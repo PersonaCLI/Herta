@@ -142,11 +142,11 @@ describe("classifyBeatTrigger — event → trigger", () => {
     expect(classifyBeatTrigger(ev)?.signature).toBe("patch.preview:first");
   });
 
-  it("fires on verification.finished", () => {
+  it("fires on a red verification.finished", () => {
     const ev: AgentEvent = {
       type: "verification.finished",
       layer: "backend",
-      result: {} as never,
+      result: { passed: false },
     };
     expect(classifyBeatTrigger(ev)?.signature).toBe("verification.finished");
   });
@@ -188,13 +188,33 @@ describe("classifyBeatTrigger — event → trigger", () => {
     expect(ordinary?.signature).toBe("tool.fail:glob:invalid_pattern");
   });
 
-  it("fires on verification.finished (test-result beat — producer added 2026-07-23)", () => {
+  it("fires on a FAILED verification.finished (test-result beat — producer added 2026-07-23)", () => {
     const trigger = classifyBeatTrigger({
       type: "verification.finished",
       layer: "backend",
-      result: {},
+      result: { passed: false },
     });
     expect(trigger?.signature).toBe("verification.finished");
+  });
+
+  it("a green test run earns no beat — the synthesis reports it (owner 2026-09-03)", () => {
+    // A passing run that ended the brief drew a beat and then the same news
+    // again from Herta's wrap-up. An emitter that does not know the outcome
+    // gets no beat either.
+    expect(
+      classifyBeatTrigger({
+        type: "verification.finished",
+        layer: "backend",
+        result: { passed: true },
+      }),
+    ).toBeNull();
+    expect(
+      classifyBeatTrigger({
+        type: "verification.finished",
+        layer: "backend",
+        result: {},
+      }),
+    ).toBeNull();
   });
 
   it("returns null on plan.updated (redundant with tool.started:plan)", () => {
@@ -256,17 +276,11 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     };
   }
   function verificationEv(): AgentEvent {
+    // Red: a green run classifies to null since 2026-09-03.
     return {
       type: "verification.finished",
       layer: "backend",
-      result: {
-        kind: "test",
-        ok: true,
-        command: "pnpm test",
-        exitCode: 0,
-        durationMs: 100,
-        summary: "passed",
-      },
+      result: { passed: false },
     };
   }
   // Unknown event type that won't classify (always returns null

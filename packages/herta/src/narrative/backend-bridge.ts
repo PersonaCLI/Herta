@@ -1272,6 +1272,12 @@ async function invokeBanzhuanBridgeInner(
   let permissionPending = false;
   let ready: TriggerSpec[] = [];
   let staged: TriggerSpec[] = [];
+  // Tool calls the permission rules REFUSED outright (`permission.resolved`
+  // with decision "blocked" — no prompt, `id` is the call id). Their
+  // `tool.call.finished` failure is a harness refusal, not 板砖 crashing,
+  // and must not earn the failure beat (owner 2026-09-03: an `ls -la`
+  // touching `.herta` drew "炸得还挺有板砖风范" for a read the guard withheld).
+  const blockedCallIds = new Set<string>();
   // Set on the runBrief-threw path BEFORE the final drain settle: the run is
   // dead, so events still queued must project (screen truth) but must not
   // stage or fire beats — a beat streaming over a failed run's teardown is
@@ -1364,6 +1370,7 @@ async function invokeBanzhuanBridgeInner(
             policy.reset();
             ready = [];
             staged = [];
+            blockedCallIds.clear();
           }
           todoLayoutProjected = false;
           lastTodoSignature = null;
@@ -1374,6 +1381,7 @@ async function invokeBanzhuanBridgeInner(
           if (event.type === "permission.requested") permissionPending = true;
           else if (event.type === "permission.resolved") {
             permissionPending = false;
+            if (event.decision === "blocked") blockedCallIds.add(event.id);
           }
         }
 
@@ -1475,7 +1483,11 @@ async function invokeBanzhuanBridgeInner(
         }
 
         if (beatsEnabled && !beatsSuppressed) {
-          const trigger = policy.shouldStage(event);
+          const refused =
+            event.type === "tool.call.finished" &&
+            event.layer === "backend" &&
+            blockedCallIds.has(event.id);
+          const trigger = refused ? null : policy.shouldStage(event);
           if (
             trigger !== null &&
             !staged.some((t) => t.signature === trigger.signature) &&

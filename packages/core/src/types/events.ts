@@ -32,7 +32,11 @@ export interface PermissionRequest {
 
 // Opaque in slice B; real shape lives in tools / dialogue specs.
 // biome-ignore lint/complexity/noBannedTypes: deliberate placeholder
-export type VerificationResult = {};
+/** What a test run came back with. `passed` was added 2026-09-03 so the
+ *  beat classifier can tell a green run (no beat — the synthesis reports
+ *  it) from a red one (Herta reacts while 板砖 fixes it); absent when the
+ *  emitter does not know. */
+export type VerificationResult = { readonly passed?: boolean };
 
 export interface TurnSummary {
   durationMs: number;

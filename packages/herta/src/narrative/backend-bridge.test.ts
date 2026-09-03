@@ -2615,6 +2615,215 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     expect(out.some((b) => b.kind === "system")).toBe(true);
     expect(out.some((b) => b.kind === "herta")).toBe(false);
   });
+
+  // ── a green test run earns no beat (owner 2026-09-03) ──────────────────
+  // A green run that ended the brief drew a beat ("全绿，0.22 秒…") and then
+  // Herta's synthesis said the same thing again. Only a RED run reacts —
+  // while 板砖 is still there to fix it — and it lands right after its row.
+
+  const testsFinished = (id: string, passed: boolean) =>
+    ({
+      type: "tool.call.finished",
+      id,
+      tool: "bash",
+      result: {
+        ok: true,
+        summary: passed ? "exit 0" : "exit 1",
+        data: {
+          argv: ["node --test"],
+          exitCode: passed ? 0 : 1,
+          testRun: {
+            command: "node --test",
+            status: passed ? "passed" : "failed",
+            summary: passed ? "exit 0, 0.25s" : "exit 1, 0.37s",
+          },
+        },
+      },
+    }) as const;
+
+  function reportFor(brief: HertaToAgentBrief): AgentExecutionReport {
+    return {
+      taskId: brief.taskId,
+      status: "completed",
+      evidence: [],
+      changedFiles: [],
+      tests: [],
+      permissions: [],
+      residualRisks: [],
+      nextActions: [],
+    } as AgentExecutionReport;
+  }
+
+  it("a green test run that ends the brief stages no beat — the synthesis tells it", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
+    let beats = 0;
+    const fireBeat: BeatFirer = async (
+      _record: TerminalRecord,
+      trigger: TriggerSpec,
+    ): Promise<TerminalRecordBlock | null> => {
+      beats += 1;
+      return {
+        kind: "herta",
+        surface: "speech",
+        text: `[${trigger.signature}]`,
+      };
+    };
+    const runtime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        publishWithLayer(bus, "backend", testsFinished("t1", true));
+        publishWithLayer(bus, "backend", {
+          type: "verification.finished",
+          result: { passed: true },
+        });
+        await tick();
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.started",
+          id: "t2",
+          tool: "todo_write",
+          inputSummary: "4/4",
+        });
+        await tick();
+        return reportFor(brief);
+      },
+    } as unknown as CodingAgentRuntime;
+    const out = await invokeBanzhuanBridge([], [], {
+      bus,
+      runtimeFactory: () => runtime,
+      signal: new AbortController().signal,
+      beatPolicy,
+      fireBeat,
+    });
+    expect(beats).toBe(0);
+    expect(
+      out.some(
+        (b) =>
+          b.kind === "system" &&
+          (b as { body: string }).body.startsWith("↳ tests"),
+      ),
+    ).toBe(true);
+    expect(out.some((b) => b.kind === "herta")).toBe(false);
+    expect((out[out.length - 1] as { role?: string }).role).toBe("done-marker");
+  });
+
+  it("a RED test run's beat fires right after its row, while 板砖 goes on to fix it", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
+    let beats = 0;
+    const fireBeat: BeatFirer = async (
+      _record: TerminalRecord,
+      trigger: TriggerSpec,
+    ): Promise<TerminalRecordBlock | null> => {
+      beats += 1;
+      return {
+        kind: "herta",
+        surface: "speech",
+        text: `[${trigger.signature}]`,
+      };
+    };
+    const runtime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        publishWithLayer(bus, "backend", testsFinished("t1", false));
+        publishWithLayer(bus, "backend", {
+          type: "verification.finished",
+          result: { passed: false },
+        });
+        await tick();
+        await tick();
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.started",
+          id: "t2",
+          tool: "bash",
+          inputSummary: "node --test test/strkit.test.mjs",
+        });
+        await tick();
+        return reportFor(brief);
+      },
+    } as unknown as CodingAgentRuntime;
+    const out = await invokeBanzhuanBridge([], [], {
+      bus,
+      runtimeFactory: () => runtime,
+      signal: new AbortController().signal,
+      beatPolicy,
+      fireBeat,
+    });
+    expect(beats).toBe(1);
+    const testsIdx = out.findIndex(
+      (b) =>
+        b.kind === "system" &&
+        (b as { body: string }).body.startsWith("↳ tests: exit 1"),
+    );
+    const beatIdx = out.findIndex((b) => b.kind === "herta");
+    const runningIdx = out.findIndex(
+      (b) =>
+        b.kind === "system" &&
+        (b as { body: string }).body.startsWith("Running node --test"),
+    );
+    expect(testsIdx).toBeGreaterThan(-1);
+    expect(beatIdx).toBe(testsIdx + 1);
+    expect(runningIdx).toBeGreaterThan(beatIdx);
+  });
+
+  it("a call the rules refused outright earns no failure beat — a withheld read is not a crash", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
+    const fired: string[] = [];
+    const fireBeat: BeatFirer = async (
+      _record: TerminalRecord,
+      trigger: TriggerSpec,
+    ): Promise<TerminalRecordBlock | null> => {
+      fired.push(trigger.signature);
+      return {
+        kind: "herta",
+        surface: "speech",
+        text: `[${trigger.signature}]`,
+      };
+    };
+    const failed = (id: string, code: string) => ({
+      type: "tool.call.finished" as const,
+      id,
+      tool: "bash",
+      result: {
+        ok: false,
+        summary: `failed: ${code}`,
+        error: { code, message: code, retryable: false },
+      },
+    });
+    const runtime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        // The reader guard's deterministic deny: no prompt, `id` is the call.
+        publishWithLayer(bus, "backend", {
+          type: "permission.resolved",
+          id: "t1",
+          decision: "blocked",
+          tool: "bash",
+          code: "path_denied",
+          risk: "workspace_read",
+        });
+        publishWithLayer(bus, "backend", failed("t1", "path_denied"));
+        await tick();
+        // A genuine failure still reacts.
+        publishWithLayer(bus, "backend", failed("t2", "spawn_failed"));
+        await tick();
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.started",
+          id: "t3",
+          tool: "bash",
+          inputSummary: "ls",
+        });
+        await tick();
+        return reportFor(brief);
+      },
+    } as unknown as CodingAgentRuntime;
+    await invokeBanzhuanBridge([], [], {
+      bus,
+      runtimeFactory: () => runtime,
+      signal: new AbortController().signal,
+      beatPolicy,
+      fireBeat,
+    });
+    expect(fired).toEqual(["tool.fail:bash:spawn_failed"]);
+  });
 });
 
 describe("invokeBanzhuanBridge — done-marker", () => {

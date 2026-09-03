@@ -656,13 +656,21 @@ export async function* runBackendTurnLoop(
         // same way, and a test run went invisible to Herta on every default
         // session for a week. A tool-name gate on a per-contract tool is the
         // bug; the shape of the result is the honest condition.
+        const testRun = (
+          result.data as { testRun?: { status?: unknown } } | undefined
+        )?.testRun;
         if (
           (call.tool === "run_command" || call.tool === "bash") &&
           result.ok &&
-          (result.data as { testRun?: unknown } | undefined)?.testRun !==
-            undefined
+          testRun !== undefined
         ) {
-          yield* emit({ type: "verification.finished", result: {} });
+          // `passed` rides along (2026-09-03) so the beat classifier can
+          // leave a green run to Herta's synthesis and react only to a red
+          // one — the detector's status is "passed" or "failed".
+          yield* emit({
+            type: "verification.finished",
+            result: { passed: testRun.status === "passed" },
+          });
         }
       }
     }

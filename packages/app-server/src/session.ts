@@ -10,9 +10,8 @@
  * v0.3 Slice 2 Task 5 — uses SessionEventProjector for all subscription channels.
  */
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
   type ApprovalOverlayState,
   defaultWorkspaceFor,
@@ -32,30 +31,21 @@ import {
   type OpeningChoice,
   type PromptLang,
   type StaticHertaPrefix,
-  spanMatchedBaseMs,
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
-import { digestSidecarFor } from "@herta/tools";
-import {
-  attachmentDirFor,
-  type ImageCaptioner,
-  ingestAttachment,
-  MAX_ATTACHMENTS_PER_ACTION,
-  migrateAttachments,
-} from "./attachments.js";
-import {
-  BusActorStreamingSink,
-  SLOW_MS_PER_CHAR,
-} from "./bus-streaming-sink.js";
+import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
+import { BusActorStreamingSink } from "./bus-streaming-sink.js";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import { recordTail } from "./record-window.js";
+import { SessionAttachments } from "./session-attachments.js";
 import { SessionEventProjector } from "./session-event-projector.js";
 import {
   createTitleProvider,
   loadSessionTitleState,
   SessionTitler,
 } from "./session-titler.js";
+import { loadSessionVoice, type SessionVoice } from "./session-voice.js";
 import {
   createActorStack,
   createBackendProvider,
@@ -63,15 +53,10 @@ import {
   defaultDigestModel,
   digestModelFrom,
 } from "./session-wiring.js";
-import {
-  MAX_STAGED_IMAGES,
-  type StagedImage,
-  StagedImageStore,
-} from "./staged-images.js";
+import type { StagedImage } from "./staged-images.js";
 import type {
   ApprovalResult,
   AppServerConfig,
-  AttachedFile,
   AttachResult,
   OverlayEvent,
   RecordEvent,
@@ -88,14 +73,6 @@ import type {
   WorkspaceEvent,
   WorkspaceSetResult,
 } from "./types.js";
-import { loadClipStems, pickClipStem } from "./voice/clip-list.js";
-import { readOpusDurationMs } from "./voice/opus-duration.js";
-import {
-  loadParticleCatalog,
-  matchLeadingParticle,
-  pickParticleClip,
-} from "./voice/particle-catalog.js";
-import { pickVetoReaction } from "./voice/veto-reaction.js";
 
 /**
  * True when a withdrawn span includes a backend (板砖) done-marker that reports
@@ -208,9 +185,6 @@ export interface SessionInternalDeps {
   readonly easterEggNow?: () => number;
 }
 
-/** Easter-egg voice throttle: ≤1 play per session per hour. */
-const EASTER_EGG_COOLDOWN_MS = 60 * 60 * 1000;
-
 /**
  * ADR 0044: the record note a NEW session carries when the configured
  * `minimal` contract fell back to `standard` because no bash exists on this
@@ -279,15 +253,10 @@ export class SessionImpl implements Session {
    *  2026-07-24, 1.6). */
   private lastTurnEnd: LastTurnEnd | undefined;
 
-  // Easter-egg voice (SPEC 2026-06-23): clip stems played when the user lifts
-  // the 板砖 device card. Held on the instance (not a factory closure) because
-  // `maybePlayEasterEgg` is called per gesture via IPC and owns the throttle.
-  private readonly easterEggClips: readonly string[];
-  private readonly easterEggRandom: () => number;
-  private readonly easterEggNow: () => number;
-  // Wall-clock (ms) of the last easter-egg play, or null. Per-session: a new
-  // session starts eligible. Enforces ≤1 play per hour.
-  private lastEasterEggAt: number | null = null;
+  /** The session's voice cues — opening clip and cadence, particle, veto
+   *  reaction, easter egg — with their catalogs and repeat-avoidance state
+   *  (session-voice.ts). */
+  private readonly voice: SessionVoice;
 
   // D3 (streaming opening): a NEW session's opening seed, deferred from the
   // in-memory record so playOpening can stream it in like a reply. null for
@@ -301,21 +270,10 @@ export class SessionImpl implements Session {
   // deferred rather than appended at create).
   private pendingContractNote: string | null;
 
-  // Voice clipId for the pending opening (its filename stem, e.g.
-  // "004-late-night-audit"), or null when there's no opening / no voice. Emitted
-  // as a `voice` cue when playOpening streams the seed so the renderer autoplays
-  // `<voiceRoot>/openings/<clipId>.opus`.
-  private readonly openingClipId: string | null;
-
   // D3: the opening-stream lead beat (ms held before the seed streams, so the
   // in-flight hint shows). undefined → the driver's OPENING_LEAD_MS default;
   // tests pass 0 to skip the wall-clock wait.
   private readonly openingLeadMs: number | undefined;
-
-  // Per-char base cadence (ms) for the opening reveal, matched to the voice
-  // clip's duration so the text spans ≈ the audio (SPEC 2026-06-23). undefined
-  // → the sink's read-along default (no clip, or duration unreadable).
-  private readonly openingBaseMs: number | undefined;
 
   // Live DeepSeek key getter (the host's mutable holder). submitText reads it to
   // detect the no-key case; the providers were built with the same getter.
@@ -344,12 +302,9 @@ export class SessionImpl implements Session {
   public readonly lang: PromptLang;
 
   private readonly transcriptDir: string;
-  /** The image-captioning instrument (ADR 0048); null = images are stored but
-   *  not read (no key, tests, a failed call). */
-  private readonly captionImage: ImageCaptioner | null;
-  /** Pictures waiting in the composer (ADR 0048 §4) — stored and captioning,
-   *  but not in the record until the message they belong to is sent. */
-  private readonly stagedImages: StagedImageStore;
+  /** The session's documents and pictures — ingest, take-back, the composer's
+   *  staged images, the rewind GC (session-attachments.ts). */
+  private readonly attachments: SessionAttachments;
 
   private constructor(opts: {
     sessionId: string;
@@ -365,12 +320,8 @@ export class SessionImpl implements Session {
     transcriptDir: string;
     titler: SessionTitler;
     pendingOpening: TerminalRecordBlock | null;
-    openingClipId: string | null;
+    voice: SessionVoice;
     openingLeadMs: number | undefined;
-    openingBaseMs: number | undefined;
-    easterEggClips: readonly string[];
-    easterEggRandom: () => number;
-    easterEggNow: () => number;
     deepSeekKey: () => string;
     lang: PromptLang;
     lastTurnEnd?: LastTurnEnd;
@@ -394,23 +345,30 @@ export class SessionImpl implements Session {
     this.transcriptDir = opts.transcriptDir;
     this.titler = opts.titler;
     this.pendingOpening = opts.pendingOpening;
-    this.openingClipId = opts.openingClipId;
+    this.voice = opts.voice;
     this.openingLeadMs = opts.openingLeadMs;
-    this.openingBaseMs = opts.openingBaseMs;
     this.deepSeekKey = opts.deepSeekKey;
-    this.easterEggClips = opts.easterEggClips;
-    this.easterEggRandom = opts.easterEggRandom;
-    this.easterEggNow = opts.easterEggNow;
     this.lang = opts.lang;
     this.pendingContractNote = opts.pendingContractNote;
-    this.captionImage = opts.captionImage;
-    this.stagedImages = new StagedImageStore({
-      // Reads the holder fresh: a workspace change between staging and send
-      // must not delete (or fail to find) a copy under the old root.
-      workspaceRoot: () => this.wsHolder.current,
+    this.attachments = new SessionAttachments({
       sessionId: opts.sessionId,
       lang: opts.lang,
-      caption: () => this.captionImage,
+      wsHolder: this.wsHolder,
+      captionImage: opts.captionImage,
+      turnInFlight: () => this.currentTurn !== null,
+      driver: this.driver,
+      onAppended: () => {
+        this._record = this.driver.getRecord();
+      },
+      onReplaced: () => {
+        this._record = this.driver.getRecord();
+        // The sink streams by a monotonic cursor and mirrors block
+        // REFERENCES, so a mutation behind the cursor is invisible to it —
+        // re-seed with the new record (same move rewind makes after
+        // truncating), then push the corrected record to the renderer.
+        this.sink.seedEmittedCount(this._record.length, this._record);
+        this.resyncRecord();
+      },
     });
   }
 
@@ -496,25 +454,10 @@ export class SessionImpl implements Session {
     return turnId;
   }
 
-  /**
-   * GUI easter egg (SPEC 2026-06-23): called per successful 板砖-card lift. Rolls
-   * a 50% chance, throttled to ≤1 play per session per hour, and emits an
-   * `easter_egg` voice cue. No-op without clips or within the cooldown.
-   */
+  /** GUI easter egg (SPEC 2026-06-23): called per successful 板砖-card lift
+   *  via IPC. The voice module owns the roll and the hourly throttle. */
   maybePlayEasterEgg(): void {
-    if (this.easterEggClips.length === 0) return;
-    const now = this.easterEggNow();
-    if (
-      this.lastEasterEggAt !== null &&
-      now - this.lastEasterEggAt < EASTER_EGG_COOLDOWN_MS
-    ) {
-      return; // within the per-session hourly cooldown
-    }
-    if (this.easterEggRandom() >= 0.5) return; // 50% gate (cooldown not consumed)
-    const clipId = pickClipStem(this.easterEggClips, this.easterEggRandom);
-    if (clipId === null) return;
-    this.lastEasterEggAt = now;
-    this.projector.emitVoice({ kind: "cue", category: "easter_egg", clipId });
+    this.voice.maybePlayEasterEgg();
   }
 
   // ── Session interface ──────────────────────────────────────────────────────
@@ -547,67 +490,26 @@ export class SessionImpl implements Session {
     return this.currentTurn !== null;
   }
 
-  /**
-   * Stage pictures in the composer (ADR 0048 §4) — stored and captioned now,
-   * appended to the record only when the message is sent.
-   *
-   * Idle-only, like `attachFiles` and for a weaker but real version of the
-   * same reason: nothing is appended here, but a staged image is meant to
-   * ride the NEXT message, and mid-turn there is no next message to ride.
-   *
-   * Non-images come back as `not_image` rather than being stored — documents
-   * ingest immediately through `attachFiles`, which is their own UX and stays
-   * unchanged (ADR 0048 §4).
-   */
-  async stageImages(
+  /** Stage pictures in the composer (ADR 0048 §4) — see SessionAttachments. */
+  stageImages(
     inputs: readonly {
       readonly path?: string;
       readonly bytes?: Uint8Array;
       readonly name?: string;
     }[],
   ): Promise<StageImagesResult> {
-    if (this.currentTurn !== null) {
-      return { ok: false, reason: "turn_in_progress" };
-    }
-    if (inputs.length === 0) return { ok: false, reason: "no_files" };
-    // The per-MESSAGE picture cap (owner 2026-08-27): what is already staged
-    // plus this batch. Tighter than the per-action attachment cap, so it is
-    // the only ceiling staging can hit.
-    if (inputs.length + this.stagedImages.size > MAX_STAGED_IMAGES) {
-      return { ok: false, reason: "too_many_images" };
-    }
-    const staged: StagedImage[] = [];
-    const rejected: { readonly name: string; readonly reason: string }[] = [];
-    for (const input of inputs) {
-      const displayName =
-        input.name ?? (input.path !== undefined ? basename(input.path) : "");
-      if (displayName === "") {
-        rejected.push({ name: "", reason: "read_error" });
-        continue;
-      }
-      const result = await this.stagedImages.stage({
-        ...(input.path !== undefined ? { sourcePath: input.path } : {}),
-        ...(input.bytes !== undefined
-          ? { bytes: Buffer.from(input.bytes) }
-          : {}),
-        displayName,
-      });
-      if (result.ok) staged.push(result.image);
-      else rejected.push({ name: displayName, reason: result.reason });
-    }
-    return { ok: true, staged, rejected };
+    return this.attachments.stageImages(inputs);
   }
 
-  /** Drop a staged image and delete its stored copy. Nothing reached the
-   *  record, so nothing is left behind to explain. */
-  async unstageImage(id: string): Promise<boolean> {
-    return this.stagedImages.unstage(id);
+  /** Drop a staged image and delete its stored copy. */
+  unstageImage(id: string): Promise<boolean> {
+    return this.attachments.unstageImage(id);
   }
 
   /** What is currently waiting in the composer — for a renderer that
    *  reconnects (reload, session switch) and needs to redraw the strip. */
   get stagedImageList(): readonly StagedImage[] {
-    return this.stagedImages.list();
+    return this.attachments.stagedImageList;
   }
 
   async submitText(
@@ -647,7 +549,9 @@ export class SessionImpl implements Session {
           opts.stagedImageIds !== undefined &&
           opts.stagedImageIds.length > 0
         ) {
-          userAttachments = await this.stagedImages.commit(opts.stagedImageIds);
+          userAttachments = await this.attachments.commitStaged(
+            opts.stagedImageIds,
+          );
         }
         // The actor sink (BusActorStreamingSink) streams every appended block
         // to record subscribers in canonical order DURING the turn via
@@ -795,16 +699,8 @@ export class SessionImpl implements Session {
         this.driver.playOpening(
           block,
           this.openingLeadMs,
-          () => {
-            if (this.openingClipId !== null) {
-              this.projector.emitVoice({
-                kind: "cue",
-                category: "openings",
-                clipId: this.openingClipId,
-              });
-            }
-          },
-          this.openingBaseMs,
+          () => this.voice.onOpeningStreamStart(),
+          this.voice.openingBaseMs,
           signal,
         ),
       // Not rethrown — fire-and-forget; the seed is durable on disk and shows
@@ -884,89 +780,16 @@ export class SessionImpl implements Session {
     // like the ✕). See the method for the D-Record-only amendment. The
     // withdrawn PICTURES come back as staged entries instead of being
     // deleted (owner 2026-08-27) — they ride the restored draft.
-    const images = await this.cleanUpWithdrawnAttachments(result.withdrawn);
+    const images = await this.attachments.cleanUpWithdrawn(
+      result.withdrawn,
+      this._record,
+    );
     return {
       ok: true,
       userText: result.userText,
       editedFiles: spanEditedFiles(result.withdrawn),
       ...(images.length > 0 ? { images } : {}),
     };
-  }
-
-  /**
-   * Garbage-collect the STORED COPIES of attachments whose record blocks a
-   * rewind just withdrew (owner decision 2026-08-26, amending D-Record-only —
-   * see the 2026-06-21-rewind-last-turn spec). That rule still holds for
-   * 板砖's real filesystem side-effects (files it edited, commands it ran);
-   * the harness's own attachment store is record-keyed bookkeeping, and a
-   * copy whose citing block no longer exists is a document the user can
-   * neither see nor take back — the ✕ affordance left with the row.
-   *
-   * Same trust shape as removeAttachment: only paths the HARNESS wrote into
-   * a block's digest are deleted, re-checked against this session's
-   * attachment prefix — nothing renderer-supplied reaches unlink. A path a
-   * SURVIVING block still cites is kept: content-hashed names make
-   * re-attaching the same document idempotent, so two blocks can share one
-   * stored file. Sidecars (outline, ADR 0043 digest) go with their text,
-   * exactly as the ✕ takes them.
-   *
-   * PICTURES are the exception (owner 2026-08-27): a withdrawn image block
-   * RESTAGES into the composer strip instead of being deleted — the copy is
-   * on disk, the caption is paid for, and the rewound message's pictures
-   * belong with its restored draft. Returns what was restaged so the rewind
-   * result can hand them to the renderer. Capped at the strip's own
-   * five-picture ceiling (counting what is already staged); overflow — and
-   * a path already restaged once, so two withdrawn blocks citing one legacy
-   * shared file cannot mint two owners — falls back to the GC.
-   */
-  private async cleanUpWithdrawnAttachments(
-    withdrawn: TerminalRecord,
-  ): Promise<readonly StagedImage[]> {
-    const prefix = `${attachmentDirFor(this.sessionId)}/`;
-    const surviving = new Set<string>();
-    for (const b of this._record) {
-      if (b.kind !== "system" || b.digest?.kind !== "attachment") continue;
-      if (b.digest.path.length > 0) surviving.add(b.digest.path);
-    }
-    const toRemove: string[] = [];
-    const restaged: StagedImage[] = [];
-    const restagedPaths = new Set<string>();
-    for (const b of withdrawn) {
-      if (b.kind !== "system" || b.digest?.kind !== "attachment") continue;
-      const d = b.digest;
-      if (d.unreadable === "removed") continue; // the ✕ already took the files
-      if (!d.path.startsWith(prefix)) continue; // harness-written, or nothing stored
-      if (surviving.has(d.path)) continue;
-      if (d.image !== undefined) {
-        if (restagedPaths.has(d.path)) continue; // one owner per file
-        if (this.stagedImages.size < MAX_STAGED_IMAGES) {
-          const img = this.stagedImages.restage(b);
-          if (img !== null) {
-            restaged.push(img);
-            restagedPaths.add(d.path);
-            continue;
-          }
-        }
-        // Strip full, or not restageable after all — the GC takes it.
-      }
-      toRemove.push(d.path, digestSidecarFor(d.path));
-      const outline = d.outline?.path;
-      if (outline?.startsWith(prefix) === true) {
-        toRemove.push(outline);
-      }
-    }
-    for (const rel of toRemove) {
-      try {
-        await rm(join(this.wsHolder.current, ...rel.split("/")), {
-          force: true,
-        });
-      } catch {
-        // Best-effort, mirroring removeAttachment: a file already gone
-        // (manual delete, workspace switched) must not fail the rewind
-        // whose record truncation has already landed.
-      }
-    }
-    return restaged;
   }
 
   /**
@@ -1122,185 +945,16 @@ export class SessionImpl implements Session {
     return { ok: true };
   }
 
-  /**
-   * Ingest documents the 开拓者 handed over (ADR 0033): copy each into the
-   * session's attachment directory under the EFFECTIVE backend workspace and
-   * append one → 系统 block per file.
-   *
-   * The effective workspace, not `this.workspaceRoot`: the block's path is
-   * what 板砖 later resolves, and it resolves against the backend root. A
-   * later workspace change strands the path the same way it strands every
-   * other relative path already in the record — no new class of staleness.
-   *
-   * Idle-only, same guard and rationale as setWorkspace (audit 2026-07-10,
-   * finding 13): `appendSystemBlock` is only safe between turns.
-   */
-  async attachFiles(paths: readonly string[]): Promise<AttachResult> {
-    if (this.currentTurn !== null) {
-      return { ok: false, reason: "turn_in_progress" };
-    }
-    if (paths.length === 0) return { ok: false, reason: "no_files" };
-    // Reject the whole action rather than ingesting a prefix: a user who
-    // dropped 30 files and got 10 with no explanation would reasonably
-    // believe all 30 arrived.
-    if (paths.length > MAX_ATTACHMENTS_PER_ACTION) {
-      return { ok: false, reason: "too_many" };
-    }
-
-    // Phase 1 — ingest (async, disk only, no record mutation). Phase 2 —
-    // guard + append, all synchronous. The first cut appended inside the
-    // await loop, which reopened exactly the hazard the idle-only guard
-    // exists for: every await yields the event loop, submitText can start a
-    // turn in that window, and an out-of-turn append lands MID-turn (dropped
-    // note / rewound sink cursor / duplicate JSONL — audit 2026-07-10,
-    // finding 13). setWorkspace never had this problem only because its
-    // guard-to-append path contains no await; with ingest I/O in between,
-    // the guard must be re-checked on the far side.
-    const ingested = [];
-    for (const sourcePath of paths) {
-      ingested.push({
-        sourcePath,
-        result: await ingestAttachment({
-          sourcePath,
-          workspaceRoot: this.wsHolder.current,
-          sessionId: this.sessionId,
-          lang: this.lang,
-          captionImage: this.captionImage,
-        }),
-      });
-    }
-
-    if (this.currentTurn !== null) {
-      // A turn started while the files were being copied. The copies stay on
-      // disk — harmless, content-hashed, and a retry of the same drop reuses
-      // them byte-for-byte — but no record blocks may be appended now.
-      return { ok: false, reason: "turn_in_progress" };
-    }
-
-    const files: AttachedFile[] = [];
-    for (const { sourcePath, result } of ingested) {
-      this.driver.appendSystemBlock(result.block);
-      files.push({
-        name: basename(sourcePath),
-        path: result.relPath,
-        ...(result.unreadable !== undefined
-          ? { unreadable: result.unreadable }
-          : {}),
-      });
-    }
-    this._record = this.driver.getRecord();
-    return { ok: true, files };
+  /** Ingest documents the 开拓者 handed over (ADR 0033) — see
+   *  SessionAttachments.attachFiles. */
+  attachFiles(paths: readonly string[]): Promise<AttachResult> {
+    return this.attachments.attachFiles(paths);
   }
 
-  /**
-   * Take back an attached document (ADR 0033, owner 2026-08-10): delete the
-   * stored file and MARK every block citing it `unreadable: "removed"`.
-   *
-   * Marked, not deleted. Dropping the block would shift every later index —
-   * rewind, topic anchors and the sink cursor all count them — and, the real
-   * reason, if Herta has already spoken about the document then erasing its
-   * citation leaves her own words pointing at something that never happened.
-   * The file goes; the record keeps saying one arrived and was withdrawn.
-   *
-   * The caller supplies a path from the RENDERER, so it is never trusted for
-   * the delete: the block found by that path supplies its own harness-written
-   * path, and that is re-checked against this session's attachment prefix
-   * before anything is unlinked.
-   *
-   * Idle-only, like every other out-of-turn record write.
-   */
-  async removeAttachment(path: string): Promise<RemoveAttachmentResult> {
-    if (this.currentTurn !== null) {
-      return { ok: false, reason: "turn_in_progress" };
-    }
-    const record = this.driver.getRecord();
-    const targets: Array<{ index: number; block: SystemBlock }> = [];
-    // A block is addressed by its text path, or — for a document whose
-    // original was kept but whose text was not (a scanned PDF, an .xlsx;
-    // ADR 0038 amendment) — by its source path, the only path the row has.
-    const isTarget = (d: { path: string; source?: string }): boolean =>
-      path.length > 0 && (d.path === path || d.source === path);
-    record.forEach((b, index) => {
-      if (b.kind !== "system") return;
-      const d = b.digest;
-      if (d?.kind !== "attachment") return;
-      if (!isTarget(d)) return;
-      if (d.unreadable === "removed") return; // already withdrawn
-      targets.push({ index, block: b });
-    });
-    if (targets.length === 0) return { ok: false, reason: "not_found" };
-
-    // Delete once, from the BLOCK's own paths, and only inside this session's
-    // attachment directory — a renderer-supplied path never reaches unlink.
-    const prefix = `${attachmentDirFor(this.sessionId)}/`;
-    const stored = targets[0]?.block.digest;
-    if (stored?.kind !== "attachment")
-      return { ok: false, reason: "not_found" };
-    const under = (p: string | undefined): string | null =>
-      p !== undefined && p.length > 0 && p.startsWith(prefix) ? p : null;
-    const relPath = under(stored.path);
-    // The original's copy (ADR 0038 amendment) goes with the text.
-    const source = under(stored.source);
-    if (relPath === null && source === null)
-      return { ok: false, reason: "not_found" };
-    // The outline sidecar (2026-08-23) goes with the text, under the same
-    // prefix check — it is the document's own table of contents, and a
-    // withdrawn document must not leave its chapter titles behind.
-    const sidecar = under(stored.outline?.path);
-    // …and the digest sidecar (ADR 0043), if 板砖 ever built one: same
-    // directory, same prefix, derived from the text's own path.
-    const toRemove = [
-      ...(relPath === null ? [] : [relPath, digestSidecarFor(relPath)]),
-      ...(source === null ? [] : [source]),
-      ...(sidecar === null ? [] : [sidecar]),
-    ];
-    for (const rel of toRemove) {
-      try {
-        await rm(join(this.wsHolder.current, ...rel.split("/")), {
-          force: true,
-        });
-      } catch {
-        // Best-effort: a file already gone (manual delete, workspace
-        // switched) must not block the record from recording the withdrawal.
-      }
-    }
-
-    // Guard re-check on the far side of the await — the same hole attachFiles
-    // closed and this method then reintroduced: `rm` yields the event loop,
-    // and a turn starting in that window would make the block replacement and
-    // the sink re-seed below MID-turn mutations. Refusing here is self-healing:
-    // the file is already gone, the block is not yet marked, and the retry
-    // finds the same targets while `rm --force` tolerates the missing file.
-    if (this.currentTurn !== null) {
-      return { ok: false, reason: "turn_in_progress" };
-    }
-
-    for (const { index, block } of targets) {
-      const d = block.digest;
-      if (d?.kind !== "attachment") continue;
-      // Drop the head excerpt with the file. Keeping prompt-visible content
-      // for a document the user just took back would be the opposite of what
-      // they asked for.
-      const { evidenceDetail: _d, evidence: _e, ...rest } = block;
-      // The outline citation goes too: its sidecar was just unlinked, and a
-      // digest pointing at it would be a path to nothing. Same for the
-      // original's copy.
-      const { outline: _o, source: _s, ...digest } = d;
-      this.driver.replaceBlockAt(index, {
-        ...rest,
-        body: `附件 ${d.name} · 已移除`,
-        digest: { ...digest, lines: 0, chars: 0, unreadable: "removed" },
-      });
-    }
-
-    this._record = this.driver.getRecord();
-    // The sink streams by a monotonic cursor and mirrors block REFERENCES, so
-    // a mutation behind the cursor is invisible to it — re-seed with the new
-    // record (same move rewind makes after truncating), then push the
-    // corrected record to the renderer.
-    this.sink.seedEmittedCount(this._record.length, this._record);
-    this.resyncRecord();
-    return { ok: true, removed: targets.length };
+  /** Take back an attached document (ADR 0033, owner 2026-08-10) — see
+   *  SessionAttachments.removeAttachment. */
+  removeAttachment(path: string): Promise<RemoveAttachmentResult> {
+    return this.attachments.removeAttachment(path);
   }
 
   /**
@@ -1421,7 +1075,7 @@ export class SessionImpl implements Session {
     // no record block ever mentioned them, so their stored copies are pure
     // orphans (ADR 0048 §4). Best-effort — a copy that survives is a stray
     // file, never a broken session.
-    await this.stagedImages.clear();
+    await this.attachments.clearStaged();
 
     // Give the turn loop one event-loop tick to observe the AbortSignal and
     // emit turn.failed before we close the projector (which would close all
@@ -1651,98 +1305,38 @@ export class SessionImpl implements Session {
       lang,
     );
 
-    // 3. Opening voice pairing (the seed itself came from the actor stack;
-    //    the host adds the clip and the clip-matched cadence).
-    // Voice-clip root, shared by every voice feature below (openings /
-    // particles / veto / easter egg). Config-driven since 2026-07-06 so a
-    // PACKAGED app can point it at its bundled resources copy; the fallback
-    // is the dev layout under the workspace. Every read stays best-effort —
-    // a missing dir just means voice never fires.
-    const voiceAssetsDir =
-      config.voiceAssetsDir ?? join(workspaceRoot, "data", "voice");
+    // 3. Voice (session-voice.ts): the opening's clip and clip-matched
+    //    cadence, the particle cue, the veto reaction and the easter egg,
+    //    with their catalogs read once. The clip root is config-driven since
+    //    2026-07-06 so a PACKAGED app can point it at its bundled resources
+    //    copy; the fallback is the dev layout under the workspace.
     const { opening, seedBlock } = actor;
-    // The opening's voice clipId = its filename stem (the .opus shares the stem),
-    // captured for the `voice` cue emitted when playOpening streams the seed.
-    // The pairing comes from the picker (slice 4): zh openings carry their
-    // filename stem; EN openings carry NO clip (no EN clips in v1) — never
-    // derive a clip id from `sourceFile` here, or an EN seed would pair with
-    // a CN clip.
-    const openingClipId: string | null = opening?.voiceClipId ?? null;
-    // Matched per-char cadence so the seed reveal spans ≈ the clip's audio
-    // (SPEC 2026-06-23). undefined when there's no clip / the clip is unreadable.
-    let openingBaseMs: number | undefined;
-    if (opening !== undefined) {
-      // Match the text-stream cadence to the voice clip's duration. The clip
-      // lives at <voiceAssetsDir>/openings/<clipId>.opus (mirrors the GUI's
-      // voice-path resolution; Ogg/Opus since the 2026-07-16 cutover).
-      // Best-effort: an unreadable / absent clip — or no clip at all (EN
-      // opening) — leaves openingBaseMs undefined → the sink's read-along
-      // default.
-      const durationMs =
-        deps.openingDurationMs ??
-        (openingClipId !== null
-          ? await readOpusDurationMs(
-              join(voiceAssetsDir, "openings", `${openingClipId}.opus`),
-            )
-          : null);
-      // `durationMs` is number | null (the `??` collapses the seam's undefined).
-      if (durationMs !== null) {
-        openingBaseMs = spanMatchedBaseMs({
-          text: opening.seedText,
-          targetMs: durationMs,
-          fallbackMs: SLOW_MS_PER_CHAR,
-        });
-      }
-    }
+    const voice = await loadSessionVoice({
+      voiceAssetsDir:
+        config.voiceAssetsDir ?? join(workspaceRoot, "data", "voice"),
+      lang,
+      opening,
+      emit: (cue) => projector.emitVoice(cue),
+      ...(deps.openingDurationMs !== undefined
+        ? { openingDurationMs: deps.openingDurationMs }
+        : {}),
+      ...(deps.particleRandom !== undefined
+        ? { particleRandom: deps.particleRandom }
+        : {}),
+      ...(deps.vetoRandom !== undefined ? { vetoRandom: deps.vetoRandom } : {}),
+      ...(deps.easterEggRandom !== undefined
+        ? { easterEggRandom: deps.easterEggRandom }
+        : {}),
+      ...(deps.easterEggNow !== undefined
+        ? { easterEggNow: deps.easterEggNow }
+        : {}),
+    });
 
     // 4. V2ActorDriver — owns the growing TerminalRecord, mood routing,
     //     the supervisor, and (via the persister) block persistence. An
     //     all-empty corpus + empty supervisor reference degrade to
     //     single-phase actor mode. The per-turn AbortSignal is threaded by
     //     submitText into driver.runTurn so interrupt() can cancel.
-    // Particle voice catalog (SPEC 2026-06-23): leading-interjection tokens +
-    // their variant clips, read once. Best-effort — a missing dir yields an
-    // empty catalog so particles simply never fire. Loaded for every session
-    // (particles fire on normal turns, not just new sessions).
-    const particleCatalog = await loadParticleCatalog(
-      join(voiceAssetsDir, "particle"),
-    );
-    const particleRandom = deps.particleRandom ?? Math.random;
-    // Veto voice clips (SPEC 2026-06-23): full "catching-herself" lines played
-    // when the supervisor rejects the candidate speech. Best-effort — missing
-    // dir → empty → never fires.
-    const vetoClips = await loadClipStems(join(voiceAssetsDir, "veto"));
-    const vetoRandom = deps.vetoRandom ?? Math.random;
-    // Track the last veto clip so two consecutive rejections never play the same
-    // wav — across retries within a turn AND across turns. Session-scoped via
-    // this closure (the onSupervisorVeto callback below is built once per
-    // session). Resets only when a new session is created.
-    let lastVetoClip: string | null = null;
-    // Same idea for the sigh case (its `<category>/<clipId>` key): two
-    // consecutive sigh rolls never repeat the same wav when an alternative
-    // exists. Session-scoped, like lastVetoClip.
-    let lastSighClip: string | null = null;
-    // The particle token cued at this turn's first speech (null = the speech
-    // didn't lead with one). Feeds the veto reaction's sigh-eligibility check.
-    // onPrimarySpeechStart fires on EVERY non-empty speech turn and both actor
-    // fire sites precede the supervisor check, so this is always fresh by the
-    // time a veto can fire — it self-resets each turn with no boundary hook.
-    let particleTokenThisTurn: string | null = null;
-    // No EN voice in v1 (ADR 0013 §5): every voice cue — opening, particle,
-    // veto, easter-egg — is suppressed for a non-zh interaction session (no
-    // EN wavs exist, and the clips that DO exist are all Chinese). The opening
-    // is gated by an absent voiceClipId; the remaining three are gated on this
-    // flag (adversarial review 2026-07-15 found veto + easter-egg firing
-    // Chinese audio in EN sessions).
-    const voiceCuesEnabled = lang === "zh";
-    // Easter-egg voice clips (SPEC 2026-06-23): played on a successful 板砖-card
-    // lift. Best-effort — missing dir → empty → never fires. Empty for non-zh.
-    const easterEggClips = voiceCuesEnabled
-      ? await loadClipStems(join(voiceAssetsDir, "easter_egg"))
-      : [];
-    const easterEggRandom = deps.easterEggRandom ?? Math.random;
-    const easterEggNow = deps.easterEggNow ?? Date.now;
-
     const driver = new V2ActorDriver({
       provider: actor.actorProvider,
       model: config.providers.actorModel,
@@ -1752,48 +1346,10 @@ export class SessionImpl implements Session {
       persister,
       sink,
       onPrompt: actor.onPrompt,
-      // Particle voice: the actor fires this at the FIRST speech of each turn
-      // (not retries/beats/regenerate). Match the leading particle and cue a
-      // random variant on the same voice channel the opening uses.
-      onPrimarySpeechStart: (text: string) => {
-        if (!voiceCuesEnabled) return; // no EN voice in v1 (ADR 0013 §5)
-        const token = matchLeadingParticle(text, particleCatalog);
-        particleTokenThisTurn = token;
-        if (token === null) return;
-        const clip = pickParticleClip(particleCatalog, token, particleRandom);
-        if (clip !== null) {
-          projector.emitVoice({
-            kind: "cue",
-            category: clip.category,
-            clipId: clip.clipId,
-          });
-        }
-      },
-      // Veto voice, diversified (user 2026-07-11): the rejection moment rolls
-      // one of three reactions instead of always a full "catching-herself"
-      // line — a veto/ clip (with the same consecutive repeat avoidance), a
-      // short sigh from particle/唉 · particle/哎 (only when this turn's
-      // speech didn't already cue a sigh-family particle), or silence (the
-      // retract morph alone carries the beat). See pickVetoReaction.
-      onSupervisorVeto: () => {
-        if (!voiceCuesEnabled) return; // no EN voice in v1 (ADR 0013 §5)
-        const reaction = pickVetoReaction({
-          vetoClips,
-          lastVetoClip,
-          lastSighClip,
-          particleCatalog,
-          particleTokenThisTurn,
-          random: vetoRandom,
-        });
-        if (reaction.kind === "silence") return;
-        if (reaction.fromVetoFolder) lastVetoClip = reaction.clipId;
-        else lastSighClip = `${reaction.category}/${reaction.clipId}`;
-        projector.emitVoice({
-          kind: "cue",
-          category: reaction.category,
-          clipId: reaction.clipId,
-        });
-      },
+      // Particle voice at the FIRST speech of each turn (not retries, beats
+      // or regenerate) and the veto reaction — both the voice module's.
+      onPrimarySpeechStart: (text: string) => voice.onPrimarySpeechStart(text),
+      onSupervisorVeto: () => voice.onSupervisorVeto(),
       routerProvider: actor.routerProvider,
       metaThinkCorpus: actor.metaThinkCorpus,
       hints: actor.actorHints,
@@ -1862,16 +1418,9 @@ export class SessionImpl implements Session {
       // resumed sessions (seedBlock is only set when initialRecord is empty) and
       // new sessions without an opening — playOpening then no-ops.
       pendingOpening: seedBlock,
-      // The opening's voice clipId (null when there's no opening) — emitted as a
-      // `voice` cue when playOpening streams the seed.
-      openingClipId,
+      voice,
       // D3: opening-stream lead beat; undefined → the driver's OPENING_LEAD_MS.
       openingLeadMs: deps.openingLeadMs,
-      // Wav-matched seed cadence; undefined → the sink's read-along default.
-      openingBaseMs,
-      easterEggClips,
-      easterEggRandom,
-      easterEggNow,
       deepSeekKey,
       lang,
       // ADR 0044: NEW sessions only — a resumed record already carried the

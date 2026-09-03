@@ -66,11 +66,11 @@ import {
   topicAnchorText,
 } from "./session-topics.js";
 import {
-  BACKEND_PROVIDER_MAX_RETRIES,
   createActorStack,
+  createBackendProvider,
   createBackendStack,
+  defaultDigestModel,
   digestModelFrom,
-  makeDigestProvider,
 } from "./session-wiring.js";
 import {
   MAX_STAGED_IMAGES,
@@ -259,19 +259,6 @@ export interface SessionInternalDeps {
 
 /** Easter-egg voice throttle: ≤1 play per session per hour. */
 const EASTER_EGG_COOLDOWN_MS = 60 * 60 * 1000;
-
-/**
- * Whether a backend model name is one that can read images (ADR 0048 §5).
- *
- * Matched by SUBSTRING rather than an exact name so the model can graduate
- * from `-Exp` without this going quietly false — which would drop
- * `view_image` from the stack while the Settings row still offered the
- * model, the worst of both. DeepSeek's vision models carry `vision` in the
- * name; nothing else does.
- */
-export function isVisionModel(model: string): boolean {
-  return model.includes("vision");
-}
 
 /**
  * ADR 0044: the record note a NEW session carries when the configured
@@ -1726,19 +1713,15 @@ export class SessionImpl implements Session {
       config.providers.baseUrl !== undefined
         ? { baseUrl: config.providers.baseUrl }
         : {};
+    // The one way both hosts build it (session-wiring.ts): Settings →
+    // Coprocessor supplies the model and the thinking level (default
+    // "high"), the wiring supplies everything the CLI would spell the same.
     const backendProvider =
       deps.providerOverrides?.backend ??
-      deepseekProvider({
+      createBackendProvider({
         apiKey,
         model: config.providers.backendModel,
-        // Default "high". Settings → Coprocessor can set low/high/max —
-        // note deepseek-v4-pro maps a sent "low" to "high" server-side
-        // until its announced early-August-2026 update (flash honors it).
-        thinking:
-          config.thinking === "off" ? false : (config.thinking ?? "high"),
-        // The turn loop's retry policy paces a rate limit; the transport
-        // must not stack its own retries under it (see the constant).
-        maxRetries: BACKEND_PROVIDER_MAX_RETRIES,
+        ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
         ...baseUrl,
       });
 
@@ -1762,11 +1745,9 @@ export class SessionImpl implements Session {
       // one `→ 系统` record note naming the remedy (see contractFallbackNote).
       wantMinimal: config.backendContract === "minimal",
       backendProvider,
-      // ADR 0048 §5: `view_image` is mounted only when 板砖's model can
-      // actually see. Derived from the model name rather than a separate
-      // setting — the capability IS the model, and two switches that could
-      // disagree would eventually disagree.
-      vision: isVisionModel(config.providers.backendModel),
+      // ADR 0048 §5: the stack mounts `view_image` only when this model can
+      // actually see (isVisionModel, one rule for both hosts).
+      backendModel: config.providers.backendModel,
       // The digest tool's side model (ADR 0043): flash, thinking off. A test
       // override takes the place of the real provider; without one the tool
       // mounts as `unavailable` rather than reaching the network under test.
@@ -1774,7 +1755,7 @@ export class SessionImpl implements Session {
         deps.providerOverrides?.digest !== undefined
           ? digestModelFrom(deps.providerOverrides.digest)
           : deps.providerOverrides === undefined
-            ? digestModelFrom(makeDigestProvider(apiKey, baseUrl))
+            ? defaultDigestModel(apiKey, baseUrl)
             : null,
       makeAsk: ({ cache, rules }) => {
         overlayResolver = new OverlayAskResolver({

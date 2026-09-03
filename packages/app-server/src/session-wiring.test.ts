@@ -6,7 +6,9 @@ import { FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BACKEND_PROVIDER_MAX_RETRIES,
+  createBackendProvider,
   createBackendStack,
+  isVisionModel,
 } from "./session-wiring.js";
 
 describe("BACKEND_PROVIDER_MAX_RETRIES", () => {
@@ -16,6 +18,95 @@ describe("BACKEND_PROVIDER_MAX_RETRIES", () => {
     // POSTs. Both hosts (session.ts, the CLI) pass this to the backend
     // provider; the actor and the sidecars keep the transport default.
     expect(BACKEND_PROVIDER_MAX_RETRIES).toBe(0);
+  });
+});
+
+describe("createBackendProvider — the one backend provider both hosts build (2026-09-03)", () => {
+  const frame = {
+    stableSystem: "s",
+    repoInstructions: "",
+    memoryContext: "",
+    retrievedLore: "",
+    messages: [
+      { role: "user" as const, text: "hi", ts: "2026-09-03T00:00:00Z" },
+    ],
+    toolSchemas: [],
+  };
+
+  /** Drive one call through a fetch double that answers 429, and hand back
+   *  the request bodies it saw — one per POST. */
+  async function postedBodies(
+    opts: Parameters<typeof createBackendProvider>[0],
+  ): Promise<Record<string, unknown>[]> {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response("rate limited", { status: 429 });
+    }) as unknown as typeof fetch;
+    const provider = createBackendProvider({ ...opts, fetchImpl });
+    try {
+      for await (const _ev of provider.streamChat(
+        frame,
+        new AbortController().signal,
+      )) {
+        // consume
+      }
+    } catch {
+      // the 429 surfaces as a ProviderError — the bodies are what we want
+    }
+    return bodies;
+  }
+
+  it("sends the model with thinking high by default, and exactly one POST on a 429", async () => {
+    const bodies = await postedBodies({
+      apiKey: "k",
+      model: "deepseek-v4-flash",
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.model).toBe("deepseek-v4-flash");
+    expect(bodies[0]?.thinking).toEqual({ type: "enabled" });
+    expect(bodies[0]?.reasoning_effort).toBe("high");
+  });
+
+  it("accepts the Settings vocabulary ('off') and the CLI's (false) alike — no thinking block", async () => {
+    for (const thinking of ["off", false] as const) {
+      const bodies = await postedBodies({
+        apiKey: "k",
+        model: "deepseek-v4-flash",
+        thinking,
+      });
+      expect(bodies[0]?.thinking).toBeUndefined();
+      expect(bodies[0]?.reasoning_effort).toBeUndefined();
+    }
+    const low = await postedBodies({
+      apiKey: "k",
+      model: "deepseek-v4-flash",
+      thinking: "low",
+    });
+    expect(low[0]?.reasoning_effort).toBe("low");
+  });
+
+  it("honours the base-URL lever", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: unknown) => {
+      urls.push(String(url));
+      return new Response("rate limited", { status: 429 });
+    }) as unknown as typeof fetch;
+    const provider = createBackendProvider({
+      apiKey: "k",
+      model: "deepseek-v4-flash",
+      baseUrl: "http://127.0.0.1:9/chaos",
+      fetchImpl,
+    });
+    await (async () => {
+      for await (const _ev of provider.streamChat(
+        frame,
+        new AbortController().signal,
+      )) {
+        // consume
+      }
+    })().catch(() => undefined);
+    expect(urls[0]?.startsWith("http://127.0.0.1:9/chaos")).toBe(true);
   });
 });
 
@@ -47,6 +138,7 @@ describe("createBackendStack", () => {
       lang: "zh",
       wantMinimal: false,
       backendProvider: new FakeProvider({ turns: [] }),
+      backendModel: "deepseek-v4-flash",
       digestModel: null,
       makeAsk: ({ cache, rules }) => {
         seen = { cacheSize: cache.size(), rulesListed: rules.list().length };
@@ -80,12 +172,33 @@ describe("createBackendStack", () => {
       lang: "en",
       wantMinimal: true,
       backendProvider: new FakeProvider({ turns: [] }),
+      backendModel: "deepseek-v4-flash",
       digestModel: null,
       makeAsk: () => noAsk,
     });
     expect(stack.contract).toBe("standard");
     expect(stack.bashPath).toBeNull();
     expect(stack.backendTools.list().map((t) => t.name)).not.toContain("bash");
+  });
+
+  it("mounts view_image from the MODEL NAME — one vision rule for both hosts (2026-09-03)", () => {
+    const names = (model: string): string[] =>
+      createBackendStack({
+        wsHolder: { current: mkWorkspace() },
+        workspaceRoot: mkWorkspace(),
+        lang: "zh",
+        wantMinimal: false,
+        backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: model,
+        digestModel: null,
+        makeAsk: () => noAsk,
+      })
+        .backendTools.list()
+        .map((t) => t.name);
+    expect(names("deepseek-v4-flash-vision-exp")).toContain("view_image");
+    expect(names("deepseek-v4-flash")).not.toContain("view_image");
+    expect(isVisionModel("deepseek-v4-flash-vision")).toBe(true);
+    expect(isVisionModel("deepseek-v4-pro")).toBe(false);
   });
 
   // ADR 0044: the standard contract on a Windows host carries the host note
@@ -110,6 +223,7 @@ describe("createBackendStack", () => {
         lang: "zh",
         wantMinimal,
         backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: "deepseek-v4-flash",
         digestModel: null,
         platform,
         makeAsk: () => noAsk,

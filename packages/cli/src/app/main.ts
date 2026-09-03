@@ -2,11 +2,10 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  BACKEND_PROVIDER_MAX_RETRIES,
   createActorStack,
+  createBackendProvider,
   createBackendStack,
-  digestModelFrom,
-  makeDigestProvider,
+  defaultDigestModel,
 } from "@herta/app-server/wiring";
 import {
   ensureHertaGitignore,
@@ -17,7 +16,7 @@ import {
   SessionFileError,
 } from "@herta/core";
 import { type PromptLang, V2ActorDriver } from "@herta/herta";
-import { deepseekProvider, resolveDeepSeekKey } from "@herta/providers";
+import { resolveDeepSeekKey } from "@herta/providers";
 import { canonicalWorkspaceRoot } from "@herta/tools";
 import { CachingAskResolver } from "../render/caching-ask-resolver.js";
 import { NarrativeRenderer } from "../render/narrative-renderer.js";
@@ -207,17 +206,15 @@ export async function main(
   // the default from 2026-08-17 and stays one env var away, as does Pro.
   const backendModel =
     process.env.HERTA_BACKEND_MODEL ?? "deepseek-v4-flash-vision-exp";
-  const backendProvider = deepseekProvider({
+  // The one way both hosts build it (@herta/app-server's session-wiring):
+  // the env supplies the model and the thinking level (HERTA_BACKEND_THINKING
+  // accepts low/high/max/false; default "high"), the wiring supplies
+  // everything the GUI session would spell the same.
+  const thinking = parseThinking(process.env.HERTA_BACKEND_THINKING, stderr);
+  const backendProvider = createBackendProvider({
     apiKey,
     model: backendModel,
-    // Default "high". HERTA_BACKEND_THINKING accepts low/high/max/false —
-    // note deepseek-v4-pro maps a sent "low" to "high" server-side until
-    // its announced early-August-2026 update (flash already honors it).
-    thinking:
-      parseThinking(process.env.HERTA_BACKEND_THINKING, stderr) ?? "high",
-    // The turn loop's retry policy paces a rate limit; the transport must
-    // not stack its own retries under it (session-wiring.ts).
-    maxRetries: BACKEND_PROVIDER_MAX_RETRIES,
+    ...(thinking !== undefined ? { thinking } : {}),
     ...baseUrl,
   });
   const isTty =
@@ -260,15 +257,14 @@ export async function main(
     lang,
     wantMinimal: process.env.HERTA_BACKEND_CONTRACT !== "standard",
     backendProvider,
-    // ADR 0048 §5: `view_image` mounts only when 板砖's model can actually
-    // see. The GUI derives this inside SessionImpl (isVisionModel); the CLI
-    // builds its stack directly, so it states the same rule here — without
-    // it, an operator on the vision model would pay its latency and still
-    // be told it has no eyes.
-    vision: backendModel.includes("vision"),
+    // ADR 0048 §5: the stack mounts `view_image` only when this model can
+    // actually see — one rule for both hosts (isVisionModel in the wiring);
+    // without it an operator on the vision model would pay its latency and
+    // still be told it has no eyes.
+    backendModel,
     // The digest tool's side model (ADR 0043) — the same flash sidecar the
     // GUI host builds.
-    digestModel: digestModelFrom(makeDigestProvider(apiKey, baseUrl)),
+    digestModel: defaultDigestModel(apiKey, baseUrl),
     makeAsk: ({ cache, rules }) =>
       new CachingAskResolver(
         new CliAskResolver(stdin as NodeJS.ReadStream, stdout, style),

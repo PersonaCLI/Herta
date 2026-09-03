@@ -110,6 +110,67 @@ import type { AppServerConfig } from "./types.js";
 export const BACKEND_PROVIDER_MAX_RETRIES = 0;
 
 /**
+ * The backend (板砖) model's provider, built the ONE way both hosts build it
+ * (2026-09-03). The desktop session and the CLI each spelled this out —
+ * model, thinking level, the retry constant, the base-URL lever — and the
+ * two had already parted on a neighbour (the vision rule below). What
+ * differs per host stays with the host: WHERE the model name and the
+ * thinking level come from (Settings vs. env). `thinking` accepts the
+ * Settings vocabulary ("off") and the CLI's (`false`) alike; absent →
+ * "high". Per the DeepSeek doc (2026-07-31) deepseek-v4-pro maps a sent
+ * "low" to "high" server-side until its announced update; flash honours it.
+ */
+export function createBackendProvider(opts: {
+  readonly apiKey: ApiKey;
+  readonly model: string;
+  readonly thinking?: "low" | "high" | "max" | "off" | false;
+  /** The dev-only chaos/staging base URL (see AppServerConfig.providers). */
+  readonly baseUrl?: string;
+  /** Test seam. */
+  readonly fetchImpl?: typeof fetch;
+}): ProviderAdapter {
+  return deepseekProvider({
+    apiKey: opts.apiKey,
+    model: opts.model,
+    thinking:
+      opts.thinking === "off" || opts.thinking === false
+        ? false
+        : (opts.thinking ?? "high"),
+    // The turn loop's retry policy paces a rate limit; the transport must
+    // not stack its own retries under it (see the constant).
+    maxRetries: BACKEND_PROVIDER_MAX_RETRIES,
+    ...(opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {}),
+    ...(opts.fetchImpl !== undefined ? { fetchImpl: opts.fetchImpl } : {}),
+  });
+}
+
+/**
+ * Whether the backend MODEL can read a picture (ADR 0048 §5). Derived from
+ * the model name rather than a separate setting — the capability IS the
+ * model, and two switches that could disagree would eventually disagree.
+ * Matched by SUBSTRING rather than an exact name so the model can graduate
+ * from `-Exp` without this going quietly false — which would drop
+ * `view_image` from the stack while the Settings row still offered the
+ * model, the worst of both. DeepSeek's vision models carry `vision` in the
+ * name; nothing else does. One rule for both hosts (2026-09-03): the
+ * desktop session had this function, the CLI restated it inline, and
+ * `createBackendStack` now applies it itself from the model name it is
+ * handed.
+ */
+export function isVisionModel(model: string): boolean {
+  return model.includes("vision");
+}
+
+/** The digest tool's side model as both hosts mount it (ADR 0043): the
+ *  flash sidecar over the same key and base URL as everything else. */
+export function defaultDigestModel(
+  apiKey: ApiKey,
+  baseUrl: { baseUrl?: string } = {},
+): DigestModel {
+  return digestModelFrom(makeDigestProvider(apiKey, baseUrl));
+}
+
+/**
  * The digest tool's side model (ADR 0043): one chat call in, plain text out.
  * Flash with thinking OFF — a chunk summary is extraction, not reasoning,
  * and the reasoning chain would cost more tokens than the answer (the title
@@ -169,13 +230,16 @@ export interface BackendStackOpts {
    *  `contract` / `bashPath` so the caller can warn where it sees fit. */
   readonly wantMinimal: boolean;
   readonly backendProvider: ProviderAdapter;
+  /** The backend model's NAME, beside its provider: the stack derives from
+   *  it whether the model can read images (ADR 0048 §5, `isVisionModel`) and
+   *  mounts `view_image` accordingly — so a visual question can be answered
+   *  by a RE-LOOK rather than by the attachment caption's one-shot reading.
+   *  Was a caller-supplied `vision` flag until 2026-09-03; the two hosts
+   *  had each derived it their own way. */
+  readonly backendModel: string;
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
-  /** The backend model can read images (ADR 0048 §5) — mounts `view_image`
-   *  so a visual question can be answered by a RE-LOOK rather than by the
-   *  attachment caption's one-shot reading. Default false. */
-  readonly vision?: boolean;
   /** Test seam for the host-note decision (ADR 0044); defaults to
    *  `process.platform`. On "win32" the STANDARD contract carries
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
@@ -243,7 +307,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // Whether the backend MODEL can read a picture (ADR 0048 §5). Mounts
   // `view_image` on either contract; false everywhere else, so a model
   // without vision is never told it can look.
-  const vision = opts.vision === true;
+  const vision = isVisionModel(opts.backendModel);
   if (contract === "minimal") {
     for (const t of createMinimalTools({
       bashPath: bashPath as string,

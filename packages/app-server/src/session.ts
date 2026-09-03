@@ -532,6 +532,65 @@ export class SessionImpl implements Session {
   }
 
   /**
+   * The one turn skeleton (2026-09-03). Three entry points run a turn — a
+   * user submit, the resume regenerate (D2) and the opening stream (D3) —
+   * and each carried its own copy of the same dozen lines: mint a turn id
+   * and an abort controller, take the single-turn slot, emit `started`, run,
+   * refresh the record snapshot, emit `finished` or `failed`, release the
+   * slot in `finally` (resolving `settled` for close()'s wait) only if this
+   * turn still owns it. The copies had drifted in what they did on failure;
+   * here the skeleton is one function and each path supplies only what
+   * differs: `onFinished` runs after the record refresh and before
+   * `finished` (the submit path records the turn's ending there); `onFailed`
+   * runs before `failed` (reconciliation, the turn-end marker); `rethrow`
+   * says whether the caller sees the error — a user submit does, the two
+   * fire-and-forget paths swallow (see each). Callers gate on `currentTurn`
+   * BEFORE calling: what a busy session means differs per path (throw,
+   * no-op, no-op). Everything `body` does — including work before the
+   * driver call, such as taking the staged pictures — runs under the
+   * try, so a throw anywhere in it releases the slot instead of wedging
+   * the session.
+   */
+  private async runAsTurn(
+    body: (signal: AbortSignal) => Promise<unknown>,
+    hooks: {
+      readonly onFinished?: () => void;
+      readonly onFailed?: (err: unknown) => void;
+      readonly rethrow: boolean;
+    },
+  ): Promise<string> {
+    const turnId = randomUUID();
+    const abortController = new AbortController();
+    let settleTurn: () => void = () => {};
+    const settled = new Promise<void>((resolve) => {
+      settleTurn = resolve;
+    });
+    this.currentTurn = { turnId, abortController, settled };
+    this.projector.emitTurnLifecycle({ kind: "started", turnId });
+    try {
+      await body(abortController.signal);
+      this._record = this.driver.getRecord();
+      hooks.onFinished?.();
+      this.projector.emitTurnLifecycle({ kind: "finished", turnId });
+    } catch (err) {
+      hooks.onFailed?.(err);
+      this.projector.emitTurnLifecycle({
+        kind: "failed",
+        turnId,
+        error: turnErrorPayload(err),
+      });
+      if (hooks.rethrow) throw err;
+    } finally {
+      settleTurn();
+      // Clear the per-turn state only if this turn still owns it. (A second
+      // entry replacing `currentTurn` mid-turn is what the callers' gates
+      // forbid; the check keeps a wrong release impossible regardless.)
+      if (this.currentTurn?.turnId === turnId) this.currentTurn = null;
+    }
+    return turnId;
+  }
+
+  /**
    * GUI easter egg (SPEC 2026-06-23): called per successful 板砖-card lift. Rolls
    * a 50% chance, throttled to ≤1 play per session per hour, and emits an
    * `easter_egg` voice cue. No-op without clips or within the cooldown.
@@ -669,68 +728,48 @@ export class SessionImpl implements Session {
     // the contract-fallback note — between turns, before this turn's user
     // block. One-shot no-op everywhere else.
     this.flushContractNote();
-    const turnId = randomUUID();
-    const abortController = new AbortController();
-    let settleTurn: () => void = () => {};
-    const settled = new Promise<void>((resolve) => {
-      settleTurn = resolve;
-    });
-    this.currentTurn = { turnId, abortController, settled };
-    this.projector.emitTurnLifecycle({ kind: "started", turnId });
-
-    // Take the staged pictures BEFORE the turn runs (ADR 0048 §4): their
-    // blocks go in right after the user block, so Herta reads the message and
-    // what came with it as one thing. `commit` awaits the captions started at
-    // stage time — usually long since resolved under the user's typing.
-    let userAttachments: readonly SystemBlock[] = [];
-    if (opts.stagedImageIds !== undefined && opts.stagedImageIds.length > 0) {
-      userAttachments = await this.stagedImages.commit(opts.stagedImageIds);
-    }
-
-    try {
-      // The actor sink (BusActorStreamingSink) streams every appended block to
-      // record subscribers in canonical order DURING the turn via flushBlocks
-      // (called at each append site in the actor turn + @板砖 bridge). So
-      // submitText no longer emits records post-turn — it only drives turn
-      // lifecycle and refreshes the synchronous .record snapshot. The driver
-      // persists each new block to JSONL inside runTurn; nothing to re-persist
-      // here. See docs/superpowers/specs/2026-06-01-gui-record-stream-ordering-design.md.
-      await this.driver.runTurn(
-        text,
-        abortController.signal,
-        true,
-        userAttachments,
-      );
-      this._record = this.driver.getRecord();
-      this.recordTurnEnd("completed");
-      this.projector.emitTurnLifecycle({ kind: "finished", turnId });
-      // Refresh the session title as the conversation evolves (initial title,
-      // re-entry, or periodic on a long session). Fire-and-forget — the user
-      // already sees Herta's reply; the title fills/updates after.
-      this.maybeUpdateTitle();
-    } catch (err) {
-      this.reconcileRecordAfterFailure();
-      // Durably record HOW this turn ended, so reopening can tell a deliberate
-      // stop from a crash (audit 2026-07-24, 1.6). An interrupt and a provider
-      // failure both leave a trailing user block; only a crash leaves no
-      // ending at all.
-      this.recordTurnEnd(isAbortError(err) ? "interrupted" : "failed");
-      this.projector.emitTurnLifecycle({
-        kind: "failed",
-        turnId,
-        error: turnErrorPayload(err),
-      });
-      throw err;
-    } finally {
-      settleTurn();
-      // Clear the per-turn state only if this turn still owns it.
-      // (A rapid second call to submitText would replace currentTurn, but
-      // that is disallowed by the single-turn-at-a-time invariant.)
-      if (this.currentTurn?.turnId === turnId) {
-        this.currentTurn = null;
-      }
-    }
-
+    const turnId = await this.runAsTurn(
+      async (signal) => {
+        // Take the staged pictures BEFORE the driver runs (ADR 0048 §4):
+        // their blocks go in right after the user block, so Herta reads the
+        // message and what came with it as one thing. `commit` awaits the
+        // captions started at stage time — usually long since resolved under
+        // the user's typing. Inside the turn, so a failing commit releases
+        // the slot like any other failure instead of leaving it taken.
+        let userAttachments: readonly SystemBlock[] = [];
+        if (
+          opts.stagedImageIds !== undefined &&
+          opts.stagedImageIds.length > 0
+        ) {
+          userAttachments = await this.stagedImages.commit(opts.stagedImageIds);
+        }
+        // The actor sink (BusActorStreamingSink) streams every appended block
+        // to record subscribers in canonical order DURING the turn via
+        // flushBlocks (called at each append site in the actor turn + @板砖
+        // bridge). So submitText no longer emits records post-turn — it only
+        // drives turn lifecycle and refreshes the synchronous .record
+        // snapshot. The driver persists each new block to JSONL inside
+        // runTurn; nothing to re-persist here. See
+        // docs/superpowers/specs/2026-06-01-gui-record-stream-ordering-design.md.
+        await this.driver.runTurn(text, signal, true, userAttachments);
+      },
+      {
+        onFinished: () => this.recordTurnEnd("completed"),
+        onFailed: (err) => {
+          this.reconcileRecordAfterFailure();
+          // Durably record HOW this turn ended, so reopening can tell a
+          // deliberate stop from a crash (audit 2026-07-24, 1.6). An
+          // interrupt and a provider failure both leave a trailing user
+          // block; only a crash leaves no ending at all.
+          this.recordTurnEnd(isAbortError(err) ? "interrupted" : "failed");
+        },
+        rethrow: true,
+      },
+    );
+    // Refresh the session title as the conversation evolves (initial title,
+    // re-entry, or periodic on a long session). Fire-and-forget — the user
+    // already sees Herta's reply; the title fills/updates after.
+    this.maybeUpdateTitle();
     return { turnId };
   }
 
@@ -780,50 +819,31 @@ export class SessionImpl implements Session {
     // Single-turn invariant (see submitText): a re-entrant CMD.open must not
     // start a second regenerate while one is in flight.
     if (this.currentTurn !== null) return;
-    const turnId = randomUUID();
-    const abortController = new AbortController();
-    let settleTurn: () => void = () => {};
-    const settled = new Promise<void>((resolve) => {
-      settleTurn = resolve;
-    });
-    this.currentTurn = { turnId, abortController, settled };
-    this.projector.emitTurnLifecycle({ kind: "started", turnId });
-    try {
-      await this.driver.regenerateLastReply(abortController.signal);
-      this._record = this.driver.getRecord();
-      this.projector.emitTurnLifecycle({ kind: "finished", turnId });
-    } catch (err) {
-      this.projector.emitTurnLifecycle({
-        kind: "failed",
-        turnId,
-        error: turnErrorPayload(err),
-      });
+    await this.runAsTurn((signal) => this.driver.regenerateLastReply(signal), {
       // The SAME reconciliation submitText does, not the old unconditional
       // reseed (audit 2026-08-05, S9). regenerateLastReply POPS the orphan
       // user block and `runTurn` re-appends it only in the actor's LOCAL
-      // record; on a non-abort provider throw the driver adopts the partial
-      // record only for ActorTurnAbortedError, so `this.record` sits at N-1
-      // while disk and the screen hold N. Seeding the cursor to N-1 left that
-      // split standing, which cost two things:
-      //   - the orphan message the user is looking at was permanently absent
-      //     from Herta's context (a D7 divergence), and
-      //   - `rewindLastUserTurn` derives its index from the DRIVER record and
-      //     truncates positionally, so the next rewind silently deleted an
-      //     EXTRA user message — one not reported in `withdrawn` and not
-      //     returned as `userText`, i.e. unrecoverable.
-      // Reachable via a crash-left orphan plus a non-retryable HTTP failure
-      // (a 402, say).
-      this.reconcileRecordAfterFailure();
-      // Deliberately NOT calling recordTurnEnd here: leaving `lastTurnEnd`
-      // undefined is what makes the orphan retry on the next open, which is
-      // the documented intent of this recovery path.
+      // record; on a non-abort provider throw the driver adopts the
+      // partial record only for ActorTurnAbortedError, so `this.record`
+      // sits at N-1 while disk and the screen hold N. Seeding the cursor
+      // to N-1 left that split standing, which cost two things:
+      //   - the orphan message the user is looking at was permanently
+      //     absent from Herta's context (a D7 divergence), and
+      //   - `rewindLastUserTurn` derives its index from the DRIVER record
+      //     and truncates positionally, so the next rewind silently
+      //     deleted an EXTRA user message — one not reported in
+      //     `withdrawn` and not returned as `userText`, i.e. unrecoverable.
+      // Reachable via a crash-left orphan plus a non-retryable HTTP
+      // failure (a 402, say).
       //
-      // Intentionally not rethrown — background recovery must not crash the
-      // open handler; the orphan persists and retries on the next resume.
-    } finally {
-      settleTurn();
-      if (this.currentTurn?.turnId === turnId) this.currentTurn = null;
-    }
+      // Deliberately NOT calling recordTurnEnd here: leaving `lastTurnEnd`
+      // undefined is what makes the orphan retry on the next open, which
+      // is the documented intent of this recovery path.
+      onFailed: () => this.reconcileRecordAfterFailure(),
+      // Not rethrown — background recovery must not crash the open handler;
+      // the orphan persists and retries on the next resume.
+      rethrow: false,
+    });
   }
 
   /**
@@ -852,56 +872,39 @@ export class SessionImpl implements Session {
     // create before any turn), so this is a defensive backstop.
     if (this.currentTurn !== null) return;
     this.pendingOpening = null; // one-shot
-    const turnId = randomUUID();
-    const abortController = new AbortController();
-    let settleTurn: () => void = () => {};
-    const settled = new Promise<void>((resolve) => {
-      settleTurn = resolve;
-    });
-    this.currentTurn = { turnId, abortController, settled };
-    this.projector.emitTurnLifecycle({ kind: "started", turnId });
-    try {
-      // Interrupt-as-SKIP (audit 2026-07-10; supersedes the deliberate
-      // non-interruptibility): the composer shows a STOP button during the
-      // opening, and interrupt() reported ok while doing nothing — a dead
-      // affordance. The turn's abort signal now threads into
-      // driver.playOpening, where a stop click cuts the lead beat and
-      // flushes the remaining seed text in ONE delta (fast-forward, never
-      // truncate — the seed still commits verbatim and stays durable).
-      //
-      // The voice cue fires via onStreamStart — AFTER the lead beat, the instant
-      // the text begins streaming — so the opening's voice and its text reveal
-      // land together. No clipId → no cue (opening without a voice file);
-      // a skip BEFORE stream start also suppresses the cue.
-      await this.driver.playOpening(
-        block,
-        this.openingLeadMs,
-        () => {
-          if (this.openingClipId !== null) {
-            this.projector.emitVoice({
-              kind: "cue",
-              category: "openings",
-              clipId: this.openingClipId,
-            });
-          }
-        },
-        this.openingBaseMs,
-        abortController.signal,
-      );
-      this._record = this.driver.getRecord();
-      this.projector.emitTurnLifecycle({ kind: "finished", turnId });
-    } catch (err) {
-      this.projector.emitTurnLifecycle({
-        kind: "failed",
-        turnId,
-        error: turnErrorPayload(err),
-      });
-      // Intentionally not rethrown — fire-and-forget; the seed is durable on
-      // disk and shows as instant history on the next resume.
-    } finally {
-      settleTurn();
-      if (this.currentTurn?.turnId === turnId) this.currentTurn = null;
-    }
+    // Interrupt-as-SKIP (audit 2026-07-10; supersedes the deliberate
+    // non-interruptibility): the composer shows a STOP button during the
+    // opening, and interrupt() reported ok while doing nothing — a dead
+    // affordance. The turn's abort signal threads into driver.playOpening,
+    // where a stop click cuts the lead beat and flushes the remaining seed
+    // text in ONE delta (fast-forward, never truncate — the seed still
+    // commits verbatim and stays durable).
+    //
+    // The voice cue fires via onStreamStart — AFTER the lead beat, the
+    // instant the text begins streaming — so the opening's voice and its
+    // text reveal land together. No clipId → no cue (opening without a voice
+    // file); a skip BEFORE stream start also suppresses the cue.
+    await this.runAsTurn(
+      (signal) =>
+        this.driver.playOpening(
+          block,
+          this.openingLeadMs,
+          () => {
+            if (this.openingClipId !== null) {
+              this.projector.emitVoice({
+                kind: "cue",
+                category: "openings",
+                clipId: this.openingClipId,
+              });
+            }
+          },
+          this.openingBaseMs,
+          signal,
+        ),
+      // Not rethrown — fire-and-forget; the seed is durable on disk and shows
+      // as instant history on the next resume.
+      { rethrow: false },
+    );
     // After the opening settles (success, skip, or failure — the seed is
     // durable either way): the contract-fallback note follows it into the
     // record, so the user reads the opening first and the notice second.

@@ -129,19 +129,20 @@ export interface ActorTurnDeps {
     prompt: string,
   ) => void;
   /**
-   * Optional intent router state (Slice 13). When provided, the actor
-   * runs in two-phase mood-routing mode: every iteration always thinks
-   * first (（我 想）), then the soft guard forces speech on the next
-   * iteration. When absent, the actor runs the Slice 10 single-phase
-   * path.
+   * The intent router's state (Slice 13). The actor runs in two-phase
+   * mood-routing mode: every iteration always thinks first (（我 想）), then
+   * the soft guard forces speech on the next iteration. Required since
+   * 2026-09-03: the Slice 10 single-phase path that ran when this was
+   * absent is gone (the driver has always routed — the meta-think corpus is
+   * a compiled asset since M-prompts-1), so an absent state was only ever a
+   * test's way of reaching that path.
    *
-   * As of the meta-think attachment refactor, two-phase mode is no
-   * longer gated on corpus presence — corpus content is the driver's
-   * concern via `attachedMetaThink`. Two-phase + no attachment is a
-   * valid configuration: think-then-speak rhythm without specific
-   * mood guidance on a given turn.
+   * Two-phase mode is not gated on corpus presence — corpus content is the
+   * driver's concern via `attachedMetaThink`. Two-phase + no attachment is a
+   * valid configuration: think-then-speak rhythm without specific mood
+   * guidance on a given turn.
    */
-  readonly intentState?: MoodState;
+  readonly intentState: MoodState;
   /**
    * Optional meta-think attachment (Slice 13 sticky-positioned refactor).
    * Owned and managed by `V2ActorDriver`. When provided, the actor

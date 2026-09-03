@@ -17,14 +17,10 @@ import {
   startFirstPassJudge,
   wouldDispatch,
 } from "./actor-turn-judges.js";
-import {
-  buildSinglePhasePrompt,
-  thoughtBeforeSpeechTag,
-} from "./actor-turn-prompts.js";
+import { thoughtBeforeSpeechTag } from "./actor-turn-prompts.js";
 import {
   abandonController,
   armAbortFlush,
-  consumeBranchStream,
   recoverEmptySpeech,
   recoverEmptyThought,
   runPhaseTwo,
@@ -449,12 +445,13 @@ async function recoverFromVeto(ctx: {
 }
 
 /**
- * Drive a single Herta turn in v0.2 narrative-completion mode. Slice 10
- * adds (a) optional thought blocks via the `（我 想）` branch, (b) a
- * per-call hint that constrains the surface to {思考, 说话}, (c) a soft
- * guard that forces speech after 2 consecutive thoughts, (d) a user-typed
- * `@板砖` pre-empt that fires the bridge before any completion call, and
- * (e) a one-bridge-per-turn cap. See SPEC v0.2 Slice 10 §5.
+ * Drive a single Herta turn in v0.2 narrative-completion mode: the always-
+ * think → forced-speech rhythm (Slice 13.3), the user-typed `@板砖` pre-empt
+ * that fires the bridge before any completion call, the per-turn dispatch
+ * budget, the supervisor and its judges on every speech, and the beats a
+ * dispatch fires in between. The Slice 10 single-phase path (an
+ * autoregressive surface pick behind the `（我 ` branch tag) was removed on
+ * 2026-09-03 — see the surface decision inside the loop.
  */
 export async function runActorCompletionTurn(
   state: ActorTurnState,
@@ -596,36 +593,26 @@ export async function runActorCompletionTurn(
     // prompt when the model keeps emitting `（/我 想）` at position 0.
     const forceSpeech =
       consecutiveThoughts >= 1 || consecutiveEmptyThoughtIters >= 1;
-    const hasMoodRouting = deps.intentState !== undefined;
 
-    let surface: Surface;
-    let needsDetect = false;
-
-    if (forceSpeech) {
-      // Soft guard: a thought just committed in the previous iteration; the
-      // next iteration must be speech. This drives the always-think →
-      // forced-speech rhythm Herta is designed around.
-      surface = "speech";
-    } else if (hasMoodRouting) {
-      // Slice 13.3: with mood routing active, Herta ALWAYS thinks before
-      // speaking. There's no RNG and no model-decide branch — the soft guard
-      // above alternates: iteration 1 = thought, iteration 2 (forced) = speech,
-      // and after each speech the loop typically terminates (no side effects)
-      // or repeats the cycle (side effects → loop → another thought → speech).
-      //
-      // Rationale: Herta's character (per the pre_think corpus) is a
-      // decision-tree planner. Going straight to speech without a deliberation
-      // pass produces stylistically plausible but contextually weak responses
-      // (model just leans on few-shot conditioning). The always-think rhythm
-      // forces "what's actually being asked / what's my decision?" through
-      // pre_think before the speech is generated.
-      surface = "thought";
-    } else {
-      // Slice 10 fallback: no mood routing → autoregressive surface pick via
-      // the `〔接下来〕` hint in `consumeBranchStream`.
-      needsDetect = true;
-      surface = "speech"; // placeholder; overwritten by consumeBranchStream below
-    }
+    // Slice 13.3: Herta ALWAYS thinks before speaking. There's no RNG and no
+    // model-decide branch — the soft guard alternates: iteration 1 = thought,
+    // iteration 2 (forced) = speech, and after each speech the loop typically
+    // terminates (no side effects) or repeats the cycle (side effects → loop
+    // → another thought → speech).
+    //
+    // Rationale: Herta's character (per the pre_think corpus) is a
+    // decision-tree planner. Going straight to speech without a deliberation
+    // pass produces stylistically plausible but contextually weak responses
+    // (model just leans on few-shot conditioning). The always-think rhythm
+    // forces "what's actually being asked / what's my decision?" through
+    // pre_think before the speech is generated.
+    //
+    // This is the only rhythm (2026-09-03). The Slice 10 single-phase path —
+    // an autoregressive surface pick via the `〔接下来〕` hint, taken when no
+    // `intentState` was supplied — was removed: the meta-think corpus has been
+    // a compiled asset since M-prompts-1 (2026-07-05), so the driver has
+    // always routed, and the path ran only in tests.
+    const surface: Surface = forceSpeech ? "speech" : "thought";
 
     // Compute supervisor enablement once for this iteration. When
     // enabled AND the upcoming call is phase-2 speech, the sink is
@@ -637,7 +624,6 @@ export async function runActorCompletionTurn(
     // supervised and re-uses the defer/slow-stream path (see the
     // empty-speech-retry block below).
     const supervisorEnabled =
-      !needsDetect &&
       surface === "speech" &&
       deps.supervisorProvider !== undefined &&
       deps.supervisorReference !== undefined &&
@@ -684,43 +670,18 @@ export async function runActorCompletionTurn(
 
     let streamResult: { surface: Surface; text: string };
     try {
-      streamResult = needsDetect
-        ? await (async (): Promise<{ surface: Surface; text: string }> => {
-            const singlePhasePrompt = buildSinglePhasePrompt({
-              deps,
-              record,
-              priorTurnLength,
-              forceSpeech: false,
-              recap,
-              recapBoundaryIndex,
-            });
-            deps.onPrompt?.("primary", singlePhasePrompt);
-            const result = await consumeBranchStream({
-              provider: deps.provider,
-              model: deps.model,
-              prompt: singlePhasePrompt,
-              signal,
-              sink: deps.sink,
-              forceSpeech: false,
-            });
-            deps.onPrompt?.(
-              "primary-out",
-              `${singlePhasePrompt}${result.text}`,
-            );
-            return result;
-          })()
-        : await runPhaseTwo({
-            deps,
-            record,
-            priorTurnLength,
-            surface,
-            signal,
-            ...(useLiveFeed
-              ? { onLiveToken: onLiveSpeechToken }
-              : { deferStreaming: supervisorEnabled }),
-            recap,
-            recapBoundaryIndex,
-          });
+      streamResult = await runPhaseTwo({
+        deps,
+        record,
+        priorTurnLength,
+        surface,
+        signal,
+        ...(useLiveFeed
+          ? { onLiveToken: onLiveSpeechToken }
+          : { deferStreaming: supervisorEnabled }),
+        recap,
+        recapBoundaryIndex,
+      });
     } catch (err) {
       // Generation threw (interrupt, provider error) with the live first-pass
       // controller possibly holding pushed tokens and an armed timer: give it
@@ -748,7 +709,7 @@ export async function runActorCompletionTurn(
     // Reset to false the moment the sink takes the speech text, either
     // via a downstream LLM call that streamed live (empty-speech retry,
     // veto retry) or via the unified replay step right before commit.
-    let speechSinkPending = !needsDetect && supervisorEnabled && !useLiveFeed;
+    let speechSinkPending = supervisorEnabled && !useLiveFeed;
 
     // Captured supervisor veto reason for the self-correction note
     // appended to the record before the retry's speech block
@@ -776,7 +737,6 @@ export async function runActorCompletionTurn(
     // forced into speech (see the `forceSpeech` definition near the
     // top of the loop).
     if (
-      !needsDetect &&
       streamResult.surface === "thought" &&
       isUnusableBlock(streamResult.text)
     ) {
@@ -810,7 +770,6 @@ export async function runActorCompletionTurn(
     // nothing but a `（我 说）…` roll-in commits no block and just
     // advances into the forced-speech iteration).
     if (
-      !needsDetect &&
       streamResult.surface === "thought" &&
       streamResult.text.includes("（我 说）")
     ) {
@@ -831,12 +790,10 @@ export async function runActorCompletionTurn(
     // detector above already consumed `（我 说）` if it was the marker);
     // speech-surface text strips both `（我 说）` and a defensive
     // `（我 想）` in case the model wandered across surfaces.
-    if (!needsDetect) {
-      streamResult = {
-        surface: streamResult.surface,
-        text: stripStrayOpenTags(streamResult.text, streamResult.surface),
-      };
-    }
+    streamResult = {
+      surface: streamResult.surface,
+      text: stripStrayOpenTags(streamResult.text, streamResult.surface),
+    };
 
     // Empty-speech retry ladder. When phase-2 speech returns an empty
     // body (typically because a verbose, conclusive thought caused the
@@ -854,11 +811,7 @@ export async function runActorCompletionTurn(
     // carve-out. The retry text isn't visible to the user until the
     // supervisor either approves (slow-stream fast-forwards) or vetoes
     // (cancelAndBackspace + veto-retry).
-    //
-    // Only fires in the phase-2 (mood-routed) path; single-phase has
-    // its own surface detection that doesn't share this failure mode.
     if (
-      !needsDetect &&
       streamResult.surface === "speech" &&
       // Slot-only counts as empty (2026-08-12): a completion that emits
       // `{需要说的话}` produced no content, and every path that skips the
@@ -907,7 +860,7 @@ export async function runActorCompletionTurn(
     // Particle voice (SPEC 2026-06-23): fire onPrimarySpeechStart for the turn's
     // FIRST non-empty speech. The live path already fired this from the first
     // revealed chars (onLiveSpeechToken above, synced to the on-screen particle),
-    // so this is the fire for the non-live / single-phase paths — and the
+    // so this is the fire for the non-live path — and the
     // fallback for a live speech shorter than PARTICLE_LEAD_LOOKAHEAD. The
     // particleSignalled latch keeps it to the first speech block; the downstream
     // veto-retry replay and beats never reach this point, so they never fire.
@@ -936,7 +889,6 @@ export async function runActorCompletionTurn(
     // rendering: slowStreamSpeech + fastForward on OK, or
     // cancelAndBackspace + supervisor-veto-retry on VETO.
     if (
-      !needsDetect &&
       streamResult.surface === "speech" &&
       streamResult.text.trim().length > 0 &&
       deps.supervisorProvider !== undefined &&
@@ -1184,11 +1136,6 @@ export async function runActorCompletionTurn(
       speechSinkPending = false;
     }
 
-    // When the soft guard forced speech, the output is a transitional
-    // block — reset the counter and continue looping rather than
-    // terminating (the guard exists to *redirect* flow, not end the turn).
-    const wasForcedSpeech = forceSpeech;
-
     // Stray-strip BEFORE the emptiness checks (fence-fuzz, 2026-07-09): a
     // body that is nothing but stray open tags strips to empty and must
     // take the empty-thought / empty-speech path (redirect / graceful end).
@@ -1375,12 +1322,10 @@ export async function runActorCompletionTurn(
       // backend produced no work, so the next iteration has concrete context.
     }
 
-    // In two-phase mode (mood routing active), forced-speech is a fully
-    // committed output block — no need to continue looping for another
-    // iteration. In single-phase mode the original "continue after
-    // forced speech" behavior is preserved for backward compatibility.
-    const hasMoodRoutingLocal = deps.intentState !== undefined;
-    if (!ranSideEffect && (!wasForcedSpeech || hasMoodRoutingLocal)) {
+    // A forced speech is a fully committed output block — no need to continue
+    // looping for another iteration. (The single-phase path's "continue after
+    // forced speech" went with the path, 2026-09-03.)
+    if (!ranSideEffect) {
       // Final flush (defensive) — the sink should already be up to date.
       deps.sink?.flushBlocks(record);
       return { record };

@@ -311,8 +311,8 @@ export class NarrativeRenderer implements ActorStreamingSink {
   streamHertaToken(text: string): void {
     if (text.length === 0) return;
     if (this.streamingSurface === "thought") return; // hidden
-    // Raw-provider-chunk lane (unsupervised / empty-corpus single-phase /
-    // in-turn beats): apply the 板砖→Brick alias with a one-char cross-chunk
+    // Raw-provider-chunk lane (unsupervised speech / in-turn beats): apply
+    // the 板砖→Brick alias with a one-char cross-chunk
     // hold, since a chunk can end mid-token (…板 | 砖…). EN only; zh writes raw.
     if (this.lang === "en") {
       let s = this.pendingBrickTail + text;

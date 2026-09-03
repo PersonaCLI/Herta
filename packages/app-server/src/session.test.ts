@@ -18,6 +18,7 @@ import { SessionImpl, spanEditedFiles } from "./session.js";
 import { createSessionHost } from "./session-host.js";
 import { makePng } from "./testing/image-fixtures.js";
 import {
+  STUB_THOUGHT,
   stubChatProvider,
   stubCompletionProvider,
 } from "./testing/stub-providers.js";
@@ -30,11 +31,12 @@ import type {
 
 /**
  * A MetaThinkCorpus with every mood-state key present but mapped to the
- * empty string. corpusHasContent() returns false for this, which disables
- * mood routing in V2ActorDriver (single-phase fallback) — exactly what the
- * deterministic stub turn needs. The seven keys mirror MOOD_STATES; an
- * all-empty `{}` would not satisfy `Record<MoodState, string>` under strict
- * mode.
+ * empty string. corpusHasContent() returns false for this, so V2ActorDriver
+ * attaches no meta-think preamble — the turn still runs the always-think
+ * rhythm (thought, then forced speech; the single-phase path went on
+ * 2026-09-03), which the stub actor answers deterministically. The keys
+ * mirror MOOD_STATES; an all-empty `{}` would not satisfy
+ * `Record<MoodState, string>` under strict mode.
  */
 function emptyMetaThinkCorpus(): import("@herta/herta").MetaThinkCorpus {
   const blank = {
@@ -247,9 +249,10 @@ describe("Session — interaction language threading (slice 4)", () => {
 /**
  * Build a minimal SessionImpl for subscribeRecord tests using stub providers.
  *
- * The stub provider emits one speech block: "你好。（/我 说）".
- * runActorCompletionTurn prepends the user block and appends the herta block,
- * so two blocks total are added per submitText("hi") call.
+ * Each turn is a thought then a speech. The stub answers the thought prompt
+ * with STUB_THOUGHT and the speech prompt with one script ("你好。（/我 说）"),
+ * so a submitText("hi") appends three blocks: user, herta thought, herta
+ * speech.
  */
 async function mkStubSession(
   cfg: AppServerConfig,
@@ -295,9 +298,9 @@ async function mkStubSession(
     transcriptDir: cfg.transcriptDir,
   });
 
-  // Stub actor: emits a single speech block per call.
-  // The actor protocol needs （我 说）...（/我 说）. We emit just the body
-  // after the open tag (actor-turn prepends the open tag in the prompt).
+  // Stub actor: one script per turn = that turn's speech. The prompt carries
+  // the open tag, so a script is just the body plus its close tag; the
+  // thought prompt preceding each speech is auto-answered (not scripted).
   const actorStub = stubCompletionProvider(
     Array.from({ length: turns }, () => ({
       deltas: [extra?.actorSpeech ?? "你好。", "（/我 说）"],
@@ -306,8 +309,8 @@ async function mkStubSession(
   );
 
   // Stub router (chat-mode): the V2ActorDriver calls classifyIntent once per
-  // turn. With an empty meta-think corpus, mood routing is disabled so the
-  // resolved state is unused; the router just needs to return a benign,
+  // turn. The resolved state only selects a meta-think preamble, and the
+  // empty corpus has none; the router just needs to return a benign,
   // recognizable state name without throwing.
   const stubRouter = stubChatProvider(
     Array.from({ length: turns }, () => ({
@@ -453,15 +456,15 @@ describe("Session — D3 streaming opening (new sessions)", () => {
       for await (const ev of session.subscribeRecord()) {
         if (ev.kind === "block") {
           blocks.push(ev.block);
-          if (blocks.length >= 2) break; // user + herta from this turn
+          if (blocks.length >= 3) break; // user + thought + speech this turn
         }
       }
     })();
     await session.submitText("hi");
     await consumer;
 
-    // The first turn streams ONLY its new blocks (user + herta); the seed at
-    // block 0 is never re-streamed (the sink's cursor is past it).
+    // The first turn streams ONLY its new blocks (user + thought + speech);
+    // the seed at block 0 is never re-streamed (the sink's cursor is past it).
     expect(blocks.map((b) => ({ ...b, at: undefined }))).toEqual(
       session.record.slice(1),
     );
@@ -809,7 +812,8 @@ describe("Session — D2 resume regenerate (orphaned reply recovery)", () => {
       for await (const ev of session.subscribeRecord()) {
         if (ev.kind === "block") {
           blocks.push(ev.block);
-          break; // exactly one new block: the regenerated reply
+          // Exactly two new blocks: the regenerated reply's thought + speech.
+          if (blocks.length >= 2) break;
         }
       }
     })();
@@ -827,18 +831,28 @@ describe("Session — D2 resume regenerate (orphaned reply recovery)", () => {
 
     // Only the regenerated reply streamed — the already-shown seed + user block
     // are NOT re-streamed (the sink's seeded cursor skips them).
-    expect(blocks).toHaveLength(1);
+    expect(blocks).toHaveLength(2);
     expect(blocks[0]).toMatchObject({
+      kind: "herta",
+      surface: "thought",
+      text: STUB_THOUGHT,
+    });
+    expect(blocks[1]).toMatchObject({
       kind: "herta",
       surface: "speech",
       text: "你好。",
     });
     // It ran as a turn (locks the composer via lifecycle): started → finished.
     expect(lifecycle).toEqual(["started", "finished"]);
-    // Final record: seed + the intact user block + the regenerated reply.
-    expect(session.record).toHaveLength(3);
+    // Final record: seed + the intact user block + the regenerated reply
+    // (its thought, then its speech).
+    expect(session.record).toHaveLength(4);
     expect(session.record[1]).toEqual({ kind: "user", text: "在吗" });
-    expect(session.record[2]).toMatchObject({ kind: "herta", text: "你好。" });
+    expect(session.record[2]).toMatchObject({
+      kind: "herta",
+      surface: "thought",
+    });
+    expect(session.record[3]).toMatchObject({ kind: "herta", text: "你好。" });
     await cleanup();
   });
 
@@ -860,11 +874,11 @@ describe("Session — subscribeRecord (single-subscriber)", () => {
   it("runs a turn through V2ActorDriver and broadcasts the new blocks", async () => {
     const cfg = mkConfig();
     const { session, cleanup } = await mkStubSession(cfg);
-    const events: unknown[] = [];
+    const events: RecordEvent[] = [];
     const consumer = (async () => {
       for await (const ev of session.subscribeRecord()) {
         events.push(ev);
-        if (events.length >= 2) break; // user + herta speech block
+        if (events.length >= 3) break; // user + thought + speech
       }
     })();
     await session.submitText("hi");
@@ -878,20 +892,29 @@ describe("Session — subscribeRecord (single-subscriber)", () => {
     const cfg = mkConfig();
     const { session, cleanup } = await mkStubSession(cfg);
 
-    const events: unknown[] = [];
+    const events: RecordEvent[] = [];
     const consumer = (async () => {
       for await (const ev of session.subscribeRecord()) {
         events.push(ev);
-        // user block + herta speech block = 2 blocks
-        if (events.length >= 2) break;
+        // user block + herta thought + herta speech = 3 blocks
+        if (events.length >= 3) break;
       }
     })();
 
     await session.submitText("hi");
     await consumer;
 
-    expect(events.length).toBeGreaterThanOrEqual(1);
-    expect(events[0]).toMatchObject({ kind: "block" });
+    // One block event per appended block, in record order — the thought is
+    // broadcast like any other block (the GUI hides it; the sink does not).
+    expect(
+      events.map((e) =>
+        e.kind === "block" ? { ...e.block, at: undefined } : e,
+      ),
+    ).toEqual([
+      { kind: "user", text: "hi", at: undefined },
+      { kind: "herta", surface: "thought", text: STUB_THOUGHT, at: undefined },
+      { kind: "herta", surface: "speech", text: "你好。", at: undefined },
+    ]);
     await cleanup();
   });
 
@@ -917,11 +940,18 @@ describe("Session — subscribeRecord (single-subscriber)", () => {
     await session.submitText("hi");
     await consumer;
 
-    // After submitText resolves, all blocks must be on disk.
+    // After submitText resolves, all blocks must be on disk: the user block,
+    // the thought, and the speech (meta lines such as `turn_end` sit between
+    // them and are not counted).
     const jsonl = readFileSync(sessionFile, "utf8");
     const lines = jsonl.split("\n").filter((l) => l.length > 0);
-    // Header line + at least the user block + the herta speech block.
-    expect(lines.length).toBeGreaterThanOrEqual(3);
+    const header = JSON.parse(lines[0] ?? "{}") as { _kind?: string };
+    expect(header._kind).toBe("session_meta");
+    const blocks = lines
+      .map((l) => JSON.parse(l) as { _kind?: string; kind?: string })
+      .filter((o) => o._kind === undefined);
+    expect(blocks).toHaveLength(3);
+    expect(blocks.map((b) => b.kind)).toEqual(["user", "herta", "herta"]);
     await cleanup();
   });
 });
@@ -1014,10 +1044,11 @@ describe("Session — setWorkspace / resetWorkspace", () => {
 /**
  * Build a SessionImpl for a NO-OP `@板砖` turn.
  *
- * Actor (completion) provider — two scripted calls:
- *   Call 1: Herta's first speech contains @板砖, triggering the bridge.
- *           The prompt ends with "（我", so the model completes "说）<body>…".
- *   Call 2: After the bridge completes, Herta emits a closing speech.
+ * Actor (completion) provider — two scripted speeches (the thought before
+ * each one is auto-answered by the stub, so the record carries a thought
+ * block ahead of both):
+ *   Speech 1: Herta's first speech contains @板砖, triggering the bridge.
+ *   Speech 2: After the bridge completes, Herta emits a closing speech.
  *
  * Backend (chat) provider — one scripted turn that emits TEXT ONLY (no tool
  * calls). With no tool/patch work the bridge projects zero `→ 系统` /
@@ -1046,13 +1077,13 @@ async function mkNoopBanzhuanSession(cfg: AppServerConfig): Promise<{
 
   const actorStub = stubCompletionProvider([
     {
-      // Call 1: Herta delegates to 板砖.
-      deltas: ["说）@板砖 看看公开资料就行。（/我 说）"],
+      // Speech 1: Herta delegates to 板砖.
+      deltas: ["@板砖 看看公开资料就行。（/我 说）"],
       stopReason: "stop",
     },
     {
-      // Call 2: Main-loop closing speech after the bridge completes.
-      deltas: ["说）行，没什么要动的。（/我 说）"],
+      // Speech 2: Main-loop closing speech after the bridge completes.
+      deltas: ["行，没什么要动的。（/我 说）"],
       stopReason: "stop",
     },
   ]);
@@ -1067,7 +1098,8 @@ async function mkNoopBanzhuanSession(cfg: AppServerConfig): Promise<{
     },
   ]);
 
-  // Empty meta-think corpus + empty supervisor reference → single-phase actor.
+  // Empty meta-think corpus + empty supervisor reference: no preamble, no
+  // supervisor pass — the stubs count exact provider calls.
   const stubRouter = stubChatProvider([
     {
       events: [
@@ -1119,8 +1151,9 @@ describe("Session — noop-marker reaches the live record stream", () => {
     const consumer = (async () => {
       for await (const ev of session.subscribeRecord()) {
         blocks.push(ev);
-        // user + herta(@板砖) + noop-marker + herta(closing) = 4 blocks.
-        if (blocks.length >= 4) break;
+        // user + thought + herta(@板砖) + noop-marker + thought +
+        // herta(closing) = 6 blocks.
+        if (blocks.length >= 6) break;
       }
     })();
 
@@ -1177,7 +1210,11 @@ describe("Session — actor assistant.delta reaches the agent stream", () => {
         (e.event as { layer?: string }).layer === "actor",
     );
     expect(actorDeltas.length).toBeGreaterThanOrEqual(1);
-    expect(actorDeltas.map((e) => e.event.text).join("")).toContain("你好");
+    const streamed = actorDeltas.map((e) => e.event.text).join("");
+    expect(streamed).toContain("你好");
+    // Thought-surface tokens never reach the agent stream (hidden per D6/D7):
+    // the sink drops them, so only the speech is in the streaming bubble.
+    expect(streamed).not.toContain(STUB_THOUGHT);
   });
 });
 
@@ -1216,7 +1253,7 @@ describe("Session — rewindLastTurn", () => {
     const cfg = mkConfig();
     const { session, cleanup } = await mkStubSession(cfg);
     await session.submitText("在吗");
-    expect(session.record).toHaveLength(2); // user + herta speech
+    expect(session.record).toHaveLength(3); // user + thought + speech
     const result = await session.rewindLastTurn();
     expect(result).toEqual({ ok: true, userText: "在吗", editedFiles: false });
     expect(session.record).toEqual([]);
@@ -1246,7 +1283,7 @@ describe("Session — rewindLastTurn", () => {
         .filter(
           (l) => (JSON.parse(l) as { _kind?: string })._kind === undefined,
         ).length;
-    expect(blockCount()).toBe(2); // user + herta
+    expect(blockCount()).toBe(3); // user + thought + speech
     await session.rewindLastTurn();
     expect(blockCount()).toBe(0); // header only remains
     await cleanup();
@@ -1302,17 +1339,23 @@ describe("Session — rewindLastTurn", () => {
       })),
     ).toEqual([
       { kind: "user", text: "second" },
+      { kind: "herta", text: STUB_THOUGHT },
       { kind: "herta", text: "你好。" },
     ]);
-    // The JSONL holds exactly header + the second turn's two blocks — the first
-    // turn's lines were truncated and never re-appended (cursor reset correctly).
+    // The JSONL holds exactly header + the second turn's three blocks — the
+    // first turn's lines were truncated and never re-appended (cursor reset
+    // correctly).
     const sessionFile = join(cfg.transcriptDir, `${session.sessionId}.jsonl`);
     const blocks = readFileSync(sessionFile, "utf8")
       .split("\n")
       .filter((l) => l.length > 0)
       .map((l) => JSON.parse(l) as Record<string, unknown>)
       .filter((o) => o._kind === undefined);
-    expect(blocks.map((b) => b.text)).toEqual(["second", "你好。"]);
+    expect(blocks.map((b) => b.text)).toEqual([
+      "second",
+      STUB_THOUGHT,
+      "你好。",
+    ]);
     await cleanup();
   });
 

@@ -55,7 +55,9 @@ async function mkSlowSession(cfg: AppServerConfig): Promise<{
 
   // Slow actor: yields deltas with 30 ms gaps so interrupt() can fire
   // mid-stream. The provider checks the signal before each delay and
-  // throws AbortError immediately on abort.
+  // throws AbortError immediately on abort. The turn's thought phase is
+  // answered instantly by the stub; the paced speech phase is what keeps
+  // the turn in flight.
   const actorStub = slowStubCompletionProvider({
     deltas: ["你好。", "（/我 说）"],
     delayMs: 30,
@@ -87,7 +89,7 @@ async function mkSlowSession(cfg: AppServerConfig): Promise<{
 }
 
 /** M-prompts-1: compiled assets are always present, so scripted-provider
- *  tests opt out explicitly — empty meta-think (single-phase actor), no
+ *  tests opt out explicitly — empty meta-think (no preamble spliced), no
  *  supervisor, no opening seed (the stubs count exact provider calls). */
 function scriptedPostureDeps(): {
   metaThinkOverride: import("@herta/herta").MetaThinkCorpus;

@@ -5,7 +5,9 @@
  * but without TTY sinks (no NarrativeRenderer, no Input, no CliAskResolver).
  * Turns are driven through a V2ActorDriver, giving the desktop session the
  * same mood-routing + supervisor wiring as the CLI. An all-empty meta-think
- * corpus and empty supervisor reference degrade to single-phase actor mode.
+ * corpus drops the meta-think attachment and an empty supervisor reference
+ * disables the supervisor; the two-phase actor rhythm itself is unconditional
+ * (the single-phase fallback was removed 2026-09-03).
  *
  * v0.3 Slice 2 Task 5 — uses SessionEventProjector for all subscription channels.
  */
@@ -150,8 +152,9 @@ export interface SessionInternalDeps {
   /** Skip the async buildStaticHertaPrefix disk scan. */
   readonly staticPrefixOverride?: StaticHertaPrefix;
   /** Replace the compiled meta-think corpus (M-prompts-1: always fully
-   *  populated in production). An all-empty corpus disables mood routing
-   *  (single-phase actor mode) — stub-session tests rely on that. */
+   *  populated in production). An all-empty corpus drops the meta-think
+   *  attachment from the actor prompts (the rhythm stays two-phase) —
+   *  stub-session tests rely on that. */
   readonly metaThinkOverride?: MetaThinkCorpus;
   /** Replace the config-derived supervisor toggle. Empty string disables
    *  the supervisor (stub tests); production defaults ON via
@@ -1334,8 +1337,9 @@ export class SessionImpl implements Session {
 
     // 4. V2ActorDriver — owns the growing TerminalRecord, mood routing,
     //     the supervisor, and (via the persister) block persistence. An
-    //     all-empty corpus + empty supervisor reference degrade to
-    //     single-phase actor mode. The per-turn AbortSignal is threaded by
+    //     all-empty corpus drops the meta-think attachment and an empty
+    //     supervisor reference disables the supervisor; the two-phase
+    //     rhythm is unconditional. The per-turn AbortSignal is threaded by
     //     submitText into driver.runTurn so interrupt() can cancel.
     const driver = new V2ActorDriver({
       provider: actor.actorProvider,

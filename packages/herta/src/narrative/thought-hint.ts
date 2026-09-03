@@ -1,21 +1,19 @@
 import type { PromptLang } from "./prompt-lang.js";
 
 /**
- * Constants for the Slice 10 thought/speech branch in main-loop prompts.
+ * Constants for the thought/speech fences of the actor's prompts.
  *
- * `BRANCH_OPEN_TAG` is used in normal main-loop calls — its trailing space
- * lets DeepSeek autoregressively complete with `想）` (thought) or `说）`
- * (speech). The model picks based on the preceding context (record + hint).
+ * `FORCED_SPEECH_OPEN_TAG` opens every speech call: the forced-speech
+ * phase that follows each thought (the only rhythm since 2026-09-03, ADR
+ * 0055) and the in-turn beats (reactions to backend events are always
+ * speech, SPEC §3 H).
  *
- * `FORCED_SPEECH_OPEN_TAG` is used in two cases:
- *   (a) Soft guard: after 2 consecutive thoughts, force speech.
- *   (b) Beats: in-turn reactions to backend events are always speech
- *       (SPEC §3 H). Beat prompts do not include the hint either.
- *
- * `THOUGHT_HINT_LINE` is appended to main-loop prompts right before the
- * open tag. It is NEVER persisted — recomputed per call. Its purpose is
- * to constrain the surface space to {思考, 说话} so the model doesn't
- * invent `（我 唱）` / `（我 写）` / etc.
+ * `BRANCH_OPEN_TAG` and `THOUGHT_HINT_LINE` are vestiges of the Slice 10
+ * single-phase path: the partial tag's trailing space let DeepSeek
+ * complete `想）` or `说）` itself, and the hint narrowed that choice to
+ * {思考, 说话}. No prompt carries either any more; the constant and the
+ * `thought_hint_line` asset key stay until the prompt-asset pipeline
+ * drops them (ADR 0055 §3).
  *
  * Language (EN interaction slice 3b): every `〔…〕` hint below exists in
  * zh + en, co-located in a `Record<PromptLang, string>` and selected via

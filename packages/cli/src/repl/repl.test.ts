@@ -102,7 +102,13 @@ function mkV2Driver(provider: CompletionProviderAdapter): V2ActorDriver {
 
 describe("repl", () => {
   it("runs one turn via V2ActorDriver and renders Herta output", async () => {
+    // Every turn thinks before it speaks (2026-09-03): call 1 answers the
+    // `（我 想）` prompt, call 2 the forced `（我 说）` prompt.
     const provider = mkV2Provider([
+      [
+        { type: "text-delta", text: "想想看。（/我 想）" },
+        { type: "finish", reason: "stop" },
+      ],
       [
         { type: "text-delta", text: "你好。" },
         { type: "finish", reason: "stop" },
@@ -129,6 +135,9 @@ describe("repl", () => {
     });
 
     expect(stdout.full()).toContain("你好。");
+    // The thought is internal monologue: the renderer shows only its
+    // `(思考中…)` indicator (then clears it) and skips the committed block.
+    expect(stdout.full()).not.toContain("想想看");
   });
 });
 

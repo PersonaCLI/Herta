@@ -24,10 +24,13 @@ async function* streamOf(
 }
 
 /**
- * Prompt-capturing fake actor provider. The driver feeds the serialized
+ * Prompt-capturing fake actor provider. The turn feeds the serialized
  * `ActorPrompt` to `streamCompletion`; we keep every prompt string so the
- * tests can assert on what the recap threading produced. Each call returns a
- * trivial speech completion so the turn finishes in one iteration.
+ * tests can assert on what the recap threading produced. Every turn thinks
+ * then speaks (2026-09-03): a thought prompt (it ends with the forced
+ * `（我 想）` tag) gets a trivial thought and the forced-speech prompt a
+ * trivial speech, so the turn finishes in one think → speak cycle — exactly
+ * two prompts.
  */
 function mkProvider(): {
   provider: CompletionProviderAdapter;
@@ -37,8 +40,11 @@ function mkProvider(): {
   const provider: CompletionProviderAdapter = {
     streamCompletion(req: CompletionRequest): AsyncIterable<CompletionEvent> {
       prompts.push(req.prompt);
+      const text = req.prompt.endsWith("（我 想）\n")
+        ? "想想看。（/我 想）"
+        : "好。（/我 说）";
       return streamOf([
-        { type: "text-delta", text: "说）好。（/我 说）" },
+        { type: "text-delta", text },
         { type: "finish", reason: "stop" },
       ]);
     },
@@ -71,6 +77,8 @@ function mkDeps(
     bus,
     runtimeFactory: () => noopRuntime,
     signal: new AbortController().signal,
+    // Required since 2026-09-03; the neutral mood, no meta-think attachment.
+    intentState: "默认",
     ...(recap !== undefined ? { recap } : {}),
   };
 }
@@ -134,13 +142,16 @@ describe("runActorCompletionTurn — long-session compaction wiring", () => {
 
     await runActorCompletionTurn(state, "现在呢？", deps);
 
-    expect(prompts.length).toBeGreaterThanOrEqual(1);
-    const prompt = prompts[0] ?? "";
-    // Recap section is rendered.
-    expect(prompt).toContain("### 记录：先前");
-    expect(prompt).toContain("我记得之前聊过的事");
-    // The oldest turn was compacted away (its index < recapBoundaryIndex).
-    expect(prompt).not.toContain("第一段：我们聊过流萤的设定细节很久了对吧");
+    // Two prompts — the thought phase, then the forced speech. The recap is
+    // computed ONCE per turn and threaded into every prompt the turn builds.
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) {
+      // Recap section is rendered.
+      expect(prompt).toContain("### 记录：先前");
+      expect(prompt).toContain("我记得之前聊过的事");
+      // The oldest turn was compacted away (its index < recapBoundaryIndex).
+      expect(prompt).not.toContain("第一段：我们聊过流萤的设定细节很久了对吧");
+    }
     // Summarize was invoked exactly once for the turn (computed once).
     expect(recapRt.summarizeCalls).toBe(1);
   });
@@ -152,8 +163,10 @@ describe("runActorCompletionTurn — long-session compaction wiring", () => {
 
     await runActorCompletionTurn(state, "现在呢？", deps);
 
-    const prompt = prompts[0] ?? "";
-    expect(prompt).toContain("第一段：我们聊过流萤的设定细节很久了对吧");
-    expect(prompt).not.toContain("### 记录：先前");
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) {
+      expect(prompt).toContain("第一段：我们聊过流萤的设定细节很久了对吧");
+      expect(prompt).not.toContain("### 记录：先前");
+    }
   });
 });

@@ -12,8 +12,10 @@
  *     → turn.lifecycle finished
  *
  * Assertions:
- *   - Record sequence: user block, herta(@板砖) block, system blocks
- *     (差分协处理器 + 系统), herta(verdict) block.
+ *   - Record sequence: user block, herta(thought), herta(@板砖) block, system
+ *     blocks (差分协处理器 + 系统), herta(beat), herta(thought), herta(verdict)
+ *     block — every main-loop speech is preceded by its thought (the
+ *     always-think rhythm, 2026-09-03).
  *   - Exactly one OverlayEvent pending + one resolved.
  *   - TurnLifecycle started then finished (no failed).
  *   - JSONL on disk: header + one line per block committed by submitText.
@@ -74,11 +76,11 @@ function mkConfig(): AppServerConfig {
 /**
  * Build a fully-wired SessionImpl for the e2e test.
  *
- * Actor (completion) provider — two scripted calls:
- *   Call 1: Herta's first speech contains @板砖, triggering the bridge.
- *           The text after （我 says as "说）<body>（/我 说）" because the
- *           prompt ends with "（我" and the model completes the rest.
- *   Call 2: After the bridge completes, Herta emits a verdict.
+ * Actor (completion) provider — three scripted speeches; the thought prompt
+ * ahead of each main-loop speech is auto-answered by the stub:
+ *   Speech 1: Herta's first speech contains @板砖, triggering the bridge.
+ *   Speech 2: the in-turn beat the bridge fires on patch.preview.
+ *   Speech 3: After the bridge completes, Herta emits a verdict.
  *
  * Backend (chat) provider — two scripted turns:
  *   Turn 1: write_new_file tool call for a.ts. This hits the
@@ -103,32 +105,32 @@ async function mkE2eSession(cfg: AppServerConfig): Promise<{
     transcriptDir: cfg.transcriptDir,
   });
 
-  // Actor: completion provider.
-  // The actor-turn prompt ends with "（我" and the model completes the surface.
-  // "说）" selects the speech surface. @板砖 inside the speech body triggers
-  // invokeBanzhuanBridge. The second call is the beat fired by the BeatPolicy
-  // when it sees the patch.preview event. The third call is the verdict.
+  // Actor: completion provider. The prompt forces the surface (`（我 想）` for
+  // the thought phase, `（我 说）` for the speech), so a script is just the
+  // body plus its close tag. @板砖 inside the first speech body triggers
+  // invokeBanzhuanBridge. The second script is the beat fired by the
+  // BeatPolicy when it sees the patch.preview event. The third is the verdict.
   //
   // Beat ordering (per BeatPolicy rules): the write_new_file permission rule
   // emits patch.preview on the bus before returning kind:"ask". The drain
   // task in invokeBanzhuanBridge picks this up and fires a beat via
-  // makeFireBeat → actor provider call #2. After the bridge completes, the
-  // main loop continues and calls the actor provider one more time (#3).
+  // makeFireBeat (a speech-surface prompt, no thought). After the bridge
+  // completes, the main loop thinks again and speaks the verdict.
   const actorStub = stubCompletionProvider([
     {
-      // Call 1: Herta delegates to 板砖.
-      deltas: ["说）@板砖 写一行到 a.ts。（/我 说）"],
+      // Speech 1: Herta delegates to 板砖.
+      deltas: ["@板砖 写一行到 a.ts。（/我 说）"],
       stopReason: "stop",
     },
     {
-      // Call 2: In-turn beat triggered by patch.preview event.
+      // Speech 2: In-turn beat triggered by patch.preview event.
       // Beats are always speech surface. Short one-liner reaction.
-      deltas: ["说）一行代码，看起来没问题。（/我 说）"],
+      deltas: ["一行代码，看起来没问题。（/我 说）"],
       stopReason: "stop",
     },
     {
-      // Call 3: Main loop verdict after bridge completes.
-      deltas: ["说）写完了，一行加进去了。（/我 说）"],
+      // Speech 3: Main loop verdict after bridge completes.
+      deltas: ["写完了，一行加进去了。（/我 说）"],
       stopReason: "stop",
     },
   ]);
@@ -178,8 +180,8 @@ async function mkE2eSession(cfg: AppServerConfig): Promise<{
       staticPrefixOverride: { bio: "[test-bio]", env: "", fewShots: [] },
       // M-prompts-1: the compiled assets are ALWAYS present now, so the
       // scripted-provider posture must opt out explicitly — an empty
-      // meta-think corpus keeps the actor single-phase, no supervisor,
-      // and no opening seed (the stub scripts count exact provider calls).
+      // meta-think corpus splices no preamble, no supervisor, and no
+      // opening seed (the stub scripts count exact provider calls).
       metaThinkOverride: emptyMetaThinkCorpus(),
       supervisorReferenceOverride: "",
       openingOverride: null,
@@ -319,26 +321,30 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     // Each block in result.record is emitted exactly once via
     // BusActorStreamingSink.flushBlocks in canonical order.
     //
-    // The actor is called 3 times per turn:
-    //   Call 1: @板砖 dispatch speech
-    //   Call 2: in-turn beat (triggered by patch.preview BeatPolicy rule)
-    //   Call 3: verdict speech
-    // So we wait for 3 herta blocks in the record stream.
+    // The actor speaks 3 times per turn (the two main-loop speeches are each
+    // preceded by an auto-answered thought; the beat has none):
+    //   Speech 1: @板砖 dispatch
+    //   Speech 2: in-turn beat (triggered by patch.preview BeatPolicy rule)
+    //   Speech 3: verdict
+    // So we wait for 3 herta SPEECH blocks in the record stream.
+    const isSpeechEvent = (e: RecordEvent): boolean =>
+      e.kind === "block" &&
+      e.block.kind === "herta" &&
+      e.block.surface === "speech";
     const recordEvents: RecordEvent[] = [];
     let verdictSeen = false;
     const recordConsumer = (async () => {
       for await (const ev of session.subscribeRecord()) {
         recordEvents.push(ev);
         // Verdict is the third herta speech block in the stream
-        // (dispatch + beat + verdict).
-        if (ev.kind === "block" && ev.block.kind === "herta") {
-          const hertaBlocks = recordEvents.filter(
-            (e) => e.kind === "block" && e.block.kind === "herta",
-          );
-          if (hertaBlocks.length >= 3) {
-            verdictSeen = true;
-            break;
-          }
+        // (dispatch + beat + verdict); thought blocks stream too but do
+        // not count toward it.
+        if (
+          isSpeechEvent(ev) &&
+          recordEvents.filter(isSpeechEvent).length >= 3
+        ) {
+          verdictSeen = true;
+          break;
         }
       }
     })();
@@ -398,26 +404,33 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     // arrives in the SAME order as session.record / the JSONL: every block is
     // projected exactly once, in canonical order, by BusActorStreamingSink
     // .flushBlocks during the turn. Canonical order for this scripted turn:
-    //   user → herta(@板砖) → 系统(patch preview) → 差分协处理器(Writing)
-    //        → herta(beat) → 差分协处理器(done-marker) → herta(verdict)
+    //   user → herta(thought) → herta(@板砖) → 系统(patch preview)
+    //        → 差分协处理器(Writing) → herta(beat) → 差分协处理器(done-marker)
+    //        → herta(thought) → herta(verdict)
     const blockEvents = recordEvents.filter(
       (e): e is Extract<RecordEvent, { kind: "block" }> => e.kind === "block",
     );
     const blocks = blockEvents.map((e) => e.block);
 
-    // Exactly 7 blocks in the stream — canonical order, no duplicates.
-    // (1 user + 3 herta + 3 system.)
-    expect(blocks).toHaveLength(7);
+    // Exactly 9 blocks in the stream — canonical order, no duplicates.
+    // (1 user + 2 thoughts + 3 speeches + 3 system.)
+    expect(blocks).toHaveLength(9);
 
     const userBlocks = blocks.filter((b) => b.kind === "user");
-    const hertaBlocks = blocks.filter((b) => b.kind === "herta");
+    const thoughtBlocks = blocks.filter(
+      (b) => b.kind === "herta" && b.surface === "thought",
+    );
+    const speechBlocks = blocks.filter(
+      (b) => b.kind === "herta" && b.surface === "speech",
+    );
     const systemBlocks = blocks.filter((b) => b.kind === "system");
     expect(userBlocks).toHaveLength(1);
-    expect(hertaBlocks).toHaveLength(3);
+    expect(thoughtBlocks).toHaveLength(2);
+    expect(speechBlocks).toHaveLength(3);
     expect(systemBlocks).toHaveLength(3);
 
-    // Dispatch block: first herta block, contains @板砖.
-    const dispatchBlock = hertaBlocks.find((b) =>
+    // Dispatch block: first speech block, contains @板砖.
+    const dispatchBlock = speechBlocks.find((b) =>
       (b as { text: string }).text.includes("@板砖"),
     );
     expect(dispatchBlock).toBeDefined();
@@ -457,21 +470,24 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     );
 
     // Spot-check the canonical positions the bug used to violate: the user
-    // block is first, and the first backend system block comes AFTER the
-    // @板砖 dispatch (herta) block — never before it.
+    // block is first, the turn's thought follows it, and the first backend
+    // system block comes AFTER the @板砖 dispatch (herta) block — never
+    // before it.
     const userIdx = blocks.findIndex((b) => b.kind === "user");
     const dispatchIdx = blocks.findIndex(
       (b) =>
-        b.kind === "herta" && (b as { text: string }).text.includes("@板砖"),
+        b.kind === "herta" &&
+        b.surface === "speech" &&
+        (b as { text: string }).text.includes("@板砖"),
     );
     const firstSystemIdx = blocks.findIndex((b) => b.kind === "system");
     expect(userIdx).toBe(0);
-    expect(dispatchIdx).toBe(1);
+    expect(dispatchIdx).toBe(2);
     expect(firstSystemIdx).toBeGreaterThan(dispatchIdx);
 
-    // Verdict block is the last herta block in the stream and must not
+    // Verdict block is the last speech block in the stream and must not
     // contain the @板砖 trigger.
-    const verdictBlock = hertaBlocks[hertaBlocks.length - 1];
+    const verdictBlock = speechBlocks[speechBlocks.length - 1];
     expect(verdictBlock).toBeDefined();
     expect((verdictBlock as { text: string }).text).not.toContain("@板砖");
 
@@ -483,10 +499,10 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
 
     // ── JSONL on disk ────────────────────────────────────────────────────
     // The JSONL is written by the driver (persister.appendBlock) as each
-    // block is appended during the turn — 7 blocks total:
-    // user + herta(@板砖) + system(系统/patch-preview) +
+    // block is appended during the turn — 9 blocks total:
+    // user + herta(thought) + herta(@板砖) + system(系统/patch-preview) +
     // system(差分协处理器/Writing) + herta(beat) +
-    // system(差分协处理器/done-marker) + herta(verdict).
+    // system(差分协处理器/done-marker) + herta(thought) + herta(verdict).
     // The done-marker is appended by invokeBanzhuanBridge at the end of the
     // backend run (after drainTask, before the actor's post-bridge verdict)
     // and is persisted like any other system block. The file also has a
@@ -501,7 +517,7 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     const blockLines = jsonlLines.filter(
       (l) => (JSON.parse(l) as { _kind?: string })._kind === undefined,
     );
-    expect(blockLines).toHaveLength(7);
+    expect(blockLines).toHaveLength(9);
     expect(
       jsonlLines.filter(
         (l) => (JSON.parse(l) as { _kind?: string })._kind === "turn_end",
@@ -530,8 +546,9 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     }
 
     // Canonical block ordering for this scenario:
-    //   user → herta(@板砖) → 系统(patch preview) → 差分协处理器(Writing) →
-    //   herta(beat) → 差分协处理器(done-marker) → herta(verdict)
+    //   user → herta(thought) → herta(@板砖) → 系统(patch preview) →
+    //   差分协处理器(Writing) → herta(beat) → 差分协处理器(done-marker) →
+    //   herta(thought) → herta(verdict)
     // The 系统 patch preview fires BEFORE the write_new_file permission
     // resolves (the rule emits patch.preview as part of its ask phase), and
     // the BeatPolicy classifies patch.preview as a beat trigger. But the beat
@@ -544,20 +561,34 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
     //
     // The 差分协处理器 done-marker is appended by invokeBanzhuanBridge at the
     // END of the backend run (after drainTask drains the deferred beat),
-    // BEFORE the actor's post-bridge loop emits the verdict herta block — so
-    // it lands between the beat and the verdict (index 5), not at the tail.
+    // BEFORE the actor's post-bridge loop thinks again and emits the verdict
+    // herta block — so it lands between the beat and the verdict's thought
+    // (index 6), not at the tail.
     const recordKinds = sessionRecord.map((b) => ({
       kind: b.kind,
       label: b.kind === "system" ? b.label : undefined,
+      surface: b.kind === "herta" ? b.surface : undefined,
     }));
+    const herta = (surface: "thought" | "speech") => ({
+      kind: "herta",
+      label: undefined,
+      surface,
+    });
+    const system = (label: string) => ({
+      kind: "system",
+      label,
+      surface: undefined,
+    });
     expect(recordKinds).toEqual([
-      { kind: "user", label: undefined },
-      { kind: "herta", label: undefined },
-      { kind: "system", label: "系统" },
-      { kind: "system", label: "差分协处理器" },
-      { kind: "herta", label: undefined },
-      { kind: "system", label: "差分协处理器" },
-      { kind: "herta", label: undefined },
+      { kind: "user", label: undefined, surface: undefined },
+      herta("thought"),
+      herta("speech"),
+      system("系统"),
+      system("差分协处理器"),
+      herta("speech"),
+      system("差分协处理器"),
+      herta("thought"),
+      herta("speech"),
     ]);
 
     // ── Done-marker block ────────────────────────────────────────────────

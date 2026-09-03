@@ -1,10 +1,12 @@
 // Completion-stream side of the actor turn: the stop sequences and the
 // stream text helpers (stray-tag stripping, the first-stop cut), the
-// abort-flush / abandon helpers for paced controllers, the two stream
-// consumers (`consumeBranchStream`, `consumePhaseTwoStream`), the phase-2
-// generation funnel (`runPhaseTwo`) and the empty-body retry ladders that
-// re-drive it. Extracted from actor-turn.ts on 2026-09-03 (owner's request:
-// the file had grown to 3,200 lines); bodies and comments are verbatim.
+// abort-flush / abandon helpers for paced controllers, the stream consumer
+// (`consumePhaseTwoStream`), the phase-2 generation funnel (`runPhaseTwo`)
+// and the empty-body retry ladders that re-drive it. Extracted from
+// actor-turn.ts on 2026-09-03 (owner's request: the file had grown to 3,200
+// lines); bodies and comments are verbatim. The Slice 10 single-phase
+// consumer (`consumeBranchStream` + its surface detector) went with its path
+// the same day.
 
 import type { CompletionProviderAdapter, TerminalRecord } from "@herta/core";
 import { type ActorPrompt, serializeActorPrompt } from "./actor-prompt.js";
@@ -210,287 +212,6 @@ export async function abandonController(
   } catch {
     // Sink teardown is best-effort on an already-failing path.
   }
-}
-
-/**
- * Stream one main-loop iteration. Detects surface from the first 1–2
- * chars after the open tag (`想）` vs `说）`), then streams remaining
- * tokens via `streamHertaToken` (no-op on thought surface inside the
- * sink).
- *
- * Uses a deferred-begin pattern: `beginHertaStream(surface)` is NOT
- * called until the first token chunk that actually has content is safe
- * to emit. This ensures that if the stream body is empty (whitespace-
- * only or literally nothing), `beginHertaStream` is never called and
- * neither is `endHertaStream`, leaving the renderer's cursor and
- * `streamingSurface` untouched — which keeps it in sync with the record
- * (the actor's empty-body path skips the block commit).
- *
- * For speech: any non-empty chunk (including whitespace) triggers begin,
- * because whitespace IS visible content in a speech block.
- * For thought: only a non-whitespace chunk triggers begin, to prevent
- * the renderer's cursor from advancing for whitespace-only thought
- * streams (thought tokens are no-ops in the sink, so holding the
- * whitespace is invisible and correct).
- */
-export async function consumeBranchStream(opts: {
-  provider: CompletionProviderAdapter;
-  model: string;
-  prompt: string;
-  signal: AbortSignal;
-  sink?: ActorStreamingSink;
-  forceSpeech: boolean;
-}): Promise<{
-  surface: Surface;
-  text: string;
-}> {
-  let buffered = "";
-  // Two positions track different things in `buffered`:
-  //   - `tagSkipPos` is the offset where Herta's body starts (just past
-  //     `说）` / `想）` and any leading whitespace). Fixed for the life of
-  //     the stream after `tryDecideTagSkip` runs. Used to compute
-  //     `cleanText` (the committed block body) at end-of-stream.
-  //   - `emittedTail` is the offset past which we've already forwarded
-  //     bytes to the sink via `streamHertaToken`. Advances during the
-  //     stream as `safeEmitBoundary` clears more content. Always
-  //     `>= tagSkipPos` once the tag is decided.
-  let tagSkipPos = 0;
-  let emittedTail = 0;
-  let surface: Surface | null = opts.forceSpeech ? "speech" : null;
-  // For forced-speech, the open tag `（我 说）` was in the prompt, so the
-  // stream contains pure body — no tag to skip. Mark decided up-front.
-  let tagSkipDecided = opts.forceSpeech;
-  let beginCalled = false;
-  // Tracks whether at least one non-whitespace char has been seen past
-  // the open-tag position. Until true, leading whitespace in the body
-  // (e.g. the `\n` after `说）` from the corpus format) is held back
-  // so the user doesn't see a blank line above Herta's speech. After
-  // it goes true, trailing-whitespace runs are held back too — so a
-  // run that ends the stream gets dropped, but a run followed by more
-  // non-ws gets emitted normally as internal whitespace.
-  let bodyStarted = false;
-
-  /**
-   * Returns true when the `chunk` justifies opening the stream for the
-   * given surface. Both speech and thought require non-whitespace to
-   * begin (the leading-ws skip below ensures `streamHertaToken` is
-   * never called with a whitespace-only prefix). Pre-2026-05-23,
-   * speech allowed any chunk (including whitespace) to trigger begin
-   * — that produced the blank-line-above-speech artifact when the
-   * model emitted `（我 说）\n<body>`.
-   */
-  const shouldBegin = (_s: Surface, chunk: string): boolean => {
-    return chunk.trim().length > 0;
-  };
-
-  const ensureBegin = (s: Surface, chunk: string): void => {
-    if (!beginCalled && shouldBegin(s, chunk) && opts.sink !== undefined) {
-      opts.sink.beginHertaStream(s);
-      beginCalled = true;
-    }
-  };
-
-  /**
-   * Advance `emittedTail` past the leading `说）` / `想）` tag once enough
-   * chars are buffered to make a definitive decision. This MUST run before
-   * any emit so we never forward partial-tag bytes (the post-merge bug
-   * where `说` from delta 1 leaked to stdout before `）` arrived in delta
-   * 2). On malformed completions (the tag isn't where it should be), we
-   * leave `emittedTail` at 0 and emit verbatim — defensive recovery.
-   */
-  const tryDecideTagSkip = (): void => {
-    if (tagSkipDecided || surface === null) return;
-    const tag = surface === "thought" ? "想）" : "说）";
-    const wsMatch = buffered.match(/^[\s　]*/);
-    const wsLen = wsMatch !== null ? wsMatch[0].length : 0;
-    if (buffered.length < wsLen + tag.length) {
-      // Not enough chars yet — wait for next delta.
-      return;
-    }
-    if (buffered.slice(wsLen, wsLen + tag.length) === tag) {
-      tagSkipPos = wsLen + tag.length;
-      emittedTail = tagSkipPos;
-    }
-    // else: tag malformed; tagSkipPos stays 0, verbatim emission.
-    tagSkipDecided = true;
-  };
-
-  /**
-   * Stream `buffered.slice(emittedTail, safeEnd)` to the sink with
-   * speech/thought rules AND with leading/trailing whitespace stripping.
-   *
-   * Pre-emit: skip leading whitespace until `bodyStarted` flips to true
-   * (i.e. the first non-ws char of the body has arrived).
-   *
-   * Post-emit: hold back any trailing whitespace at the end of the slice
-   * — if the next chunk brings more non-ws content the held-back ws is
-   * emitted as internal whitespace; if the stream ends, the held-back
-   * ws is discarded by the final-flush block below.
-   */
-  const flushToSink = (safeEnd: number): void => {
-    if (
-      surface === null ||
-      !tagSkipDecided ||
-      opts.sink === undefined ||
-      safeEnd <= emittedTail
-    ) {
-      return;
-    }
-    let start = emittedTail;
-    if (!bodyStarted) {
-      while (start < safeEnd && /\s/.test(buffered.charAt(start))) {
-        start++;
-      }
-      if (start >= safeEnd) {
-        // Still all whitespace — hold and wait.
-        emittedTail = safeEnd;
-        return;
-      }
-      bodyStarted = true;
-    }
-    let end = safeEnd;
-    while (end > start && /\s/.test(buffered.charAt(end - 1))) {
-      end--;
-    }
-    if (end > start) {
-      // Slice 4 (streamed == committed): drop complete stray open tags the
-      // commit path would remove, so the tag never types on screen only to
-      // vanish at the block swap. The emit boundary held any partial tag,
-      // so this only ever sees complete ones.
-      const chunk = stripStrayFromChunk(buffered.slice(start, end), surface);
-      if (chunk.length === 0) {
-        emittedTail = end; // the slice was one whole stray tag — consume it
-        return;
-      }
-      if (surface === "speech") {
-        ensureBegin(surface, chunk);
-        if (beginCalled) opts.sink.streamHertaToken(chunk);
-      } else {
-        ensureBegin(surface, chunk);
-      }
-      emittedTail = end;
-    }
-    // Else: slice was all-whitespace-with-no-leading-ws-to-skip; hold
-    // it. emittedTail stays put so we re-evaluate on the next call.
-  };
-
-  for await (const ev of opts.provider.streamCompletion(
-    {
-      model: opts.model,
-      prompt: opts.prompt,
-      stop: [STOP_SPEECH_CLOSE, STOP_THOUGHT_CLOSE, STOP_OPENER_USER],
-      // Capped (slice 3); the supervisor call is deadline-only by design —
-      // see PRIMARY_COMPLETION_MAX_TOKENS.
-      maxTokens: PRIMARY_COMPLETION_MAX_TOKENS,
-    },
-    opts.signal,
-  )) {
-    if (ev.type === "text-delta") {
-      buffered += ev.text;
-
-      if (surface === null) {
-        const detected = detectSurface(buffered);
-        if (detected !== null) surface = detected;
-      }
-
-      tryDecideTagSkip();
-
-      // Only forward chunks AFTER the tag-skip position is decided.
-      // This prevents partial-tag bytes from reaching the sink
-      // across split deltas (delta 1 = "说", delta 2 = "）好。").
-      // LIVE_EMIT_HOLD_SEQS also holds partial STRAY tags (slice 4).
-      // firstStopIndex caps the emit at any COMPLETE stop marker a
-      // misbehaving provider streamed past (fence-fuzz, 2026-07-09).
-      flushToSink(
-        Math.min(
-          safeEmitBoundary(buffered, LIVE_EMIT_HOLD_SEQS),
-          firstStopIndex(buffered, STOP_SEQS),
-        ),
-      );
-    } else if (ev.type === "finish") {
-      break;
-    }
-  }
-
-  // End-of-stream. If surface was never detected (empty stream, or model
-  // emitted only the stop seq), default to speech. Do NOT call
-  // beginHertaStream here — begin only fires when there is content.
-  if (surface === null) surface = "speech";
-
-  // Stream might have been short enough that we never accumulated full
-  // tag length during the loop — decide now with whatever we have.
-  tryDecideTagSkip();
-
-  // Clean the raw buffer's tail before committing. Two exclusive cases:
-  //   - A COMPLETE stop marker exists: cut exactly at the first one (where a
-  //     stop-honoring provider would have ended the stream — matches the
-  //     live emit cap above, so streamed == committed even against a
-  //     provider that streams past its stops; fence-fuzz 2026-07-09). The
-  //     cut point is exact, so prose legitimately ending in `（` right
-  //     before the marker is preserved — no dangling-strip afterwards.
-  //   - No complete marker: the stream may have ended mid-marker; strip a
-  //     DANGLING partial prefix like `（/` (the `.trim()` below only
-  //     removes whitespace, not the full-width `（`).
-  const stopIdx = firstStopIndex(buffered, STOP_SEQS);
-  const withoutClose =
-    stopIdx < buffered.length
-      ? buffered.slice(0, stopIdx)
-      : stripDanglingStopPrefix(buffered, STOP_SEQS);
-
-  // cleanText = buffer past the tag (and past the close-tag strip),
-  // with leading and trailing whitespace stripped. Use `tagSkipPos`
-  // (NOT `emittedTail`) — the committed block body is the full content
-  // after the tag, independent of how much we've already streamed via
-  // `streamHertaToken`. Clamp to handle the edge case where
-  // `tagSkipPos` exceeds `withoutClose.length` (close tag started
-  // right after the open tag). The trim mirrors the streaming-time
-  // skip-leading / hold-back-trailing logic so the record stores
-  // exactly what the user saw on screen.
-  const cleanStart = Math.min(tagSkipPos, withoutClose.length);
-  const cleanText = withoutClose.slice(cleanStart).trim();
-
-  // Flush any held tail: content in `withoutClose` past `emittedTail`
-  // that wasn't streamed during the loop (held back by safeEmitBoundary
-  // pending stop-seq resolution OR by the leading/trailing whitespace
-  // skip above). Apply the same leading-skip + trailing-strip rules
-  // so the final flush doesn't reintroduce blank lines.
-  if (opts.sink !== undefined && emittedTail < withoutClose.length) {
-    let start = emittedTail;
-    let end = withoutClose.length;
-    if (!bodyStarted) {
-      while (start < end && /\s/.test(withoutClose.charAt(start))) {
-        start++;
-      }
-      if (start < end) bodyStarted = true;
-    }
-    while (end > start && /\s/.test(withoutClose.charAt(end - 1))) {
-      end--;
-    }
-    if (end > start) {
-      // Slice 4: the emit-boundary hold parks a complete stray tag at the
-      // stream's end; strip it here (the commit path removes it too) and
-      // re-trim the exposed trailing whitespace so streamed == committed.
-      const tailChunk = stripStrayFromChunk(
-        withoutClose.slice(start, end),
-        surface,
-      ).replace(/\s+$/, "");
-      if (tailChunk.length > 0) {
-        if (surface === "speech") {
-          ensureBegin(surface, tailChunk);
-          if (beginCalled) opts.sink.streamHertaToken(tailChunk);
-        } else {
-          ensureBegin(surface, tailChunk);
-        }
-      }
-    }
-  }
-
-  // begin/end calls must be balanced — the renderer's cursor advances on
-  // endHertaStream, and we only want that advance when a block will
-  // commit to TerminalRecord.
-  if (beginCalled) opts.sink?.endHertaStream();
-
-  return { surface, text: cleanText };
 }
 
 /**
@@ -1000,8 +721,9 @@ async function consumePhaseTwoStream(opts: {
       end--;
     }
     if (end > start) {
-      // Slice 4 (streamed == committed): drop complete stray open tags —
-      // see consumeBranchStream. Also keeps the live-feed `retryAccum`
+      // Slice 4 (streamed == committed): drop complete stray open tags the
+      // commit path would remove, so the tag never types on screen only to
+      // vanish at the block swap. Also keeps the live-feed `retryAccum`
       // (fed from onLiveToken) consistent with the stripped commit text,
       // so the retract floor indexes exactly what is on screen.
       const chunk = stripStrayFromChunk(
@@ -1057,7 +779,7 @@ async function consumePhaseTwoStream(opts: {
     }
   }
 
-  // See consumeBranchStream: cut exactly at the FIRST complete stop marker
+  // Cut exactly at the FIRST complete stop marker
   // when one exists (matching the live emit cap, so streamed == committed;
   // prose ending in `（` right before the marker survives), else strip a
   // dangling partial marker prefix left by a stream that ended mid-marker.
@@ -1087,7 +809,7 @@ async function consumePhaseTwoStream(opts: {
     }
     if (end > start) {
       // Slice 4: strip a boundary-held complete stray tag + re-trim the
-      // exposed trailing whitespace — see consumeBranchStream's tail flush.
+      // exposed trailing whitespace, so streamed == committed at the tail.
       const tailChunk = stripStrayFromChunk(
         withoutClose.slice(start, end),
         opts.surface,
@@ -1111,21 +833,4 @@ async function consumePhaseTwoStream(opts: {
   if (beginCalled) opts.sink?.endHertaStream();
 
   return { surface: opts.surface, text: cleanText };
-}
-
-/**
- * Detect surface from buffered chars. Returns "thought" / "speech" as soon
- * as the surface tag's distinguishing character is visible; returns null
- * if not enough chars yet.
- */
-function detectSurface(buffered: string): Surface | null {
-  // The model completes with `想）...` or `说）...` (the open tag `（我 `
-  // is in the prompt). Whitespace tolerance: skip leading whitespace.
-  const trimmedStart = buffered.replace(/^[\s　]+/, "");
-  if (trimmedStart.length === 0) return null;
-  const first = trimmedStart.charAt(0);
-  if (first === "想") return "thought";
-  if (first === "说") return "speech";
-  // Any other first char — defensively call it speech (malformed completion).
-  return "speech";
 }

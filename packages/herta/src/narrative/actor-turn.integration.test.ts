@@ -14,12 +14,32 @@ import { type ActorTurnDeps, runActorCompletionTurn } from "./actor-turn.js";
 import type { ActorStreamingSink } from "./streaming-sink.js";
 
 // ---------------------------------------------------------------------------
-// Helpers for the Slice 10 integration describe block below.
+// Helpers for the end-to-end describe blocks below.
 // Duplicated here (vs. imported from actor-turn.test.ts) to keep test files
 // independent — independence is preferred over DRY across test modules.
 // ---------------------------------------------------------------------------
 
-function mkSlice10Provider(scripts: ReadonlyArray<CompletionEvent[]>): {
+/** Canned thought the default `mkProvider` answers every thought prompt with. */
+const AUTO_THOUGHT = "想想看。";
+
+/** The phase-2 thought prompt ends with its forced open tag (a complete open
+ *  tag gets a trailing newline in `serializeActorPrompt`). */
+function isThoughtPrompt(req: CompletionRequest): boolean {
+  return req.prompt.endsWith("（我 想）\n");
+}
+
+/**
+ * Scripted actor provider. Every turn thinks before it speaks (2026-09-03:
+ * the single-phase surface pick is gone), so by default a thought prompt is
+ * answered with `AUTO_THOUGHT` WITHOUT consuming a script and `scripts` lists
+ * only the speech completions in order. `scriptThoughts: true` opts out:
+ * every call consumes the next script, thought prompts included, for tests
+ * that assert on the thought text.
+ */
+function mkProvider(
+  scripts: ReadonlyArray<CompletionEvent[]>,
+  opts: { scriptThoughts?: boolean } = {},
+): {
   provider: CompletionProviderAdapter;
   prompts: string[];
 } {
@@ -28,8 +48,16 @@ function mkSlice10Provider(scripts: ReadonlyArray<CompletionEvent[]>): {
   const provider: CompletionProviderAdapter = {
     streamCompletion(req: CompletionRequest): AsyncIterable<CompletionEvent> {
       prompts.push(req.prompt);
-      const script = scripts[idx] ?? [{ type: "finish", reason: "stop" }];
-      idx += 1;
+      let script: CompletionEvent[];
+      if (opts.scriptThoughts !== true && isThoughtPrompt(req)) {
+        script = [
+          { type: "text-delta", text: `${AUTO_THOUGHT}（/我 想）` },
+          { type: "finish", reason: "stop" },
+        ];
+      } else {
+        script = scripts[idx] ?? [{ type: "finish", reason: "stop" }];
+        idx += 1;
+      }
       return (async function* () {
         for (const e of script) yield e;
       })();
@@ -38,7 +66,7 @@ function mkSlice10Provider(scripts: ReadonlyArray<CompletionEvent[]>): {
   return { provider, prompts };
 }
 
-function mkSlice10Deps(opts: {
+function mkDeps(opts: {
   provider: CompletionProviderAdapter;
   bus?: InMemoryEventBus<AgentEvent>;
   runtimeFactory?: () => CodingAgentRuntime;
@@ -64,10 +92,13 @@ function mkSlice10Deps(opts: {
     bus,
     runtimeFactory: opts.runtimeFactory ?? (() => noopRuntime),
     signal: new AbortController().signal,
+    // Required since 2026-09-03; the neutral mood. No meta-think attachment
+    // is passed, so the turn thinks then speaks without a preamble.
+    intentState: "默认",
   };
 }
 
-function mkSlice10Sink(): {
+function mkSink(): {
   sink: ActorStreamingSink;
   tokens: string[];
   endStreamCalls: number;
@@ -105,26 +136,35 @@ function mkSlice10Sink(): {
 
 // ---------------------------------------------------------------------------
 
-describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
+describe("runActorCompletionTurn — end-to-end (think → speak rhythm)", () => {
   it("thought-then-speech flow: record has both, only speech reaches sink tokens", async () => {
-    const { provider } = mkSlice10Provider([
+    // Both phases scripted: iteration 1 is the thought (prompt forces
+    // `（我 想）`), iteration 2 the forced speech (prompt forces `（我 说）`).
+    const { provider } = mkProvider(
       [
-        { type: "text-delta", text: "想）板砖按教科书写的。（/我 想）" },
-        { type: "finish", reason: "stop" },
+        [
+          { type: "text-delta", text: "板砖按教科书写的。（/我 想）" },
+          { type: "finish", reason: "stop" },
+        ],
+        [
+          { type: "text-delta", text: "行了。（/我 说）" },
+          { type: "finish", reason: "stop" },
+        ],
       ],
-      [
-        { type: "text-delta", text: "说）行了。（/我 说）" },
-        { type: "finish", reason: "stop" },
-      ],
-    ]);
-    const sinkBundle = mkSlice10Sink();
-    const deps = mkSlice10Deps({ provider });
+      { scriptThoughts: true },
+    );
+    const sinkBundle = mkSink();
+    const deps = mkDeps({ provider });
     const { record } = await runActorCompletionTurn(
       { record: [] as TerminalRecord },
       "在吗",
       { ...deps, sink: sinkBundle.sink },
     );
-    expect(record).toHaveLength(3); // user, thought, speech
+    expect(record).toEqual([
+      { kind: "user", text: "在吗" },
+      { kind: "herta", surface: "thought", text: "板砖按教科书写的。" },
+      { kind: "herta", surface: "speech", text: "行了。" },
+    ]);
     expect(sinkBundle.beginCalls).toEqual(["thought", "speech"]);
     const tokenJoin = sinkBundle.tokens.join("");
     expect(tokenJoin).toContain("行了。");
@@ -135,15 +175,16 @@ describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
     // Regression for record 53e0e3c8: the model began the speech close
     // marker （/我 说） but the completion stream finished after only the
     // 2-char prefix （/ had streamed. The orphaned （/ must not survive into
-    // the committed block (nor reach the sink).
-    const { provider } = mkSlice10Provider([
+    // the committed block (nor reach the sink). The thought phase is
+    // auto-answered; the cut is exercised on the forced speech.
+    const { provider } = mkProvider([
       [
-        { type: "text-delta", text: "说）补上？\n（/" },
+        { type: "text-delta", text: "补上？\n（/" },
         { type: "finish", reason: "stop" },
       ],
     ]);
-    const sinkBundle = mkSlice10Sink();
-    const deps = mkSlice10Deps({ provider });
+    const sinkBundle = mkSink();
+    const deps = mkDeps({ provider });
     const { record } = await runActorCompletionTurn(
       { record: [] as TerminalRecord },
       "在吗",
@@ -164,13 +205,13 @@ describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
     // （ was already streamed to the user, so it must survive into the
     // committed block — the dangling-prefix strip must stop at the complete
     // marker's boundary, not eat the prose before it.
-    const { provider } = mkSlice10Provider([
+    const { provider } = mkProvider([
       [
-        { type: "text-delta", text: "说）开始（（/我 说）" },
+        { type: "text-delta", text: "开始（（/我 说）" },
         { type: "finish", reason: "stop" },
       ],
     ]);
-    const deps = mkSlice10Deps({ provider });
+    const deps = mkDeps({ provider });
     const { record } = await runActorCompletionTurn(
       { record: [] as TerminalRecord },
       "在吗",
@@ -184,9 +225,9 @@ describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
   });
 
   it("user @板砖 pre-empt: backend events appear in record before Herta's commentary speech", async () => {
-    const { provider } = mkSlice10Provider([
+    const { provider } = mkProvider([
       [
-        { type: "text-delta", text: "说）完事，没意外。（/我 说）" },
+        { type: "text-delta", text: "完事，没意外。（/我 说）" },
         { type: "finish", reason: "stop" },
       ],
     ]);
@@ -211,7 +252,7 @@ describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
         } as never;
       },
     } as unknown as CodingAgentRuntime;
-    const deps = mkSlice10Deps({
+    const deps = mkDeps({
       provider,
       bus,
       runtimeFactory: () => runtime,
@@ -221,15 +262,23 @@ describe("runActorCompletionTurn — Slice 10 end-to-end", () => {
       "@板砖 看一下 foo.ts",
       deps,
     );
-    // Expected order: user, system(差分协处理器:Reading), herta(speech-commentary)
+    // Expected order: user, system(差分协处理器:Reading), then Herta's
+    // commentary — the pre-empt dispatch runs before any completion, so both
+    // her thought and the speech that follows it land AFTER the projection.
     expect(record[0]?.kind).toBe("user");
     const sysIdx = record.findIndex((b) => b.kind === "system");
-    const hertaIdx = record.findIndex(
-      (b) =>
-        b.kind === "herta" && (b as { surface: string }).surface === "speech",
+    const firstHertaIdx = record.findIndex((b) => b.kind === "herta");
+    const speechIdx = record.findIndex(
+      (b) => b.kind === "herta" && b.surface === "speech",
     );
     expect(sysIdx).toBeGreaterThan(-1);
-    expect(hertaIdx).toBeGreaterThan(sysIdx);
+    expect(firstHertaIdx).toBeGreaterThan(sysIdx);
+    expect(speechIdx).toBeGreaterThan(firstHertaIdx);
+    expect(record[speechIdx]).toEqual({
+      kind: "herta",
+      surface: "speech",
+      text: "完事，没意外。",
+    });
   });
 });
 
@@ -238,16 +287,19 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
     // With always-think: iteration 1 = thought (THINK_TXT injected in prompt),
     // iteration 2 = forced-speech (SPEAK_TXT injected in prompt).
     // Neither committed block should contain the meta-think text.
-    const { provider } = mkSlice10Provider([
+    const { provider } = mkProvider(
       [
-        { type: "text-delta", text: "考虑了。（/我 想）" },
-        { type: "finish", reason: "stop" },
+        [
+          { type: "text-delta", text: "考虑了。（/我 想）" },
+          { type: "finish", reason: "stop" },
+        ],
+        [
+          { type: "text-delta", text: "在。（/我 说）" },
+          { type: "finish", reason: "stop" },
+        ],
       ],
-      [
-        { type: "text-delta", text: "在。（/我 说）" },
-        { type: "finish", reason: "stop" },
-      ],
-    ]);
+      { scriptThoughts: true },
+    );
     const corpus = {
       preThink: {
         默认: "THINK_TXT",
@@ -268,8 +320,8 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
         被顶嘴版: "",
       },
     };
-    const sinkBundle = mkSlice10Sink();
-    const deps = mkSlice10Deps({ provider });
+    const sinkBundle = mkSink();
+    const deps = mkDeps({ provider });
     const { record } = await runActorCompletionTurn(
       { record: [] as TerminalRecord },
       "在吗",
@@ -331,11 +383,10 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
 
     let call = 0;
     const provider: CompletionProviderAdapter = {
-      streamCompletion(
-        _req: CompletionRequest,
-      ): AsyncIterable<CompletionEvent> {
+      streamCompletion(req: CompletionRequest): AsyncIterable<CompletionEvent> {
         call += 1;
         const n = call;
+        const thoughtPrompt = isThoughtPrompt(req);
         return (async function* () {
           if (n === 1) {
             // The beat (fires first — user-preempt dispatch runs before any
@@ -343,15 +394,24 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
             yield { type: "text-delta", text: "诶，这个 diff——" } as const;
             throw new Error("provider died mid-beat");
           }
-          // Primary speech after the bridge returns.
-          yield { type: "text-delta", text: "说）收尾。（/我 说）" } as const;
+          if (thoughtPrompt) {
+            // The primary turn's thought phase after the bridge returns.
+            yield {
+              type: "text-delta",
+              text: `${AUTO_THOUGHT}（/我 想）`,
+            } as const;
+            yield { type: "finish", reason: "stop" } as const;
+            return;
+          }
+          // The forced speech after the thought.
+          yield { type: "text-delta", text: "收尾。（/我 说）" } as const;
           yield { type: "finish", reason: "stop" } as const;
         })();
       },
     };
 
-    const sinkBundle = mkSlice10Sink();
-    const deps = mkSlice10Deps({
+    const sinkBundle = mkSink();
+    const deps = mkDeps({
       provider,
       bus,
       runtimeFactory: () => runtime,
@@ -364,9 +424,10 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
       { ...deps, sink: sinkBundle.sink },
     );
 
-    // Sink balanced: beat (salvaged) + primary speech = 2 begins, 2 ends.
-    expect(sinkBundle.beginCalls).toEqual(["speech", "speech"]);
-    expect(sinkBundle.endStreamCalls).toBe(2);
+    // Sink balanced: beat (salvaged) + the primary turn's thought + its
+    // forced speech = 3 begins, 3 ends.
+    expect(sinkBundle.beginCalls).toEqual(["speech", "thought", "speech"]);
+    expect(sinkBundle.endStreamCalls).toBe(3);
     // The emitted portion of the dead beat was committed as a herta block.
     const beatBlock = record.find(
       (b) => b.kind === "herta" && b.text.includes("诶，这个 diff"),

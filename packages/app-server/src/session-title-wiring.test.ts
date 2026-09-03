@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   type CompletionEvent,
   type CompletionProviderAdapter,
+  type CompletionRequest,
   type ProviderAdapter,
   type ProviderEvent,
   readSessionTitle,
@@ -25,7 +26,11 @@ import {
   SessionImpl,
   turnErrorPayload,
 } from "./session.js";
-import { stubChatProvider } from "./testing/stub-providers.js";
+import {
+  isThoughtPrompt,
+  stubChatProvider,
+  stubThoughtStream,
+} from "./testing/stub-providers.js";
 import type { AppServerConfig, TitleEvent } from "./types.js";
 
 function emptyMetaThinkCorpus(): MetaThinkCorpus {
@@ -70,10 +75,12 @@ function alwaysChat(events: readonly ProviderEvent[]): ProviderAdapter {
   };
 }
 
-/** A completion provider that always yields the same speech (any call count). */
+/** A completion provider that answers every thought prompt with the canned
+ *  thought and every speech prompt with the same speech (any call count). */
 function alwaysActor(deltas: readonly string[]): CompletionProviderAdapter {
   return {
-    streamCompletion() {
+    streamCompletion(request: CompletionRequest) {
+      if (isThoughtPrompt(request)) return stubThoughtStream();
       return (async function* () {
         for (const d of deltas)
           yield { type: "text-delta", text: d } satisfies CompletionEvent;
@@ -158,11 +165,12 @@ describe("SessionImpl — title generation", () => {
         anchorIndex: 0,
         anchorText: "hi",
         at: expect.any(String),
-        // Record length when the topic was born — [user, herta] (2026-07-30).
-        // What makes a rewind of THIS turn able to withdraw the topic, which
-        // the anchor cannot express once a re-entry retitle anchors it in old
-        // history. See pruneTopics.
-        bornAtLength: 2,
+        // Record length when the topic was born — [user, thought, speech]
+        // (2026-07-30; the thought block since the always-think rhythm,
+        // 2026-09-03). What makes a rewind of THIS turn able to withdraw the
+        // topic, which the anchor cannot express once a re-entry retitle
+        // anchors it in old history. See pruneTopics.
+        bornAtLength: 3,
       },
     });
     expect(session.topics).toHaveLength(1);

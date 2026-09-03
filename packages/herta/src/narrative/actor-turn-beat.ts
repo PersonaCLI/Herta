@@ -172,7 +172,7 @@ export function makeFireBeat(
     }
 
     // Cut exactly at the FIRST complete stop marker when one exists
-    // (matching the live emit cap — see consumeBranchStream; prose ending
+    // (matching the live emit cap — see consumePhaseTwoStream; prose ending
     // in `（` right before the marker survives), else strip a DANGLING
     // partial prefix (a trailing `（/` from a beat truncated mid-marker —
     // still possible even at `maxTokens: 220`; the `.trim()` at commit

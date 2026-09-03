@@ -61,12 +61,10 @@ export const OPENING_LEAD_MS = 2000;
 
 /**
  * Returns true when the corpus has at least one non-empty meta-think blob.
- * An all-empty corpus means no meta-think text can be injected, so
- * two-phase mode is not useful — the driver passes `undefined` to
- * `runActorCompletionTurn`, falling back to Slice 10 single-phase mode.
- *
- * Per the V2ActorDriverDeps spec comment: "Pass an empty corpus to disable
- * mood routing (the actor falls back to Slice 10 single-phase mode)."
+ * An all-empty corpus (a test seam — the compiled corpus is never empty)
+ * means no meta-think text can be injected, so the driver builds no
+ * attachment; the actor still runs its think-then-speak rhythm (the
+ * single-phase fallback this used to select is gone, 2026-09-03).
  */
 function corpusHasContent(corpus: MetaThinkCorpus): boolean {
   return (
@@ -150,9 +148,9 @@ export interface V2ActorDriverDeps {
    *  Model name lives on the provider instance (via the factory's
    *  `model` option), not on per-call requests. */
   readonly routerProvider: ProviderAdapter;
-  /** Slice 13: pre-loaded meta-think corpus. Pass an empty corpus
-   *  to disable mood routing (the actor falls back to Slice 10
-   *  single-phase mode). */
+  /** Slice 13: pre-loaded meta-think corpus. An empty corpus (a test
+   *  seam) means no meta-think attachment is built; the actor still thinks
+   *  then speaks. */
   readonly metaThinkCorpus: MetaThinkCorpus;
   /** Editable actor hints, loaded at startup. Optional: omit to use the
    *  hardcoded `DEFAULT_ACTOR_HINTS`. */
@@ -388,10 +386,11 @@ export class V2ActorDriver {
     // Log the resolved (or kept) intent state once per turn.
     this.deps.onPrompt?.("state", this.currentIntentState);
 
-    // Only activate two-phase mood routing when the corpus has actual
-    // content. An all-empty corpus → no intentState to
-    // runActorCompletionTurn, which falls back to single-phase (Slice 10)
-    // mode.
+    // The routed state always reaches the actor (2026-09-03 — the single-
+    // phase fallback an absent state used to select is gone). The corpus
+    // check below gates only the meta-think ATTACHMENT: an all-empty corpus
+    // (a test seam) means there is no preamble to splice, and the turn runs
+    // think-then-speak without one.
     const corpusActive = corpusHasContent(this.deps.metaThinkCorpus);
 
     // Build the meta-think attachment for this turn. Asymmetric
@@ -514,7 +513,7 @@ export class V2ActorDriver {
         precomputedRecap,
         ...(userAttachments.length > 0 ? { userAttachments } : {}),
         lang: this.deps.lang ?? "zh",
-        intentState: corpusActive ? this.currentIntentState : undefined,
+        intentState: this.currentIntentState,
         attachedMetaThink:
           corpusActive && this.attachedMetaThink !== null
             ? this.attachedMetaThink

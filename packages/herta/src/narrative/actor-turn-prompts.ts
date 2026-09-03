@@ -1,48 +1,16 @@
-// Prompt-side helpers of the actor turn: hint-set resolution, the Slice 10
-// single-phase prompt builder and the thought / speech-tag splitter.
-// Extracted from actor-turn.ts on 2026-09-03 (owner's request: the file had
-// grown to 3,200 lines); bodies and comments are verbatim.
+// Prompt-side helpers of the actor turn: hint-set resolution and the
+// thought / speech-tag splitter. Extracted from actor-turn.ts on 2026-09-03
+// (owner's request: the file had grown to 3,200 lines); bodies and comments
+// are verbatim. The Slice 10 single-phase prompt builder that lived here
+// went with its path the same day.
 
-import type { TerminalRecord } from "@herta/core";
 import { type ActorHints, defaultActorHintsFor } from "./actor-hints.js";
-import { type ActorPrompt, serializeActorPrompt } from "./actor-prompt.js";
 import type { ActorTurnDeps } from "./actor-turn-deps.js";
 import { stripStopSequence } from "./streaming-sink.js";
-import {
-  BRANCH_OPEN_TAG,
-  FORCED_SPEECH_OPEN_TAG,
-  STOP_THOUGHT_CLOSE,
-} from "./thought-hint.js";
+import { STOP_THOUGHT_CLOSE } from "./thought-hint.js";
 
 export function resolveHints(deps: ActorTurnDeps): ActorHints {
   return deps.hints ?? defaultActorHintsFor(deps.lang ?? "zh");
-}
-
-/**
- * Construct the Slice 10 single-phase prompt (used when no mood routing
- * is configured, and as a building block for phase 1 of two-phase mode).
- */
-export function buildSinglePhasePrompt(opts: {
-  deps: ActorTurnDeps;
-  record: TerminalRecord;
-  priorTurnLength: number;
-  forceSpeech: boolean;
-  recap?: string;
-  recapBoundaryIndex?: number;
-}): string {
-  const prompt: ActorPrompt = {
-    staticPrefix: opts.deps.staticPrefix,
-    record: opts.record,
-    priorTurnLength: opts.priorTurnLength,
-    formatHint: opts.forceSpeech
-      ? undefined
-      : resolveHints(opts.deps).thoughtHintLine,
-    openTag: opts.forceSpeech ? FORCED_SPEECH_OPEN_TAG : BRANCH_OPEN_TAG,
-    ...(opts.recap !== undefined ? { recap: opts.recap } : {}),
-    recapBoundaryIndex: opts.recapBoundaryIndex ?? 0,
-    lang: opts.deps.lang ?? "zh",
-  };
-  return serializeActorPrompt(prompt);
 }
 
 /**

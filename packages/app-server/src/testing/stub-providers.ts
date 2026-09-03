@@ -11,6 +11,38 @@ import type {
   ProviderEvent,
 } from "@herta/core";
 
+/**
+ * The thought the completion stubs answer every `（我 想）` prompt with.
+ * Every actor turn thinks before it speaks (the single-phase path went on
+ * 2026-09-03), so a turn commits `{ kind: "herta", surface: "thought", text:
+ * STUB_THOUGHT }` right before each scripted speech. Exported so record-shape
+ * assertions can name the block instead of counting around it.
+ */
+export const STUB_THOUGHT = "想想看。";
+
+/** True for the actor's thought-phase prompt (it ends with the forced open
+ *  tag and the newline the serializer appends to a complete tag). */
+export function isThoughtPrompt(request: CompletionRequest): boolean {
+  return request.prompt.endsWith("（我 想）\n");
+}
+
+/** The canned thought stream: STUB_THOUGHT closed by its stop sequence. */
+export async function* stubThoughtStream(): AsyncGenerator<CompletionEvent> {
+  yield { type: "text-delta", text: `${STUB_THOUGHT}（/我 想）` };
+  yield { type: "finish", reason: "stop" };
+}
+
+export interface StubCompletionOptions {
+  /**
+   * When true, thought prompts consume scripts like any other call — for a
+   * test that wants to script the thought phase (an empty thought, a thought
+   * that rolls into `（我 说）`, …). Defaults to false: thought prompts are
+   * answered with `stubThoughtStream` WITHOUT consuming a script, so a
+   * script list reads as the turn's speeches.
+   */
+  readonly scriptThoughts?: boolean;
+}
+
 export interface CompletionScript {
   /** Deltas to yield in order, as `{ type: "text-delta" }` events. */
   readonly deltas: readonly string[];
@@ -21,17 +53,22 @@ export interface CompletionScript {
 /**
  * A scripted CompletionProviderAdapter that yields predefined delta
  * sequences in order. Throws with a descriptive message when more calls
- * are made than scripts were provided.
+ * are made than scripts were provided. Thought prompts are auto-answered
+ * unless `scriptThoughts` is set (see StubCompletionOptions).
  */
 export function stubCompletionProvider(
   scripts: readonly CompletionScript[],
+  opts: StubCompletionOptions = {},
 ): CompletionProviderAdapter {
   let i = 0;
   return {
     streamCompletion(
-      _request: CompletionRequest,
+      request: CompletionRequest,
       _signal: AbortSignal,
     ): AsyncIterable<CompletionEvent> {
+      if (opts.scriptThoughts !== true && isThoughtPrompt(request)) {
+        return stubThoughtStream();
+      }
       const script = scripts[i];
       i += 1;
       if (script === undefined) {
@@ -66,20 +103,26 @@ export interface SlowCompletionScript {
  * and throws an `AbortError` if the signal has been aborted. This allows tests
  * to interrupt a turn mid-stream.
  *
- * Loops the script indefinitely (repeating the last script) so a slow turn
- * stays in-flight until interrupted.
+ * Serves the same script on every call, so a slow turn stays in-flight until
+ * interrupted. Thought prompts are answered instantly with the canned thought
+ * unless `scriptThoughts` is set — the paced speech phase is what keeps the
+ * turn open.
  */
 export function slowStubCompletionProvider(
   script: SlowCompletionScript,
+  opts: StubCompletionOptions = {},
 ): CompletionProviderAdapter {
   const delayMs = script.delayMs ?? 20;
   const deltas = script.deltas;
   const stopReason = script.stopReason ?? "stop";
   return {
     streamCompletion(
-      _request: CompletionRequest,
+      request: CompletionRequest,
       signal: AbortSignal,
     ): AsyncIterable<CompletionEvent> {
+      if (opts.scriptThoughts !== true && isThoughtPrompt(request)) {
+        return stubThoughtStream();
+      }
       return (async function* () {
         for (const delta of deltas) {
           // Abort-aware delay.

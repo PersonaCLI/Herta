@@ -23,7 +23,11 @@ import type {
 import { readSessionFile, V2RecordPersister } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { SessionImpl } from "./session.js";
-import { stubChatProvider } from "./testing/stub-providers.js";
+import {
+  isThoughtPrompt,
+  stubChatProvider,
+  stubThoughtStream,
+} from "./testing/stub-providers.js";
 import type { AppServerConfig, RecordEvent } from "./types.js";
 
 function mkConfig(): AppServerConfig {
@@ -43,14 +47,15 @@ function mkConfig(): AppServerConfig {
   };
 }
 
-/** Actor stub: call #1 streams one delta then throws a PLAIN error (mid-turn
- *  provider failure — NOT an AbortError, so the driver keeps its pre-turn
- *  record); later calls stream a well-formed reply. */
+/** Actor stub: call #1 (turn 1's thought phase) streams one delta then throws
+ *  a PLAIN error (mid-turn provider failure — NOT an AbortError, so the driver
+ *  keeps its pre-turn record); later calls answer the thought prompt with the
+ *  canned thought and stream a well-formed speech. */
 function failingThenOkActor(): CompletionProviderAdapter {
   let call = 0;
   return {
     streamCompletion(
-      _request: CompletionRequest,
+      request: CompletionRequest,
       _signal: AbortSignal,
     ): AsyncIterable<CompletionEvent> {
       call += 1;
@@ -60,6 +65,7 @@ function failingThenOkActor(): CompletionProviderAdapter {
           throw new Error("provider exploded mid-turn");
         })();
       }
+      if (isThoughtPrompt(request)) return stubThoughtStream();
       return (async function* () {
         yield {
           type: "text-delta",
@@ -75,7 +81,7 @@ function failingThenOkActor(): CompletionProviderAdapter {
   };
 }
 
-/** Scripted-posture deps — see interrupt.test.ts (single-phase actor, no
+/** Scripted-posture deps — see interrupt.test.ts (no meta-think preamble, no
  *  supervisor, no opening seed). */
 function scriptedPostureDeps(): {
   metaThinkOverride: import("@herta/herta").MetaThinkCorpus;

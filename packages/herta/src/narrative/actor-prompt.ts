@@ -28,8 +28,8 @@ export interface StaticHertaPrefix {
  * (narrative-completion path). `serializeActorPrompt` produces the
  * flat string DeepSeek receives.
  *
- * One instance is built per LLM call (phase-1 single-phase, phase-2
- * think, phase-2 speech, in-turn beat, speech retry). The doc is
+ * One instance is built per LLM call (phase-2 think, phase-2 speech,
+ * in-turn beat, speech retry). The doc is
  * effectively immutable from the caller's perspective — assembled,
  * serialized, sent, discarded.
  *
@@ -51,13 +51,15 @@ export interface ActorPrompt {
    *  specific text and index from the attachment. */
   readonly metaThinkSurface?: "thought" | "speech";
   /** Optional surface-specific format-enforcement hint inserted
-   *  immediately before the open tag (separated by `\n`). For
-   *  two-phase: one of `PHASE_TWO_THOUGHT_HINT`,
-   *  `PHASE_TWO_SPEECH_HINT`, `PHASE_TWO_SPEECH_RETRY_HINT`. For
-   *  single-phase: `THOUGHT_HINT_LINE`. Omit when no hint applies. */
+   *  immediately before the open tag (separated by `\n`): one of
+   *  `PHASE_TWO_THOUGHT_HINT`, `PHASE_TWO_SPEECH_HINT`,
+   *  `PHASE_TWO_SPEECH_RETRY_HINT`. Omit when no hint applies. */
   readonly formatHint?: string;
-  /** The open tag the model continues from. Examples: `（我 想）`,
-   *  `（我 说）`, `（我 ` (single-phase surface detection). */
+  /** The open tag the model continues from: `（我 想）` or `（我 说）`.
+   *  (The partial `（我 ` of the removed single-phase surface detection
+   *  is still serialized correctly — no trailing newline — should a
+   *  caller ever pass one, but nothing in the actor does since
+   *  2026-09-03.) */
   readonly openTag: string;
   /** Optional body seed appended immediately after the open tag with
    *  no separator (so the model sees the seed as the start of its
@@ -380,10 +382,10 @@ export function serializeActorPrompt(doc: ActorPrompt): string {
   //
   // Without the trailing newline the model often emits something
   // like `（我 想）：<body>` — adding a stray `:` separator the
-  // corpus never has (user-reported 2026-05-23). The single-phase
-  // BRANCH_OPEN_TAG `（我 ` is intentionally PARTIAL (the model
-  // completes the tag itself via autoregression to pick the
-  // surface), so no trailing newline there.
+  // corpus never has (user-reported 2026-05-23). A PARTIAL tag such as
+  // the former single-phase BRANCH_OPEN_TAG `（我 ` (the model completed
+  // it itself to pick the surface; that path was removed 2026-09-03)
+  // gets no trailing newline.
   //
   // `openTagSuffix` (if any) starts the body — it appears AFTER
   // the trailing newline, on the same line where the model's

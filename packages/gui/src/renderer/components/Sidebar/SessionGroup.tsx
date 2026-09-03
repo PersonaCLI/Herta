@@ -1,10 +1,10 @@
 import type { SessionMetadata } from "@herta/app-server";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
-import { sessionDisplayTitle } from "../../mocks/index.js";
 import type { SessionGroupLabel } from "./group-sessions.js";
 import { SessionItem } from "./SessionItem.js";
 import type { SearchHitView } from "./Sidebar.js";
+import { sessionDisplayTitle } from "./session-display-title.js";
 
 export interface SessionGroupProps {
   readonly label: SessionGroupLabel;
@@ -33,10 +33,10 @@ export function SessionGroup(props: SessionGroupProps): JSX.Element {
         {t(GROUP_KEY[props.label])}
       </div>
       {props.sessions.map((s) => {
-        // sessionDisplayTitle returns the real generated title, a mock-derived
-        // title, or the literal "Untitled" sentinel for a titleless real
-        // session. Localize ONLY that sentinel — a real generated title is
-        // never "Untitled" — so an untitled session reads 未命名 in zh mode.
+        // sessionDisplayTitle returns the real generated title or the literal
+        // "Untitled" sentinel for a titleless session. Localize ONLY that
+        // sentinel — a real generated title is never "Untitled" — so an
+        // untitled session reads 未命名 in zh mode.
         const display = sessionDisplayTitle(s);
         const hit = props.snippets?.get(s.sessionId);
         return (

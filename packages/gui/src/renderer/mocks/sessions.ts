@@ -1,8 +1,15 @@
 import type { SessionMetadata } from "@herta/app-server";
+import { deriveTitle } from "./derive-title.js";
+import { mockRecord } from "./record.js";
 
 /**
  * Mock session list. Matches the reference image's sidebar:
  * 2 Today entries, 3 Yesterday entries, 3 Previous 7 Days entries.
+ *
+ * "today-1" carries its title as ordinary metadata, derived from the mock
+ * record the way the Slice 3 sidebar used to derive it at display time
+ * (2026-09-03: the display rule moved to the Sidebar and stopped
+ * special-casing this id, so the mock supplies what the sidecar would).
  */
 export const mockSessionList: SessionMetadata[] = [
   // Today
@@ -11,6 +18,7 @@ export const mockSessionList: SessionMetadata[] = [
     workspaceRoot: "/repo",
     startedAt: "2026-05-28T09:00:00Z",
     lastActivityAt: "2026-05-28T10:25:00Z",
+    title: deriveTitle(mockRecord),
   },
   {
     sessionId: "today-2",

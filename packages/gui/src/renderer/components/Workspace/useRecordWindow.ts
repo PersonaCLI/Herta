@@ -62,9 +62,23 @@ export function useRecordWindow(opts: {
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  // The engine's predicates, intents and scroll anchor are stable (useCallback
+  // with fixed deps / a ref): listing the ones each effect uses satisfies the
+  // exhaustive-deps rule without adding a trigger anywhere.
+  const {
+    scrollRef,
+    releasePin,
+    isPinned,
+    isMorphInFlight,
+    isGliding,
+    isJumping,
+    hasJumpPoll,
+    hasHeadroom,
+    armHeadroomRebase,
+    releaseHeadroom,
+  } = scroll;
   const loadEarlier = useCallback((): void => {
-    const el = scroll.scrollRef.current;
+    const el = scrollRef.current;
     prependAnchorRef.current =
       el === null
         ? null
@@ -75,19 +89,18 @@ export function useRecordWindow(opts: {
           };
     // Reading older history: drop the pin so the append-follow effect can't
     // yank the view to the bottom when the prepend lands.
-    scroll.releasePin();
+    releasePin();
     void sessionStore.loadOlderBlocks();
-  }, [sessionStore]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  }, [sessionStore, scrollRef, releasePin]);
   useLayoutEffect(() => {
     const anchor = prependAnchorRef.current;
     if (anchor === null) return;
     prependAnchorRef.current = null;
     if (recordStart >= anchor.expectFrom) return; // not this click's prepend
-    const el = scroll.scrollRef.current;
+    const el = scrollRef.current;
     if (el === null) return;
     el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
-  }, [recordStart]);
+  }, [recordStart, scrollRef]);
 
   // Live-window trim (audit T3.5): live appends grow the windowed record
   // without bound — the 200-block tail bound (RECORD_TAIL_BLOCKS) applies
@@ -101,9 +114,8 @@ export function useRecordWindow(opts: {
   // geometry-guarded sibling below owns that case) or while a morph clone
   // is measuring row slots (a shrinking flow would move its landing slot —
   // the same bug class the morphs just escaped).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
   useEffect(() => {
-    if (!scroll.isPinned() || scroll.isMorphInFlight()) return;
+    if (!isPinned() || isMorphInFlight()) return;
     if (record.length > 260) {
       // An armed reservation is a content-coordinate total; trimming rows
       // above it without sliding it down converts their height into spacer,
@@ -111,10 +123,10 @@ export function useRecordWindow(opts: {
       // (review 2026-07-31). The height isn't knowable until the shrunken
       // flow lays out, so flag the next sync to rebase — the spacer keeps
       // its current size across the trim.
-      scroll.armHeadroomRebase();
+      armHeadroomRebase();
       sessionStore.trimRecordWindow(200);
     }
-  }, [record, sessionStore]);
+  }, [record, sessionStore, isPinned, isMorphInFlight, armHeadroomRebase]);
 
   // Unpinned live-window trim (2026-08-25): the T3.5 trim above stands down
   // while the reader is scrolled up, which left a marathon run under an
@@ -142,26 +154,25 @@ export function useRecordWindow(opts: {
   // to the live end can never be trimmed (the window is one contiguous
   // tail), so growth below the fold remains — this bounds everything above.
   const prevUnpinnedEndRef = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
   useEffect(() => {
     const end = recordStart + record.length;
     const prevEnd = prevUnpinnedEndRef.current;
     prevUnpinnedEndRef.current = end;
     if (end <= prevEnd) return; // reset/rewind/trim/prepend — not append growth
-    if (scroll.isPinned()) return; // the pinned trim above owns this
+    if (isPinned()) return; // the pinned trim above owns this
     if (record.length <= UNPINNED_TRIM_AT) return;
     if (
-      scroll.isMorphInFlight() ||
-      scroll.isGliding() ||
-      scroll.isJumping() ||
-      scroll.hasJumpPoll() ||
-      scroll.hasHeadroom() ||
+      isMorphInFlight() ||
+      isGliding() ||
+      isJumping() ||
+      hasJumpPoll() ||
+      hasHeadroom() ||
       prependAnchorRef.current !== null ||
       trimAnchorRef.current !== null
     ) {
       return;
     }
-    const el = scroll.scrollRef.current;
+    const el = scrollRef.current;
     if (el === null) return;
     // Cheap pre-guard: with less than one viewport of content above the
     // fold, no margin-respecting cut exists — skip the DOM scan entirely.
@@ -201,22 +212,32 @@ export function useRecordWindow(opts: {
       scrollTop: el.scrollTop,
     };
     sessionStore.trimRecordWindow(record.length - trimCount);
-  }, [record, recordStart, sessionStore]);
+  }, [
+    record,
+    recordStart,
+    sessionStore,
+    scrollRef,
+    isPinned,
+    isMorphInFlight,
+    isGliding,
+    isJumping,
+    hasJumpPoll,
+    hasHeadroom,
+  ]);
   // Anchor consumption — the prepend consumer's mirror: the trimmed rows
   // left from ABOVE the scroll position, so scrollTop slides down by the
   // removed height in the same pre-paint pass (overflow-anchor is disabled
   // on the pane; nothing else compensates). Keyed on recordStart — a trim
   // strictly raises it, so the guard is the increase this trim caused.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
   useLayoutEffect(() => {
     const anchor = trimAnchorRef.current;
     if (anchor === null) return;
     trimAnchorRef.current = null;
     if (recordStart <= anchor.expectFrom) return; // not this trim's commit
-    const el = scroll.scrollRef.current;
+    const el = scrollRef.current;
     if (el === null) return;
     el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
-  }, [recordStart]);
+  }, [recordStart, scrollRef]);
 
   // A tail-shrink of the record is a rewind: the reservation belonged to the
   // withdrawn turn, so it leaves with it (review 2026-07-31 — "the headroom
@@ -227,7 +248,6 @@ export function useRecordWindow(opts: {
   // also pass through here when the next session is shorter — harmless, the
   // entrance effect below releases the extent regardless.
   const prevRecordEndRef = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
   useLayoutEffect(() => {
     const end = recordStart + record.length;
     const prev = prevRecordEndRef.current;
@@ -240,9 +260,9 @@ export function useRecordWindow(opts: {
       // the same kind of geometry — same discipline.
       prependAnchorRef.current = null;
       trimAnchorRef.current = null;
-      scroll.releaseHeadroom();
+      releaseHeadroom();
     }
-  }, [record, recordStart]);
+  }, [record, recordStart, releaseHeadroom]);
 
   // Session-scoped transients the entrance effect predates (review
   // 2026-07-31, Class A): `jumpingRef` is cleared only by a scroll that

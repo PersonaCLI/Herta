@@ -4,11 +4,11 @@ import { useFlipList } from "../../hooks/useFlipList.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useSessionList } from "../../hooks/useSessionList.js";
 import { useT } from "../../i18n/LocaleProvider.js";
-import { sessionDisplayTitle } from "../../mocks/index.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
 import { groupSessions } from "./group-sessions.js";
 import { SettingsIcon } from "./icons.js";
 import { SessionGroup } from "./SessionGroup.js";
+import { sessionDisplayTitle } from "./session-display-title.js";
 
 /** Keystroke → transcript-scan debounce. Title matches stay instant; content
  *  hits merge in when the scan returns. */

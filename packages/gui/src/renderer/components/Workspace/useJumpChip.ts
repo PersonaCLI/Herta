@@ -29,14 +29,17 @@ export function useJumpChip(opts: {
     sid: null,
     end: 0,
   });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  // The engine's intents are stable callbacks (useCallback with fixed deps),
+  // so listing the one this effect calls satisfies the exhaustive-deps rule
+  // without ever re-running it.
+  const { noteNewBelow } = scroll;
   useEffect(() => {
     const end = recordStart + record.length;
     const prev = lastEndRef.current;
     lastEndRef.current = { sid: sessionId, end };
     if (prev.sid !== sessionId) return; // new session — baseline only
-    if (end > prev.end) scroll.noteNewBelow();
-  }, [record, recordStart, sessionId]);
+    if (end > prev.end) noteNewBelow();
+  }, [record, recordStart, sessionId, noteNewBelow]);
 
   // Presence-managed chip: the entrance transition arms one frame after
   // mount, and hiding (click, manual scroll-back, re-pin) plays the reverse

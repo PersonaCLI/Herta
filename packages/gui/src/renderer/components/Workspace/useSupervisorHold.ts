@@ -55,12 +55,14 @@ export function useSupervisorHold(opts: {
   // The reveal's growth signal: stamps the stall clock, lights the jump chip
   // for an unpinned reader, then follows the pinned autoscroll (the original
   // onGrow behavior).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  // Both engine intents are stable callbacks, so the handler keeps its
+  // identity for the life of the session.
+  const { noteNewBelow, scrollToEndIfPinned } = scroll;
   const onRevealGrow = useCallback((): void => {
     lastGrowRef.current = Date.now();
-    scroll.noteNewBelow();
-    scroll.scrollToEndIfPinned();
-  }, []);
+    noteNewBelow();
+    scrollToEndIfPinned();
+  }, [noteNewBelow, scrollToEndIfPinned]);
 
   return { showSupervisorHold, onRevealGrow };
 }

@@ -23,7 +23,10 @@ export function useTopicJump(opts: {
   // loaded window — page history in first (bounded; bails if a fetch makes
   // no progress). Unpins up front so the prepends' append-follow effect can't
   // yank the view to the bottom mid-jump; the jump chip is the way back down.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  // The engine's intents and its scroll anchor are stable (useCallback with
+  // fixed deps / a ref), so listing them keeps `jumpToTopic` as stable as
+  // before while satisfying the exhaustive-deps rule.
+  const { releasePin, scrollRef, scheduleJumpPoll } = scroll;
   const jumpToTopic = useCallback(
     (anchorIndex: number): void => {
       void (async () => {
@@ -35,7 +38,7 @@ export function useTopicJump(opts: {
         // just pinned it. Captured identity + re-check after every await —
         // the pattern handleRewind already uses.
         const jumpSessionId = sessionStore.getSnapshot().sessionId;
-        scroll.releasePin();
+        releasePin();
         let guard = 0;
         while (
           sessionStore.getSnapshot().recordStart > anchorIndex &&
@@ -61,7 +64,7 @@ export function useTopicJump(opts: {
           // still-pending tick (M4 — it was previously stored nowhere, so
           // nothing could stop it).
           if (sessionStore.getSnapshot().sessionId !== jumpSessionId) return;
-          const el = scroll.scrollRef.current?.querySelector(
+          const el = scrollRef.current?.querySelector(
             `[data-abs-index="${anchorIndex}"]`,
           );
           if (el !== null && el !== undefined) {
@@ -72,13 +75,13 @@ export function useTopicJump(opts: {
             return;
           }
           if (attempt < 10) {
-            scroll.scheduleJumpPoll(() => tryScroll(attempt + 1), 50);
+            scheduleJumpPoll(() => tryScroll(attempt + 1), 50);
           }
         };
         tryScroll(0);
       })();
     },
-    [sessionStore, reduced],
+    [sessionStore, reduced, releasePin, scrollRef, scheduleJumpPoll],
   );
 
   // Search-result landing (2026-07-27): a sidebar card that matched by CONTENT

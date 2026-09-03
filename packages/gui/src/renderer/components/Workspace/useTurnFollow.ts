@@ -84,9 +84,10 @@ export function useTurnFollow(opts: {
   // The body — the reading-history test, the re-pin, the headroom
   // reservation, the park-or-glide — is the engine's `followSend`; `reduced`
   // stays a dep so the effect re-runs exactly when it always did.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` / `isFlightArmed` are stable handles passed through this hook; `reduced` is read inside `followSend` and keeps its place as a trigger
+  const { followSend } = scroll;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reduced` is read inside `followSend`, not here, and keeps its place as a trigger so the effect re-runs exactly when it always did
   useEffect(() => {
     if (pendingUser === null) return;
-    scroll.followSend(isFlightArmed());
-  }, [pendingUser, reduced]);
+    followSend(isFlightArmed());
+  }, [pendingUser, reduced, followSend, isFlightArmed]);
 }

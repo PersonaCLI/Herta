@@ -34,7 +34,11 @@ export function useSessionEntrance(opts: {
   // no `style` prop, and self-clear once the cascade finishes).
   const prevSessionId = useRef<string | null>(null);
   const entranceTimer = useRef<number | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `scroll` is the engine handle (useConversationScroll's result, stable per biome.json) passed through this hook, not a varying input
+  // The engine's intents and its scroll anchor are stable (useCallback with
+  // fixed deps / a ref): listing them satisfies the exhaustive-deps rule
+  // without adding a trigger.
+  const { rePin, dropTurnTravel, cancelJumpPoll, scrollToBottom, scrollRef } =
+    scroll;
   useLayoutEffect(() => {
     const prev = prevSessionId.current;
     prevSessionId.current = sessionId;
@@ -48,15 +52,15 @@ export function useSessionEntrance(opts: {
       // (user bug 2026-07-24). No scroll or entrance cascade: there is no
       // session to land in.
       if (sessionId === null && prev !== null) {
-        scroll.rePin();
-        scroll.dropTurnTravel();
-        scroll.cancelJumpPoll();
+        rePin();
+        dropTurnTravel();
+        cancelJumpPoll();
       }
       return;
     }
     // Any session change cancels a topic-jump poll left over from the one we
     // are leaving (audit 2026-07-24, M4).
-    scroll.cancelJumpPoll();
+    cancelJumpPoll();
     // Entering a session normally lands pinned at the bottom (even under
     // reduced motion, where the entrance cascade below is skipped) — UNLESS
     // it was opened from a search hit, which asked for a specific turn
@@ -78,13 +82,13 @@ export function useSessionEntrance(opts: {
     // the one we are entering — the flight's clone unmounts on the switch, and
     // its settle effect would otherwise travel this session's scroller. A
     // climb already RUNNING is worse: flags alone don't stop its rAF loop.
-    scroll.dropTurnTravel();
+    dropTurnTravel();
     if (!jumpRequested) {
-      scroll.rePin();
-      scroll.scrollToBottom();
+      rePin();
+      scrollToBottom();
     }
     if (reduced) return;
-    const container = scroll.scrollRef.current;
+    const container = scrollRef.current;
     if (container === null) return;
     const rowEls = Array.from(
       container.querySelectorAll<HTMLElement>(
@@ -140,5 +144,14 @@ export function useSessionEntrance(opts: {
     };
     // sessionStore is provider-stable; it is a dep only because the
     // stand-down check reads the pending jump straight off the snapshot.
-  }, [sessionId, reduced, sessionStore]);
+  }, [
+    sessionId,
+    reduced,
+    sessionStore,
+    rePin,
+    dropTurnTravel,
+    cancelJumpPoll,
+    scrollToBottom,
+    scrollRef,
+  ]);
 }

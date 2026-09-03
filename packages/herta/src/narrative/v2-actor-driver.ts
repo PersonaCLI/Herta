@@ -324,17 +324,21 @@ export class V2ActorDriver {
     // user SAID. Both would be unmoved by a picture appended after the fact.
     const prelimRecord = [...this.record, { kind: "user" as const, text }];
 
-    // Long-session compaction runs FIRST — before intent routing — so the recap
-    // hint (recap.compaction start/end) fires at turn-start and the GUI shows
-    // the recap row immediately, rather than flashing the galaxy-travel row
-    // first while the router LLM call below runs (~1s; user 2026-06-20).
-    // classifyIntent reads the raw recent record, so compacting first does not
-    // change its input. Computed once here and threaded into the turn as
+    // The two pre-speech calls run CONCURRENTLY (2026-09-03). The recap
+    // summarizes history BEFORE this turn; the router classifies what the
+    // user SAID from the raw recent record — neither reads the other's
+    // output, and on a compaction turn they used to run back to back, the
+    // summarizer's seconds plus the router's on top. The recap is STARTED
+    // first: its synchronous prefix (cache read, the prompt estimate, the
+    // `recap.compaction` start hint) runs before the router's request is even
+    // issued, so the GUI still shows the recap row at turn start on a
+    // compaction turn rather than the galaxy-travel row first (user
+    // 2026-06-20). Computed once here and threaded into the turn as
     // `precomputedRecap`; the forceCompact one-shot is consumed up here too so
     // it clears even if the turn later throws.
     const forceCompact = this.forceCompactPending;
     this.forceCompactPending = false;
-    const precomputedRecap: PreparedRecap = await prepareTurnRecap(
+    const recapPending = prepareTurnRecap(
       prelimRecord,
       this.deps.staticPrefix,
       this.deps.recap,
@@ -347,23 +351,30 @@ export class V2ActorDriver {
           phase,
         }),
     );
+    // Router failure is non-fatal — the prior state is kept. Settled to
+    // null here (not awaited under a try) so a failing router can neither
+    // reject unhandled while the recap is still running nor mask it. The
+    // driver intentionally does not log the failure — main.ts can decide
+    // whether to surface router failures.
+    const routerPending = classifyIntent({
+      recentRecord: lastNSpeechTurns(prelimRecord, 5),
+      currentState: this.currentIntentState,
+      provider: this.deps.routerProvider,
+      lang: this.deps.lang ?? "zh",
+      signal,
+    }).then(
+      (result) => result,
+      () => null,
+    );
+    const precomputedRecap: PreparedRecap = await recapPending;
+    const routed = await routerPending;
 
     let routerPrompt: string | undefined;
     let routerRawOutput: string | undefined;
-    try {
-      const result = await classifyIntent({
-        recentRecord: lastNSpeechTurns(prelimRecord, 5),
-        currentState: this.currentIntentState,
-        provider: this.deps.routerProvider,
-        lang: this.deps.lang ?? "zh",
-        signal,
-      });
-      this.currentIntentState = result.state;
-      routerPrompt = result.prompt;
-      routerRawOutput = result.rawOutput;
-    } catch {
-      // Keep prior state. The driver intentionally does not log here —
-      // main.ts can decide whether to surface router failures.
+    if (routed !== null) {
+      this.currentIntentState = routed.state;
+      routerPrompt = routed.prompt;
+      routerRawOutput = routed.rawOutput;
     }
     // Dump the full router transaction (prompt + raw output) for
     // diagnostics. Only fires when the router call returned without

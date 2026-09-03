@@ -1975,6 +1975,115 @@ describe("V2ActorDriver — recap dependency", () => {
     expect(seen[0]).toBe(await recapSpy.mock.results[0]?.value);
   });
 
+  it("runs the recap and the router CONCURRENTLY — the router is called while the recap is still pending (2026-09-03)", async () => {
+    // The recap resolves only once the router has been called. Under the
+    // old back-to-back order the router never ran before the recap settled,
+    // so this turn would hang; the race below turns that hang into a
+    // failure instead of a timeout.
+    let routerCalled: () => void = () => {};
+    const routerCalledPromise = new Promise<void>((resolve) => {
+      routerCalled = resolve;
+    });
+    const order: string[] = [];
+    vi.spyOn(recapRuntime, "prepareTurnRecap").mockImplementation(async () => {
+      order.push("recap:start");
+      const won = await Promise.race([
+        routerCalledPromise.then(() => "router" as const),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), 1000),
+        ),
+      ]);
+      order.push(`recap:end(${won})`);
+      return { recapBoundaryIndex: 0 };
+    });
+    vi.spyOn(actorTurn, "runActorCompletionTurn").mockImplementation(
+      async (state) => ({ record: state.record }),
+    );
+    const router: ProviderAdapter = {
+      streamChat(): AsyncIterable<ProviderEvent> {
+        order.push("router:called");
+        routerCalled();
+        return streamOf<ProviderEvent>([
+          { type: "text-delta", text: "教学版" },
+          { type: "finish", reason: "stop" },
+        ]);
+      },
+    };
+    const noopRuntime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => ({
+        taskId: brief.taskId,
+        status: "completed" as const,
+        evidence: [],
+        changedFiles: [],
+        tests: [],
+        permissions: [],
+        residualRisks: [],
+        nextActions: [],
+      }),
+    } as unknown as CodingAgentRuntime;
+    const driver = new V2ActorDriver({
+      provider: mkProvider([[{ type: "finish", reason: "stop" }]]),
+      model: "test-model",
+      staticPrefix: { bio: "[prefix]", env: "", fewShots: [] },
+      bus: new InMemoryEventBus<AgentEvent>(),
+      runtimeFactory: () => noopRuntime,
+      routerProvider: router,
+      metaThinkCorpus: mkEmptyCorpusForHelper(),
+      recap: mkRecapRuntime(),
+    });
+    await driver.runTurn("一", new AbortController().signal);
+    // The recap was started first (its hint lands first on a compaction
+    // turn), the router ran while it was pending, and the router's verdict
+    // still applied.
+    expect(order).toEqual([
+      "recap:start",
+      "router:called",
+      "recap:end(router)",
+    ]);
+    expect(driver.getCurrentIntentState()).toBe("教学版");
+  });
+
+  it("a failing router still keeps the prior state while the recap runs (non-fatal, no unhandled rejection)", async () => {
+    vi.spyOn(recapRuntime, "prepareTurnRecap").mockImplementation(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      return { recapBoundaryIndex: 0 };
+    });
+    vi.spyOn(actorTurn, "runActorCompletionTurn").mockImplementation(
+      async (state) => ({ record: state.record }),
+    );
+    const router: ProviderAdapter = {
+      streamChat(): AsyncIterable<ProviderEvent> {
+        throw new Error("router unreachable");
+      },
+    };
+    const noopRuntime: CodingAgentRuntime = {
+      runBrief: async (brief: HertaToAgentBrief) => ({
+        taskId: brief.taskId,
+        status: "completed" as const,
+        evidence: [],
+        changedFiles: [],
+        tests: [],
+        permissions: [],
+        residualRisks: [],
+        nextActions: [],
+      }),
+    } as unknown as CodingAgentRuntime;
+    const driver = new V2ActorDriver({
+      provider: mkProvider([[{ type: "finish", reason: "stop" }]]),
+      model: "test-model",
+      staticPrefix: { bio: "[prefix]", env: "", fewShots: [] },
+      bus: new InMemoryEventBus<AgentEvent>(),
+      runtimeFactory: () => noopRuntime,
+      routerProvider: router,
+      metaThinkCorpus: mkEmptyCorpusForHelper(),
+      recap: mkRecapRuntime(),
+    });
+    await expect(
+      driver.runTurn("一", new AbortController().signal),
+    ).resolves.toBeDefined();
+    expect(driver.getCurrentIntentState()).toBe("默认");
+  });
+
   it("rewind invalidates the recap sidecar only when the cut lands at/below the cached boundary", () => {
     const invalidate = vi.fn();
     const mk = (boundaryIndex: number): RecapRuntime => ({

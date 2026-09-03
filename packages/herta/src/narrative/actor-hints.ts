@@ -11,7 +11,6 @@ import {
   PHASE_TWO_THOUGHT_HINT,
   PHASE_TWO_THOUGHT_RETRY_HINTS,
   PHASE_TWO_THOUGHT_SLOT_RETRY_HINTS,
-  THOUGHT_HINT_LINE,
 } from "./thought-hint.js";
 
 /**
@@ -25,7 +24,6 @@ import {
  * `{{reason}}` placeholder (substituted by `buildSupervisorVetoHint`).
  */
 export interface ActorHints {
-  readonly thoughtHintLine: string;
   readonly phase2Thought: string;
   readonly phase2Speech: string;
   readonly speechRetry: readonly [string, string, string];
@@ -82,7 +80,6 @@ const SUPERVISOR_RESPEAK_TEXT: Record<PromptLang, string> = {
  *  change) falls back to its value here, so the format contract degrades
  *  to a working default rather than breaking. */
 export const DEFAULT_ACTOR_HINTS: ActorHints = {
-  thoughtHintLine: THOUGHT_HINT_LINE,
   phase2Thought: PHASE_TWO_THOUGHT_HINT,
   phase2Speech: PHASE_TWO_SPEECH_HINT,
   speechRetry: PHASE_TWO_SPEECH_RETRY_HINTS,
@@ -108,7 +105,6 @@ export function defaultActorHintsFor(lang: PromptLang = "zh"): ActorHints {
   if (lang === "zh") return DEFAULT_ACTOR_HINTS;
   const t = actorHintTexts(lang);
   return {
-    thoughtHintLine: t.thoughtHintLine,
     phase2Thought: t.phase2Thought,
     phase2Speech: t.phase2Speech,
     speechRetry: t.speechRetry,
@@ -172,8 +168,6 @@ export function loadActorHints(lang: PromptLang = "zh"): ActorHints {
   const splice = (raw: string | null, def: string): string =>
     (raw ?? def).split("{{no_banzhuan}}").join(clause);
   return {
-    thoughtHintLine:
-      asset(hints, "thought_hint_line") ?? defaults.thoughtHintLine,
     phase2Thought: asset(hints, "phase2_thought") ?? defaults.phase2Thought,
     phase2Speech: asset(hints, "phase2_speech") ?? defaults.phase2Speech,
     speechRetry: [

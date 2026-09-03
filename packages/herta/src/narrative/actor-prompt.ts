@@ -383,9 +383,9 @@ export function serializeActorPrompt(doc: ActorPrompt): string {
   // Without the trailing newline the model often emits something
   // like `（我 想）：<body>` — adding a stray `:` separator the
   // corpus never has (user-reported 2026-05-23). A PARTIAL tag such as
-  // the former single-phase BRANCH_OPEN_TAG `（我 ` (the model completed
-  // it itself to pick the surface; that path was removed 2026-09-03)
-  // gets no trailing newline.
+  // the former single-phase `（我 ` (the model completed it itself to
+  // pick the surface; that path was removed 2026-09-03) gets no
+  // trailing newline.
   //
   // `openTagSuffix` (if any) starts the body — it appears AFTER
   // the trailing newline, on the same line where the model's

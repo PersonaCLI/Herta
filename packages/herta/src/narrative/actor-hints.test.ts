@@ -12,7 +12,6 @@ describe("loadActorHints (compiled assets, M-prompts-1)", () => {
   it("resolves every hint from the compiled corpus (non-empty, trimmed)", () => {
     const hints = loadActorHints();
     for (const value of [
-      hints.thoughtHintLine,
       hints.phase2Thought,
       hints.phase2Speech,
       ...hints.speechRetry,
@@ -106,7 +105,6 @@ describe("defaultActorHintsFor (slice 4)", () => {
   it('"en" mirrors actorHintTexts("en") plus an EN supervisor-veto template', () => {
     const en = defaultActorHintsFor("en");
     const t = actorHintTexts("en");
-    expect(en.thoughtHintLine).toBe(t.thoughtHintLine);
     expect(en.phase2Thought).toBe(t.phase2Thought);
     expect(en.phase2Speech).toBe(t.phase2Speech);
     expect(en.speechRetry).toEqual(t.speechRetry);

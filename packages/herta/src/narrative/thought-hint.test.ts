@@ -6,7 +6,6 @@ import {
   BEAT_HINT_TOOL_FAIL,
   BEAT_HINT_VERIFICATION_FINISHED,
   BEAT_NO_BANZHUAN_CLAUSE,
-  BRANCH_OPEN_TAG,
   buildSupervisorVetoHint,
   FORCED_SPEECH_OPEN_TAG,
   PHASE_TWO_SPEECH_HINT,
@@ -17,15 +16,9 @@ import {
   PHASE_TWO_THOUGHT_RETRY_HINTS,
   STOP_SPEECH_CLOSE,
   STOP_THOUGHT_CLOSE,
-  THOUGHT_HINT_LINE,
 } from "./thought-hint.js";
 
 describe("thought-hint constants", () => {
-  it("BRANCH_OPEN_TAG ends with a trailing space so the model autoregressively picks 想 or 说", () => {
-    expect(BRANCH_OPEN_TAG).toBe("（我 ");
-    expect(BRANCH_OPEN_TAG.endsWith(" ")).toBe(true);
-  });
-
   it("FORCED_SPEECH_OPEN_TAG forces speech (used by soft guard and beats)", () => {
     expect(FORCED_SPEECH_OPEN_TAG).toBe("（我 说）");
   });
@@ -36,14 +29,6 @@ describe("thought-hint constants", () => {
 
   it("STOP_THOUGHT_CLOSE matches the thought close tag", () => {
     expect(STOP_THOUGHT_CLOSE).toBe("（/我 想）");
-  });
-
-  it("THOUGHT_HINT_LINE is the per-call branch nudge from spec §3 C", () => {
-    expect(THOUGHT_HINT_LINE).toBe("〔接下来：（我 想）思考 或（我 说）说话〕");
-  });
-
-  it("THOUGHT_HINT_LINE does NOT contain @板砖 (regression — would leak into bridge cap)", () => {
-    expect(THOUGHT_HINT_LINE).not.toContain("@板砖");
   });
 });
 
@@ -288,7 +273,6 @@ describe("BEAT_HINT_* — N9 (2026-05-23): forbid @板砖 in beats", () => {
 describe("actorHintTexts (EN interaction slice 3b)", () => {
   it('defaults to "zh" and returns the exact exported consts (byte-identical)', () => {
     for (const texts of [actorHintTexts(), actorHintTexts("zh")]) {
-      expect(texts.thoughtHintLine).toBe(THOUGHT_HINT_LINE);
       expect(texts.phase2Thought).toBe(PHASE_TWO_THOUGHT_HINT);
       expect(texts.phase2Speech).toBe(PHASE_TWO_SPEECH_HINT);
       expect(texts.speechRetry).toEqual(PHASE_TWO_SPEECH_RETRY_HINTS);
@@ -303,13 +287,11 @@ describe("actorHintTexts (EN interaction slice 3b)", () => {
   it('lang:"en" hints are English prose that keep the CN structural tokens', () => {
     const en = actorHintTexts("en");
     // Distinctive EN sentinels per surface.
-    expect(en.thoughtHintLine).toContain("to think");
     expect(en.phase2Thought).toContain("What follows is my thinking");
     expect(en.phase2Speech).toContain("What follows is what I say out loud");
     // Every 〔…〕 hint keeps the bracket form and the CN narrative
     // fences — the EN actor reads the same grammar (D2/D7/D8).
     const all = [
-      en.thoughtHintLine,
       en.phase2Thought,
       en.phase2Speech,
       ...en.speechRetry,

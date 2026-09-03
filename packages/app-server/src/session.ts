@@ -20,18 +20,14 @@ import {
   type LastTurnEnd,
   type ProjectCommandRuleStore,
   type ProviderAdapter,
-  readSessionTitle,
-  readSessionTopics,
   ruleDisplay,
   type SessionTopic,
   type SystemBlock,
   type TerminalRecord,
   type TerminalRecordBlock,
   type V2RecordPersister,
-  writeSessionTitle,
 } from "@herta/core";
 import {
-  generateSessionTitle,
   type MetaThinkCorpus,
   type OpeningChoice,
   type PromptLang,
@@ -39,11 +35,7 @@ import {
   spanMatchedBaseMs,
   V2ActorDriver,
 } from "@herta/herta";
-import {
-  type ApiKey,
-  deepseekProvider,
-  deepseekVisionCaptioner,
-} from "@herta/providers";
+import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
 import { digestSidecarFor } from "@herta/tools";
 import {
   attachmentDirFor,
@@ -60,11 +52,10 @@ import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import { recordTail } from "./record-window.js";
 import { SessionEventProjector } from "./session-event-projector.js";
 import {
-  appendTopic,
-  pruneTopics,
-  synthesizeInitialTopic,
-  topicAnchorText,
-} from "./session-topics.js";
+  createTitleProvider,
+  loadSessionTitleState,
+  SessionTitler,
+} from "./session-titler.js";
 import {
   createActorStack,
   createBackendProvider,
@@ -123,17 +114,11 @@ export function spanEditedFiles(blocks: TerminalRecord): boolean {
   );
 }
 
-// ── Dynamic title tuning ─────────────────────────────────────────────────────
-
-/** Re-title a long session every this many user turns since the last title. */
-const RETITLE_EVERY_N_TURNS = 6;
-/** How many trailing user→Herta exchanges feed a (re)title. At the first turn
- *  this IS the first exchange, so the initial title is unchanged. */
-const TITLE_WINDOW_EXCHANGES = 2;
-/** Cap on consecutive per-turn attempts to produce an initial title (while the
- *  session is still untitled). Bounds the retry on a failing/empty-output title
- *  model to a few turns; the periodic trigger still retries later. */
-const MAX_INITIAL_TITLE_ATTEMPTS = 3;
+// The title machinery — tuning constants, the recent-window input, the
+// provider, the sidecar load and the titler itself — lives in
+// session-titler.ts (2026-09-03). `buildRecentTitleInput` is re-exported
+// for its tests.
+export { buildRecentTitleInput } from "./session-titler.js";
 
 /**
  * The `turn.failed` error payload. Carries the provider's HTTP status when
@@ -164,40 +149,6 @@ export function turnErrorPayload(err: unknown): {
     };
   }
   return { code: "unknown", message: String(err) };
-}
-
-/**
- * Build the title-model input from the RECENT window — the last
- * `windowExchanges` user messages plus the Herta speech from the first of those
- * onward. Returns null when there is no user turn (nothing to title).
- * `startIndex` is the record index of the window's first user block — a title
- * change anchors its TOPIC entry there (session-topics.ts): the new title
- * describes the conversation from that message on. Exported for unit testing.
- */
-export function buildRecentTitleInput(
-  record: TerminalRecord,
-  windowExchanges: number,
-): { userText: string; hertaText: string; startIndex: number } | null {
-  const userIdxs: number[] = [];
-  record.forEach((b, i) => {
-    if (b.kind === "user") userIdxs.push(i);
-  });
-  if (userIdxs.length === 0) return null;
-  // Take the last min(N, windowExchanges) user blocks from the tail.
-  const take = Math.min(userIdxs.length, windowExchanges);
-  const start = userIdxs[userIdxs.length - take] ?? 0;
-  const slice = record.slice(start);
-  const userText = slice
-    .filter((b) => b.kind === "user")
-    .map((b) => (b.kind === "user" ? b.text : ""))
-    .join("\n")
-    .trim();
-  const hertaText = slice
-    .filter((b) => b.kind === "herta" && b.surface === "speech")
-    .map((b) => (b.kind === "herta" ? b.text : ""))
-    .join("\n")
-    .trim();
-  return userText === "" ? null : { userText, hertaText, startIndex: start };
 }
 
 // ── Test-only seam ──────────────────────────────────────────────────────────
@@ -383,31 +334,9 @@ export class SessionImpl implements Session {
     readonly settled: Promise<void>;
   } | null = null;
 
-  // Title generation. _title holds the current generated/loaded title. The title
-  // re-generates as the conversation continues: on a re-opened titled session's
-  // first new turn (reEntryRetitlePending) and periodically on long sessions
-  // (every RETITLE_EVERY_N_TURNS user turns, tracked by turnsSinceTitle).
-  // titleGenInFlight makes generation single-flight. The flash chat provider, the
-  // transcript dir (sidecar), and an abort source are held here. titlePromise is
-  // a test seam.
-  private _title: string | null;
-  /** Topic history (title changes anchored at their window's first user
-   *  block) — the rail's jump targets. Loaded from the sidecar; appended by
-   *  generateAndEmitTitle; pruned by rewind. */
-  private _topics: readonly SessionTopic[];
-  private reEntryRetitlePending: boolean;
-  private turnsSinceTitle = 0;
-  private titleGenInFlight = false;
-  /** Bumped by every rewind. An in-flight title generation captures the
-   *  epoch at start and drops its result on a mismatch: the window it
-   *  titled was (partly) withdrawn while the model was thinking, and a late
-   *  landing re-set a title for erased content and appended a ghost topic
-   *  whose post-rewind `bornAtLength` even pruneTopics couldn't kill
-   *  (review 2026-07-31). */
-  private titleEpoch = 0;
-  // Consecutive title-gen attempts since the last SUCCESS — bounds the
-  // initial-title retry (while untitled) on a failing title model.
-  private titleAttempts = 0;
+  /** The session title and its topic history — generation after a user
+   *  turn, the rewind fence, the sidecar (session-titler.ts). */
+  private readonly titler: SessionTitler;
   // Interaction language (slice 4) — held for per-turn language-parameterized
   // calls (the session-title prompt; the driver got its own copy at
   // construction). PUBLIC (implements Session.lang): the GUI surfaces it so the
@@ -421,9 +350,6 @@ export class SessionImpl implements Session {
   /** Pictures waiting in the composer (ADR 0048 §4) — stored and captioning,
    *  but not in the record until the message they belong to is sent. */
   private readonly stagedImages: StagedImageStore;
-  private readonly titleProvider: ProviderAdapter;
-  private readonly titleAbort = new AbortController();
-  private titlePromise: Promise<void> | null = null;
 
   private constructor(opts: {
     sessionId: string;
@@ -437,9 +363,7 @@ export class SessionImpl implements Session {
     overlayResolver: OverlayAskResolver;
     commandRules: ProjectCommandRuleStore;
     transcriptDir: string;
-    titleProvider: ProviderAdapter;
-    initialTitle: string | null;
-    initialTopics: readonly SessionTopic[];
+    titler: SessionTitler;
     pendingOpening: TerminalRecordBlock | null;
     openingClipId: string | null;
     openingLeadMs: number | undefined;
@@ -468,12 +392,7 @@ export class SessionImpl implements Session {
     this.overlayResolver = opts.overlayResolver;
     this.commandRules = opts.commandRules;
     this.transcriptDir = opts.transcriptDir;
-    this.titleProvider = opts.titleProvider;
-    this._title = opts.initialTitle;
-    this._topics = opts.initialTopics;
-    // A reopened session that already has a title re-titles on its first new
-    // turn (so continuing an old session refreshes the now-stale title).
-    this.reEntryRetitlePending = opts.initialTitle !== null;
+    this.titler = opts.titler;
     this.pendingOpening = opts.pendingOpening;
     this.openingClipId = opts.openingClipId;
     this.openingLeadMs = opts.openingLeadMs;
@@ -617,11 +536,11 @@ export class SessionImpl implements Session {
   }
 
   get title(): string | null {
-    return this._title;
+    return this.titler.title;
   }
 
   get topics(): readonly SessionTopic[] {
-    return this._topics;
+    return this.titler.topics;
   }
 
   get turnInFlight(): boolean {
@@ -756,7 +675,7 @@ export class SessionImpl implements Session {
     // Refresh the session title as the conversation evolves (initial title,
     // re-entry, or periodic on a long session). Fire-and-forget — the user
     // already sees Herta's reply; the title fills/updates after.
-    this.maybeUpdateTitle();
+    this.titler.afterUserTurn();
     return { turnId };
   }
 
@@ -931,42 +850,22 @@ export class SessionImpl implements Session {
     if (result === null) {
       return { ok: false, reason: "no_user_turn" };
     }
-    // Title generation fires at turn end and runs while the session is idle
-    // — exactly when this method is allowed — so an in-flight generation may
-    // be titling the window this rewind is about to withdraw. Fence it out
-    // (see titleEpoch); the guard on currentTurn above cannot catch it.
-    this.titleEpoch += 1;
     this._record = this.driver.getRecord();
     // Reset the sink's canonical-diff cursor to the new (shorter) length: the
     // record just shrank, so the next turn's flushBlocks must emit from there,
     // not from the pre-rewind count (which would skip the next turn's blocks).
     // Passing the truncated record re-seeds the sink's resync mirror too.
     this.sink.seedEmittedCount(this._record.length, this._record);
-    // If no user turn remains, the generated title described a now-withdrawn
-    // exchange — clear it so the next turn regenerates from scratch. A surviving
-    // prior turn keeps its title (re-titling continues on the next turn).
-    if (!this._record.some((b) => b.kind === "user")) {
-      this._title = null;
-      this.reEntryRetitlePending = false;
-      this.turnsSinceTitle = 0;
-      this.titleAttempts = 0;
-    }
-    // Topic anchors beyond the truncation no longer exist — prune them (and
-    // persist the pruned history so a resume doesn't resurrect dead jump
-    // targets; skipped when the title itself was cleared above — the next
-    // title write starts the sidecar fresh).
-    const prunedTopics = pruneTopics(this._topics, this._record.length);
-    if (prunedTopics !== this._topics) {
-      this._topics = prunedTopics;
-      if (this._title !== null) {
-        writeSessionTitle(
-          this.transcriptDir,
-          this.sessionId,
-          this._title,
-          this._topics,
-        );
-      }
-    }
+    // Title generation fires at turn end and runs while the session is idle
+    // — exactly when this method is allowed — so an in-flight generation may
+    // be titling the window this rewind is about to withdraw. The titler
+    // fences it out, clears a title whose exchange is gone, and prunes the
+    // topic anchors beyond the truncation (see SessionTitler.onRewind); the
+    // guard on currentTurn above cannot catch any of that.
+    this.titler.onRewind(
+      this._record.length,
+      this._record.some((b) => b.kind === "user"),
+    );
     // Broadcast the truncated record so every subscriber replaces its mirror
     // — windowed like every full-record payload (long sessions, 2026-07-12) —
     // and the pruned topic history with it. The topics ride along because this
@@ -978,7 +877,7 @@ export class SessionImpl implements Session {
       kind: "reset",
       record: tail.record,
       start: tail.start,
-      topics: this._topics,
+      topics: this.titler.topics,
     });
     // Stored-attachment GC last: the record is already truncated and
     // broadcast, and a failed unlink must not fail the rewind (best-effort,
@@ -1480,130 +1379,12 @@ export class SessionImpl implements Session {
   }
 
   /**
-   * Decide whether this just-finished user turn should (re)generate the title,
-   * and if so kick it off (fire-and-forget). Triggers: no title yet (new session
-   * or a prior failed attempt), a re-opened titled session's first new turn, or
-   * every RETITLE_EVERY_N_TURNS turns on a long session. Single-flight: while a
-   * generation runs, later turns keep counting and retry next turn.
-   */
-  private maybeUpdateTitle(): void {
-    this.turnsSinceTitle += 1;
-    const shouldRetitle =
-      (this._title === null &&
-        this.titleAttempts < MAX_INITIAL_TITLE_ATTEMPTS) ||
-      this.reEntryRetitlePending ||
-      this.turnsSinceTitle >= RETITLE_EVERY_N_TURNS;
-    if (!shouldRetitle || this.titleGenInFlight) return;
-    this.reEntryRetitlePending = false;
-    this.turnsSinceTitle = 0;
-    this.titlePromise = this.generateAndEmitTitle();
-  }
-
-  /**
-   * Generate a title from the recent window (last TITLE_WINDOW_EXCHANGES
-   * exchanges — at the first turn that IS the first exchange), persist it, and
-   * emit a title event. Best-effort: any failure (model error, empty output,
-   * disk error) leaves the title unchanged and never throws. Single-flight via
-   * titleGenInFlight. Kept off the critical path — invoked fire-and-forget.
-   */
-  private async generateAndEmitTitle(): Promise<void> {
-    this.titleGenInFlight = true;
-    this.titleAttempts += 1;
-    const epoch = this.titleEpoch;
-    try {
-      const input = buildRecentTitleInput(
-        this.driver.getRecord(),
-        TITLE_WINDOW_EXCHANGES,
-      );
-      if (input === null) {
-        console.warn(
-          `[herta] title: nothing to title yet (no user text in the window) — session ${this.sessionId}`,
-        );
-        return;
-      }
-      const title = await generateSessionTitle(
-        this.titleProvider,
-        {
-          ...input,
-          lang: this.lang,
-          // Incumbent-title contract (owner 2026-08-11): a re-title that sees
-          // the current title can say "still on topic" by copying it exactly,
-          // which appendTopic's exact-match dedup then swallows — no churn,
-          // no ghost topic tick on a same-topic re-entry. Absent on the
-          // initial title (nothing to keep).
-          ...(this._title !== null ? { currentTitle: this._title } : {}),
-        },
-        this.titleAbort.signal,
-      );
-      if (title === null) {
-        // Best-effort by contract, but not silent (owner 2026-09-03: a
-        // sidebar stuck on 未命名 had nothing in the log to explain it). The
-        // generator swallows the provider error, so this line is the only
-        // trace a failing title model leaves.
-        console.warn(
-          `[herta] title: the title model returned nothing (attempt ${this.titleAttempts}/${MAX_INITIAL_TITLE_ATTEMPTS} while untitled) — session ${this.sessionId}`,
-        );
-        return;
-      }
-      // A rewind landed while the model was thinking: `input` describes a
-      // window that no longer exists, and every index below is stale. Drop
-      // the whole result — no title, no topic, no persist, no emit.
-      if (epoch !== this.titleEpoch) return;
-      // Topic history (2026-07-12): a CHANGED title marks a topic boundary,
-      // anchored at the title window's first user block (the message the new
-      // title describes the conversation from). A re-derived same title
-      // appends nothing — the conversation stayed on topic.
-      const recordNow = this.driver.getRecord();
-      const anchorBlock = recordNow[input.startIndex];
-      const appended = appendTopic(this._topics, {
-        title,
-        anchorIndex: input.startIndex,
-        anchorText: topicAnchorText(
-          anchorBlock?.kind === "user" ? anchorBlock.text : input.userText,
-        ),
-        at: new Date().toISOString(),
-        // How much conversation this topic needed to exist. A rewind below it
-        // withdrew the turn that produced this title, so the topic goes with
-        // it — which the anchor cannot express, since the anchor is the title
-        // WINDOW's start and may predate this turn by hours (pruneTopics).
-        bornAtLength: recordNow.length,
-      });
-      if (appended !== null) this._topics = appended;
-      writeSessionTitle(
-        this.transcriptDir,
-        this.sessionId,
-        title,
-        this._topics,
-      );
-      this._title = title;
-      this.titleAttempts = 0; // success → refresh the initial-title budget
-      const newTopic =
-        appended !== null ? this._topics[this._topics.length - 1] : undefined;
-      this.projector.emitTitle({
-        kind: "title",
-        sessionId: this.sessionId,
-        title,
-        ...(newTopic !== undefined ? { topic: newTopic } : {}),
-      });
-    } catch (err) {
-      // best-effort: a title failure never affects the session — but it is
-      // logged (see above), so a stuck 未命名 can be diagnosed from the log.
-      console.warn(
-        `[herta] title: generation failed — session ${this.sessionId}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    } finally {
-      this.titleGenInFlight = false;
-    }
-  }
-
-  /**
    * Test seam: resolves once the in-flight title generation settles (no-op
    * when none ran). Production never awaits this — title generation is
    * fire-and-forget so it cannot delay a turn.
    */
   async whenTitleSettled(): Promise<void> {
-    if (this.titlePromise !== null) await this.titlePromise;
+    await this.titler.whenSettled();
   }
 
   async close(): Promise<void> {
@@ -1614,7 +1395,7 @@ export class SessionImpl implements Session {
     await this.interrupt();
     // Abort any in-flight title generation so a slow flash call can't outlive
     // the session.
-    this.titleAbort.abort();
+    this.titler.dispose();
 
     // Await the interrupted turn's REAL settlement (audit 2026-07-10,
     // finding 14): one setImmediate was not enough — a still-unwinding turn
@@ -1849,58 +1630,15 @@ export class SessionImpl implements Session {
       },
     });
 
-    // Title provider — a fast flash chat call at thinking "low" (owner
-    // decision 2026-08-03; omitting `thinking` meant the server's DEFAULT
-    // effort, which is "high" — titles were silently paying full reasoning).
-    // NOTE: deepseek-v4-flash is a reasoning model; it streams a reasoning
-    // chain BEFORE the answer, so maxTokens must cover the reasoning PLUS
-    // the (short) title — a tight cap silently starves the answer and yields
-    // an empty title. 1024 stays: generous for low effort, and the model
-    // stops naturally after the title.
+    // The title model (see createTitleProvider) and the title/topics the
+    // session opens with, judged against the record actually loaded.
     const titleProvider =
-      deps.providerOverrides?.title ??
-      deepseekProvider({
-        apiKey,
-        model: "deepseek-v4-flash",
-        thinking: "low",
-        maxTokens: 1024,
-        temperature: 0.3,
-        ...baseUrl,
-      });
-    let existingTitle =
-      readSessionTitle(config.transcriptDir, sessionId) ?? null;
-    // Topic history (2026-07-12): persisted alongside the title. Sessions
-    // titled BEFORE the history existed get their first entry synthesized
-    // from the existing title, anchored at the record's first user block
-    // (in-memory; it persists with the next real title write).
-    let existingTopics: readonly SessionTopic[] = readSessionTopics(
+      deps.providerOverrides?.title ?? createTitleProvider(apiKey, baseUrl);
+    const existing = loadSessionTitleState(
       config.transcriptDir,
       sessionId,
+      opts.initialRecord ?? [],
     );
-    // The sidecar can outlive the record it described (review 2026-07-31):
-    // rewind-to-empty deliberately skips the sidecar rewrite ("the next
-    // title write starts it fresh" — which never comes if the app closes
-    // first), and a crash can land between the JSONL truncation and the
-    // sidecar write. Without this, resume resurrected the withdrawn title
-    // and dead rail ticks — and the next real title write re-persisted them
-    // for good. Judge the sidecar against the record actually loaded.
-    const loadedRecord = opts.initialRecord ?? [];
-    if (!loadedRecord.some((b) => b.kind === "user")) {
-      // No surviving user turn: whatever the sidecar describes is gone.
-      existingTitle = null;
-      existingTopics = [];
-    } else {
-      existingTopics = pruneTopics(existingTopics, loadedRecord.length);
-    }
-    // Runs AFTER the prune on purpose: a title whose every topic was pruned
-    // re-anchors at the record's first surviving user block, same as a
-    // pre-history sidecar.
-    const synthesized = synthesizeInitialTopic(
-      existingTitle,
-      existingTopics,
-      loadedRecord,
-    );
-    if (synthesized !== null) existingTopics = [synthesized];
 
     const sink = new BusActorStreamingSink(
       bus,
@@ -2110,9 +1848,16 @@ export class SessionImpl implements Session {
       overlayResolver,
       commandRules,
       transcriptDir: config.transcriptDir,
-      titleProvider,
-      initialTitle: existingTitle,
-      initialTopics: existingTopics,
+      titler: new SessionTitler({
+        sessionId,
+        transcriptDir: config.transcriptDir,
+        lang,
+        provider: titleProvider,
+        getRecord: () => driver.getRecord(),
+        emit: (event) => projector.emitTitle(event),
+        initialTitle: existing.title,
+        initialTopics: existing.topics,
+      }),
       // D3: the deferred opening seed (new sessions with an opening). null for
       // resumed sessions (seedBlock is only set when initialRecord is empty) and
       // new sessions without an opening — playOpening then no-ops.

@@ -123,7 +123,11 @@ describe("extractDocumentText — pdf", () => {
     expect(warned.filter((w) => /napi-rs\/canvas|polyfill/.test(w))).toEqual(
       [],
     );
-  });
+    // 30 s tier (2026-09-03): this is the file's FIRST pdfjs load — 3 MB of
+    // engine through vitest's transform — and under full-suite contention
+    // it took 7.4 s once today, against 0.36 s alone. The load is not slow;
+    // the machine is busy (same class as the 2026-08-31 scanner guards).
+  }, 30_000);
 
   it("extracts text with line breaks and a page count, every page opened by its marker line (2026-08-23)", async () => {
     const r = await extractDocumentText(

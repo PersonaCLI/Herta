@@ -406,7 +406,7 @@ const ZH: SiteCopy = {
   turnSub: " · one turn",
   turnCaption: (
     <>
-      你和黑塔通过终端交流；把文件拖进会话栏，她直接读原文。要动代码时，她会在台词里
+      你和黑塔通过终端交流；把文件拖进会话栏，她直接读原文；记录里出现的文件，点一下就在对话旁边打开。要动代码时，她会在台词里
       <b className="banzhuan-ink">@板砖</b>
       ——那是她给编码协处理器起的名字。执行的每一步都回到同一份终端记录：
       黑塔和你一起监督任务，最后由她陈述结论。
@@ -586,7 +586,8 @@ const EN: SiteCopy = {
   turnCaption: (
     <>
       You and Herta talk through the terminal; drop a file into the composer and
-      she reads the original. When code needs touching, she writes{" "}
+      she reads the original; any file the record names opens beside the
+      conversation with a click. When code needs touching, she writes{" "}
       <b className="banzhuan-ink">@Brick</b> in her line — her name for the
       coding coprocessor. Every step of execution returns to the same terminal
       record: Herta supervises the task with you, and states the conclusion

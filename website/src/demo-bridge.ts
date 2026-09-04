@@ -58,6 +58,7 @@ import type {
 // the opening still reveals at voice pace, silently. Duration is unchanged,
 // so `openingVoiceMs` below still describes it.
 import openingVoiceUrl from "./assets/opening-voice.opus";
+import { demoWorkspaceFiles } from "./demo-workspace.js";
 
 export type DemoLang = "zh" | "en";
 
@@ -493,12 +494,25 @@ const EVENT_BUS_DIFF = (deprecatedNote: string): string =>
 +    return this.queues.open(type);
 +  }`;
 
-const EVENT_BUS_DIFF_ZH = EVENT_BUS_DIFF(
-  "@deprecated 用 subscribe()；保留只为不动公开签名。",
-);
-const EVENT_BUS_DIFF_EN = EVENT_BUS_DIFF(
-  "@deprecated use subscribe(); kept only so the public signature holds.",
-);
+/** The one diff line that differs by language — shared with the demo
+ *  workspace's patched file (demo-workspace.ts), so the file the viewer
+ *  opens carries the exact `+` lines the preview showed. */
+const EVENT_BUS_NOTE = {
+  zh: "@deprecated 用 subscribe()；保留只为不动公开签名。",
+  en: "@deprecated use subscribe(); kept only so the public signature holds.",
+} as const;
+const EVENT_BUS_DIFF_ZH = EVENT_BUS_DIFF(EVENT_BUS_NOTE.zh);
+const EVENT_BUS_DIFF_EN = EVENT_BUS_DIFF(EVENT_BUS_NOTE.en);
+
+/** show_excerpt's STARTED row carries the path and range as one arg —
+ *  the shape ADR 0050 parses into an anchored open, so the click lands on
+ *  the cited lines (was a bare `logs/alerts`, which no tool call spells). */
+const ALERTS_EXCERPT = {
+  path: "logs/alerts/2026-07-31.log",
+  from: 41,
+  to: 43,
+} as const;
+const ALERTS_EXCERPT_ARG = `${ALERTS_EXCERPT.path}:${ALERTS_EXCERPT.from}-${ALERTS_EXCERPT.to}`;
 
 /** The patch's magnitude, measured off the diff itself (zh/en twins differ
  *  only in a comment's wording, so the counts are shared). Feeds the preview
@@ -554,12 +568,12 @@ const ZH: DemoContent = {
           say(
             "三次踩的是同一个阈值，还是三个不同的？——算了，你要是看得出来就不会来问我。\n@板砖，把凌晨那段告警捞出来。只读，别碰文件。",
           ),
-          op("Reading", "logs/alerts"),
           op("Reading", '"sensor-0"'),
+          op("Reading", ALERTS_EXCERPT_ARG),
           excerptRow(
-            "logs/alerts/2026-07-31.log",
-            41,
-            53,
+            ALERTS_EXCERPT.path,
+            ALERTS_EXCERPT.from,
+            ALERTS_EXCERPT.to,
             "03:14:07  WARN  sensor-07  temp 41.2 > 40.0  (dwell 0.4s)\n" +
               "04:02:51  WARN  sensor-07  temp 40.3 > 40.0  (dwell 0.2s)\n" +
               "05:47:33  WARN  sensor-07  temp 40.1 > 40.0  (dwell 0.1s)",
@@ -759,12 +773,12 @@ const EN: DemoContent = {
           say(
             "Same threshold all three times, or three different ones? — never mind. If you could tell, you wouldn't be asking.\n@板砖, pull the overnight alerts. Read-only; don't touch anything.",
           ),
-          op("Reading", "logs/alerts"),
           op("Reading", '"sensor-0"'),
+          op("Reading", ALERTS_EXCERPT_ARG),
           excerptRow(
-            "logs/alerts/2026-07-31.log",
-            41,
-            53,
+            ALERTS_EXCERPT.path,
+            ALERTS_EXCERPT.from,
+            ALERTS_EXCERPT.to,
             "03:14:07  WARN  sensor-07  temp 41.2 > 40.0  (dwell 0.4s)\n" +
               "04:02:51  WARN  sensor-07  temp 40.3 > 40.0  (dwell 0.2s)\n" +
               "05:47:33  WARN  sensor-07  temp 40.1 > 40.0  (dwell 0.1s)",
@@ -977,6 +991,10 @@ export function createDemoBridge(
   options: DemoBridgeOptions = {},
 ): HertaBridge {
   const c = CONTENT[lang];
+  /** The showcase workspace's files, for the viewer panel (ADR 0050/0054 on
+   *  the site, 2026-09-04). Keyed by the record's own spelling of each path;
+   *  the LIVE session names no files, so only the showcase can read. */
+  const files = demoWorkspaceFiles(EVENT_BUS_NOTE[lang]);
   const record = new Channel<RecordEvent>();
   const overlay = new Channel<OverlayEvent>();
   const speech = new Channel<SpeechControlEvent>();
@@ -1430,6 +1448,24 @@ export function createDemoBridge(
     }),
     unstageImage: async () => false,
     pathForFile: () => "",
+    // The file viewer (ADR 0050 / 0054): the same two reads the desktop app
+    // answers from the session's workspace, answered here from the bundled
+    // demo workspace — so a click on a file name in the showcase opens the
+    // REAL panel and its renderers. Text only: nothing the record names is
+    // a picture or an Office file (the two screenshots ride the lightbox),
+    // so the bytes read has nothing to serve and says so.
+    readWorkspaceFile: async (sessionId, path) => {
+      const content = sessionId === SHOWCASE_ID ? files[path] : undefined;
+      if (content === undefined) return { ok: false, reason: "not_found" };
+      return {
+        ok: true,
+        content,
+        truncated: false,
+        size: new TextEncoder().encode(content).byteLength,
+        relative: path,
+      };
+    },
+    readWorkspaceBytes: async () => ({ ok: false, reason: "not_found" }),
     getDreamConfig: async () => ({ enabled: true }),
     setDreamConfig: async () => {},
     getLocale: async () => lang,

@@ -195,8 +195,26 @@ try {
   // the first run (31947117338) came up English on an en-US runner while this
   // probe looked for the Chinese prefix, and reported FAIL over five correct
   // rows. Match either.
+  // The row is read at ELEMENT level, not text-node level (0.1.4 release
+  // run 33832577466): since ADR 0050 the file name is its own clickable
+  // element, so no single text node starts with the label any more and the
+  // leaf scrape came back empty over five correct rows. Take the innermost
+  // element whose whole text starts with the label — the row line — and
+  // stop at it (a parent that also holds the detail toggle or the excerpt
+  // has a child that already starts with the label).
   const rows = await cdp.eval(
-    `(() => [...document.querySelectorAll('*')].map(e => e.childElementCount === 0 ? (e.textContent || '').trim() : '').filter(t => t.startsWith('附件 ') || t.startsWith('attachment ')).filter((v, i, a) => a.indexOf(v) === i))()`,
+    `(() => {
+      const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+      const isRow = (t) => t.startsWith('附件 ') || t.startsWith('attachment ');
+      const out = [];
+      for (const e of document.querySelectorAll('*')) {
+        const t = norm(e.textContent);
+        if (!isRow(t)) continue;
+        if ([...e.children].some((c) => isRow(norm(c.textContent)))) continue;
+        out.push(t);
+      }
+      return out.filter((v, i, a) => a.indexOf(v) === i);
+    })()`,
   );
   report.rows = rows;
   console.log("  rendered rows:");
@@ -220,10 +238,15 @@ try {
   // Expectations — the same rows the Windows live check produced, in either
   // catalog. Each is (file, one marker per language) so a wording change in
   // one catalog fails loudly instead of matching by accident.
-  const rowFor = (name) => rows.find((r) => r.includes(` ${name} `)) ?? "";
+  // Whitespace-blind: the row's segments are separate elements now, and
+  // whether textContent joins them with a space is a markup detail the
+  // probe should not depend on.
+  const squash = (s) => s.replace(/\s+/g, "");
+  const rowFor = (name) =>
+    rows.find((r) => squash(r).includes(squash(name))) ?? "";
   const has = (name, zh, en) => {
-    const r = rowFor(name);
-    return r.length > 0 && (r.includes(zh) || r.includes(en));
+    const r = squash(rowFor(name));
+    return r.length > 0 && (r.includes(squash(zh)) || r.includes(squash(en)));
   };
   const expect = [
     [

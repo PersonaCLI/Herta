@@ -168,6 +168,17 @@ describe("main — per-session language pinning", () => {
     }
   });
 
+  // The one test here that boots the WHOLE CLI (the other ten return at
+  // --help / a flag error / the key lookup): backend stack, actor stack —
+  // which materializes the eleven EN seed 废案 into the temp workspace and
+  // reads them back for the static prefix — the JSONL header, then readline
+  // to EOF. All real disk I/O plus first-touch tool setup: ~¼ s alone in a
+  // vitest worker, 9× that under a contended full suite here, and past the
+  // 5 s default in three of three full-suite runs on 2026-09-08/09 (each
+  // passing alone). No timer, delay or child process is on the path, so
+  // fake timers cannot make it deterministic; the budget is what the test
+  // assumed. Bounded rather than open: a REPL that stops exiting on EOF
+  // must still fail, not hang the suite.
   it("a new session persists its birth language into the JSONL header", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "herta-main-hdr-"));
     try {
@@ -193,7 +204,7 @@ describe("main — per-session language pinning", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 describe("main — --resume flag", () => {

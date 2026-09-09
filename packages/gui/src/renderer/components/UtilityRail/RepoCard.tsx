@@ -14,6 +14,7 @@ import { useListTransitions } from "../../hooks/useListTransitions.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useT } from "../../i18n/LocaleProvider.js";
+import { hoverTipProps } from "../common/hover-tip.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { SwapText } from "../Workspace/SwapText.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
@@ -267,7 +268,7 @@ export function RepoCard(): JSX.Element | null {
                     <button
                       type="button"
                       className="repo-card__path repo-card__subject"
-                      title={`${c.shortSha} ${c.subject}`}
+                      {...hoverTipProps(`${c.shortSha} ${c.subject}`)}
                       aria-label={`${t("activity.commit.openAria")} ${c.shortSha}`}
                       onClick={() =>
                         openFile(c.shortSha, {
@@ -281,7 +282,7 @@ export function RepoCard(): JSX.Element | null {
                   ) : (
                     <span
                       className="repo-card__path repo-card__subject"
-                      title={`${c.shortSha} ${c.subject}`}
+                      {...hoverTipProps(`${c.shortSha} ${c.subject}`)}
                     >
                       {c.subject}
                     </span>
@@ -290,8 +291,8 @@ export function RepoCard(): JSX.Element | null {
                     <span
                       className="repo-card__unpushed"
                       role="img"
-                      title={t("repo.card.unpushed")}
                       aria-label={t("repo.card.unpushed")}
+                      {...hoverTipProps(t("repo.card.unpushed"))}
                     >
                       ↑
                     </span>

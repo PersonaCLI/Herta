@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { HoverTipLayer } from "./components/common/HoverTipLayer.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { FileViewerProvider } from "./components/FileViewer/file-viewer-context.js";
 import { WorkspaceBodyShell } from "./components/FileViewer/WorkspaceBodyShell.js";
@@ -174,6 +175,8 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         onClose={() => setSettingsOpen(false)}
       />
       <KeyPrompt />
+      {/* The one hover tip, above everything it may anchor to. */}
+      <HoverTipLayer />
     </div>
   );
 }

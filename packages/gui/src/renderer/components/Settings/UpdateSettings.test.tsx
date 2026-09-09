@@ -39,6 +39,32 @@ describe("UpdateSettings", () => {
     expect(screen.getByTestId("update-status")).toHaveTextContent("Up to date");
   });
 
+  it("a feed that cannot be reached says so and offers the netdisk; any other error prints its message (owner 2026-09-09)", async () => {
+    const mock = renderPane(createMockHertaBridge({ appVersion: "0.1.0" }));
+    await screen.findByText("v0.1.0");
+    act(() =>
+      mock.emitUpdate({
+        phase: "error",
+        message: "net::ERR_CONNECTION_CLOSED",
+        network: true,
+      }),
+    );
+    const status = screen.getByTestId("update-status");
+    expect(status).toHaveTextContent("could not be reached");
+    expect(status).not.toHaveTextContent("ERR_CONNECTION_CLOSED");
+    screen.getByRole("button", { name: "Open Baidu Netdisk" }).click();
+    expect(mock.calls.openExternal).toEqual([
+      "https://pan.baidu.com/s/1k-47zy6TTDWl0OaT2WCFUg?pwd=y195",
+    ]);
+    act(() => mock.emitUpdate({ phase: "error", message: "HttpError: 404" }));
+    expect(screen.getByTestId("update-status")).toHaveTextContent(
+      "Check failed: HttpError: 404",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Open Baidu Netdisk" }),
+    ).toBeNull();
+  });
+
   it("streams state: downloading shows progress, ready swaps in restart-and-install", async () => {
     const mock = renderPane();
     await screen.findByText("v0.1.0");

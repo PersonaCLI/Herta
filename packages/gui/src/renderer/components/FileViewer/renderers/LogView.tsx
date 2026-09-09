@@ -4,6 +4,7 @@ import { useHertaBridge } from "../../../context/HertaBridgeContext.js";
 import { useReducedMotion } from "../../../hooks/useReducedMotion.js";
 import { useSessionSelector } from "../../../hooks/useSessionSelector.js";
 import { useLocale, useT } from "../../../i18n/LocaleProvider.js";
+import { hoverTipProps } from "../../common/hover-tip.js";
 import { Select } from "../../Settings/Select.js";
 import { useFileViewerOpen } from "../file-viewer-context.js";
 import { formatCommitDate } from "./commit-patch.js";
@@ -233,13 +234,20 @@ export function LogView(): JSX.Element {
                   }
                 >
                   <span className="log-view__sha">{e.shortSha}</span>
-                  <span className="log-view__subject" title={e.subject}>
+                  {/* The app's tip, not the OS's, for a subject the row
+                      clipped (owner 2026-09-09). */}
+                  <span
+                    className="log-view__subject"
+                    {...hoverTipProps(e.subject)}
+                  >
                     {e.subject}
                   </span>
                   {e.unpushed && (
                     <span
                       className="log-view__unpushed"
-                      title={t("repo.card.unpushed")}
+                      role="img"
+                      aria-label={t("repo.card.unpushed")}
+                      {...hoverTipProps(t("repo.card.unpushed"))}
                     >
                       ↑
                     </span>

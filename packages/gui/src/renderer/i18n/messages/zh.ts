@@ -21,6 +21,9 @@ export const zh = {
   "update.downloading": "正在下载",
   "update.ready": "已就绪，退出时安装：",
   "update.error": "检查失败",
+  "update.unreachable":
+    "无法连接更新服务器（GitHub）。请检查网络或 VPN；也可从百度网盘下载最新版本。",
+  "update.netdisk": "打开百度网盘",
   "update.upToDate": "已是最新",
   "update.notChecked": "尚未检查更新",
   "update.unsupported": "此环境不支持更新",
@@ -84,7 +87,8 @@ export const zh = {
   "voice.modelReady": "已安装，占用约 {size} MB。",
   "voice.modelRemove": "删除",
   "voice.modelRetry": "重试",
-  "voice.modelFailed.network": "下载中断，检查网络后重试。",
+  "voice.modelFailed.network":
+    "无法连接 GitHub 下载模型。请检查网络或 VPN 后重试。",
   "voice.modelFailed.http": "服务器没有给出模型文件。",
   "voice.modelFailed.size": "下载的文件大小不对，已丢弃。",
   "voice.modelFailed.hash": "下载的文件校验失败，已丢弃。",

@@ -7,9 +7,11 @@ import {
   nativeTheme,
   screen,
   session,
+  shell,
 } from "electron";
 import hertaIcon from "../../resources/herta-icon.png?asset";
 import { CMD, EVT } from "../preload/channels.js";
+import { isAllowedExternalUrl } from "../shared/links.js";
 import {
   readGlobalSettings,
   resolveInitialLocale,
@@ -427,8 +429,17 @@ function registerUpdateHandlers(): void {
   ipcMain.removeHandler(CMD.updateRestart);
   ipcMain.removeHandler(CMD.updateStatus);
   ipcMain.removeHandler(CMD.appVersion);
+  ipcMain.removeHandler(CMD.openExternal);
   ipcMain.handle(CMD.updateCheck, async () => {
     await updateService?.checkNow();
+  });
+  // An https link to an allowlisted host (`shared/links.ts`) opens in the
+  // OS browser — the netdisk mirror when the update feed is out of reach
+  // (2026-09-09). Anything else is refused here, not merely hidden in the
+  // renderer: the renderer is not trusted with an "open any URL" door.
+  ipcMain.handle(CMD.openExternal, async (_e, url: unknown) => {
+    if (typeof url !== "string" || !isAllowedExternalUrl(url)) return;
+    await shell.openExternal(url);
   });
   ipcMain.handle(CMD.updateRestart, () => {
     updateService?.restartAndInstall();

@@ -24,6 +24,9 @@ export const en = {
   "update.downloading": "Downloading",
   "update.ready": "Ready — installs on exit:",
   "update.error": "Check failed",
+  "update.unreachable":
+    "The update server (GitHub) could not be reached. Check the network or VPN; the latest build is also on Baidu Netdisk.",
+  "update.netdisk": "Open Baidu Netdisk",
   "update.upToDate": "Up to date",
   "update.notChecked": "Not checked yet",
   "update.unsupported": "Updates unavailable here",
@@ -93,7 +96,7 @@ export const en = {
   "voice.modelRemove": "Remove",
   "voice.modelRetry": "Retry",
   "voice.modelFailed.network":
-    "The download broke off; check the network and retry.",
+    "GitHub could not be reached to download the model. Check the network or VPN and retry.",
   "voice.modelFailed.http": "The server did not return the model file.",
   "voice.modelFailed.size":
     "The downloaded file had the wrong size; discarded.",

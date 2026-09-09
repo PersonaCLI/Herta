@@ -1,7 +1,7 @@
 import type { AppUpdater } from "electron-updater";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateState } from "../renderer/ipc/bridge-types.js";
-import { createUpdateService } from "./update-service.js";
+import { createUpdateService, isUnreachable } from "./update-service.js";
 
 /** Minimal fake AppUpdater: captures handlers, lets tests fire events. */
 function mkUpdater(opts: { checkRejects?: Error } = {}): {
@@ -123,7 +123,75 @@ describe("createUpdateService", () => {
     fire("error", new Error("net::ERR_CONNECTION_RESET"));
     expect(states[states.length - 1]?.phase).toBe("error");
     expect(states[states.length - 1]?.message).toContain("CONNECTION_RESET");
+    // A connection that dropped is a NETWORK failure — the pane points at
+    // the VPN and the netdisk.
+    expect(states[states.length - 1]?.network).toBe(true);
     svc.dispose();
+  });
+
+  // Owner 2026-09-09, behind a wall: "正在检查…" then "尚未检查更新" was all
+  // the pane ever said. Two things were wrong: an automatic check that
+  // could not REACH the feed took the silent branch, and even a manual one
+  // was overwritten — checkForUpdates rejects after emitting "error", the
+  // event's terminal set had cleared the latch, and the catch wrote idle.
+  it("a feed that cannot be reached is reported on the AUTOMATIC path too, flagged network", () => {
+    const { updater, fire } = mkUpdater();
+    const states: UpdateState[] = [];
+    const svc = createUpdateService({
+      updater,
+      isPackaged: true,
+      send: (s) => states.push(s),
+    });
+    svc.start();
+    fire("checking-for-update");
+    fire("error", new Error("net::ERR_CONNECTION_CLOSED"));
+    expect(states[states.length - 1]).toEqual({
+      phase: "error",
+      message: "net::ERR_CONNECTION_CLOSED",
+      network: true,
+    });
+    // An answer the feed gave (404) on the automatic path stays silent.
+    fire("error", new Error("HttpError: 404"));
+    expect(states[states.length - 1]?.phase).toBe("idle");
+    svc.dispose();
+  });
+
+  it("the rejection that follows an 'error' event does not overwrite the report with idle", async () => {
+    const { updater, fire } = mkUpdater({
+      checkRejects: new Error("HttpError: 404"),
+    });
+    const states: UpdateState[] = [];
+    const svc = createUpdateService({
+      updater,
+      isPackaged: true,
+      send: (s) => states.push(s),
+    });
+    svc.start();
+    const manual = svc.checkNow();
+    fire("error", new Error("HttpError: 404"));
+    await manual;
+    expect(states.map((s) => s.phase)).toEqual(["error"]);
+    svc.dispose();
+  });
+
+  it("isUnreachable tells a feed that is not there from an answer it gave", () => {
+    for (const m of [
+      "net::ERR_CONNECTION_CLOSED",
+      "net::ERR_INTERNET_DISCONNECTED",
+      "connect ECONNRESET 20.205.243.166:443",
+      "getaddrinfo ENOTFOUND github.com",
+      "TLS handshake failed",
+      "request timed out",
+    ]) {
+      expect(isUnreachable(m)).toBe(true);
+    }
+    for (const m of [
+      "HttpError: 404",
+      "Cannot find latest.yml in the latest release artifacts",
+      "sha512 checksum mismatch",
+    ]) {
+      expect(isUnreachable(m)).toBe(false);
+    }
   });
 
   it("the manual latch clears at a terminal phase — a later AUTO error is silent again", async () => {

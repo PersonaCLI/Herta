@@ -166,6 +166,7 @@ export interface MockHertaBridge {
     resyncRecord: number;
     checkForUpdate: number;
     restartAndInstall: number;
+    openExternal: string[];
     listSessions: number;
     searchSessions: string[];
     recordSlice: Array<[string, number, number]>;
@@ -284,6 +285,7 @@ export function createMockHertaBridge(
     resyncRecord: 0,
     checkForUpdate: 0,
     restartAndInstall: 0,
+    openExternal: [],
     listSessions: 0,
     searchSessions: [],
     recordSlice: [],
@@ -526,6 +528,9 @@ export function createMockHertaBridge(
     },
     restartAndInstall: async () => {
       calls.restartAndInstall += 1;
+    },
+    openExternal: async (url) => {
+      calls.openExternal.push(url);
     },
     getUpdateState: async () => opts.updateState ?? { phase: "idle" },
     getAppVersion: async () => opts.appVersion ?? "0.1.0",

@@ -7044,6 +7044,38 @@ button.commit-view__path:hover {
 .settings-help.is-open .settings-help-tip {
   display: block;
 }
+/* The app's hover tip (owner 2026-09-09: the commit rows raised the OS
+   tooltip). One fixed box, rendered by HoverTipLayer at the app root and
+   positioned from the anchor's rectangle, so no scrolling card clips it.
+   The settings "?" tip's face, floating. */
+.hover-tip {
+  position: fixed;
+  z-index: 60;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--surface-pop);
+  border: 1px solid var(--ink-a14);
+  border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(17, 20, 23, 0.16);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: hover-tip-in 120ms ease-out both;
+}
+@keyframes hover-tip-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+.hover-tip.is-below { animation-name: hover-tip-in-below; }
+@keyframes hover-tip-in-below {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hover-tip { animation: none; }
+}
 .settings-key-input {
   flex: 1 1 auto;
   min-width: 0;

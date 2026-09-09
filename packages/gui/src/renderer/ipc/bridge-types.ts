@@ -282,6 +282,11 @@ export interface UpdateState {
   readonly version?: string;
   readonly progress?: number;
   readonly message?: string;
+  /** On `error`: the feed could not be REACHED at all (offline, a blocked
+   *  region), as opposed to an answer it gave — the pane points at the
+   *  network, the VPN and the netdisk instead of printing the error. Set on
+   *  the automatic path too (2026-09-09). */
+  readonly network?: boolean;
 }
 
 /** Masked DeepSeek key status for the renderer (Settings → DeepSeek). The raw
@@ -666,6 +671,11 @@ export interface HertaBridge {
     readonly ok: true;
     readonly status: DeepSeekKeyStatus;
   }>;
+  /** Open an https link in the OS browser — ONLY an allowlisted host
+   *  (`shared/links.ts`): the netdisk mirror, GitHub, the key platforms.
+   *  Anything else is refused by main. OPTIONAL — fakes and the website
+   *  demo omit it, and the links then do not render. */
+  openExternal?(url: string): Promise<void>;
   /** The token-plan key (ADR 0062 §1.8), stored and checked like the
    *  pay-as-you-go one. Optional alongside it. */
   getMiniMaxPlanKeyStatus?(): Promise<DeepSeekKeyStatus>;

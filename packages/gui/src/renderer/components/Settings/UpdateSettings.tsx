@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { NETDISK_URL } from "../../../shared/links.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { UpdateState } from "../../ipc/bridge-types.js";
@@ -58,6 +59,10 @@ export function UpdateSettings(): JSX.Element {
       case "ready":
         return `${t("update.ready")} v${state.version ?? "?"}`;
       case "error":
+        // The feed could not be reached (offline, a blocked region — GitHub
+        // is the feed): say that, and where else the build is, instead of
+        // the raw error (owner 2026-09-09).
+        if (state.network === true) return t("update.unreachable");
         return `${t("update.error")}${
           state.message !== undefined ? `: ${state.message}` : ""
         }`;
@@ -128,6 +133,20 @@ export function UpdateSettings(): JSX.Element {
       {supported && (
         <p className="settings-note" data-testid="update-status">
           {statusText}
+          {state.phase === "error" &&
+            state.network === true &&
+            bridge.openExternal !== undefined && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="settings-note-action"
+                  onClick={() => void bridge.openExternal?.(NETDISK_URL)}
+                >
+                  {t("update.netdisk")}
+                </button>
+              </>
+            )}
         </p>
       )}
       {/* Attribution (audit S12). The app carries the character's name, her

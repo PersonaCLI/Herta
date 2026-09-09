@@ -44,19 +44,29 @@ describe("main", () => {
     expect(out.full()).toMatch(/Herta v\d+\.\d+\.\d+/);
   });
 
+  // A real temp workspace, never a made-up absolute path: main creates
+  // `<cwd>/.herta/.gitignore` before the key lookup, and on Windows a
+  // root-relative `/x` resolves against the current drive — the earlier
+  // `/nonexistent-test-cwd` left `E:\nonexistent-test-cwd\.herta` on the
+  // owner's disk for a month (2026-08-06).
   it("missing API key returns 2 with stderr message", async () => {
-    process.env.DEEPSEEK_API_KEY = "";
-    const out = new MockWritable();
-    const err = new MockWritable();
-    const code = await main([], {
-      stdout: out,
-      stderr: err,
-      stdin: process.stdin,
-      cwd: "/nonexistent-test-cwd",
-      homedir: "/nonexistent-test-home",
-    });
-    expect(code).toBe(2);
-    expect(err.full()).toContain("DeepSeek API key");
+    const tmp = mkdtempSync(join(tmpdir(), "herta-main-key-"));
+    try {
+      process.env.DEEPSEEK_API_KEY = "";
+      const out = new MockWritable();
+      const err = new MockWritable();
+      const code = await main([], {
+        stdout: out,
+        stderr: err,
+        stdin: process.stdin,
+        cwd: tmp,
+        homedir: join(tmp, "home"),
+      });
+      expect(code).toBe(2);
+      expect(err.full()).toContain("DeepSeek API key");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -74,34 +84,44 @@ describe("main — --lang flag", () => {
   });
 
   it("--lang with an invalid value exits 2 before any key lookup", async () => {
-    const out = new MockWritable();
-    const err = new MockWritable();
-    const code = await main(["--lang", "de"], {
-      stdout: out,
-      stderr: err,
-      stdin: process.stdin,
-      cwd: "/nonexistent-test-cwd-lang",
-      homedir: "/nonexistent-test-home",
-    });
-    expect(code).toBe(2);
-    expect(err.full()).toContain("--lang");
-    expect(err.full()).toContain("de");
-    // Fails on flag validation, not on the missing API key.
-    expect(err.full()).not.toContain("API key");
+    const tmp = mkdtempSync(join(tmpdir(), "herta-main-lang-"));
+    try {
+      const out = new MockWritable();
+      const err = new MockWritable();
+      const code = await main(["--lang", "de"], {
+        stdout: out,
+        stderr: err,
+        stdin: process.stdin,
+        cwd: tmp,
+        homedir: join(tmp, "home"),
+      });
+      expect(code).toBe(2);
+      expect(err.full()).toContain("--lang");
+      expect(err.full()).toContain("de");
+      // Fails on flag validation, not on the missing API key.
+      expect(err.full()).not.toContain("API key");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("bare --lang (missing value) exits 2", async () => {
-    const out = new MockWritable();
-    const err = new MockWritable();
-    const code = await main(["--lang"], {
-      stdout: out,
-      stderr: err,
-      stdin: process.stdin,
-      cwd: "/nonexistent-test-cwd-lang",
-      homedir: "/nonexistent-test-home",
-    });
-    expect(code).toBe(2);
-    expect(err.full()).toContain("expected zh or en");
+    const tmp = mkdtempSync(join(tmpdir(), "herta-main-lang-"));
+    try {
+      const out = new MockWritable();
+      const err = new MockWritable();
+      const code = await main(["--lang"], {
+        stdout: out,
+        stderr: err,
+        stdin: process.stdin,
+        cwd: tmp,
+        homedir: join(tmp, "home"),
+      });
+      expect(code).toBe(2);
+      expect(err.full()).toContain("expected zh or en");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -223,17 +243,23 @@ describe("main — --resume flag", () => {
   });
 
   it("--resume <unknown-id> exits 2 with stderr error", async () => {
-    const out = new MockWritable();
-    const err = new MockWritable();
-    // Use an isolated cwd so we don't see any real sessions.
-    const code = await main(["--resume", "does-not-exist-zzzzz"], {
-      stdout: out,
-      stderr: err,
-      stdin: process.stdin,
-      cwd: "/nonexistent-test-cwd-resume",
-      homedir: "/nonexistent-test-home",
-    });
-    expect(code).toBe(2);
-    expect(err.full()).toContain("no session matching");
+    // An isolated (and real, see the key test above) cwd so we don't see any
+    // real sessions.
+    const tmp = mkdtempSync(join(tmpdir(), "herta-main-resume-"));
+    try {
+      const out = new MockWritable();
+      const err = new MockWritable();
+      const code = await main(["--resume", "does-not-exist-zzzzz"], {
+        stdout: out,
+        stderr: err,
+        stdin: process.stdin,
+        cwd: tmp,
+        homedir: join(tmp, "home"),
+      });
+      expect(code).toBe(2);
+      expect(err.full()).toContain("no session matching");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

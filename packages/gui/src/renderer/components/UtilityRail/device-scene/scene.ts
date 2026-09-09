@@ -146,6 +146,30 @@ export interface DeviceSceneOptions {
   /** The scene can no longer draw (device lost, context lost). The caller
    *  returns the card to its flat renders; the handle is already disposed. */
   readonly onFallback: (reason: string) => void;
+  /**
+   * Driven a moment at a time by the caller (a film renderer, a still):
+   * no frame loop, no clock, nothing scheduled — `renderAt` draws exactly
+   * the moment it is given, synchronously, so a frame is a pure function
+   * of its inputs. `pixelRatio` sizes the drawing buffer in place of the
+   * window's; `context` is a WebGL2 context the caller made (with
+   * `forceWebGL`), for attributes the scene does not set itself —
+   * preserveDrawingBuffer, say, so a screenshot finds the frame.
+   */
+  readonly driven?: {
+    readonly pixelRatio: number;
+    readonly context?: WebGL2RenderingContext;
+  };
+}
+
+/** One moment of the driven scene (`DeviceSceneOptions.driven`). */
+export interface DeviceSceneMoment {
+  /** The card's hour, 0–24. The theme's clock fold does not apply — the
+   *  caller says the hour; the lighting tables are the same. */
+  readonly hour: number;
+  /** Seconds elapsed: the indicator's breath and the cloud drift. */
+  readonly seconds: number;
+  /** The lift in CSS px, settled (no spring). 0 when absent. */
+  readonly liftPx?: number;
 }
 
 export interface DeviceSceneStats {
@@ -169,6 +193,9 @@ export interface DeviceSceneHandle {
    *  buffer and read back (§2.13's frosted glass for the next launch).
    *  Null when the scene is gone or the backend cannot read back. */
   snapshot(): Promise<string | null>;
+  /** Driven mode only (`DeviceSceneOptions.driven`): draw one moment. In
+   *  loop mode the next tick overwrites it. */
+  renderAt(moment: DeviceSceneMoment): void;
   dispose(): void;
 }
 
@@ -678,6 +705,7 @@ export async function createDeviceScene(
   const t0 = performance.now();
 
   const profile = opts.profile === true;
+  const driven = opts.driven;
   const renderer = new THREE.WebGPURenderer({
     canvas,
     antialias: true,
@@ -686,7 +714,11 @@ export async function createDeviceScene(
     powerPreference: "low-power",
     forceWebGL: opts.forceWebGL,
     trackTimestamp: profile,
-  });
+    // A caller-made WebGL2 context (driven mode): the WebGL backend takes
+    // `parameters.context` in place of creating its own. Not in the
+    // typings, hence the cast.
+    ...(driven?.context !== undefined ? { context: driven.context } : {}),
+  } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   await renderer.init();
   if (profile) {
     // Profiling only: lets a devtools probe read the renderer's caches.
@@ -1039,7 +1071,12 @@ export async function createDeviceScene(
   /** The art export (§2.14) owns the scene while it renders offscreen. */
   let exporting = false;
   const mayRun = (): boolean =>
-    !disposed && ready && !inputs.paused && !document.hidden && !exporting;
+    driven === undefined &&
+    !disposed &&
+    ready &&
+    !inputs.paused &&
+    !document.hidden &&
+    !exporting;
   const schedule = (delay = 0): void => {
     if (raf !== null || timer !== null || !mayRun()) return;
     if (delay > 1) {
@@ -1079,7 +1116,7 @@ export async function createDeviceScene(
     const ratio = renderPixelRatio(
       stageWidth,
       stageHeight,
-      window.devicePixelRatio || 1,
+      driven?.pixelRatio ?? window.devicePixelRatio ?? 1,
     );
     if (renderer.getPixelRatio() !== ratio) renderer.setPixelRatio(ratio);
     renderer.setSize(stageWidth, stageHeight, false);
@@ -1449,9 +1486,39 @@ export async function createDeviceScene(
     }
   };
 
+  /** Driven mode: the moment onto the scene and one render. The same
+   *  three applications the loop makes — lighting, indicator, bake — from
+   *  the moment's hour and seconds instead of the clock, the breath at
+   *  its resting colour with no easing to catch up, the shadows always
+   *  re-rendered (the key moves every frame here, and a still has no
+   *  budget to keep). */
+  const renderAt = (moment: DeviceSceneMoment): void => {
+    if (disposed || !ready) return;
+    liveHour = ((moment.hour % 24) + 24) % 24;
+    const light = applyCloudy(lightingAt(liveHour), moment.seconds);
+    applyLighting(light, moment.seconds);
+    const target = STATE_TARGETS[inputs.state];
+    liveColor.set(target.color);
+    const breath =
+      1 + Math.sin(moment.seconds * target.hz * Math.PI * 2) * target.depth;
+    applyRing(liveColor, target.intensity * breath);
+    (bloomNode.strength as { value: number }).value =
+      (0.065 + light.night * 0.1) / Math.sqrt(light.adaptation);
+    const liftPx = moment.liftPx ?? 0;
+    const lift =
+      (liftPx * (camera.top - camera.bottom)) /
+      (Math.max(1, stageHeight) * UNIT);
+    assembly.position.y = lift;
+    applyBake(liveHour, light, lift, liftPx);
+    key.shadow.needsUpdate = true;
+    contour.shadow.needsUpdate = contour.intensity > 0;
+    graph.render();
+  };
+
   return {
     stats: { backend, loadMs, compileMs, firstFrameMs, presentMs },
     snapshot,
+    renderAt,
     update(next) {
       const prev = inputs;
       inputs = next;

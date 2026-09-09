@@ -72,6 +72,12 @@ export interface VoicedRevealDeps {
    *  must finish before the next line starts, or two of her would speak at
    *  once. Synthesis is NOT deferred, only the start. */
   readonly startAfter?: Promise<void>;
+  /** The sentences the VETOED stream fully played, by position (ADR 0042
+   *  §7b): a unit of this stream that closes identical to the one at the
+   *  same index is revealed at once and not spoken again — the listener
+   *  already heard it and the screen already shows it. The first unit that
+   *  differs, or the one the veto cut, is spoken whole from its start. */
+  readonly alreadySpoken?: readonly string[];
   emitRange(text: string, start: number, end: number): void;
   onBegin(): void;
   onFinish(begun: boolean): void;
@@ -86,6 +92,14 @@ export interface VoicedReveal {
   fastForward(): Promise<void>;
   flushTail(): void;
   cancel(): boolean;
+  /** The units that played to their end, in order — what a retry after a
+   *  veto may skip (`alreadySpoken`). The unit the cut landed in is not
+   *  among them. */
+  spokenUnits(): string[];
+  /** The start of the sentence `cp` falls in — where a retract floor snaps
+   *  to when the retry will speak that sentence whole. Past every closed
+   *  unit, the open tail's start; with no unit yet, 0. */
+  unitStartAtOrBefore(cp: number): number;
 }
 
 /** The beat a silent unit (code block, table row) holds before the next
@@ -122,7 +136,9 @@ type UnitState =
   | { readonly status: "pending" }
   | { readonly status: "ready"; readonly audio: SynthesizedAudio }
   | { readonly status: "failed" }
-  | { readonly status: "silent" };
+  | { readonly status: "silent" }
+  /** Heard already (the vetoed stream played it): revealed at once. */
+  | { readonly status: "spoken" };
 
 /** Per-character reveal weight: the same pause vocabulary the text cadence
  *  uses, so a unit's characters spread over its audio the way a listener
@@ -218,6 +234,9 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
     active = null;
   };
 
+  const rawOf = (unit: SpeechUnit): string =>
+    chars.slice(unit.start, unit.end).join("");
+
   const resegment = (): void => {
     const fresh = segmentSpeechUnits(chars, inputFinished, deps.lang);
     // Prefix-stable by construction; only APPENDED units are new.
@@ -231,6 +250,16 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       if (states.has(idx)) continue;
       const unit = units[idx];
       if (unit === undefined) continue;
+      // Already heard from the vetoed stream, same sentence at the same
+      // position: nothing to synthesize, nothing to wait for.
+      if (
+        deps.alreadySpoken !== undefined &&
+        idx < deps.alreadySpoken.length &&
+        rawOf(unit) === deps.alreadySpoken[idx]
+      ) {
+        states.set(idx, { status: "spoken" });
+        continue;
+      }
       if (unit.speak.length === 0) {
         states.set(idx, { status: "silent" });
         continue;
@@ -339,6 +368,12 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       requestSynthesis();
       tryAdvance();
     };
+    if (st.status === "spoken") {
+      // On screen and in the ear already: land it and move on, no beat.
+      emit(cursor, unit.end);
+      onEnd();
+      return;
+    }
     if (st.status === "silent") {
       emit(cursor, unit.end);
       const t = setTimeout(() => {
@@ -490,6 +525,19 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       deps.synth.cancel(deps.utteranceId);
       rejectDone(new Error("slow-stream cancelled"));
       return true;
+    },
+    spokenUnits: (): string[] => units.slice(0, playIdx).map(rawOf),
+    unitStartAtOrBefore: (cp: number): number => {
+      let start = 0;
+      for (const u of units) {
+        if (u.end <= cp) {
+          start = u.end;
+          continue;
+        }
+        if (u.start <= cp) start = u.start;
+        break;
+      }
+      return start;
     },
   };
 }

@@ -1578,10 +1578,15 @@ export class SessionImpl implements Session {
     // 0013 §5): the model IS bilingual, but her English speaking voice has
     // never been reviewed, and shipping an unreviewed voice is a bigger claim
     // than shipping none.
+    // The cue module is built below; the sink's begin hook reaches it
+    // through this cell (ADR 0042 §7b: the veto reaction is armed when a
+    // supervised voiced reply begins).
+    let voiceCues: SessionVoice | null = null;
     if (config.speech !== undefined && lang === "zh") {
       sink.attachVoice({
         synth: config.speech.synthesizer,
         emitVoice: (ev) => projector.emitVoice(ev),
+        onVoicedBegin: () => voiceCues?.armVetoReaction(),
       });
     }
 
@@ -1616,6 +1621,7 @@ export class SessionImpl implements Session {
         ? { synth: config.speech.synthesizer }
         : {}),
     });
+    voiceCues = voice;
 
     // 4. V2ActorDriver — owns the growing TerminalRecord, mood routing,
     //     the supervisor, and (via the persister) block persistence. An
@@ -1635,7 +1641,12 @@ export class SessionImpl implements Session {
       // Particle voice at the FIRST speech of each turn (not retries, beats
       // or regenerate) and the veto reaction — both the voice module's.
       onPrimarySpeechStart: (text: string) => voice.onPrimarySpeechStart(text),
-      onSupervisorVeto: () => voice.onSupervisorVeto(),
+      // The reaction's audio holds the voice lane so the retry's first
+      // sentence waits for it (ADR 0042 §7b); 0 = a clip or silence.
+      onSupervisorVeto: () => {
+        const holdMs = voice.onSupervisorVeto();
+        if (holdMs > 0) sink.holdVoiceLane(holdMs);
+      },
       routerProvider: actor.routerProvider,
       metaThinkCorpus: actor.metaThinkCorpus,
       hints: actor.actorHints,

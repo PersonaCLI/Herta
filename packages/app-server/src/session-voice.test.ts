@@ -2,42 +2,65 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpeningChoice } from "@herta/herta";
-import { describe, expect, it } from "vitest";
-import { loadSessionVoice } from "./session-voice.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  loadSessionVoice,
+  VETO_FILLER_TAIL_MS,
+  VETO_FILLER_WAIT_MS,
+} from "./session-voice.js";
 import type {
   SpeechSynthesizer,
   SynthesisRequest,
+  SynthesizedAudio,
   VoiceCueEvent,
 } from "./types.js";
 
-/** A voice-clip root with one easter-egg clip whose stem is the line. */
+/** A voice-clip root with one easter-egg clip whose stem is the line, one
+ *  sigh variant, and one veto line (named by its text, like the real ones). */
 const EGG_LINE = "你动它干什么？实在没事的话，过来帮我测模拟宇宙？";
+const VETO_LINE = "等等，我得再改一改。";
 function assets(): string {
   const root = mkdtempSync(join(tmpdir(), "herta-voice-"));
   mkdirSync(join(root, "easter_egg"));
   writeFileSync(join(root, "easter_egg", `${EGG_LINE}.opus`), "");
   mkdirSync(join(root, "particle", "唉"), { recursive: true });
   writeFileSync(join(root, "particle", "唉", "01.opus"), "");
+  mkdirSync(join(root, "veto"));
+  writeFileSync(join(root, "veto", `${VETO_LINE}.opus`), "");
   return root;
 }
 
+const AUDIO: SynthesizedAudio = {
+  samples: new Int16Array([1, 2, 3]),
+  sampleRate: 24000,
+  durationMs: 125,
+};
+
 function fakeSynth(opts: {
   available: boolean;
-  answer?: "audio" | "null" | "throw";
-}): SpeechSynthesizer & { requests: SynthesisRequest[] } {
+  answer?: "audio" | "null" | "throw" | "deferred";
+}): SpeechSynthesizer & {
+  requests: SynthesisRequest[];
+  land(audio: SynthesizedAudio | null): void;
+} {
   const requests: SynthesisRequest[] = [];
+  const deferred: ((a: SynthesizedAudio | null) => void)[] = [];
   return {
     requests,
+    land: (audio) => {
+      for (const r of deferred.splice(0)) r(audio);
+    },
     available: () => opts.available,
     async synthesize(req) {
       requests.push(req);
       if (opts.answer === "throw") throw new Error("boom");
       if (opts.answer === "null") return null;
-      return {
-        samples: new Int16Array([1, 2, 3]),
-        sampleRate: 24000,
-        durationMs: 125,
-      };
+      if (opts.answer === "deferred") {
+        return new Promise((r) => {
+          deferred.push(r);
+        });
+      }
+      return AUDIO;
     },
     cancel: () => undefined,
   };
@@ -55,6 +78,8 @@ async function voice(opts: {
   synth?: SpeechSynthesizer;
   lang?: "zh" | "en";
   withOpening?: boolean;
+  /** The veto roll's draws: 0 → the veto line, 0.5 → a sigh, 0.9 → silence. */
+  vetoRandom?: () => number;
 }) {
   const emitted: VoiceCueEvent[] = [];
   const v = await loadSessionVoice({
@@ -64,6 +89,7 @@ async function voice(opts: {
     emit: (e) => emitted.push(e),
     openingDurationMs: 1000,
     particleRandom: () => 0,
+    vetoRandom: opts.vetoRandom ?? (() => 0),
     easterEggRandom: () => 0, // the 50% roll always wins; the pick is the first
     easterEggNow: () => 1,
     ...(opts.synth !== undefined ? { synth: opts.synth } : {}),
@@ -72,6 +98,99 @@ async function voice(opts: {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("session voice — the veto reaction in her own voice (ADR 0042 §7b)", () => {
+  it("armed when the voiced reply begins, spoken at the veto: everything stops, the line plays, the lane holds for its length", async () => {
+    const synth = fakeSynth({ available: true });
+    const { v, emitted } = await voice({ synth });
+    v.armVetoReaction();
+    expect(synth.requests).toEqual([
+      { utteranceId: "veto1", seq: 0, text: VETO_LINE, lang: "zh" },
+    ]);
+    await flush();
+    expect(emitted).toEqual([]); // nothing until the veto
+    const hold = v.onSupervisorVeto();
+    expect(hold).toBe(125 + VETO_FILLER_TAIL_MS);
+    expect(emitted).toEqual([
+      { kind: "ttsStop" },
+      {
+        kind: "tts",
+        utteranceId: "veto1",
+        seq: 0,
+        samples: AUDIO.samples,
+        sampleRate: 24000,
+        durationMs: 125,
+      },
+    ]);
+    // Spent: a second veto in the same turn has nothing armed and falls
+    // back to the recorded roll.
+    expect(v.onSupervisorVeto()).toBe(0);
+    expect(emitted.at(-1)).toMatchObject({ kind: "cue", category: "veto" });
+  });
+
+  it("a sigh is the token trailing off; silence stays silent and asks for nothing", async () => {
+    const sigh = fakeSynth({ available: true });
+    const a = await voice({ synth: sigh, vetoRandom: () => 0.5 });
+    a.v.armVetoReaction();
+    expect(sigh.requests[0]?.text).toBe("唉……");
+    await flush();
+    expect(a.v.onSupervisorVeto()).toBe(125 + VETO_FILLER_TAIL_MS);
+    expect(a.emitted[1]).toMatchObject({ kind: "tts", utteranceId: "veto1" });
+    const quiet = fakeSynth({ available: true });
+    const b = await voice({ synth: quiet, vetoRandom: () => 0.9 });
+    b.v.armVetoReaction();
+    expect(quiet.requests).toEqual([]);
+    expect(b.v.onSupervisorVeto()).toBe(0);
+    expect(b.emitted).toEqual([]);
+  });
+
+  it("a veto before the filler is ready plays it when it lands; past the bound, the recording", async () => {
+    vi.useFakeTimers();
+    const late = fakeSynth({ available: true, answer: "deferred" });
+    const a = await voice({ synth: late });
+    a.v.armVetoReaction();
+    expect(a.v.onSupervisorVeto()).toBe(
+      VETO_FILLER_WAIT_MS + VETO_FILLER_TAIL_MS,
+    );
+    expect(a.emitted).toEqual([]);
+    late.land(AUDIO);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(a.emitted.map((e) => e.kind)).toEqual(["ttsStop", "tts"]);
+    const never = fakeSynth({ available: true, answer: "deferred" });
+    const b = await voice({ synth: never });
+    b.v.armVetoReaction();
+    b.v.onSupervisorVeto();
+    await vi.advanceTimersByTimeAsync(VETO_FILLER_WAIT_MS + 1);
+    expect(b.emitted).toEqual([
+      { kind: "cue", category: "veto", clipId: VETO_LINE },
+    ]);
+    // Landing after the bound changes nothing.
+    never.land(AUDIO);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(b.emitted).toHaveLength(1);
+  });
+
+  it("a synthesis that fails falls back to the recording; without the synthesizer the recording plays as before, no hold", async () => {
+    const failing = fakeSynth({ available: true, answer: "null" });
+    const a = await voice({ synth: failing });
+    a.v.armVetoReaction();
+    await flush();
+    expect(a.v.onSupervisorVeto()).toBe(0);
+    expect(a.emitted).toEqual([
+      { kind: "cue", category: "veto", clipId: VETO_LINE },
+    ]);
+    const off = await voice({ synth: fakeSynth({ available: false }) });
+    off.v.armVetoReaction();
+    expect(off.v.onSupervisorVeto()).toBe(0);
+    expect(off.emitted).toEqual([
+      { kind: "cue", category: "veto", clipId: VETO_LINE },
+    ]);
+  });
+});
 
 describe("session voice — one voice with the synthesizer on (ADR 0042 §7a)", () => {
   it("the opening: the clip cues by default; told `voiced`, no clip — the sink speaks it", async () => {

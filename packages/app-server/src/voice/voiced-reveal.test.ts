@@ -99,6 +99,61 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("createVoicedReveal — after a veto (ADR 0042 §7b)", () => {
+  const S0 = "第一句话说得比较长一些。";
+  const S1 = "第二句也说得比较长一些。";
+  const S1b = "第二句换了一个说法来讲。";
+
+  it("spokenUnits lists the units that played to their end; the cut one is not among them", async () => {
+    const h = harness();
+    h.ctl.pushToken(`${S0}${S1}`);
+    h.ctl.finishInput();
+    h.synth.resolve(0, 1000);
+    h.synth.resolve(1, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.tts().length).toBe(1);
+    // Unit 0 plays out; unit 1 starts and is cut mid-way.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.tts().length).toBe(2);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.ctl.cancel()).toBe(true);
+    expect(h.ctl.spokenUnits()).toEqual([S0]);
+    // The sentence a floor falls in: its start.
+    expect(h.ctl.unitStartAtOrBefore(0)).toBe(0);
+    expect(h.ctl.unitStartAtOrBefore(5)).toBe(0);
+    expect(h.ctl.unitStartAtOrBefore(S0.length)).toBe(S0.length);
+    expect(h.ctl.unitStartAtOrBefore(S0.length + 3)).toBe(S0.length);
+    // Past every closed unit: the open tail's start.
+    expect(h.ctl.unitStartAtOrBefore(S0.length + S1.length + 2)).toBe(
+      S0.length + S1.length,
+    );
+  });
+
+  it("a retry with the same first sentence does not speak it again: revealed at once, the first differing sentence spoken whole", async () => {
+    const h = harness({ alreadySpoken: [S0] });
+    h.ctl.pushToken(`${S0}${S1b}`);
+    h.ctl.finishInput();
+    // Only the differing sentence is synthesized, from its start.
+    expect(h.synth.requests.map((r) => [r.seq, r.text])).toEqual([[1, S1b]]);
+    h.synth.resolve(1, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    // The heard sentence landed in one emit ahead of the audio; the new
+    // one plays whole.
+    expect(h.text().startsWith(S0)).toBe(true);
+    expect(h.tts().map((t) => (t.kind === "tts" ? t.seq : -1))).toEqual([1]);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(h.text()).toBe(`${S0}${S1b}`);
+    expect(h.finished()).toEqual([true]);
+  });
+
+  it("a retry whose first sentence differs speaks from the start; positions beyond the spoken list are untouched", async () => {
+    const h = harness({ alreadySpoken: [S0] });
+    h.ctl.pushToken(`${S1b}${S1}`);
+    h.ctl.finishInput();
+    expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 1]);
+  });
+});
+
 describe("createVoicedReveal", () => {
   it("synthesizes a unit the moment it closes and reveals its text across the audio", async () => {
     const h = harness();

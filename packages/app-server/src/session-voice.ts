@@ -5,7 +5,11 @@ import {
   spanMatchedBaseMs,
 } from "@herta/herta";
 import { SLOW_MS_PER_CHAR } from "./bus-streaming-sink.js";
-import type { SpeechSynthesizer, VoiceCueEvent } from "./types.js";
+import type {
+  SpeechSynthesizer,
+  SynthesizedAudio,
+  VoiceCueEvent,
+} from "./types.js";
 import { loadClipStems, pickClipStem } from "./voice/clip-list.js";
 import { readOpusDurationMs } from "./voice/opus-duration.js";
 import {
@@ -13,7 +17,7 @@ import {
   matchLeadingParticle,
   pickParticleClip,
 } from "./voice/particle-catalog.js";
-import { pickVetoReaction } from "./voice/veto-reaction.js";
+import { pickVetoReaction, type VetoReaction } from "./voice/veto-reaction.js";
 
 /**
  * The session's voice cues (extracted from session.ts, 2026-09-03): the
@@ -37,13 +41,37 @@ import { pickVetoReaction } from "./voice/veto-reaction.js";
  * its text (the clip's filename stem IS the line), and the particle cue is
  * withheld because the synthesized first unit already carries the
  * interjection — a recorded clip would cut that unit off (the renderer
- * plays one voice at a time, newest wins). The veto reaction stays a clip:
- * it is a line the text does not contain, and cutting the vetoed audio is
- * exactly what it should do.
+ * plays one voice at a time, newest wins).
+ *
+ * The veto reaction, too (§7b, 2026-09-09): the "catching herself" line is
+ * synthesized from the recording's own text (the veto clips are named by
+ * their lines, the sighs by their token), so the beat is in the same voice
+ * as the reply it interrupts. It is ARMED when the supervised voiced reply
+ * begins — rolled and synthesized then, so a veto never waits on synthesis
+ * and the request queues behind the reply's first units rather than ahead
+ * of them — and thrown away if she does not need it. At the veto: stop
+ * everything (the renderer fades), the filler, and a hold on the voice
+ * lane for its length so the retry's first sentence waits. A filler still
+ * synthesizing plays when it lands, within a bound; past it, or on a
+ * failed synthesis, the recording.
  */
 
 /** Easter-egg voice throttle: ≤1 play per session per hour. */
 export const EASTER_EGG_COOLDOWN_MS = 60 * 60 * 1000;
+
+/** Breath after the veto filler before the retry's first sentence. */
+export const VETO_FILLER_TAIL_MS = 150;
+/** How long a veto waits for a filler still being synthesized. */
+export const VETO_FILLER_WAIT_MS = 1500;
+
+/** The reaction rolled and synthesized ahead of a possible veto. */
+interface ArmedReaction {
+  readonly reaction: VetoReaction;
+  readonly utteranceId: string;
+  readonly audio: Promise<SynthesizedAudio | null>;
+  /** undefined while synthesizing; the answer once it landed. */
+  ready: SynthesizedAudio | null | undefined;
+}
 
 export interface SessionVoiceOpts {
   /** Voice-clip root (openings/, particle/, veto/, easter_egg/). Config-driven
@@ -92,8 +120,14 @@ export interface SessionVoice {
    *  beats, or regenerate): match the leading particle and cue a random
    *  variant on the same voice channel the opening uses. */
   onPrimarySpeechStart(text: string): void;
-  /** The rejection moment (see pickVetoReaction). */
-  onSupervisorVeto(): void;
+  /** A supervised VOICED reply has begun (the sink's hook): roll the veto
+   *  reaction now and synthesize it, so a veto has it in hand. No-op
+   *  without the synthesizer. */
+  armVetoReaction(): void;
+  /** The rejection moment (see pickVetoReaction). Returns how long the
+   *  voice lane should hold for the reaction's audio — 0 for a recorded
+   *  clip or silence, which the lane need not wait for. */
+  onSupervisorVeto(): number;
   /** GUI easter egg (SPEC 2026-06-23): called per successful 板砖-card lift.
    *  Rolls a 50% chance, throttled to ≤1 play per session per hour. No-op
    *  without clips or within the cooldown. */
@@ -184,6 +218,23 @@ export async function loadSessionVoice(
   const synthAvailable = (): boolean =>
     voiceCuesEnabled && synth !== undefined && synth.available();
   let eggSeq = 0;
+  let armed: ArmedReaction | null = null;
+  let fillerSeq = 0;
+  const rollVeto = (): VetoReaction =>
+    pickVetoReaction({
+      vetoClips,
+      lastVetoClip,
+      lastSighClip,
+      particleCatalog,
+      particleTokenThisTurn,
+      random: vetoRandom,
+    });
+  /** Remember what played, for the consecutive-repeat avoidance. */
+  const notePlayed = (r: VetoReaction): void => {
+    if (r.kind !== "cue") return;
+    if (r.fromVetoFolder) lastVetoClip = r.clipId;
+    else lastSighClip = `${r.category}/${r.clipId}`;
+  };
 
   return {
     openingClipId,
@@ -196,16 +247,49 @@ export async function loadSessionVoice(
     },
     onPrimarySpeechStart(text: string): void {
       if (!voiceCuesEnabled) return; // no EN voice in v1 (ADR 0013 §5)
+      const token = matchLeadingParticle(text, particleCatalog);
+      // Recorded either way: the veto roll's sigh eligibility reads it.
+      particleTokenThisTurn = token;
       // The synthesized reply already speaks its leading interjection; a
       // clip on top would cut the first unit's audio (newest wins).
       if (synthAvailable()) return;
-      const token = matchLeadingParticle(text, particleCatalog);
-      particleTokenThisTurn = token;
       if (token === null) return;
       const clip = pickParticleClip(particleCatalog, token, particleRandom);
       if (clip !== null) {
         emit({ kind: "cue", category: clip.category, clipId: clip.clipId });
       }
+    },
+    armVetoReaction(): void {
+      if (!synthAvailable() || synth === undefined) return;
+      const reaction = rollVeto();
+      fillerSeq += 1;
+      const utteranceId = `veto${fillerSeq}`;
+      if (reaction.kind === "silence") {
+        armed = {
+          reaction,
+          utteranceId,
+          audio: Promise.resolve(null),
+          ready: null,
+        };
+        return;
+      }
+      // The recording's own words: a veto clip is named by its line, a sigh
+      // by its token — trailing off.
+      const text = reaction.fromVetoFolder
+        ? reaction.clipId
+        : `${reaction.category.slice("particle/".length)}……`;
+      const entry: ArmedReaction = {
+        reaction,
+        utteranceId,
+        audio: synth
+          .synthesize({ utteranceId, seq: 0, text, lang: "zh" })
+          .catch(() => null),
+        ready: undefined,
+      };
+      void entry.audio.then((audio) => {
+        entry.ready = audio;
+      });
+      armed = entry;
     },
     // Veto voice, diversified (user 2026-07-11): the rejection moment rolls
     // one of three reactions instead of always a full "catching-herself"
@@ -213,24 +297,59 @@ export async function loadSessionVoice(
     // short sigh from particle/唉 · particle/哎 (only when this turn's
     // speech didn't already cue a sigh-family particle), or silence (the
     // retract morph alone carries the beat). See pickVetoReaction.
-    onSupervisorVeto(): void {
-      if (!voiceCuesEnabled) return; // no EN voice in v1 (ADR 0013 §5)
-      const reaction = pickVetoReaction({
-        vetoClips,
-        lastVetoClip,
-        lastSighClip,
-        particleCatalog,
-        particleTokenThisTurn,
-        random: vetoRandom,
-      });
-      if (reaction.kind === "silence") return;
-      if (reaction.fromVetoFolder) lastVetoClip = reaction.clipId;
-      else lastSighClip = `${reaction.category}/${reaction.clipId}`;
+    onSupervisorVeto(): number {
+      if (!voiceCuesEnabled) return 0; // no EN voice in v1 (ADR 0013 §5)
+      const a = armed;
+      armed = null;
+      if (a !== null && synthAvailable()) {
+        const r = a.reaction;
+        if (r.kind === "silence") return 0;
+        notePlayed(r);
+        const recording = (): void =>
+          emit({ kind: "cue", category: r.category, clipId: r.clipId });
+        const play = (audio: SynthesizedAudio | null): number => {
+          if (audio === null || audio.durationMs <= 0) {
+            recording();
+            return 0;
+          }
+          emit({ kind: "ttsStop" });
+          emit({
+            kind: "tts",
+            utteranceId: a.utteranceId,
+            seq: 0,
+            samples: audio.samples,
+            sampleRate: audio.sampleRate,
+            durationMs: audio.durationMs,
+          });
+          return audio.durationMs + VETO_FILLER_TAIL_MS;
+        };
+        if (a.ready !== undefined) return play(a.ready);
+        // A veto faster than the synthesis: play the filler when it lands,
+        // within a bound; past it, the recording.
+        let settled = false;
+        const bound = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          recording();
+        }, VETO_FILLER_WAIT_MS);
+        void a.audio.then((audio) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(bound);
+          play(audio);
+        });
+        return VETO_FILLER_WAIT_MS + VETO_FILLER_TAIL_MS;
+      }
+      // No synthesizer: the recorded reaction, rolled now, as before.
+      const reaction = rollVeto();
+      if (reaction.kind === "silence") return 0;
+      notePlayed(reaction);
       emit({
         kind: "cue",
         category: reaction.category,
         clipId: reaction.clipId,
       });
+      return 0;
     },
     maybePlayEasterEgg(): void {
       if (easterEggClips.length === 0) return;

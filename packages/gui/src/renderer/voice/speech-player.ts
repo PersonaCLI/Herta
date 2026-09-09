@@ -16,15 +16,25 @@ import { getVoiceVolume, isVoiceMuted } from "./voice-prefs.js";
  * happens when synthesis ran ahead of the reveal). Either way audio never
  * overlaps itself and never leaves a hole mid-sentence.
  *
+ * A stop FADES (ADR 0042 §7b, 2026-09-09): each unit rides its own gain
+ * node, and `stopSpeech` ramps the live ones to silence over a short beat
+ * before stopping them, instead of cutting the waveform mid-word — the
+ * veto's "catching herself" still reads as an interruption, without the
+ * click. A unit that starts during the fade is untouched by it.
+ *
  * Best-effort like every other voice path: no Web Audio, a rejected resume,
  * a malformed buffer — all swallowed. Silence is an acceptable outcome; a
  * broken UI is not.
  */
 
+/** How long a stop takes to reach silence. Short enough to stay a cut. */
+export const FADE_OUT_MS = 120;
+
 let ctx: AudioContext | null = null;
 let gain: GainNode | null = null;
-/** Sources scheduled and not yet ended — stopped as a group on a cut. */
-const live = new Set<AudioBufferSourceNode>();
+/** Sources scheduled and not yet ended, each with its own gain — faded and
+ *  stopped as a group on a cut. */
+const live = new Map<AudioBufferSourceNode, GainNode>();
 /** Context time the next unit should start at. */
 let nextAt = 0;
 /** The utterance the cursor belongs to; a different one resets the schedule. */
@@ -101,16 +111,26 @@ export function playSpeechUnit(unit: {
     }
     const src = audio.ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(audio.gain);
+    // Per-unit gain: the fade on a cut ramps THIS node, so the master volume
+    // stays what the slider says and a unit starting mid-fade plays whole.
+    const unitGain = audio.ctx.createGain();
+    unitGain.gain.value = 1;
+    src.connect(unitGain);
+    unitGain.connect(audio.gain);
     if (unit.utteranceId !== currentUtterance) {
       currentUtterance = unit.utteranceId;
       nextAt = 0;
     }
     const at = Math.max(audio.ctx.currentTime, nextAt);
-    live.add(src);
+    live.set(src, unitGain);
     notify();
     src.onended = (): void => {
       live.delete(src);
+      try {
+        unitGain.disconnect();
+      } catch {
+        // already gone
+      }
       notify();
     };
     src.start(at);
@@ -121,20 +141,36 @@ export function playSpeechUnit(unit: {
 }
 
 /**
- * Stop synthesized speech. With an `utteranceId`, only that utterance's
- * audio (a stale stop for a reply already superseded must not cut the new
- * one); without, everything. Idempotent.
+ * Stop synthesized speech, fading it out over {@link FADE_OUT_MS}. With an
+ * `utteranceId`, only that utterance's audio (a stale stop for a reply
+ * already superseded must not cut the new one); without, everything.
+ * Idempotent. The units leave the live set at once — what is fading is no
+ * longer "her speaking" — and are stopped when the ramp lands.
  */
 export function stopSpeech(utteranceId?: string): void {
   if (utteranceId !== undefined && currentUtterance !== null) {
     if (utteranceId !== currentUtterance) return;
   }
-  for (const src of live) {
+  const c = ctx;
+  for (const [src, unitGain] of live) {
     try {
       src.onended = null;
-      src.stop();
+      if (c === null) {
+        src.stop();
+        continue;
+      }
+      const now = c.currentTime;
+      const end = now + FADE_OUT_MS / 1000;
+      unitGain.gain.cancelScheduledValues(now);
+      unitGain.gain.setValueAtTime(unitGain.gain.value, now);
+      unitGain.gain.linearRampToValueAtTime(0, end);
+      src.stop(end + 0.01);
     } catch {
-      // already ended
+      try {
+        src.stop();
+      } catch {
+        // already ended
+      }
     }
   }
   live.clear();

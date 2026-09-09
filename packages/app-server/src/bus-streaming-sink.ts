@@ -104,12 +104,20 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   private voice: {
     readonly synth: SpeechSynthesizer;
     readonly emitVoice: (ev: VoiceCueEvent) => void;
+    /** A SUPERVISED voiced stream has begun — the moment the veto reaction
+     *  is armed (ADR 0042 §7b): its first units are in flight, so the
+     *  filler queues behind them instead of ahead of the reply. */
+    readonly onVoicedBegin?: () => void;
   } | null = null;
   private utteranceSeq = 0;
   /** One voice at a time: every voiced driver starts after the previous
    *  one settles. A beat still sounding when the next line opens must
    *  finish first, or two of her would speak at once. */
   private voiceLane: Promise<void> = Promise.resolve();
+  /** The voiced driver a veto cut, kept until the turn settles: the retry's
+   *  driver skips the sentences it fully played, and the retract floor
+   *  snaps to the start of the sentence the retry will speak whole. */
+  private lastVetoed: VoicedReveal | null = null;
   /** Voiced drivers not yet settled — `settleVoice` lands their text. */
   private readonly liveVoiced = new Set<VoicedReveal>();
   /**
@@ -155,8 +163,21 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   attachVoice(voice: {
     readonly synth: SpeechSynthesizer;
     readonly emitVoice: (ev: VoiceCueEvent) => void;
+    readonly onVoicedBegin?: () => void;
   }): void {
     this.voice = voice;
+  }
+
+  /**
+   * Hold the voice lane for `ms` after whatever is on it settles: the next
+   * voiced driver starts after that. The veto reaction's filler rides here
+   * (ADR 0042 §7b) — the retry's first sentence waits for "等等…" to land.
+   */
+  holdVoiceLane(ms: number): void {
+    if (!(ms > 0)) return;
+    this.voiceLane = this.voiceLane.then(
+      () => new Promise<void>((r) => setTimeout(r, ms)),
+    );
   }
 
   /** Whether a stream opened now would be voiced — the host's synthesizer
@@ -193,6 +214,8 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   ): VoicedReveal {
     this.utteranceSeq += 1;
     const startAfter = this.voiceLane;
+    const supervised = opts.verdictPending !== undefined;
+    const vetoed = this.lastVetoed;
     const driver = createVoicedReveal({
       synth: voice.synth,
       utteranceId: `u${this.utteranceSeq}-${randomUUID().slice(0, 8)}`,
@@ -204,10 +227,15 @@ export class BusActorStreamingSink implements ActorStreamingSink {
         ? { verdictPending: opts.verdictPending }
         : {}),
       startAfter,
+      // After a veto: the sentences already heard are not spoken twice.
+      ...(vetoed !== null ? { alreadySpoken: vetoed.spokenUnits() } : {}),
       emitRange: (text) => {
         publishWithLayer(this.bus, "actor", { type: "assistant.delta", text });
       },
-      onBegin: opts.onBegin,
+      onBegin: () => {
+        opts.onBegin();
+        if (supervised) voice.onVoicedBegin?.();
+      },
       onFinish: opts.onFinish,
       emitVoice: voice.emitVoice,
     });
@@ -230,6 +258,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   settleVoice(): void {
     for (const d of this.liveVoiced) d.flushTail();
     this.beatVoice = null;
+    this.lastVetoed = null;
     this.drainQueuedRecord();
   }
 
@@ -354,7 +383,12 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    * it is not retracting (the cursor-0 veto where no retract fired).
    */
   emitRetractFloor(keepLen: number): void {
-    this.emitSpeech({ kind: "retractFloor", keepLen });
+    // Voiced (ADR 0042 §7b): the retry speaks the sentence the divergence
+    // falls in WHOLE, so the erase walks back to that sentence's start and
+    // audio and text restart together — a few characters further than the
+    // minimum, in lockstep.
+    const snapped = this.lastVetoed?.unitStartAtOrBefore(keepLen) ?? keepLen;
+    this.emitSpeech({ kind: "retractFloor", keepLen: snapped });
   }
 
   /**
@@ -471,7 +505,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     // Voiced (ADR 0042) when the host's synthesizer is available and the
     // caller did not bring its own voice: the audio paces the reveal.
     const voice = this.voiceFor(opts);
-    const driver: RevealLike =
+    const voicedDriver: VoicedReveal | null =
       voice !== null
         ? this.makeVoicedDriver(voice, {
             ...(opts?.verdictPending !== undefined
@@ -483,6 +517,10 @@ export class BusActorStreamingSink implements ActorStreamingSink {
             onBegin,
             onFinish,
           })
+        : null;
+    const driver: RevealLike =
+      voicedDriver !== null
+        ? voicedDriver
         : createRevealDriver({
             mode: this.mode,
             baseMs,
@@ -524,6 +562,9 @@ export class BusActorStreamingSink implements ActorStreamingSink {
         // driver.cancel() stops the loop and rejects `done`; false → a
         // repeat call (idempotent, no second retract event).
         if (!driver.cancel()) return;
+        // The retry's driver and the retract floor read what this one
+        // spoke (ADR 0042 §7b).
+        if (voicedDriver !== null) this.lastVetoed = voicedDriver;
         if (!begun) this.openSurface();
         this.closeSurface();
         // cursor === 0 → nothing on screen to retract (veto during the

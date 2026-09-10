@@ -315,6 +315,84 @@ describe("createTtsSynthesizer", () => {
     await expect(p).resolves.toBeNull();
   });
 
+  it("a unit that times out abandons its utterance: siblings resolve null now, the worker drops its queue, later units answer without a request", async () => {
+    vi.useFakeTimers();
+    const { synth } = setup();
+    const p0 = synth.synthesize(REQ);
+    const child = ready();
+    await Promise.resolve();
+    const p1 = synth.synthesize({ ...REQ, seq: 1 });
+    await Promise.resolve();
+    expect(child.sent.filter((m) => (m as { type: string }).type === "synth"))
+      .toHaveLength(2);
+    // The first deadline (the model load rides on it) passes with no audio.
+    await vi.advanceTimersByTimeAsync(45_000);
+    await expect(p0).resolves.toBeNull();
+    await expect(p1).resolves.toBeNull();
+    expect(child.sent).toContainEqual({ type: "cancel", utteranceId: "u1" });
+    // A later unit of the same utterance: null at once, nothing posted.
+    const before = child.sent.length;
+    await expect(synth.synthesize({ ...REQ, seq: 2 })).resolves.toBeNull();
+    expect(child.sent).toHaveLength(before);
+    // The next utterance is unaffected, and the worker is not restarted.
+    const p3 = synth.synthesize({ ...REQ, utteranceId: "u2", seq: 0 });
+    await Promise.resolve();
+    expect(children).toHaveLength(1);
+    const msg = child.sent[child.sent.length - 1] as { id: number };
+    child.emit({
+      type: "audio",
+      id: msg.id,
+      samples: new Int16Array([7]),
+      sampleRate: 24000,
+      durationMs: 10,
+    });
+    await expect(p3).resolves.not.toBeNull();
+    expect(synth.available()).toBe(true);
+  });
+
+  it("a worker that never answers init is torn down at the deadline and counted as a failed start", async () => {
+    vi.useFakeTimers();
+    const { synth } = setup();
+    const p = synth.synthesize(REQ);
+    const child = children[0];
+    expect(child).toBeDefined();
+    await vi.advanceTimersByTimeAsync(45_000);
+    await expect(p).resolves.toBeNull();
+    expect(child?.killed()).toBe(true);
+    expect(synth.status().running).toBe(false);
+    // Still available (one failure), and the next request forks afresh.
+    expect(synth.available()).toBe(true);
+    const p2 = synth.synthesize({ ...REQ, seq: 1 });
+    expect(children).toHaveLength(2);
+    const fresh = ready();
+    await Promise.resolve();
+    const msg = fresh.sent[1] as { id: number };
+    fresh.emit({
+      type: "audio",
+      id: msg.id,
+      samples: new Int16Array([1]),
+      sampleRate: 24000,
+      durationMs: 5,
+    });
+    await expect(p2).resolves.not.toBeNull();
+  });
+
+  it("crashes AFTER a successful start count against the same budget as failed starts", async () => {
+    const { synth } = setup();
+    for (let i = 0; i < 3; i += 1) {
+      const p = synth.synthesize({ ...REQ, seq: i });
+      const child = ready();
+      await Promise.resolve();
+      child.exit(139); // the addon died on a sentence
+      await expect(p).resolves.toBeNull();
+    }
+    expect(synth.status().failed).toBe(true);
+    expect(synth.available()).toBe(false);
+    const before = children.length;
+    await expect(synth.synthesize({ ...REQ, seq: 9 })).resolves.toBeNull();
+    expect(children).toHaveLength(before);
+  });
+
   it("a worker crash resolves in-flight work and the NEXT request starts a fresh one", async () => {
     const { synth } = setup();
     const p = synth.synthesize(REQ);

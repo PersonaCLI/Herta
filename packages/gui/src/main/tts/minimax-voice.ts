@@ -3,11 +3,14 @@ import {
   cloneVoice,
   type FetchLike,
   listClones,
+  MINIMAX_CONTROL_TIMEOUT_MS,
+  MINIMAX_UPLOAD_TIMEOUT_MS,
   MiniMaxError,
   type MiniMaxFailure,
   makeVoiceId,
   probeHost,
   uploadReference,
+  withDeadline,
 } from "./minimax-api.js";
 
 /**
@@ -80,6 +83,11 @@ export interface MiniMaxVoiceServiceOptions {
   readonly random?: () => string;
   /** Minimum ms between `lastUsedAt` writes. */
   readonly usedStampEveryMs?: number;
+  /** Deadlines per call (tests shorten them); see MINIMAX_*_TIMEOUT_MS. */
+  readonly timeoutMs?: {
+    readonly control?: number;
+    readonly upload?: number;
+  };
 }
 
 export interface MiniMaxVoiceService {
@@ -103,6 +111,8 @@ export function createMiniMaxVoiceService(
   const log = opts.log ?? ((l: string) => console.log(`[herta-minimax] ${l}`));
   const now = opts.now ?? (() => new Date());
   const stampEvery = opts.usedStampEveryMs ?? 10 * 60 * 1000;
+  const controlMs = opts.timeoutMs?.control ?? MINIMAX_CONTROL_TIMEOUT_MS;
+  const uploadMs = opts.timeoutMs?.upload ?? MINIMAX_UPLOAD_TIMEOUT_MS;
   let record: MiniMaxVoiceRecord | null = opts.initial;
   let inFlight: Promise<MiniMaxVoiceState> | null = null;
   // Set INSIDE `run` before its first push: the promise is assigned to
@@ -140,7 +150,10 @@ export function createMiniMaxVoiceService(
   /** The newest clone on the account made from this reference, or null. A
    *  listing that fails for a reason other than the key is treated as an
    *  empty account — cloning still answers the user; adoption is a saving,
-   *  not a requirement. */
+   *  not a requirement. Two answers are NOT an empty account (2026-09-10):
+   *  a rate limit and an exhausted balance come from a platform that is
+   *  answering and refusing — the account may well hold a paid clone, and
+   *  cloning past the refusal is the ¥9.90 the listing exists to save. */
   const adoptable = async (
     host: string,
     key: string,
@@ -148,13 +161,17 @@ export function createMiniMaxVoiceService(
   ): Promise<string | null> => {
     let clones: Awaited<ReturnType<typeof listClones>>;
     try {
-      clones = await listClones(opts.fetch, host, key);
+      clones = await withDeadline(controlMs, undefined, (sig) =>
+        listClones(opts.fetch, host, key, sig),
+      );
     } catch (err) {
       if (
         err instanceof MiniMaxError &&
         (err.reason === "auth" ||
           err.reason === "invalid_key" ||
-          err.reason === "cancelled")
+          err.reason === "cancelled" ||
+          err.reason === "rate" ||
+          err.reason === "quota")
       ) {
         throw err;
       }
@@ -183,7 +200,13 @@ export function createMiniMaxVoiceService(
         throw new Error("the reference audio is not in this install");
       }
       const tag = referenceTag(reference);
-      const host = await probeHost(opts.fetch, key);
+      const host = await probeHost(
+        opts.fetch,
+        key,
+        undefined,
+        undefined,
+        controlMs,
+      );
       // Adopt before clone: a voice this reference already paid for.
       const adopted = await adoptable(host, key, tag);
       if (adopted !== null) {
@@ -198,15 +221,20 @@ export function createMiniMaxVoiceService(
           lastError = "no_clone_key";
           throw new Error("cloning needs the pay-as-you-go key");
         }
-        const fileId = await uploadReference(
-          opts.fetch,
-          host,
-          cloneKey,
-          reference,
-          "herta-reference.wav",
+        const fileId = await withDeadline(uploadMs, undefined, (sig) =>
+          uploadReference(
+            opts.fetch,
+            host,
+            cloneKey,
+            reference,
+            "herta-reference.wav",
+            sig,
+          ),
         );
         const voiceId = makeVoiceId(opts.random, tag);
-        await cloneVoice(opts.fetch, host, cloneKey, fileId, voiceId);
+        await withDeadline(controlMs, undefined, (sig) =>
+          cloneVoice(opts.fetch, host, cloneKey, fileId, voiceId, sig),
+        );
         await persist({ voiceId, host, clonedAt: now().toISOString() });
         log(`cloned ${voiceId} on ${host}`);
       }

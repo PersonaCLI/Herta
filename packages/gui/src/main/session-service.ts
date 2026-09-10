@@ -79,7 +79,11 @@ import {
   resolveInsideWorkspace,
 } from "./read-workspace-file.js";
 import { createFallbackFetch } from "./tts/fallback-fetch.js";
-import { MiniMaxError, probeHost } from "./tts/minimax-api.js";
+import {
+  MINIMAX_CONTROL_TIMEOUT_MS,
+  MiniMaxError,
+  probeHost,
+} from "./tts/minimax-api.js";
 import {
   createMiniMaxSynthesizer,
   type MiniMaxSynthesizer,
@@ -1276,14 +1280,22 @@ export function createSessionService(
     handle(CMD.getMiniMaxKeyStatus, async () => getMiniMaxKeyStatus());
     // A key is checked against the platform before it is stored — a key
     // neither host accepts is refused, like a DeepSeek key that fails its
-    // auth check. A network failure stores it unverified.
+    // auth check. A network failure stores it unverified — and a platform
+    // that never answers is one (the deadline; the save must not spin for
+    // the rest of the session).
     const checkKey = async (
       key: string,
     ): Promise<{ trimmed: string; unverified: boolean } | null> => {
       const trimmed = typeof key === "string" ? key.trim() : "";
       if (trimmed.length === 0) return null;
       try {
-        await probeHost(minimaxFetch, trimmed);
+        await probeHost(
+          minimaxFetch,
+          trimmed,
+          undefined,
+          undefined,
+          MINIMAX_CONTROL_TIMEOUT_MS,
+        );
         return { trimmed, unverified: false };
       } catch (err) {
         if (err instanceof MiniMaxError && err.reason === "invalid_key") {

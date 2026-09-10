@@ -32,10 +32,13 @@ import { TTS_EFFECT, TTS_MODEL_FILE, ttsBundleComplete } from "./tts-path.js";
  * memory.
  */
 
-/** Worker restarts allowed per app run. Past this the voice stays off until
- *  the app is relaunched: a worker that dies repeatedly is a broken install
- *  (missing native lib, incompatible CPU), and retrying forever would spend
- *  seconds of model load on every sentence. */
+/** Worker failures allowed per app run — a start that never reaches
+ *  `ready`, or a crash after it (2026-09-10: only failed starts were
+ *  counted, so an addon that died on every `generate` was re-forked and
+ *  reloaded the model on every sentence, forever). Past this the voice
+ *  stays off until the app is relaunched: a worker that dies repeatedly is
+ *  a broken install (missing native lib, incompatible CPU), and retrying
+ *  forever would spend seconds of model load on every sentence. */
 const MAX_RESTARTS = 3;
 
 /** How long one unit may take before the reveal gives up on it and types
@@ -46,6 +49,17 @@ const MAX_RESTARTS = 3;
  *  slower CPU than the reference one is the case the cap exists for. */
 const REQUEST_TIMEOUT_MS = 25_000;
 const FIRST_REQUEST_TIMEOUT_MS = 45_000;
+/** How long the worker may take to answer `init` with `ready` (the model
+ *  load). A worker that neither answers nor exits — a native hang in
+ *  `createTts`, a stalled read from a network drive — used to leave the
+ *  first request pending with no deadline at all (the per-unit timer was
+ *  armed only after the start), and the reply with it until the stop click
+ *  (2026-09-10). Counts against MAX_RESTARTS like any failed start. */
+const INIT_TIMEOUT_MS = FIRST_REQUEST_TIMEOUT_MS;
+/** Utterances whose synthesis fell behind are remembered so their later
+ *  units answer null at once; bounded, and utterance ids are never
+ *  reused, so the oldest are simply forgotten. */
+const MAX_ABANDONED = 32;
 
 type WorkerMessage =
   | {
@@ -147,6 +161,18 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
   const pending = new Map<number, Pending>();
   /** Utterances cancelled while their worker request was still in flight. */
   const cancelledUtterances = new Set<string>();
+  /**
+   * Utterances a unit of which timed out (2026-09-10). The worker drains
+   * its queue in order on one thread, so once one unit has fallen a whole
+   * deadline behind, every later unit of the same utterance is queued
+   * behind the same slow work and would each wait out the same 25 s while
+   * the worker burned a core on audio nobody would play — and the NEXT
+   * reply queued behind all of it. Instead the whole utterance is
+   * abandoned at the first timeout: its in-flight units resolve null now,
+   * the worker drops what it has not started, and its later units answer
+   * null without a request. The reply types unvoiced from there.
+   */
+  const abandoned = new Set<string>();
 
   const settle = (id: number, audio: SynthesizedAudio | null): void => {
     const p = pending.get(id);
@@ -158,6 +184,41 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
 
   const rejectAll = (): void => {
     for (const id of [...pending.keys()]) settle(id, null);
+  };
+
+  /** Resolve an utterance's in-flight requests null and tell the worker to
+   *  drop its queued ones — a veto, an interrupt, or a unit that fell too
+   *  far behind. */
+  const cancelUtterance = (utteranceId: string): void => {
+    cancelledUtterances.add(utteranceId);
+    for (const [id, p] of [...pending.entries()]) {
+      if (p.utteranceId === utteranceId) settle(id, null);
+    }
+    try {
+      worker?.postMessage({ type: "cancel", utteranceId });
+    } catch {
+      // worker already gone — nothing queued to drop
+    }
+  };
+
+  const abandon = (utteranceId: string): void => {
+    abandoned.add(utteranceId);
+    while (abandoned.size > MAX_ABANDONED) {
+      const oldest = abandoned.values().next().value;
+      if (oldest === undefined) break;
+      abandoned.delete(oldest);
+    }
+    cancelUtterance(utteranceId);
+  };
+
+  /** One more failure against the budget; past it the voice is off for
+   *  the run. */
+  const countFailure = (what: string): void => {
+    restarts += 1;
+    if (restarts >= MAX_RESTARTS) {
+      failed = true;
+      log(`giving up after ${restarts} ${what} — voice off this run`);
+    }
   };
 
   const teardown = (): void => {
@@ -185,6 +246,15 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
     }
     ready = new Promise<void>((resolve, reject) => {
       let settled = false;
+      // The model load's own deadline (see INIT_TIMEOUT_MS): a worker that
+      // neither answers nor exits is torn down by the catch below and
+      // counted like a failed start.
+      const initDeadline = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        log(`worker did not become ready within ${INIT_TIMEOUT_MS} ms`);
+        reject(new Error("worker init timed out"));
+      }, INIT_TIMEOUT_MS);
       const child = utilityProcess.fork(opts.workerPath, [], {
         serviceName: "herta-tts",
         stdio: "ignore",
@@ -204,6 +274,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
         if (msg.type === "ready") {
           if (!settled) {
             settled = true;
+            clearTimeout(initDeadline);
             log(
               `worker ready (sampleRate ${msg.sampleRate}, effect ${msg.effect ?? "none"})`,
             );
@@ -215,6 +286,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
           log(`worker init failed: ${msg.message}`);
           if (!settled) {
             settled = true;
+            clearTimeout(initDeadline);
             reject(new Error(msg.message));
           }
           return;
@@ -241,7 +313,10 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
         }
       });
       child.on("exit", (code) => {
-        if (worker === child) {
+        // Ours, or one `teardown` already let go of (a stop, a bundle
+        // change, a dispose — none of which is a failure).
+        const ours = worker === child;
+        if (ours) {
           worker = null;
           ready = null;
         }
@@ -250,8 +325,12 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
         log(`worker exited (code ${code})`);
         if (!settled) {
           settled = true;
+          clearTimeout(initDeadline);
           reject(new Error(`worker exited during init (code ${code})`));
+          return; // counted by the start's catch below
         }
+        // A crash AFTER a successful start — the addon died on a sentence.
+        if (ours) countFailure("worker crashes");
       });
       child.postMessage({
         type: "init",
@@ -264,12 +343,8 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
     // A failed start counts against the restart budget and clears `ready`
     // so the next request may try again (up to MAX_RESTARTS).
     ready.catch(() => {
-      restarts += 1;
       teardown();
-      if (restarts >= MAX_RESTARTS) {
-        failed = true;
-        log(`giving up after ${restarts} failed starts — voice off this run`);
-      }
+      countFailure("failed starts");
     });
     return ready;
   };
@@ -281,6 +356,8 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
 
     async synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null> {
       if (disposed || !bundleOk || !runtimeOk || failed) return null;
+      // The rest of an utterance that fell behind types unvoiced at once.
+      if (abandoned.has(req.utteranceId)) return null;
       // A request for an utterance re-arms it (a retry / respeak reuses the
       // id space only within one stream, but the cancel latch must not
       // outlive the cancel that set it).
@@ -297,8 +374,10 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
       return new Promise<SynthesizedAudio | null>((resolve) => {
         const timer = setTimeout(
           () => {
-            log(`request ${id} timed out — that unit will type unvoiced`);
-            settle(id, null);
+            log(
+              `request ${id} timed out — the rest of that utterance types unvoiced`,
+            );
+            abandon(req.utteranceId);
           },
           first ? FIRST_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
         );
@@ -322,17 +401,9 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
     },
 
     cancel(utteranceId: string): void {
-      cancelledUtterances.add(utteranceId);
       // Resolve this utterance's in-flight requests now: the reveal is gone
       // (a veto, an interrupt) and nothing is waiting for the audio.
-      for (const [id, p] of [...pending.entries()]) {
-        if (p.utteranceId === utteranceId) settle(id, null);
-      }
-      try {
-        worker?.postMessage({ type: "cancel", utteranceId });
-      } catch {
-        // worker already gone — nothing queued to drop
-      }
+      cancelUtterance(utteranceId);
     },
 
     dispose(): void {

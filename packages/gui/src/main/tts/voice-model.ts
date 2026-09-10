@@ -94,6 +94,27 @@ function isAbort(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
+/** The local disk saying no — a full volume, a permission, a dying drive.
+ *  Told apart from the transfer (2026-09-10): a `write` that fails with
+ *  ENOSPC inside the body loop used to be reported as `network`, and the
+ *  Settings row then sent the user to check their VPN with 60 MB of a 76 MB
+ *  download on a full disk. */
+const DISK_CODES: ReadonlySet<string> = new Set([
+  "ENOSPC",
+  "EDQUOT",
+  "EACCES",
+  "EPERM",
+  "EIO",
+  "EROFS",
+  "EMFILE",
+  "ENFILE",
+  "EBUSY",
+]);
+function isDiskError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && DISK_CODES.has(code);
+}
+
 /** `rm -rf` with a few retries: Windows holds a directory a moment after
  *  its last handle closes, and the worker's model files are the case. */
 async function rmRetry(path: string, attempts = 6): Promise<void> {
@@ -169,7 +190,11 @@ export async function downloadVoiceModel(
     } catch (err) {
       if (err instanceof VoiceModelError) throw err;
       throw new VoiceModelError(
-        isAbort(err) || signal.aborted ? "cancelled" : "network",
+        isAbort(err) || signal.aborted
+          ? "cancelled"
+          : isDiskError(err)
+            ? "disk"
+            : "network",
         err instanceof Error ? err.message : String(err),
       );
     } finally {
@@ -197,7 +222,7 @@ export async function downloadVoiceModel(
     } catch (err) {
       if (err instanceof VoiceModelError) throw err;
       throw new VoiceModelError(
-        "archive",
+        isDiskError(err) ? "disk" : "archive",
         err instanceof Error ? err.message : String(err),
       );
     }

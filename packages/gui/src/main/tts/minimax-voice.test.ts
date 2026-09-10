@@ -184,6 +184,56 @@ describe("createMiniMaxVoiceService", () => {
     expect(logs.some((l) => l.includes("could not list"))).toBe(true);
   });
 
+  it("a rate-limited or out-of-balance listing is NOT an empty account: nothing is uploaded or cloned", async () => {
+    // The account may hold the paid clone the listing exists to find; a
+    // clone past the refusal is the ¥9.90 adoption saves (§1.8).
+    for (const [code, reason] of [
+      [1002, "rate"],
+      [1039, "rate"],
+      [1008, "quota"],
+    ] as const) {
+      const p = platform({ listCode: code });
+      const { svc } = service(p.fetch);
+      expect(await svc.prepare()).toEqual({ phase: "failed", error: reason });
+      expect(uploads(p.calls)).toBe(0);
+      expect(clonesMade(p.calls)).toBe(0);
+    }
+  });
+
+  it("a platform that never answers fails as `network` at the deadline instead of holding prepare() forever", async () => {
+    const calls: string[] = [];
+    const hanging: FetchLike = (url, init) => {
+      calls.push(url);
+      return new Promise<Response>((_resolve, reject) => {
+        const sig = init.signal;
+        if (sig === undefined) return; // no deadline → hangs forever
+        if (sig.aborted) {
+          reject(sig.reason ?? new Error("aborted"));
+          return;
+        }
+        sig.addEventListener("abort", () =>
+          reject(sig.reason ?? new Error("aborted")),
+        );
+      });
+    };
+    const svc = createMiniMaxVoiceService({
+      fetch: hanging,
+      key: () => "k",
+      readReference: async () => REFERENCE,
+      initial: null,
+      save: async () => undefined,
+      onChange: () => undefined,
+      log: () => undefined,
+      timeoutMs: { control: 30, upload: 30 },
+    });
+    const end = await svc.prepare();
+    expect(end).toEqual({ phase: "failed", error: "network" });
+    // The probe tried both hosts, each to its deadline, then stopped.
+    expect(calls.length).toBe(2);
+    // And a reset — which awaits the in-flight run — returns promptly.
+    expect(await svc.reset()).toEqual({ phase: "absent" });
+  });
+
   // ── the token-plan key (§1.8) ─────────────────────────────────────────────
 
   it("with only a plan key: an existing clone is adopted; none → no_clone_key, nothing uploaded", async () => {

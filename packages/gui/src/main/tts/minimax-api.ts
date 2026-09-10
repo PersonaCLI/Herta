@@ -17,6 +17,15 @@ export const MINIMAX_HOSTS: readonly string[] = [
 
 export const MINIMAX_DEFAULT_MODEL = "speech-2.8-hd";
 
+/** Deadlines for the control plane (probe, list, clone) and for the ~8 MB
+ *  reference upload. Without them a connection that is accepted and never
+ *  answered — a captive portal, a proxy that swallows the request — left
+ *  the key row's save spinning for the session and `prepare()` in flight
+ *  forever, which `reset()` awaits (2026-09-10). The synthesizer's per-unit
+ *  deadline lives in minimax-synthesizer.ts. */
+export const MINIMAX_CONTROL_TIMEOUT_MS = 30_000;
+export const MINIMAX_UPLOAD_TIMEOUT_MS = 120_000;
+
 export type MiniMaxFailure =
   | "no_key"
   | "invalid_key"
@@ -84,6 +93,57 @@ function isAbort(err: unknown): boolean {
   return err instanceof Error && err.name === "AbortError";
 }
 
+/** A request that ended on its signal: the caller's cancel is `cancelled`;
+ *  a deadline (`deadlineSignal`, whose reason is a TimeoutError) is the
+ *  platform not answering — `network`, which is what the user can act on.
+ *  Judged by the reason's NAME, not its class: the DOMException may come
+ *  from another realm (jsdom in tests, a worker). */
+function abortedAs(init: Parameters<FetchLike>[1]): MiniMaxFailure {
+  const reason = init.signal?.reason as { name?: unknown } | undefined;
+  return reason?.name === "TimeoutError" ? "network" : "cancelled";
+}
+
+/**
+ * A signal that aborts with a TimeoutError after `ms`, or as soon as
+ * `outer` aborts (with its reason). Built on AbortController + setTimeout
+ * rather than `AbortSignal.timeout`/`any` so the same code runs under
+ * Electron's Node and the test environment's DOM. `clear` releases the
+ * timer once the call has settled.
+ */
+export function deadlineSignal(
+  ms: number,
+  outer?: AbortSignal,
+): { readonly signal: AbortSignal; readonly clear: () => void } {
+  const ac = new AbortController();
+  const timer = setTimeout(() => {
+    ac.abort(new DOMException(`no answer within ${ms} ms`, "TimeoutError"));
+  }, ms);
+  const forward = (): void => ac.abort(outer?.reason);
+  if (outer?.aborted === true) forward();
+  else outer?.addEventListener("abort", forward, { once: true });
+  return {
+    signal: ac.signal,
+    clear: () => {
+      clearTimeout(timer);
+      outer?.removeEventListener("abort", forward);
+    },
+  };
+}
+
+/** Run one platform call under a fresh deadline. */
+export async function withDeadline<T>(
+  ms: number,
+  outer: AbortSignal | undefined,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const d = deadlineSignal(ms, outer);
+  try {
+    return await run(d.signal);
+  } finally {
+    d.clear();
+  }
+}
+
 async function call(
   fetch: FetchLike,
   url: string,
@@ -94,7 +154,9 @@ async function call(
     res = await fetch(url, init);
   } catch (err) {
     throw new MiniMaxError(
-      isAbort(err) || init.signal?.aborted === true ? "cancelled" : "network",
+      isAbort(err) || init.signal?.aborted === true
+        ? abortedAs(init)
+        : "network",
       err instanceof Error ? err.message : String(err),
     );
   }
@@ -103,7 +165,9 @@ async function call(
     text = await res.text();
   } catch (err) {
     throw new MiniMaxError(
-      isAbort(err) ? "cancelled" : "network",
+      isAbort(err) || init.signal?.aborted === true
+        ? abortedAs(init)
+        : "network",
       err instanceof Error ? err.message : String(err),
     );
   }
@@ -149,16 +213,22 @@ export async function probeHost(
   key: string,
   signal?: AbortSignal,
   hosts: readonly string[] = MINIMAX_HOSTS,
+  /** Per-host deadline; a host that never answers is a `network` failure
+   *  for that host and the probe moves on (2026-09-10). */
+  perHostTimeoutMs?: number,
 ): Promise<string> {
   let lastNetwork: MiniMaxError | null = null;
   for (const host of hosts) {
     try {
-      await call(fetch, `${host}/v1/get_voice`, {
-        method: "POST",
-        headers: { ...auth(key), "Content-Type": "application/json" },
-        body: JSON.stringify({ voice_type: "voice_cloning" }),
-        signal,
-      });
+      const ask = (sig: AbortSignal | undefined): Promise<unknown> =>
+        call(fetch, `${host}/v1/get_voice`, {
+          method: "POST",
+          headers: { ...auth(key), "Content-Type": "application/json" },
+          body: JSON.stringify({ voice_type: "voice_cloning" }),
+          signal: sig,
+        });
+      if (perHostTimeoutMs === undefined) await ask(signal);
+      else await withDeadline(perHostTimeoutMs, signal, ask);
       return host;
     } catch (err) {
       if (!(err instanceof MiniMaxError)) throw err;

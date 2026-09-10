@@ -55,6 +55,7 @@ import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import { recordTail } from "./record-window.js";
 import {
   REPO_WATCH_DEBOUNCE_MS,
+  REPO_WATCH_MAX_WAIT_SPANS,
   type RepoWatcher,
   watchGitDir,
 } from "./repo-watch.js";
@@ -295,6 +296,8 @@ export class SessionImpl implements Session {
   private repoWatchedDir: string | null = null;
   private stopRepoWatch: (() => void) | null = null;
   private repoWatchTimer: NodeJS.Timeout | null = null;
+  /** When the current burst of watcher events began (the max-wait). */
+  private repoWatchSince: number | null = null;
   private repoClosed = false;
   private readonly commitDescriber: (
     workspace: string,
@@ -1249,17 +1252,39 @@ export class SessionImpl implements Session {
     this.stopRepoWatch = null;
     this.repoWatchedDir = gitDir;
     if (gitDir === null || this.repoClosed) return;
-    this.stopRepoWatch = this.repoWatcher(gitDir, () => this.onRepoChanged());
+    this.stopRepoWatch = this.repoWatcher(gitDir, (gone) =>
+      this.onRepoChanged(gone === true),
+    );
   }
 
-  /** A git-dir change: one probe after the burst settles. */
-  private onRepoChanged(): void {
+  /** A git-dir change: one probe after the burst settles — or at latest a
+   *  few debounce spans after the burst began, so events that never pause
+   *  (a long checkout, a rebase) still reach the card. `gone`: the
+   *  watcher closed itself because its dir vanished (repo-watch.ts); probe
+   *  now, and forget it so the next answer re-arms one even under the
+   *  same path. */
+  private onRepoChanged(gone = false): void {
     if (this.repoClosed) return;
+    if (gone) {
+      this.stopRepoWatch = null;
+      this.repoWatchedDir = null;
+    }
     if (this.repoWatchTimer !== null) clearTimeout(this.repoWatchTimer);
-    this.repoWatchTimer = setTimeout(() => {
+    const now = Date.now();
+    if (this.repoWatchSince === null) this.repoWatchSince = now;
+    const overdue =
+      now - this.repoWatchSince >=
+      this.repoWatchDebounceMs * REPO_WATCH_MAX_WAIT_SPANS;
+    const probe = (): void => {
       this.repoWatchTimer = null;
+      this.repoWatchSince = null;
       void this.refreshRepo();
-    }, this.repoWatchDebounceMs);
+    };
+    if (gone || overdue) {
+      probe();
+      return;
+    }
+    this.repoWatchTimer = setTimeout(probe, this.repoWatchDebounceMs);
     this.repoWatchTimer.unref?.();
   }
 

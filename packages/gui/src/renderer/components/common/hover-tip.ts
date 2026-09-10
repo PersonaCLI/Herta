@@ -29,6 +29,33 @@ function notify(): void {
   for (const l of listeners) l();
 }
 
+/**
+ * While a tip shows, its anchor is watched for leaving the DOM (2026-09-10):
+ * React dispatches no mouseleave for an element it removes, so a tip over
+ * a commit row that a terminal's commit pushed off the list stayed pinned
+ * at the row's old rectangle until another tipped element was entered.
+ * One observer on the document's tree, alive only while a tip is up.
+ */
+let anchorWatch: MutationObserver | null = null;
+function watchAnchor(anchor: Element): void {
+  anchorWatch?.disconnect();
+  anchorWatch = null;
+  if (typeof MutationObserver === "undefined") return;
+  const observer = new MutationObserver(() => {
+    if (anchor.isConnected) return;
+    hideHoverTip();
+  });
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+  anchorWatch = observer;
+}
+function unwatchAnchor(): void {
+  anchorWatch?.disconnect();
+  anchorWatch = null;
+}
+
 export function getHoverTip(): HoverTipState | null {
   return current;
 }
@@ -49,6 +76,7 @@ export function showHoverTip(anchor: Element, text: string): void {
     text,
     anchor: { left: r.left, top: r.top, width: r.width, height: r.height },
   };
+  watchAnchor(anchor);
   notify();
 }
 
@@ -57,6 +85,7 @@ export function hideHoverTip(): void {
     clearTimeout(pending);
     pending = null;
   }
+  unwatchAnchor();
   if (current === null) return;
   current = null;
   notify();

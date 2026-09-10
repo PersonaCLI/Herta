@@ -32,6 +32,13 @@ export interface ListTransitionOpts {
  * index it had, so the exit plays where the row was and nothing below it
  * jumps before the collapse. Phases are state, not DOM classes measured
  * back — the rows are plain markup and the CSS owns the curves.
+ *
+ * Timers are keyed by row AND phase (2026-09-10): keyed by row alone, a
+ * row that left inside its entrance kept the entrance's timer and got no
+ * exit — its `is-leaving` markup stayed until the next list change — and a
+ * row that came back during its exit was stuck in `enter`. The phase a
+ * row is not in has its timer cancelled first, then the phase it is in is
+ * armed if it is not already.
  */
 export function useListTransitions<T>(
   items: readonly T[],
@@ -76,12 +83,28 @@ export function useListTransitions<T>(
     }
     setRows(next);
 
+    const map = timers.current;
+    const cancel = (id: string): void => {
+      const t = map.get(id);
+      if (t === undefined) return;
+      clearTimeout(t);
+      map.delete(id);
+    };
+    // The phase a row is NOT in loses its timer: a stale exit must not
+    // drop a row that came back, a stale entrance must not settle a row
+    // that is leaving.
+    for (const r of next) {
+      if (r.phase !== "leave") cancel(`${r.key}:leave`);
+      if (r.phase !== "enter") cancel(`${r.key}:enter`);
+    }
     // One timer per keyed phase: entrances settle, exits drop the row.
     for (const r of next) {
-      if (r.phase === "steady" || timers.current.has(r.key)) continue;
+      if (r.phase === "steady") continue;
+      const id = `${r.key}:${r.phase}`;
+      if (map.has(id)) continue;
       const ms = r.phase === "enter" ? enterMs : leaveMs;
       const t = setTimeout(() => {
-        timers.current.delete(r.key);
+        map.delete(id);
         setRows((cur) =>
           r.phase === "leave"
             ? cur.filter((x) => !(x.key === r.key && x.phase === "leave"))
@@ -92,18 +115,7 @@ export function useListTransitions<T>(
               ),
         );
       }, ms);
-      timers.current.set(r.key, t);
-    }
-    // A leaving row that came back must not be dropped by its stale exit.
-    for (const r of next) {
-      if (r.phase !== "leave") {
-        const stale = prevByKey.get(r.key);
-        if (stale?.phase === "leave") {
-          const t = timers.current.get(r.key);
-          if (t !== undefined) clearTimeout(t);
-          timers.current.delete(r.key);
-        }
-      }
+      map.set(id, t);
     }
   }, [items, keyOf, leaveMs, enterMs, reduced]);
 

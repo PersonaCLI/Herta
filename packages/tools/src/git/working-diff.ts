@@ -56,8 +56,11 @@ async function describe(
   path: string,
   signal?: AbortSignal,
 ): Promise<WorkingDiff | null> {
-  if (path.length === 0 || path.startsWith("-") || path.includes("\0"))
-    return null;
+  // Every spawn below places the path after `--`, so a name that begins
+  // with `-` is a file, not an option (2026-09-10: the refusal here left a
+  // file literally named `-c` unable to open its diff). NUL cannot be an
+  // argument at all.
+  if (path.length === 0 || path.includes("\0")) return null;
   const sig = signal ?? new AbortController().signal;
   const opts = { timeoutMs: 5_000 } as const;
 

@@ -61,6 +61,23 @@ describe("hover-tip", () => {
     expect(getHoverTip()).toBeNull();
   });
 
+  it("a tip whose anchor leaves the DOM under a still pointer hides itself (2026-09-10)", async () => {
+    const el = anchor();
+    showHoverTip(el, "pinned?");
+    expect(getHoverTip()?.text).toBe("pinned?");
+    // The row is removed (a commit moved it off the list); no mouseleave.
+    el.remove();
+    await vi.advanceTimersByTimeAsync(0); // the observer's microtask
+    expect(getHoverTip()).toBeNull();
+    // Another element leaving does not disturb a tip whose anchor stays.
+    const stays = anchor();
+    const other = anchor();
+    showHoverTip(stays, "stays");
+    other.remove();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getHoverTip()?.text).toBe("stays");
+  });
+
   it("hoverTipProps wires the four handlers, and none for an empty text", () => {
     expect(hoverTipProps("")).toEqual({});
     const props = hoverTipProps("subject");

@@ -67,6 +67,18 @@ describe.skipIf(!GIT_AVAILABLE)(
       expect(d?.patchTruncated).toBe(false);
     });
 
+    it("a file whose name begins with `-` is a file, not an option — every spawn puts the path after `--` (2026-09-10)", async () => {
+      const dir = seeded();
+      writeFileSync(join(dir, "-c"), "dash\n");
+      const d = await describeWorkingDiff(dir, "-c");
+      expect(d).not.toBeNull();
+      expect(d?.untracked).toBe(true);
+      expect(d?.added).toBe(1);
+      expect(d?.patch).toContain("+dash");
+      // NUL can never be an argument.
+      expect(await describeWorkingDiff(dir, "a\0b")).toBeNull();
+    });
+
     it("an untracked file is a whole addition; a staged-new file reads against HEAD", async () => {
       const dir = seeded();
       writeFileSync(join(dir, "notes.txt"), "scratch\nmore\n");

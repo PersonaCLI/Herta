@@ -61,6 +61,32 @@ describe("watchGitDir (ADR 0058 amendment — the git dir, never the worktree)",
     expect(fired).toBe(stopped);
   });
 
+  it("the git dir vanishing closes every handle and reports `gone` once — no storm (2026-09-10)", async () => {
+    const root = mkDir("watch-gone-");
+    const gitDir = join(root, ".git");
+    mkdirSync(join(gitDir, "refs", "heads"), { recursive: true });
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/main\n");
+    let plain = 0;
+    let gone = 0;
+    const stop = watchGitDir(gitDir, (g) => {
+      if (g === true) gone += 1;
+      else plain += 1;
+    });
+    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/side\n");
+    expect(await until(() => plain >= 1)).toBe(true);
+    // `rm -rf .git` from beside the app.
+    rmSync(gitDir, { recursive: true, force: true });
+    expect(await until(() => gone >= 1)).toBe(true);
+    // Whatever the platform emitted while the dir went, the callbacks end
+    // with the handles: no runaway count, and nothing more afterwards.
+    const settledPlain = plain;
+    await sleep(300);
+    expect(gone).toBe(1);
+    expect(plain).toBe(settledPlain);
+    expect(plain).toBeLessThan(200);
+    expect(() => stop()).not.toThrow();
+  });
+
   it("follows a linked worktree's commondir pointer for refs, and survives an unwatchable dir", () => {
     const root = mkDir("watch-wt-");
     const common = join(root, ".git");

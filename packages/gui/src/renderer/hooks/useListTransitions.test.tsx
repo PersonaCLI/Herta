@@ -66,6 +66,65 @@ describe("useListTransitions (ADR 0058 §5.7)", () => {
     expect(result.current.map((r) => r.key)).toEqual(["a", "c"]);
   });
 
+  it("a row that leaves inside its entrance gets its exit; one that returns inside its exit gets its entrance (2026-09-10)", () => {
+    vi.useFakeTimers();
+    const { result, rerender } = renderHook(
+      ({ items }: { items: readonly string[] }) =>
+        useListTransitions(items, key, OPTS),
+      { initialProps: { items: ["a"] } },
+    );
+    // Enters, then leaves 100 ms in: the exit is armed and drops the row
+    // after leaveMs — the stale entrance timer settles nothing.
+    rerender({ items: ["a", "b"] });
+    expect(result.current[1]?.phase).toBe("enter");
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    rerender({ items: ["a"] });
+    expect(result.current.map((r) => [r.key, r.phase])).toEqual([
+      ["a", "steady"],
+      ["b", "leave"],
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(199);
+    });
+    expect(result.current.map((r) => r.key)).toEqual(["a", "b"]);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.map((r) => r.key)).toEqual(["a"]);
+    // Leaves, then returns 100 ms in: enters, and settles after enterMs —
+    // the stale exit timer drops nothing.
+    rerender({ items: ["a", "c"] });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    rerender({ items: ["a"] });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    rerender({ items: ["a", "c"] });
+    expect(result.current.map((r) => [r.key, r.phase])).toEqual([
+      ["a", "steady"],
+      ["c", "enter"],
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(result.current[1]?.phase).toBe("enter");
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current.map((r) => [r.key, r.phase])).toEqual([
+      ["a", "steady"],
+      ["c", "steady"],
+    ]);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(result.current.map((r) => r.key)).toEqual(["a", "c"]);
+  });
+
   it("reduced motion: rows appear and vanish in place, no phases", () => {
     const { result, rerender } = renderHook(
       ({ items }: { items: readonly string[] }) =>

@@ -23,17 +23,54 @@ import { isAbsolute, join, resolve } from "node:path";
  * so its `git status` never writes the index and never wakes this watcher
  * — the loop that would otherwise close.
  *
- * Every failure is silent by design (a vanished dir, a platform without
- * recursive watch): the card keeps its other triggers.
+ * The git dir going away (2026-09-10): `rm -rf .git`, `git worktree remove`
+ * of the session's own worktree, the project folder deleted beside a
+ * backgrounded app. Node's Windows watcher does not report that as an
+ * error — it fires without end (measured: ~60 000 callbacks a second, a
+ * core pegged, and a trailing debounce that never drains). So every event
+ * first asks whether the watched dir still exists; when it does not, every
+ * handle closes and the caller hears `onChange(true)` ONCE — "gone", which
+ * it treats as both a change (probe now) and the watcher's end (re-arm on
+ * the next answer, even one naming the same path: `rm -rf .git && git init`
+ * is a new git dir under the old name).
+ *
+ * Every other failure is silent by design (an unwatchable dir, a platform
+ * without recursive watch): the card keeps its other triggers.
  */
-export type RepoWatcher = (gitDir: string, onChange: () => void) => () => void;
+export type RepoWatcher = (
+  gitDir: string,
+  onChange: (gone?: boolean) => void,
+) => () => void;
 
 export const watchGitDir: RepoWatcher = (gitDir, onChange) => {
   const watchers: FSWatcher[] = [];
+  let closed = false;
+  const closeAll = (): void => {
+    closed = true;
+    for (const w of watchers.splice(0)) {
+      try {
+        w.close();
+      } catch {
+        // already closed
+      }
+    }
+  };
+  /** The watched dir vanished: close everything, say so once. */
+  const goneIfMissing = (): boolean => {
+    if (closed) return true;
+    if (existsSync(gitDir)) return false;
+    closeAll();
+    onChange(true);
+    return true;
+  };
   const add = (dir: string, recursive: boolean): void => {
     try {
-      const w = watch(dir, { persistent: false, recursive }, () => onChange());
+      const w = watch(dir, { persistent: false, recursive }, () => {
+        if (goneIfMissing()) return;
+        onChange();
+      });
       w.on("error", () => {
+        if (goneIfMissing()) return;
         try {
           w.close();
         } catch {
@@ -50,15 +87,7 @@ export const watchGitDir: RepoWatcher = (gitDir, onChange) => {
   const common = commonDirOf(gitDir);
   if (common !== gitDir) add(common, false);
   add(join(common, "refs"), true);
-  return () => {
-    for (const w of watchers.splice(0)) {
-      try {
-        w.close();
-      } catch {
-        // already closed
-      }
-    }
-  };
+  return closeAll;
 };
 
 /** A linked worktree's git dir names the shared one in `commondir`
@@ -77,3 +106,7 @@ function commonDirOf(gitDir: string): string {
 
 /** Trailing debounce for the watcher's bursts (see above). */
 export const REPO_WATCH_DEBOUNCE_MS = 500;
+/** Under events that never pause (a long checkout, a rebase, a runaway
+ *  watcher), the trailing debounce alone would never fire; the session
+ *  probes at latest this many debounce spans after the first event. */
+export const REPO_WATCH_MAX_WAIT_SPANS = 4;

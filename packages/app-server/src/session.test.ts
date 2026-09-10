@@ -2242,6 +2242,49 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     expect(calls).toBe(before);
   });
 
+  it("a watcher that reports its dir gone is forgotten and re-armed on the next answer, even under the same path; a burst that never pauses still probes (2026-09-10)", async () => {
+    const cfg = mkConfig();
+    const watched: string[] = [];
+    const hook: { fire: ((gone?: boolean) => void) | null } = { fire: null };
+    let calls = 0;
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      undefined,
+      1,
+      undefined,
+      {
+        repoDescriber: async () => {
+          calls += 1;
+          return sample;
+        },
+        repoWatcher: (gitDir, onChange) => {
+          watched.push(gitDir);
+          hook.fire = onChange;
+          return () => undefined;
+        },
+        repoWatchDebounceMs: 20,
+      },
+    );
+    await until(() => watched.length === 1);
+    expect(calls).toBe(1);
+    // `rm -rf .git && git init`: the watcher closed itself, the probe finds
+    // a repository under the SAME git dir — a new watcher must arm.
+    hook.fire?.(true);
+    await until(() => calls === 2);
+    await until(() => watched.length === 2);
+    expect(watched).toEqual(["/repo/.git", "/repo/.git"]);
+    // Events every 5 ms for well past the debounce: the trailing debounce
+    // alone would never fire; the max-wait does.
+    const before = calls;
+    const stopAt = Date.now() + 20 * 4 * 3;
+    while (Date.now() < stopAt) {
+      hook.fire?.();
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(calls).toBeGreaterThan(before);
+    await cleanup();
+  });
+
   it("describeCommit reads against the EFFECTIVE workspace (ADR 0059)", async () => {
     const cfg = mkConfig();
     const asked: Array<[string, string]> = [];

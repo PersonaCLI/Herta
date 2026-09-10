@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
+import { isPathInside } from "../path-containment.js";
 
 /**
  * Where a session's recap/compaction sidecar lives. Defined in core so
@@ -53,7 +54,7 @@ export async function deleteSessionFiles(
     resolve(dir, `${sessionId}.title.json`),
   ];
   for (const f of files) {
-    if (!f.startsWith(dir + sep)) continue;
+    if (!isPathInside(dir, f, { strict: true })) continue;
     await rm(f, { force: true });
   }
 
@@ -61,7 +62,7 @@ export async function deleteSessionFiles(
     // Same containment rule as above — the sidecar path is id-derived too.
     const compactionDir = resolve(workspaceRoot, ".herta", "compaction");
     const sidecar = resolve(recapCachePath(workspaceRoot, sessionId));
-    if (sidecar.startsWith(compactionDir + sep)) {
+    if (isPathInside(compactionDir, sidecar, { strict: true })) {
       await rm(sidecar, { force: true });
     }
   }
@@ -72,7 +73,6 @@ export async function deleteSessionFiles(
   // is never under this base, so a real project can never be deleted here.
   const base = resolve(workspacesBaseDir);
   const target = resolve(base, sessionId);
-  const inside = target !== base && target.startsWith(base + sep);
-  if (!inside) return;
+  if (!isPathInside(base, target, { strict: true })) return;
   await rm(target, { recursive: true, force: true });
 }

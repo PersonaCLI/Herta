@@ -90,6 +90,12 @@ export type {
   MemoryQuery,
 } from "./memory-manager.js";
 export { MEMORY_KINDS, NoopMemoryManager } from "./memory-manager.js";
+export {
+  isPathInside,
+  isPathInsideWith,
+  type PathApi,
+  type PathContainmentOptions,
+} from "./path-containment.js";
 export type {
   AskResolver,
   CommandConsequence,

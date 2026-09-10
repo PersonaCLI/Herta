@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isPathInside } from "@herta/core";
 import { net, protocol } from "electron";
 import { ATTACHMENT_SCHEME } from "../shared/attachment-image.js";
 
@@ -68,12 +69,12 @@ export function resolveAttachmentPath(
 
   const root = resolve(workspaceRoot);
   const target = resolve(root, rel);
-  if (target !== root && !target.startsWith(root + sep)) return null;
+  if (!isPathInside(root, target)) return null;
   // …and check it again on the RESOLVED path, so a traversal that lands back
   // inside the root but outside the attachment tree (`.herta/attachments/../../x`)
   // is refused too.
   const attachmentRoot = resolve(root, ATTACHMENT_PREFIX);
-  if (!target.startsWith(attachmentRoot + sep)) return null;
+  if (!isPathInside(attachmentRoot, target, { strict: true })) return null;
   return target;
 }
 

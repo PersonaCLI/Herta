@@ -1,4 +1,5 @@
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
+import { isPathInside } from "@herta/core";
 
 /** On-disk root for voice assets, under the workspace: `<workspaceRoot>/data/voice`
  *  (renamed from 语音 2026-07-06 — ASCII-safe paths for the installed app;
@@ -51,6 +52,6 @@ export function resolveVoiceFilePath(
   if (rel.length === 0) return null;
   const root = resolve(voiceRoot);
   const target = resolve(root, rel);
-  if (target !== root && !target.startsWith(root + sep)) return null;
+  if (!isPathInside(root, target)) return null;
   return target;
 }

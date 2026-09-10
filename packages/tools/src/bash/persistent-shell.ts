@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { BackgroundProcess } from "@herta/core";
+import { dirname, join, resolve } from "node:path";
+import { type BackgroundProcess, isPathInside } from "@herta/core";
 import { type ShellPaths, shellPathsFor } from "./shell-paths.js";
 
 /**
@@ -269,7 +269,7 @@ export class PersistentShell implements BackgroundProcess {
     const pwdShell = m[3] as string;
     const native = this.paths.toNative(pwdShell);
     this.currentCwd =
-      native !== null && isInside(this.opts.workspaceRoot, native)
+      native !== null && isPathInside(this.opts.workspaceRoot, native)
         ? native
         : this.opts.workspaceRoot;
     w.resolve({
@@ -396,11 +396,6 @@ export class PersistentShell implements BackgroundProcess {
   get spawns(): number {
     return this.spawnCount;
   }
-}
-
-function isInside(root: string, p: string): boolean {
-  const rel = relative(root, p);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 async function killTree(child: ChildProcess): Promise<void> {

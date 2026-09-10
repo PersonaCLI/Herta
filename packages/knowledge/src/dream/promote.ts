@@ -1,14 +1,15 @@
 import { mkdirSync, readdirSync, renameSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
-import { writeFileAtomicSync } from "@herta/core";
+import { join, resolve } from "node:path";
+import { isPathInside, writeFileAtomicSync } from "@herta/core";
 import { nextFeianIndex } from "./feian-format.js";
 
-/** D4 guard: throws unless `target` resolves to a path inside `root`. */
+/** D4 guard: throws unless `target` resolves to a path inside `root` (core's
+ *  one containment rule). */
 export function assertUnderDreamRoot(target: string, root: string): void {
-  const r = resolve(root);
-  const t = resolve(target);
-  if (t !== r && !t.startsWith(r + sep)) {
-    throw new Error(`dream: refusing to write outside ${r}: ${t}`);
+  if (!isPathInside(root, target)) {
+    throw new Error(
+      `dream: refusing to write outside ${resolve(root)}: ${resolve(target)}`,
+    );
   }
 }
 

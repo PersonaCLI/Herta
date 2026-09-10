@@ -1,5 +1,6 @@
 import { mkdir, open } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { isPathInside } from "@herta/core";
 
 /**
  * A streaming ustar reader for the voice-model archive (ADR 0061).
@@ -129,7 +130,7 @@ export function safeEntryPath(dest: string, entry: string): string {
   }
   const root = resolve(dest);
   const target = resolve(root, ...entry.split("/"));
-  if (target !== root && !target.startsWith(root + sep)) {
+  if (!isPathInside(root, target)) {
     throw new Error(`tar entry escapes the target: ${JSON.stringify(entry)}`);
   }
   return target;

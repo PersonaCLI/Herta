@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
+import { isPathInside } from "@herta/core";
 import { protocol } from "electron";
 import {
   DEVICE_SCENE_HOST,
@@ -82,7 +83,7 @@ export function resolveDeviceSceneAssetPath(
   if (assetContentType(rel) === null) return null;
   const base = resolve(root);
   const target = resolve(base, rel);
-  if (!target.startsWith(base + sep)) return null;
+  if (!isPathInside(base, target, { strict: true })) return null;
   return target;
 }
 

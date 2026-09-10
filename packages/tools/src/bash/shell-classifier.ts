@@ -1,5 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
-import type { RiskLevel } from "@herta/core";
+import { relative, resolve } from "node:path";
+import { isPathInside, type RiskLevel } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import { gitDirShapeWriteDenial } from "../path-safety.js";
@@ -1152,10 +1152,10 @@ function destinationOf(token: string, opts: ShellClassifyOpts): string | null {
   const t = token.replace(/^["']|["']$/g, "");
   const native = opts.paths.toNative(t);
   if (native !== null)
-    return isInside(opts.workspaceRoot, native) ? native : null;
+    return isPathInside(opts.workspaceRoot, native) ? native : null;
   if (/^[\\/]/.test(t)) return null;
   const resolved = resolveNative(opts.cwd ?? opts.workspaceRoot, t);
-  return isInside(opts.workspaceRoot, resolved) ? resolved : null;
+  return isPathInside(opts.workspaceRoot, resolved) ? resolved : null;
 }
 
 /** A `cd` that leaves the workspace. WRITE risk and its own class
@@ -1423,11 +1423,11 @@ function leavesWorkspace(token: string, opts: ShellClassifyOpts): boolean {
   // `> $LOG` and buys the guarantee back.
   if (/[$`]/.test(t)) return true;
   const native = opts.paths.toNative(t);
-  if (native !== null) return !isInside(opts.workspaceRoot, native);
+  if (native !== null) return !isPathInside(opts.workspaceRoot, native);
   if (/^[\\/]/.test(t)) return true; // some other absolute spelling
   const base = opts.cwd ?? opts.workspaceRoot;
   const resolved = resolveNative(base, t);
-  return !isInside(opts.workspaceRoot, resolved);
+  return !isPathInside(opts.workspaceRoot, resolved);
 }
 
 /** Bare-repo shape denial for an out-redirect target (ADR 0049 §6), or null.
@@ -1445,7 +1445,7 @@ function redirectGitShapeDenial(
     if (/^[\\/]/.test(t)) return null; // unmappable absolute spelling
     native = resolveNative(opts.cwd ?? opts.workspaceRoot, t);
   }
-  if (!isInside(opts.workspaceRoot, native)) return null;
+  if (!isPathInside(opts.workspaceRoot, native)) return null;
   return gitDirShapeWriteDenial(opts.workspaceRoot, resolve(native));
 }
 
@@ -1469,7 +1469,7 @@ export function resolveWorkspacePath(
     (/^[\\/]/.test(t)
       ? null
       : resolveNative(opts.cwd ?? opts.workspaceRoot, t));
-  if (native === null || !isInside(opts.workspaceRoot, native)) return null;
+  if (native === null || !isPathInside(opts.workspaceRoot, native)) return null;
   const rel = relativePath(opts.workspaceRoot, native);
   return { native, relative: rel === "" ? "." : rel };
 }
@@ -1483,15 +1483,11 @@ function relativizeInsideWorkspace(
 ): string {
   const native = opts.paths.toNative(token);
   if (native === null) return token;
-  if (!isInside(opts.workspaceRoot, native)) return token;
+  if (!isPathInside(opts.workspaceRoot, native)) return token;
   const rel = relativePath(opts.workspaceRoot, native);
   return rel === "" ? "." : rel;
 }
 
-function isInside(root: string, p: string): boolean {
-  const rel = relative(resolve(root), resolve(p));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
 function resolveNative(base: string, p: string): string {
   return resolve(base, p);
 }

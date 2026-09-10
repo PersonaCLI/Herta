@@ -9,6 +9,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { isPathInside } from "@herta/core";
 import {
   isCredentialBasename,
   isSensitiveSegment,
@@ -234,8 +235,10 @@ export function gitDirShapeWriteDenial(
   workspaceRoot: string,
   resolvedAbsolute: string,
 ): string | null {
+  if (!isPathInside(workspaceRoot, resolvedAbsolute, { strict: true })) {
+    return null;
+  }
   const rel = relativePath(workspaceRoot, resolvedAbsolute);
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute(rel)) return null;
   const raw = rel.split(sep);
   let dir = workspaceRoot;
   for (let i = 0; i < raw.length; i++) {
@@ -336,11 +339,9 @@ export async function resolveSafePath(
     resolved = await realpathViaExistingAncestor(candidate);
   }
 
-  const rootCmp = caseNormalize(workspaceRoot);
-  const resolvedCmp = caseNormalize(resolved);
-  const isInside =
-    resolvedCmp === rootCmp || resolvedCmp.startsWith(rootCmp + sep);
-  if (!isInside) {
+  // The ONE containment rule (core): the platform's own case policy, which
+  // is what the win32-only lowercase fold here used to spell by hand.
+  if (!isPathInside(workspaceRoot, resolved)) {
     return {
       ok: false,
       code: "path_outside_workspace",

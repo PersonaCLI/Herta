@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
+import { isPathInside } from "@herta/core";
 
 /**
  * The file-viewer read (ADR 0050 §2): one bounded, workspace-jailed read
@@ -63,10 +64,6 @@ export type ReadWorkspaceBytesResult =
 /** NUL inside the head is the classic text/binary sniff — git's own. */
 const BINARY_SNIFF_BYTES = 8_000;
 
-function caseNorm(s: string): string {
-  return process.platform === "win32" ? s.toLowerCase() : s;
-}
-
 /**
  * Resolve `inputPath` (workspace-relative or absolute) against the
  * workspace, realpath it (symlink hops collapse before the jail check),
@@ -97,9 +94,9 @@ export async function resolveInsideWorkspace(
   } catch {
     return { kind: "missing" };
   }
-  const isInside = (p: string): boolean =>
-    caseNorm(p) === caseNorm(realRoot) ||
-    caseNorm(p).startsWith(caseNorm(realRoot) + sep);
+  // The ONE containment rule (core): the platform's own case policy, which
+  // is what the win32-only lowercase fold here used to spell by hand.
+  const isInside = (p: string): boolean => isPathInside(realRoot, p);
   let real: string;
   try {
     real = await fs.realpath(candidate);

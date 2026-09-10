@@ -66,12 +66,11 @@ export interface AppServerConfig {
      *  covered — dream failure paths are dream-lab territory. */
     readonly baseUrl?: string;
   };
-  /** Backend reasoning effort. Per the official DeepSeek doc (updated
-   *  2026-07-31): deepseek-v4-flash accepts "low" | "high" | "max";
-   *  deepseek-v4-pro accepts "high" | "max" and maps a sent "low" to
-   *  "high" server-side until its announced early-August-2026 update.
-   *  "off" omits the thinking block. Settings → Coprocessor persists this
-   *  (GUI, restart-to-apply); default "high". */
+  /** Backend reasoning effort. Per the official DeepSeek doc (2026-09-10)
+   *  both `deepseek-flash` and `deepseek-v4-pro` accept "low" | "high" |
+   *  "max"; thinking is on by default at "high". "off" sends the thinking
+   *  block disabled. Settings → Coprocessor persists this (GUI,
+   *  restart-to-apply); default "high". */
   readonly thinking?: "low" | "high" | "max" | "off";
   /**
    * 板砖's model-facing tool contract (ADR 0040). `standard` (default) = the

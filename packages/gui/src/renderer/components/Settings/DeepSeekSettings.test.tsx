@@ -62,7 +62,7 @@ describe("DeepSeekSettings", () => {
     it("loads the persisted choice into both Selects", async () => {
       const mock = createMockHertaBridge({
         getModelConfigResult: {
-          actor: "deepseek-v4-flash",
+          actor: "deepseek-flash",
           backend: "deepseek-v4-pro",
         },
       });
@@ -81,13 +81,10 @@ describe("DeepSeekSettings", () => {
       await waitFor(() => expect(actor.textContent).toContain("Pro"));
       fireEvent.click(actor);
       fireEvent.click(getByRole("option", { name: "Flash" }));
-      // Backend rides along at its default (the vision flash since
-      // 2026-08-28, ADR 0048 §5a).
+      // Backend rides along at its default (the flash — the vision-capable
+      // one since the 2026-09 rename, ADR 0048 §5a/§5b).
       expect(mock.calls.setModelConfig).toEqual([
-        {
-          actor: "deepseek-v4-flash",
-          backend: "deepseek-v4-flash-vision-exp",
-        },
+        { actor: "deepseek-flash", backend: "deepseek-flash" },
       ]);
       // The restart fact lives in the intro (static), like the thinking row.
       expect(queryByText("Restart to apply")).toBeNull();

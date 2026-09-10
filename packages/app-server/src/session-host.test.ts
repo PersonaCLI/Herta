@@ -33,7 +33,7 @@ function mkConfig(): AppServerConfig {
       deepseekApiKey: "sk-test",
       actorModel: "deepseek-v4-base",
       backendModel: "deepseek-v4-chat",
-      routerModel: "deepseek-v4-flash",
+      routerModel: "deepseek-flash",
     },
   };
 }

@@ -136,7 +136,7 @@ export interface V2ActorDriverDeps {
     prompt: string,
   ) => void;
   /** Slice 13 (chat-mode escalation): router provider. Typically
-   *  `deepseekProvider({ model: "deepseek-v4-flash", thinking: "low" })`
+   *  `deepseekProvider({ model: "deepseek-flash", thinking: "low" })`
    *  (low since the 2026-07-31 flash update; the supervisor keeps its own
    *  "high" adapter).
    *  Used once per user turn to classify the conversation into one of

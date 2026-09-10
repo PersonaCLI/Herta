@@ -25,7 +25,7 @@ describe("@herta/app-server — type exports", () => {
         deepseekApiKey: "sk-test",
         actorModel: "deepseek-v4-base",
         backendModel: "deepseek-v4-chat",
-        routerModel: "deepseek-v4-flash",
+        routerModel: "deepseek-flash",
       },
     };
     expect(cfg.workspaceRoot).toBe("/tmp/x");

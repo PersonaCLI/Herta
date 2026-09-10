@@ -60,27 +60,27 @@ describe("createBackendProvider — the one backend provider both hosts build (2
   it("sends the model with thinking high by default, and exactly one POST on a 429", async () => {
     const bodies = await postedBodies({
       apiKey: "k",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
     });
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]?.model).toBe("deepseek-v4-flash");
+    expect(bodies[0]?.model).toBe("deepseek-flash");
     expect(bodies[0]?.thinking).toEqual({ type: "enabled" });
     expect(bodies[0]?.reasoning_effort).toBe("high");
   });
 
-  it("accepts the Settings vocabulary ('off') and the CLI's (false) alike — no thinking block", async () => {
+  it("accepts the Settings vocabulary ('off') and the CLI's (false) alike — the thinking block sent DISABLED (omitted, the API reasons by default)", async () => {
     for (const thinking of ["off", false] as const) {
       const bodies = await postedBodies({
         apiKey: "k",
-        model: "deepseek-v4-flash",
+        model: "deepseek-flash",
         thinking,
       });
-      expect(bodies[0]?.thinking).toBeUndefined();
+      expect(bodies[0]?.thinking).toEqual({ type: "disabled" });
       expect(bodies[0]?.reasoning_effort).toBeUndefined();
     }
     const low = await postedBodies({
       apiKey: "k",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       thinking: "low",
     });
     expect(low[0]?.reasoning_effort).toBe("low");
@@ -94,7 +94,7 @@ describe("createBackendProvider — the one backend provider both hosts build (2
     }) as unknown as typeof fetch;
     const provider = createBackendProvider({
       apiKey: "k",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       baseUrl: "http://127.0.0.1:9/chaos",
       fetchImpl,
     });
@@ -138,7 +138,7 @@ describe("createBackendStack", () => {
       lang: "zh",
       wantMinimal: false,
       backendProvider: new FakeProvider({ turns: [] }),
-      backendModel: "deepseek-v4-flash",
+      backendModel: "deepseek-v4-pro",
       digestModel: null,
       makeAsk: ({ cache, rules }) => {
         seen = { cacheSize: cache.size(), rulesListed: rules.list().length };
@@ -172,7 +172,7 @@ describe("createBackendStack", () => {
       lang: "en",
       wantMinimal: true,
       backendProvider: new FakeProvider({ turns: [] }),
-      backendModel: "deepseek-v4-flash",
+      backendModel: "deepseek-v4-pro",
       digestModel: null,
       makeAsk: () => noAsk,
     });
@@ -181,7 +181,7 @@ describe("createBackendStack", () => {
     expect(stack.backendTools.list().map((t) => t.name)).not.toContain("bash");
   });
 
-  it("mounts view_image from the MODEL NAME — one vision rule for both hosts (2026-09-03)", () => {
+  it("mounts view_image from the MODEL NAME — one vision rule for both hosts (2026-09-03); the flash itself sees since the 2026-09 API", () => {
     const names = (model: string): string[] =>
       createBackendStack({
         wsHolder: { current: mkWorkspace() },
@@ -195,9 +195,15 @@ describe("createBackendStack", () => {
       })
         .backendTools.list()
         .map((t) => t.name);
+    // `deepseek-flash` (V4.1 Flash) reads images, and so does the retired
+    // vision name DeepSeek still serves with it. Pro does not — and it no
+    // longer 400s an image, it says it cannot see it (probe 2026-09-10), so
+    // the rule must keep it out. The retired PLAIN flash name is not offered
+    // anywhere; an env override using it gets no `view_image`, on purpose.
+    expect(names("deepseek-flash")).toContain("view_image");
     expect(names("deepseek-v4-flash-vision-exp")).toContain("view_image");
-    expect(names("deepseek-v4-flash")).not.toContain("view_image");
-    expect(isVisionModel("deepseek-v4-flash-vision")).toBe(true);
+    expect(names("deepseek-v4-pro")).not.toContain("view_image");
+    expect(isVisionModel("deepseek-v4-flash")).toBe(false);
     expect(isVisionModel("deepseek-v4-pro")).toBe(false);
   });
 
@@ -223,7 +229,7 @@ describe("createBackendStack", () => {
         lang: "zh",
         wantMinimal,
         backendProvider: new FakeProvider({ turns: [] }),
-        backendModel: "deepseek-v4-flash",
+        backendModel: "deepseek-v4-pro",
         digestModel: null,
         platform,
         makeAsk: () => noAsk,

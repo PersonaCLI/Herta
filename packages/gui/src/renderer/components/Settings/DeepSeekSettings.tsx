@@ -3,7 +3,6 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useActiveSession } from "../../hooks/useActiveSession.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type {
-  BackendModelChoice,
   DeepSeekKeyStatus,
   ModelChoice,
   ModelConfig,
@@ -44,13 +43,14 @@ export function DeepSeekSettings(): JSX.Element {
   // reads the choice at the next bootstrap.
   const modelsSupported = bridge.setModelConfig !== undefined;
   // Pre-load optimistic state = the real handler's defaults (actor Pro,
-  // owner 2026-08-17; backend the VISION flash, owner 2026-08-28 per ADR
-  // 0048 §5a), so the pills never flash a wrong selection while
-  // getModelConfig is in flight. Keep in lockstep with session-service's
-  // getModelConfig and buildConfig — three statements of one default.
+  // owner 2026-08-17; backend the flash — the vision-capable one since the
+  // 2026-09 rename, ADR 0048 §5a/§5b), so the pills never flash a wrong
+  // selection while getModelConfig is in flight. Keep in lockstep with
+  // session-service's getModelConfig and buildConfig — three statements of
+  // one default.
   const [models, setModels] = useState<ModelConfig>({
     actor: "deepseek-v4-pro",
-    backend: "deepseek-v4-flash-vision-exp",
+    backend: "deepseek-flash",
   });
   const [modelsFailed, setModelsFailed] = useState(false);
   const [modelsLoadFailed, setModelsLoadFailed] = useState(false);
@@ -72,12 +72,9 @@ export function DeepSeekSettings(): JSX.Element {
     };
   }, [bridge]);
 
-  // `BackendModelChoice` is the wider of the two unions (the actor's is a
-  // subset), so one handler serves both rows without a cast at either call.
-  const onModel = (
-    stage: keyof ModelConfig,
-    next: BackendModelChoice,
-  ): void => {
+  // Both stages pick from the same two names (the flash reads images since
+  // the 2026-09 API), so one handler serves both rows.
+  const onModel = (stage: keyof ModelConfig, next: ModelChoice): void => {
     const prev = models;
     const nextCfg: ModelConfig = { ...models, [stage]: next };
     modelsWriteSeqRef.current += 1;
@@ -243,10 +240,7 @@ export function DeepSeekSettings(): JSX.Element {
                 ariaLabel={t("deepseek.model.actor")}
                 options={[
                   { value: "deepseek-v4-pro", label: t("deepseek.model.pro") },
-                  {
-                    value: "deepseek-v4-flash",
-                    label: t("deepseek.model.flash"),
-                  },
+                  { value: "deepseek-flash", label: t("deepseek.model.flash") },
                 ]}
                 onChange={(v) => onModel("actor", v)}
               />
@@ -256,23 +250,15 @@ export function DeepSeekSettings(): JSX.Element {
             title={t("deepseek.model.backend")}
             description={t("deepseek.model.backendDesc")}
             control={
-              // 板砖 gets a third option the actor cannot have (ADR 0048 §5):
-              // the vision model reads images, and the actor runs on the
-              // completion endpoint, which accepts neither images nor this
-              // name (D8).
-              <Select<BackendModelChoice>
+              // The same two names as the actor's row: since the 2026-09 API
+              // the flash itself reads images (ADR 0048 §5b), so the
+              // 板砖-only "Flash 视觉版" row of 2026-08 is gone.
+              <Select<ModelChoice>
                 value={models.backend}
                 ariaLabel={t("deepseek.model.backend")}
                 options={[
                   { value: "deepseek-v4-pro", label: t("deepseek.model.pro") },
-                  {
-                    value: "deepseek-v4-flash",
-                    label: t("deepseek.model.flash"),
-                  },
-                  {
-                    value: "deepseek-v4-flash-vision-exp",
-                    label: t("deepseek.model.vision"),
-                  },
+                  { value: "deepseek-flash", label: t("deepseek.model.flash") },
                 ]}
                 onChange={(v) => onModel("backend", v)}
               />

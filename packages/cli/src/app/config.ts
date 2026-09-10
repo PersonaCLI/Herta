@@ -78,11 +78,10 @@ export function printVersion(out: NodeJS.WritableStream): void {
   out.write(`Herta v${pkg.version}\n`);
 }
 
-/** Per the official DeepSeek doc (updated 2026-07-31): deepseek-v4-flash
- *  accepts "low" | "high" | "max" as reasoning_effort; deepseek-v4-pro
- *  accepts "high" | "max" and maps a sent "low" to "high" server-side until
- *  its announced early-August update. "medium" was never a valid value.
- *  `false` omits thinking entirely. */
+/** Per the official DeepSeek doc (2026-09-10): both `deepseek-flash` and
+ *  `deepseek-v4-pro` accept "low" | "high" | "max" as reasoning_effort
+ *  (thinking is on by default at "high"). "medium" was never a valid value.
+ *  `false` sends the thinking block disabled. */
 export type ThinkingLevel = false | "low" | "high" | "max";
 
 /**

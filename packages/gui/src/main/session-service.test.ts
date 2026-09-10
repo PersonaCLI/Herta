@@ -174,13 +174,13 @@ describe("buildConfig", () => {
     expect(cfg.workspaceRoot).toBe(cwd);
     expect(cfg.providers.deepseekApiKey).toBe("sk-test-123");
     // Must match the working CLI: the completion endpoint accepts only
-    // deepseek-v4-pro / deepseek-v4-flash (deepseek-v4-base 400s) — which
-    // is why the VISION model is backend-only.
-    // Defaults: actor Pro (owner 2026-08-17); backend the vision flash
-    // (owner 2026-08-28, ADR 0048 §5a — 板砖 can re-look out of the box).
+    // deepseek-flash / deepseek-v4-pro (2026-09-10; deepseek-v4-base 400s).
+    // Defaults: actor Pro (owner 2026-08-17); backend the flash — the
+    // vision-capable one since the rename (owner 2026-08-28, ADR 0048
+    // §5a/§5b — 板砖 can re-look out of the box).
     expect(cfg.providers.actorModel).toBe("deepseek-v4-pro");
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
-    expect(cfg.providers.routerModel).toBe("deepseek-v4-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-flash");
+    expect(cfg.providers.routerModel).toBe("deepseek-flash");
     // "high" is the default backend reasoning effort (Settings → Coprocessor
     // can lower/raise it; with no settings file the default stands).
     expect(cfg.thinking).toBe("high");
@@ -188,13 +188,13 @@ describe("buildConfig", () => {
   });
 
   it("honors HERTA_ACTOR_MODEL / HERTA_BACKEND_MODEL overrides", async () => {
-    vi.stubEnv("HERTA_ACTOR_MODEL", "deepseek-v4-flash");
-    vi.stubEnv("HERTA_BACKEND_MODEL", "deepseek-v4-flash");
+    vi.stubEnv("HERTA_ACTOR_MODEL", "deepseek-flash");
+    vi.stubEnv("HERTA_BACKEND_MODEL", "deepseek-flash");
     const cwd = mkdtempSync(join(tmpdir(), "herta-bc-cwd-ov-"));
     const home = mkdtempSync(join(tmpdir(), "herta-bc-home-ov-"));
     const cfg = await buildConfig(cwd, home, "sk-test-123");
-    expect(cfg.providers.actorModel).toBe("deepseek-v4-flash");
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash");
+    expect(cfg.providers.actorModel).toBe("deepseek-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-flash");
   });
 
   it("defaults Dream enabled to true with no settings file", async () => {
@@ -238,15 +238,14 @@ describe("buildConfig", () => {
     mkdirSync(join(cwd, ".herta"), { recursive: true });
     writeFileSync(
       join(cwd, ".herta", "settings.json"),
-      JSON.stringify({ models: { actor: "deepseek-v4-flash" } }),
+      JSON.stringify({ models: { actor: "deepseek-flash" } }),
       "utf-8",
     );
     const cfg = await buildConfig(cwd, home, "sk-test-123");
     // Actor follows the setting; backend, unset, keeps the built-in default
-    // (the vision flash since 2026-08-28). A PERSISTED backend choice is
-    // also honored.
-    expect(cfg.providers.actorModel).toBe("deepseek-v4-flash");
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
+    // (the flash). A PERSISTED backend choice is also honored.
+    expect(cfg.providers.actorModel).toBe("deepseek-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-flash");
     writeFileSync(
       join(cwd, ".herta", "settings.json"),
       JSON.stringify({ models: { backend: "deepseek-v4-pro" } }),
@@ -255,6 +254,29 @@ describe("buildConfig", () => {
     expect(
       (await buildConfig(cwd, home, "sk-test-123")).providers.backendModel,
     ).toBe("deepseek-v4-pro");
+  });
+
+  it("a settings.json from before the 2026-09 rename still means the flash — for BOTH stages, and the retired vision row folds into it", async () => {
+    vi.stubEnv("HERTA_ACTOR_MODEL", undefined);
+    vi.stubEnv("HERTA_BACKEND_MODEL", undefined);
+    const cwd = mkdtempSync(join(tmpdir(), "herta-bc-legacy-"));
+    const home = mkdtempSync(join(tmpdir(), "herta-bc-legacyh-"));
+    mkdirSync(join(cwd, ".herta"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".herta", "settings.json"),
+      JSON.stringify({
+        models: {
+          actor: "deepseek-v4-flash",
+          backend: "deepseek-v4-flash-vision-exp",
+        },
+      }),
+      "utf-8",
+    );
+    const cfg = await buildConfig(cwd, home, "sk-test-123");
+    // Not the Pro default: a user who had picked the flash keeps the flash
+    // (and its price) across the rename.
+    expect(cfg.providers.actorModel).toBe("deepseek-flash");
+    expect(cfg.providers.backendModel).toBe("deepseek-flash");
   });
 
   it("an env override still beats the setting (dev/lab knob), and an off-enum setting is ignored", async () => {
@@ -266,14 +288,14 @@ describe("buildConfig", () => {
     writeFileSync(
       join(cwd, ".herta", "settings.json"),
       JSON.stringify({
-        models: { actor: "deepseek-v4-flash", backend: "deepseek-v4-base" },
+        models: { actor: "deepseek-flash", backend: "deepseek-v4-base" },
       }),
       "utf-8",
     );
     const cfg = await buildConfig(cwd, home, "sk-test-123");
     expect(cfg.providers.actorModel).toBe("deepseek-v4-pro"); // env won
-    // off-enum → the built-in default (the vision flash since 2026-08-28)
-    expect(cfg.providers.backendModel).toBe("deepseek-v4-flash-vision-exp");
+    // off-enum → the built-in default (the flash)
+    expect(cfg.providers.backendModel).toBe("deepseek-flash");
   });
 
   it("backendContract (ADR 0040): default MINIMAL (owner flip 2026-08-17); setting honored; env beats setting; off-enum → default", async () => {

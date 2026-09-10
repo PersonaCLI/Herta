@@ -95,12 +95,11 @@ function metaFor(state: BanzhuanDeviceState): StateMeta {
  * There is deliberately NO dynamic restart note: the row description
  * already says "下次启动生效", and an appearing note re-flowed the pane.
  *
- * NOTE on "low": DeepSeek's 2026-07-31 update gave deepseek-v4-flash the low
- * tier; deepseek-v4-pro (the backend default) maps a sent "low" to "high"
- * server-side until its announced early-August-2026 update. Owner decision
- * 2026-08-03: persist and send the choice as-is — it starts meaning low the
- * day DeepSeek ships that, with no change here. The UI deliberately does not
- * mention the transient mapping.
+ * NOTE on "low": per the DeepSeek doc (2026-09-10) both `deepseek-flash`
+ * and `deepseek-v4-pro` honour the low tier (the 2026-07-31 doc had Pro
+ * mapping a sent "low" to "high" server-side; owner decision 2026-08-03 was
+ * to persist and send the choice as-is regardless). The UI deliberately
+ * says nothing about server-side handling of the tiers.
  */
 export function BanzhuanSettings(): JSX.Element {
   const t = useT();

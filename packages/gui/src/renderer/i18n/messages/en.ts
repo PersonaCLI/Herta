@@ -182,17 +182,13 @@ export const en = {
   "deepseek.unencrypted":
     "Stored unencrypted — this device has no secure keychain available.",
   "deepseek.models.intro":
-    "Model choice: Pro performs best at a higher cost; Flash hallucinates more and may take longer. Changes apply after a restart.",
+    "Model choice: Flash is faster and cheaper and can read images; Pro costs more. Changes apply after a restart.",
   "deepseek.model.actor": "Conversation model",
   "deepseek.model.actorDesc": "The model used when talking with Herta.",
   "deepseek.model.backend": "Coprocessor model",
-  "deepseek.model.backendDesc":
-    "The model Brick runs tasks with. The vision one can read images directly.",
+  "deepseek.model.backendDesc": "The model Brick runs tasks with.",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
-  // ADR 0048 §5 — Brick only: the conversation runs on the completion
-  // endpoint, which takes no images.
-  "deepseek.model.vision": "Flash Vision",
   "keyprompt.title": "Connect Herta to DeepSeek",
   // "stored in your OS keychain", not "stored encrypted" (audit BL18):
   // key-store falls back to plaintext when safeStorage reports no encryption

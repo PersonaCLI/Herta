@@ -21,39 +21,47 @@ export function isBackendThinking(v: unknown): v is BackendThinking {
 }
 
 /** The DeepSeek models the app can drive each stage with (2026-08-17, owner:
- *  API prices rose; the actor is the biggest per-turn lever). The completion
- *  endpoint accepts only the first two names — which is why the vision model
- *  below is BACKEND-only. */
-export type ModelChoice = "deepseek-v4-pro" | "deepseek-v4-flash";
+ *  API prices rose; the actor is the biggest per-turn lever). Exactly the two
+ *  names the completion endpoint accepts (DeepSeek doc, 2026-09-10):
+ *  `deepseek-flash` (V4.1 Flash — reads images, 1M context, the three
+ *  thinking tiers) and `deepseek-v4-pro`. NOTE: DeepSeek retires V4 Pro on
+ *  2026-09-14 — from then a `deepseek-v4-pro` request is served by V4.1
+ *  Flash at the Flash price; the name stays accepted.
+ *
+ *  The 2026-08 names are off the API's own list: `deepseek-v4-flash` and
+ *  `deepseek-v4-flash-vision-exp` are still ACCEPTED but served by V4.1
+ *  Flash. `normalizeModelChoice` folds a persisted legacy name into
+ *  `deepseek-flash`, so a settings.json written before the rename keeps
+ *  meaning "flash" (guarding it off-enum would have switched such a user to
+ *  the Pro default, at Pro prices, without a word). Since the flash reads
+ *  images, the separate vision model — and with it the difference between
+ *  what the actor and 板砖 may run — is gone (ADR 0048 §5b). */
+export type ModelChoice = "deepseek-v4-pro" | "deepseek-flash";
 
 const MODEL_CHOICE_VALUES: readonly string[] = [
   "deepseek-v4-pro",
-  "deepseek-v4-flash",
+  "deepseek-flash",
 ];
 
 export function isModelChoice(v: unknown): v is ModelChoice {
   return typeof v === "string" && MODEL_CHOICE_VALUES.includes(v);
 }
 
-/**
- * 板砖's models (ADR 0048 §5) — the two above plus the vision model, which
- * mounts `view_image` so a visual question can be answered by a re-look
- * instead of the attachment caption's one-shot reading.
- *
- * Backend-only, for a hard reason: images ride chat-shaped endpoints, and the
- * ACTOR runs on the completion endpoint, which accepts neither images nor
- * this model name (D8). Opt-in and not the default while it is `-Exp`, and
- * until the backend labs have been rerun on it (the stage→model rule).
- */
-export type BackendModelChoice = ModelChoice | "deepseek-v4-flash-vision-exp";
+/** The pre-2026-09 names a settings.json may still carry, and what each
+ *  means today (both are served by V4.1 Flash). */
+const LEGACY_MODEL_NAMES: Readonly<Record<string, ModelChoice>> = {
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-v4-flash-vision-exp": "deepseek-flash",
+};
 
-const BACKEND_MODEL_VALUES: readonly string[] = [
-  ...MODEL_CHOICE_VALUES,
-  "deepseek-v4-flash-vision-exp",
-];
-
-export function isBackendModelChoice(v: unknown): v is BackendModelChoice {
-  return typeof v === "string" && BACKEND_MODEL_VALUES.includes(v);
+/** A persisted model name as the app should read it: a current name as-is,
+ *  a legacy name folded into its successor, anything else `undefined` (the
+ *  caller falls back to its default). Read-side only — the file is rewritten
+ *  with current names the next time the user picks a model. */
+export function normalizeModelChoice(v: unknown): ModelChoice | undefined {
+  if (isModelChoice(v)) return v;
+  if (typeof v === "string") return LEGACY_MODEL_NAMES[v];
+  return undefined;
 }
 
 /** Which model-facing tool contract 板砖 runs (ADR 0040, 2026-08-17).
@@ -84,9 +92,10 @@ export interface AppSettings {
    *  both). Read at bootstrap; restart-to-apply like the rows above. */
   readonly models?: {
     readonly actor?: ModelChoice;
-    /** 板砖 may also run the vision model (ADR 0048 §5); the actor may not —
-     *  the completion endpoint does not accept it. */
-    readonly backend?: BackendModelChoice;
+    /** Same two names as the actor since 2026-09 (the flash reads images;
+     *  ADR 0048 §5b). Readers go through `normalizeModelChoice` — the file
+     *  may still say `deepseek-v4-flash-vision-exp`. */
+    readonly backend?: ModelChoice;
   };
 }
 

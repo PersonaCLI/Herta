@@ -53,9 +53,9 @@ import {
 } from "./app-global-settings.js";
 import {
   isBackendContract,
-  isBackendModelChoice,
   isBackendThinking,
   isModelChoice,
+  normalizeModelChoice,
   readAppSettings,
   writeAppSettings,
 } from "./app-settings.js";
@@ -261,36 +261,34 @@ export async function buildConfig(
       deepseekApiKey,
       // Model names MUST match the working CLI (packages/cli/src/app/main.ts).
       // The DeepSeek COMPLETION endpoint (used by the narrative actor) accepts
-      // ONLY `deepseek-v4-pro` or `deepseek-v4-flash` — `deepseek-v4-base`
-      // returns a 400 "supported API model names are…" and the turn fails
-      // silently (no record blocks). The backend (chat mode) also uses
-      // deepseek-v4-pro in the CLI.
+      // ONLY `deepseek-flash` or `deepseek-v4-pro` (doc + live probe
+      // 2026-09-10) — an off-list name returns a 400 "supported API model
+      // names are…" and the turn fails silently (no record blocks). The
+      // backend (chat mode) takes the same two; `deepseek-flash` reads
+      // images (ADR 0048 §5b).
       //
       // Precedence (2026-08-17): env (a dev/lab override, mirrors the CLI's
       // knobs) > Settings → DeepSeek → 模型 (the user's choice, persisted in
-      // settings.json, restart-to-apply) > the built-in default. The guard
-      // drops an off-enum value a hand-edited file might carry.
+      // settings.json, restart-to-apply) > the built-in default. A legacy
+      // name in the file (`deepseek-v4-flash`, `deepseek-v4-flash-vision-exp`)
+      // folds into `deepseek-flash`; an off-enum value falls to the default.
       //
-      // Defaults: actor Pro (owner 2026-08-17 — flash is voice-flat and
-      // fabricates on first pass, per the actor lab). Backend was flash for
-      // the same reason Pro was not (the outcome lab measured flash-板砖 =
-      // Pro-板砖, 62/62, far cheaper); it is now the VISION flash
-      // (owner 2026-08-28, ADR 0048 §5a) so 板砖 can re-look at a picture
-      // without the user opting in. The lab reruns that gate this found no
-      // safety or capability regression (git-dev 74/74, zero destructive
-      // misses) and a real cost the owner accepted knowingly: +77 % wall
-      // clock and +25 % permission cards on the same fifteen briefs.
+      // Defaults: actor Pro (owner 2026-08-17 — the V4 flash was voice-flat
+      // and fabricated on first pass, per the actor lab; DeepSeek retires V4
+      // Pro on 2026-09-14, after which the name is served by V4.1 Flash, and
+      // the actor lab has not been rerun on V4.1). Backend `deepseek-flash`:
+      // the vision flash has been the default since 2026-08-28 (owner, ADR
+      // 0048 §5a) so 板砖 can re-look at a picture without the user opting
+      // in, and V4.1 Flash is that model under its current name.
       actorModel:
         process.env.HERTA_ACTOR_MODEL ??
-        (isModelChoice(settings.models?.actor)
-          ? settings.models.actor
-          : "deepseek-v4-pro"),
+        normalizeModelChoice(settings.models?.actor) ??
+        "deepseek-v4-pro",
       backendModel:
         process.env.HERTA_BACKEND_MODEL ??
-        (isBackendModelChoice(settings.models?.backend)
-          ? settings.models.backend
-          : "deepseek-v4-flash-vision-exp"),
-      routerModel: "deepseek-v4-flash",
+        normalizeModelChoice(settings.models?.backend) ??
+        "deepseek-flash",
+      routerModel: "deepseek-flash",
       ...(devBaseUrl !== undefined && devBaseUrl !== ""
         ? { baseUrl: devBaseUrl }
         : {}),
@@ -1114,22 +1112,18 @@ export function createSessionService(
     handle(CMD.getModelConfig, async () => {
       const s = await readAppSettings(appWorkspaceRoot());
       return {
-        actor: isModelChoice(s.models?.actor)
-          ? s.models.actor
-          : "deepseek-v4-pro",
-        // Default vision flash (owner 2026-08-28, ADR 0048 §5a) — must
-        // match buildConfig's, or the pane shows a model the next boot
-        // will not use.
-        backend: isBackendModelChoice(s.models?.backend)
-          ? s.models.backend
-          : "deepseek-v4-flash-vision-exp",
+        actor: normalizeModelChoice(s.models?.actor) ?? "deepseek-v4-pro",
+        // Default `deepseek-flash` (the vision-capable flash, ADR 0048
+        // §5a/§5b) — must match buildConfig's, or the pane shows a model
+        // the next boot will not use. A legacy name in the file reads as
+        // its successor here too, so the pane shows what the boot will run.
+        backend: normalizeModelChoice(s.models?.backend) ?? "deepseek-flash",
       };
     });
     handle(
       CMD.setModelConfig,
       async (_e, cfg: { actor?: unknown; backend?: unknown }) => {
-        if (!isModelChoice(cfg?.actor) || !isBackendModelChoice(cfg?.backend))
-          return;
+        if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
         const ws = appWorkspaceRoot();
         const s = await readAppSettings(ws);
         await writeAppSettings(ws, {

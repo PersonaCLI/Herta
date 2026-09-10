@@ -162,19 +162,18 @@ export const zh = {
   "deepseek.unverified":
     "已保存，但无法连接 DeepSeek 验证——若黑塔没有回应，请检查网络。",
   "deepseek.unencrypted": "已明文存储——此设备没有可用的安全密钥链。",
-  // Per-stage model choice (2026-08-17, owner: API prices rose). Pro is the
-  // built-in default for both; flash is cheaper. Restart-to-apply.
+  // Per-stage model choice (2026-08-17, owner: API prices rose). Restart-to-
+  // apply. Since the 2026-09 API (`deepseek-flash` = V4.1 Flash, which reads
+  // images; V4 Pro retires 2026-09-14) both rows offer the same two names —
+  // the 板砖-only "Flash 视觉版" row is gone (ADR 0048 §5b).
   "deepseek.models.intro":
-    "模型选择：Pro 表现最佳，成本较高；Flash 幻觉较多，可能增加耗时。改动重启后生效。",
+    "模型选择：Flash 更快、更省，能直接看图片；Pro 成本较高。改动重启后生效。",
   "deepseek.model.actor": "对话模型",
   "deepseek.model.actorDesc": "与黑塔交流时使用的模型。",
   "deepseek.model.backend": "协处理器模型",
-  "deepseek.model.backendDesc":
-    "板砖执行任务时使用的模型。视觉版能直接看图片。",
+  "deepseek.model.backendDesc": "板砖执行任务时使用的模型。",
   "deepseek.model.pro": "Pro",
   "deepseek.model.flash": "Flash",
-  // ADR 0048 §5 — 板砖-only: 对话走补全接口，收不了图片。
-  "deepseek.model.vision": "Flash 视觉版",
   "keyprompt.title": "将黑塔接入 DeepSeek",
   "keyprompt.body":
     "黑塔需要一个 DeepSeek API 密钥才能思考。它存放在本机的系统密钥链里，除了调用 DeepSeek 绝不外传。",

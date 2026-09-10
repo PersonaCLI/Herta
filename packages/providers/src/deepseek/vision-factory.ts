@@ -7,10 +7,10 @@ import {
 
 export interface DeepseekVisionOpts {
   apiKey: ApiKey;
-  /** Default `deepseek-v4-flash-vision-exp` — the only DeepSeek model that
-   *  accepts images (2026-08-27; every other model answers 400 "This model
-   *  does not support image"). Overridable so the model name can move when it
-   *  graduates from `-Exp` without a code change here. */
+  /** Default `deepseek-flash` — V4.1 Flash reads images (DeepSeek doc +
+   *  live probe 2026-09-10; the 2026-08 `deepseek-v4-flash-vision-exp` is a
+   *  retired name the API still serves with the same model). Overridable so
+   *  the name can move again without a code change here. */
   model?: string;
   baseUrl?: string;
   maxTokens?: number;
@@ -25,7 +25,7 @@ export function deepseekVisionCaptioner(
   return visionCaptioner({
     baseUrl: opts.baseUrl ?? "https://api.deepseek.com",
     apiKey: opts.apiKey,
-    model: opts.model ?? "deepseek-v4-flash-vision-exp",
+    model: opts.model ?? "deepseek-flash",
     // A caption is description, not deliberation — but the model reasons
     // anyway, and the budget must cover that chain before any visible text
     // (see VisionCaptionerOpts.maxTokens for the measurements).

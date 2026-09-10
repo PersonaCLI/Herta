@@ -46,9 +46,9 @@ describe("deepseekProvider", () => {
   it("respects model override", async () => {
     const { body } = await captureRequestBody({
       apiKey: "sk",
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
     });
-    expect(body.model).toBe("deepseek-v4-flash");
+    expect(body.model).toBe("deepseek-flash");
   });
 
   it("does not include thinking fields by default", async () => {
@@ -84,12 +84,13 @@ describe("deepseekProvider", () => {
     expect(body.reasoning_effort).toBe("max");
   });
 
-  it("thinking:false is treated as off", async () => {
+  it("thinking:false sends the block DISABLED — omitting it would mean the server default, thinking ON at high (doc 2026-09-10)", async () => {
     const { body } = await captureRequestBody({
       apiKey: "sk",
       thinking: false,
     });
-    expect(body).not.toHaveProperty("thinking");
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body).not.toHaveProperty("reasoning_effort");
   });
 
   it("forwards temperature and maxTokens", async () => {

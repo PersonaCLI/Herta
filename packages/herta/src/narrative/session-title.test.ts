@@ -216,7 +216,7 @@ describe("generateSessionTitle", () => {
   });
 
   it("ignores the reasoning chain and reads the title from text-delta", async () => {
-    // deepseek-v4-flash is a reasoning model: it streams reasoning-delta
+    // deepseek-flash reasons by default: it streams reasoning-delta
     // before the answer. The title must come only from text-delta.
     const provider: ProviderAdapter = {
       async *streamChat(): AsyncIterable<ProviderEvent> {

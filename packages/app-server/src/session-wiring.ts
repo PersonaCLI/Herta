@@ -117,8 +117,9 @@ export const BACKEND_PROVIDER_MAX_RETRIES = 0;
  * differs per host stays with the host: WHERE the model name and the
  * thinking level come from (Settings vs. env). `thinking` accepts the
  * Settings vocabulary ("off") and the CLI's (`false`) alike; absent →
- * "high". Per the DeepSeek doc (2026-07-31) deepseek-v4-pro maps a sent
- * "low" to "high" server-side until its announced update; flash honours it.
+ * "high". Per the DeepSeek doc (2026-09-10) both `deepseek-flash` and
+ * `deepseek-v4-pro` take low / high / max; thinking is on by default at
+ * "high" when the block is omitted.
  */
 export function createBackendProvider(opts: {
   readonly apiKey: ApiKey;
@@ -148,17 +149,17 @@ export function createBackendProvider(opts: {
  * Whether the backend MODEL can read a picture (ADR 0048 §5). Derived from
  * the model name rather than a separate setting — the capability IS the
  * model, and two switches that could disagree would eventually disagree.
- * Matched by SUBSTRING rather than an exact name so the model can graduate
- * from `-Exp` without this going quietly false — which would drop
- * `view_image` from the stack while the Settings row still offered the
- * model, the worst of both. DeepSeek's vision models carry `vision` in the
- * name; nothing else does. One rule for both hosts (2026-09-03): the
- * desktop session had this function, the CLI restated it inline, and
- * `createBackendStack` now applies it itself from the model name it is
- * handed.
+ * Since the 2026-09 API the flash itself reads images: `deepseek-flash`
+ * (V4.1 Flash) sees, and so does the retired `deepseek-v4-flash-vision-exp`
+ * DeepSeek still serves with it (the substring rule this started with).
+ * `deepseek-v4-pro` does NOT — and no longer answers an image with a 400
+ * either: it replies that it cannot see the picture (probe 2026-09-10), so
+ * mounting `view_image` on it would let 板砖 "look" and be told nothing.
+ * One rule for both hosts (2026-09-03): `createBackendStack` applies it
+ * itself from the model name it is handed.
  */
 export function isVisionModel(model: string): boolean {
-  return model.includes("vision");
+  return model === "deepseek-flash" || model.includes("vision");
 }
 
 /** The digest tool's side model as both hosts mount it (ADR 0043): the
@@ -209,7 +210,7 @@ export function makeDigestProvider(
 ): ProviderAdapter {
   return deepseekProvider({
     apiKey,
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     thinking: false,
     maxTokens: 1024,
     temperature: 0.2,
@@ -559,7 +560,7 @@ export async function createActorStack(
     overrides.routerProvider ??
     deepseekProvider({
       apiKey: opts.apiKey,
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       thinking: "low",
       ...baseUrl,
     });
@@ -571,7 +572,7 @@ export async function createActorStack(
     overrides.routerProvider ??
     deepseekProvider({
       apiKey: opts.apiKey,
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       thinking: "high",
       ...baseUrl,
     });

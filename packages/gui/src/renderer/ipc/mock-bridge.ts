@@ -634,9 +634,9 @@ export function createMockHertaBridge(
       return (
         opts.getModelConfigResult ?? {
           actor: "deepseek-v4-pro",
-          // Mirrors the real handler's default (owner flip 2026-08-28,
-          // ADR 0048 §5a — was plain flash from 2026-08-17).
-          backend: "deepseek-v4-flash-vision-exp",
+          // Mirrors the real handler's default: the flash, which reads
+          // images since the 2026-09 rename (ADR 0048 §5a/§5b).
+          backend: "deepseek-flash",
         }
       );
     },

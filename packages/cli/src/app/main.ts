@@ -201,11 +201,11 @@ export async function main(
     devBaseUrl !== undefined && devBaseUrl !== ""
       ? { baseUrl: devBaseUrl }
       : {};
-  // Default the VISION flash (owner 2026-08-28, ADR 0048 §5a — parity with
-  // the GUI): 板砖 can re-look at a picture out of the box. Plain flash was
-  // the default from 2026-08-17 and stays one env var away, as does Pro.
-  const backendModel =
-    process.env.HERTA_BACKEND_MODEL ?? "deepseek-v4-flash-vision-exp";
+  // Default the flash — `deepseek-flash`, V4.1 Flash, which reads images, so
+  // 板砖 can re-look at a picture out of the box (parity with the GUI; the
+  // vision flash has been the default since 2026-08-28, ADR 0048 §5a/§5b).
+  // Pro stays one env var away.
+  const backendModel = process.env.HERTA_BACKEND_MODEL ?? "deepseek-flash";
   // The one way both hosts build it (@herta/app-server's session-wiring):
   // the env supplies the model and the thinking level (HERTA_BACKEND_THINKING
   // accepts low/high/max/false; default "high"), the wiring supplies
@@ -355,12 +355,15 @@ export async function main(
   // Default to deepseek-v4-pro for the v0.2 narrative-completion actor.
   // The actor is the user's primary touchpoint with Herta — voice fidelity
   // and Chinese nuance matter more here than per-turn latency. Operators
-  // can override via HERTA_ACTOR_MODEL=deepseek-v4-flash to trade quality
-  // for ~3x speed and ~10x lower cost.
+  // can override via HERTA_ACTOR_MODEL=deepseek-flash to trade quality for
+  // speed and cost.
   //
-  // NOTE: as of 2026-05, the DeepSeek API accepts only `deepseek-v4-pro`
-  // or `deepseek-v4-flash` on the completion endpoint. Any other model
+  // NOTE: per the DeepSeek doc (2026-09-10) the completion endpoint accepts
+  // only `deepseek-flash` or `deepseek-v4-pro` (the retired
+  // `deepseek-v4-flash` is still served, as V4.1 Flash). Any other model
   // identifier produces a 400 "supported API model names are..." error.
+  // DeepSeek retires V4 Pro on 2026-09-14: the name stays accepted, served
+  // by V4.1 Flash at the Flash price.
   const model = process.env.HERTA_ACTOR_MODEL ?? "deepseek-v4-pro";
 
   // `lang` selects the reveal cadence (EN word-paced, zh per code point) and

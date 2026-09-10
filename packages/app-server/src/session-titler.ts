@@ -83,7 +83,7 @@ export function buildRecentTitleInput(
  * The title model — a fast flash chat call at thinking "low" (owner decision
  * 2026-08-03; omitting `thinking` meant the server's DEFAULT effort, which is
  * "high" — titles were silently paying full reasoning). NOTE:
- * deepseek-v4-flash is a reasoning model; it streams a reasoning chain BEFORE
+ * `deepseek-flash` reasons by default; it streams a reasoning chain BEFORE
  * the answer, so maxTokens must cover the reasoning PLUS the (short) title —
  * a tight cap silently starves the answer and yields an empty title. 1024
  * stays: generous for low effort, and the model stops naturally after the
@@ -95,7 +95,7 @@ export function createTitleProvider(
 ): ProviderAdapter {
   return deepseekProvider({
     apiKey,
-    model: "deepseek-v4-flash",
+    model: "deepseek-flash",
     thinking: "low",
     maxTokens: 1024,
     temperature: 0.3,

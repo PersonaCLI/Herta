@@ -13,10 +13,14 @@ import { IDLE_MOUNT_SETTLE_MS } from "./device-scene/use-idle-mount.js";
 afterEach(() => {
   resetDeviceScenePrefForTest();
   resetDeviceSceneBackendForTest();
+  // A spec that fails under fake timers must not leave them installed for
+  // the `waitFor`-based specs after it (six timeouts from one failure).
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("DeviceCard", () => {
-  it("mounts the 3D scene canvas only when the bridge reports the setting on, and keeps the flat stack authoritative until a frame exists (ADR 0057)", async () => {
+  it("never mounts the 3D scene where there is no GPU path — the flat stack and the glow stay in charge from the first answer (ADR 0057 §6.1)", async () => {
     // jsdom has no WebGL2: silence its "not implemented" and take the
     // no-GPU path, which is the honest one here.
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
@@ -45,23 +49,20 @@ describe("DeviceCard", () => {
     await act(async () => {
       for (let i = 0; i < 4; i += 1) await Promise.resolve();
     });
-    // The setting is on, but the scene waits for the boot to settle (§2.9):
-    // nothing mounts before the idle gate's delay.
+    // The setting is on, but the card's own probe at mount (2026-09-10)
+    // found no GPU path: no scene is mounted — not now, and not after the
+    // idle gate's delay either — and no glass is shown while waiting.
     expect(container.querySelector(".device-scene-canvas")).toBeNull();
     await act(async () => {
       vi.advanceTimersByTime(IDLE_MOUNT_SETTLE_MS);
     });
-    expect(container.querySelector(".device-scene-canvas")).not.toBeNull();
-    await act(async () => {
-      for (let i = 0; i < 6; i += 1) await Promise.resolve();
-    });
-    // No GPU path → never live: the flat renders and the glow stay in charge.
+    expect(container.querySelector(".device-scene-canvas")).toBeNull();
+    // Never live: the flat renders and the glow stay in charge.
     const card = container.querySelector(".device-card");
     expect(card?.getAttribute("data-scene")).toBeNull();
+    expect(card?.classList.contains("has-frost")).toBe(false);
     expect(container.querySelector("img.agent-device-img")).not.toBeNull();
     expect(container.querySelector(".device-glow-canvas")).not.toBeNull();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
   });
 
   it("renders the 4-layer composite (2 imgs + 2 divs) inside .agent-preview", () => {

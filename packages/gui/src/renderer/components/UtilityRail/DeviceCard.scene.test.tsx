@@ -29,6 +29,15 @@ vi.mock("./device-scene/DeviceScene.js", () => ({
     return <canvas className="device-scene-canvas" />;
   },
 }));
+// The GPU path, as the card now asks it at mount (2026-09-10): jsdom has
+// no WebGL2, so the real probe would answer "none" and every card here
+// would be flat from the start. A machine with a path unless a test says
+// otherwise.
+const gpu = vi.hoisted(() => ({ backend: "webgpu" as string | null }));
+vi.mock("./device-scene/capability.js", () => ({
+  detectDeviceSceneBackend: () => Promise.resolve(gpu.backend),
+  resetDeviceSceneBackendForTest: () => undefined,
+}));
 
 const FROST = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
 
@@ -40,6 +49,7 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
     vi.useFakeTimers();
     latest.onLive = null;
     latest.onSnapshot = null;
+    gpu.backend = "webgpu";
     clearFrostForTest();
   });
   afterEach(() => {
@@ -187,6 +197,47 @@ describe("DeviceCard — what shows while the 3D scene builds (ADR 0057 §2.13)"
       latest.onLive?.(true);
     });
     expect(sceneAttr(again.container)).toBe("live");
+  });
+
+  it("no GPU path: flat as soon as the probe answers, never the glass and then a cut (2026-09-10)", async () => {
+    gpu.backend = null;
+    const mock = createMockHertaBridge({ deviceSceneResult: true });
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    // The probe and the pref land in the same few microtasks.
+    await act(async () => {
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+    expect(sceneAttr(container)).toBeNull();
+    expect(container.querySelector("img.device-frost")).toBeNull();
+    // …and the scene is never asked for, idle gate or not.
+    await act(async () => {
+      vi.advanceTimersByTime(IDLE_MOUNT_SETTLE_MS * 2);
+    });
+    expect(container.querySelector(".device-scene-canvas")).toBeNull();
+  });
+
+  it("a pref read that fails leaves the card flat once it has settled, not behind the glass for the patience", async () => {
+    const mock = createMockHertaBridge({ deviceSceneResult: true });
+    const bridge = {
+      ...mock.bridge,
+      getDeviceScene: async (): Promise<boolean> => {
+        throw new Error("settings unreadable");
+      },
+    };
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={bridge}>
+        <DeviceCard />
+      </HertaBridgeProvider>,
+    );
+    expect(sceneAttr(container)).toBe("pending"); // in flight
+    await act(async () => {
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    expect(sceneAttr(container)).toBeNull();
   });
 
   it("a bridge without the surface, or the setting off, is flat from the start / as soon as known", async () => {

@@ -720,6 +720,20 @@ export async function createDeviceScene(
     ...(driven?.context !== undefined ? { context: driven.context } : {}),
   } as ConstructorParameters<typeof THREE.WebGPURenderer>[0]);
   await renderer.init();
+  // A device or context lost while the assets load and the pipelines
+  // compile (2026-09-10): three's default handler only logs and parks the
+  // renderer, so a build that went on reported live over a canvas that
+  // never presents. Remembered here from the first instant, acted on
+  // once the scene can fall back (the handlers below replace these).
+  let lostEarly: string | null = null;
+  const onEarlyContextLost = (event: Event): void => {
+    event.preventDefault();
+    lostEarly = "context lost";
+  };
+  canvas.addEventListener("webglcontextlost", onEarlyContextLost);
+  renderer.onDeviceLost = (info) => {
+    lostEarly = `device lost: ${info.reason ?? "unknown"}`;
+  };
   if (profile) {
     // Profiling only: lets a devtools probe read the renderer's caches.
     Object.defineProperty(canvas, "__renderer", {
@@ -1319,8 +1333,16 @@ export async function createDeviceScene(
   window.addEventListener("focus", onFocus);
   window.addEventListener("blur", onBlur);
   document.addEventListener("visibilitychange", onVisibility);
+  // A nudge, not a wake (2026-09-10): `wake(0)` runs one frame of a RESTING
+  // loop, where the gate decides whether the hour has moved enough to draw
+  // and the calm cadence follows the drift until it converges — the
+  // resting-loop nudge §2.2 describes. The earlier `wake(1100)` also held
+  // `activeUntil` open, which reads as MOTION: ~66 full frames a minute at
+  // the moving rate, even for a window parked hours unfocused, which the
+  // park check (§2.6) otherwise keeps still. A parked window stays parked
+  // through a nudge; its clock catches up on focus.
   const clockTimer = setInterval(() => {
-    if (inputs.theme === "light") wake(1100);
+    if (inputs.theme === "light") wake(0);
   }, CLOCK_WAKE_MS);
 
   const dispose = (): void => {
@@ -1359,10 +1381,15 @@ export async function createDeviceScene(
     event.preventDefault();
     fallback("context lost");
   };
+  canvas.removeEventListener("webglcontextlost", onEarlyContextLost);
   canvas.addEventListener("webglcontextlost", onContextLost);
   renderer.onDeviceLost = (info) => {
     fallback(`device lost: ${info.reason ?? "unknown"}`);
   };
+  if (lostEarly !== null) {
+    fallback(lostEarly);
+    throw new Error(lostEarly);
+  }
 
   // The scene's pipelines are compiled ASYNCHRONOUSLY before the first
   // frame (ADR 0057 §2.12). A synchronous createRenderPipeline is

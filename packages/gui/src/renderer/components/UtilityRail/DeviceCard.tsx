@@ -24,6 +24,7 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { useRailParked } from "../FileViewer/file-viewer-context.js";
 import { CardMenu } from "./CardMenu.js";
 import { DeviceGlow } from "./DeviceGlow.js";
+import { detectDeviceSceneBackend } from "./device-scene/capability.js";
 import { DeviceScene } from "./device-scene/DeviceScene.js";
 import {
   loadDeviceScenePref,
@@ -110,12 +111,50 @@ export function DeviceCard(): JSX.Element {
   // SCENE_PATIENCE_MS.
   const theme = useResolvedTheme();
   const scenePref = useDeviceScenePref();
+  // Whether the pref read has answered: a read that settled on `null`
+  // failed, and a scene it cannot want is not one to wait for.
+  const [prefSettled, setPrefSettled] = useState(false);
   useEffect(() => {
-    void loadDeviceScenePref(bridge);
+    let cancelled = false;
+    void loadDeviceScenePref(bridge).then(() => {
+      if (!cancelled) setPrefSettled(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [bridge]);
   const sceneSupported = bridge.setDeviceScene !== undefined;
-  const sceneExpected = sceneSupported && scenePref !== false;
-  const wantScene = scenePref === true;
+  // The GPU path, asked at mount (2026-09-10) rather than when the scene
+  // mounts: the probe is memoised and cheap (one adapter request, ~100
+  // ms), and a machine with no path — a remote desktop, a VM, a software
+  // rasterizer — used to show the frosted picture for the idle gate's
+  // seconds and then cut hard to the flat art, on every launch. Knowing
+  // early, the card is flat from the first answer with no glass in
+  // between; the scene's own probe finds the memoised answer.
+  const [gpuPath, setGpuPath] = useState<"unknown" | "some" | "none">(
+    "unknown",
+  );
+  useEffect(() => {
+    if (!sceneSupported) return;
+    let cancelled = false;
+    detectDeviceSceneBackend().then(
+      (backend) => {
+        if (!cancelled) setGpuPath(backend === null ? "none" : "some");
+      },
+      () => {
+        if (!cancelled) setGpuPath("none");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [sceneSupported]);
+  const sceneExpected =
+    sceneSupported &&
+    scenePref !== false &&
+    !(prefSettled && scenePref === null) &&
+    gpuPath !== "none";
+  const wantScene = scenePref === true && gpuPath !== "none";
   // The scene is heavy to start (three.js chunk, assets, transcoder
   // workers, a synchronous first frame): it mounts after the boot has
   // settled and in an idle slot, never in the boot's way (§2.9).
@@ -230,7 +269,16 @@ export function DeviceCard(): JSX.Element {
         />
       )}
       {frostShown && (
-        <img className="device-frost" src={frost} alt="" aria-hidden="true" />
+        <img
+          className="device-frost"
+          src={frost}
+          alt=""
+          aria-hidden="true"
+          // A stored picture that will not decode (a truncated localStorage
+          // value) would leave the glass empty over a hidden flat stack;
+          // fall back to the bundled rendering.
+          onError={() => setFrost(DEFAULT_FROST[themeRef.current])}
+        />
       )}
       <CardMenu
         cardKind="device"

@@ -36,7 +36,8 @@
       ]
     },
     "overrides": {
-      "@napi-rs/canvas": "-"
+      "@napi-rs/canvas": "-",
+      "js-yaml": "^4.3.2"
     }
   }
 }

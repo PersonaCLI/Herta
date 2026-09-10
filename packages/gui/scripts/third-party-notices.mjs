@@ -269,7 +269,10 @@ if (existsSync(BASIS_WASM)) {
  * the notices without ever staging, and gating on `tts-runtime/` would have
  * it report the release's notices as stale.
  */
-const SHERPA_PKG = resolve(HERE, "../node_modules/sherpa-onnx-node/package.json");
+const SHERPA_PKG = resolve(
+  HERE,
+  "../node_modules/sherpa-onnx-node/package.json",
+);
 if (existsSync(SHERPA_PKG)) {
   const sherpa = readJson(SHERPA_PKG) ?? {};
   const licenseText = (name) =>

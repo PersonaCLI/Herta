@@ -10,9 +10,7 @@
   "references": [
     { "path": "../app-server" },
     { "path": "../core" },
-    { "path": "../knowledge" },
     { "path": "../tools" },
-    { "path": "../memory" },
     { "path": "../providers" },
     { "path": "../herta" }
   ]

@@ -323,8 +323,9 @@ describe("createTtsSynthesizer", () => {
     await Promise.resolve();
     const p1 = synth.synthesize({ ...REQ, seq: 1 });
     await Promise.resolve();
-    expect(child.sent.filter((m) => (m as { type: string }).type === "synth"))
-      .toHaveLength(2);
+    expect(
+      child.sent.filter((m) => (m as { type: string }).type === "synth"),
+    ).toHaveLength(2);
     // The first deadline (the model load rides on it) passes with no audio.
     await vi.advanceTimersByTimeAsync(45_000);
     await expect(p0).resolves.toBeNull();

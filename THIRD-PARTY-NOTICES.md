@@ -68,7 +68,7 @@ Not listed here, because they travel separately:
 | has-flag | 4.0.0 | MIT | main process |
 | highlight.js | 11.12.0 | BSD-3-Clause | renderer |
 | internmap | 2.0.3 | ISC | renderer |
-| js-yaml | 4.3.0 | MIT | main process |
+| js-yaml | 4.3.2 | MIT | main process |
 | jsonfile | 6.2.1 | MIT | main process |
 | jszip | 3.10.1 | (MIT OR GPL-3.0-or-later) | renderer |
 | katex | 0.16.47 | MIT | renderer |
@@ -1951,7 +1951,7 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 ```
 
-### js-yaml 4.3.0 — MIT
+### js-yaml 4.3.2 — MIT
 
 - Author: Vladimir Zapparov <dervus.grim@gmail.com>
 - Source: https://github.com/nodeca/js-yaml

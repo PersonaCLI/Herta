@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DOM_FREE_TESTS } from "../vitest.dom-free.js";
@@ -61,5 +61,35 @@ describe("dom-free test list", () => {
 
   it("has no duplicate entries", () => {
     expect(new Set(DOM_FREE_TESTS).size).toBe(DOM_FREE_TESTS.length);
+  });
+
+  it("every test file under src/ is reached by one project or the other", () => {
+    // The third hazard (2026-09-10): a test in a tree NEITHER include
+    // pattern names. `src/shared/links.test.ts` — the external-link
+    // allowlist — sat there for a day, green by absence. The jsdom
+    // project's trees are listed here to match packages/gui/vitest.config.ts;
+    // a new tree needs an entry in both places, and this says so.
+    const JSDOM_TREES = ["src/renderer/", "src/main/", "src/shared/"];
+    const found: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "node_modules") walk(p);
+        } else if (/\.test\.tsx?$/.test(entry.name)) {
+          found.push(relative(GUI_ROOT, p).split(sep).join("/"));
+        }
+      }
+    };
+    walk(join(GUI_ROOT, "src"));
+    const listed = new Set<string>(DOM_FREE_TESTS);
+    const orphans = found.filter(
+      (p) =>
+        p !== "src/vitest-dom-free.test.ts" &&
+        !listed.has(p) &&
+        !JSDOM_TREES.some((tree) => p.startsWith(tree)),
+    );
+    expect(orphans).toEqual([]);
+    expect(found.length).toBeGreaterThan(DOM_FREE_TESTS.length);
   });
 });

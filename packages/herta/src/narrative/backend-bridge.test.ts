@@ -1948,20 +1948,30 @@ describe("invokeBanzhuanBridge", () => {
 
   it("unsubscribes from the bus after runBrief returns (no leaked listener)", async () => {
     const bus = new InMemoryEventBus<AgentEvent>();
+    // Every subscription the bridge takes, and whether it let go of it —
+    // the assertion this test lacked until 2026-09-10 (`expect(true)`).
+    const released: boolean[] = [];
+    const onAny = bus.onAny.bind(bus);
+    bus.onAny = (handler) => {
+      const off = onAny(handler);
+      const i = released.push(false) - 1;
+      return () => {
+        released[i] = true;
+        off();
+      };
+    };
     const runtime = mkStubRuntime({});
     const deps = mkBridgeDeps({ bus, runtime: () => runtime });
     await invokeBanzhuanBridge([], [], deps);
-    // After the bridge returns, publishing a new event should not throw
-    // or be captured by any lingering listener.
+    expect(released.length).toBeGreaterThan(0);
+    expect(released.every(Boolean)).toBe(true);
+    // And a later event finds no lingering handler.
     publishWithLayer(bus, "backend", {
       type: "tool.call.started",
       id: "ghost",
       tool: "read_file",
       inputSummary: "should-not-be-captured.ts",
     });
-    // No assertion needed beyond "didn't crash" — the test isolates the
-    // bridge's lifecycle.
-    expect(true).toBe(true);
   });
 });
 

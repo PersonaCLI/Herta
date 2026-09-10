@@ -72,6 +72,32 @@ describe("ApprovalPanel", () => {
     ]);
   });
 
+  it("a resolve the session never took re-arms the buttons instead of leaving them disabled (2026-09-10)", async () => {
+    const mock = createMockHertaBridge();
+    let attempts = 0;
+    const bridge = {
+      ...mock.bridge,
+      resolveApproval: async (): Promise<never> => {
+        attempts += 1;
+        throw new Error("session disposed");
+      },
+    };
+    renderWithLocale(
+      <HertaBridgeProvider bridge={bridge}>
+        <ApprovalPanel />
+      </HertaBridgeProvider>,
+    );
+    await settle();
+    emitPending(mock);
+    const allow = screen.getByRole("button", { name: "Allow" });
+    fireEvent.click(allow);
+    expect(allow).toBeDisabled(); // the one-resolution latch
+    await settle();
+    expect(allow).toBeEnabled(); // the rejection released it
+    fireEvent.click(allow);
+    expect(attempts).toBe(2);
+  });
+
   it("Always allow resolves allow/session", async () => {
     const mock = setup();
     await settle();

@@ -40,6 +40,8 @@ export const DOM_FREE_TESTS = [
   "src/main/update-service.test.ts",
   "src/main/voice-path.test.ts",
   "src/main/win-path.test.ts",
+  // Shared between main and renderer — pure functions.
+  "src/shared/links.test.ts",
   // Renderer — pure logic behind the components: parsers, projections,
   // formatters, stores, and the engines that compute geometry without ever
   // reading one.

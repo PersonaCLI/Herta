@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   nativeTheme,
   screen,
@@ -486,182 +487,199 @@ function registerWindowControlHandlers(): void {
 /** The most recent window's in-flight dispose — awaited by before-quit. */
 let pendingDispose: Promise<void> | null = null;
 
-void app.whenReady().then(async () => {
-  // Read the per-user settings BEFORE creating the window (2026-07-13; was
-  // fire-and-forget): the close-to-tray flag, the theme (the window now
-  // constructs already tinted — no light flash on a dark launch), and the
-  // saved window geometry/mode all shape the first frame. The read is a
-  // few ms of local IO; a failure falls back to the defaults.
-  const s = await readGlobalSettings(app.getPath("userData")).catch(
-    () => ({}) as Awaited<ReturnType<typeof readGlobalSettings>>,
-  );
-  // Deny every renderer permission request (audit BL22). Electron grants them
-  // by default, and this renderer asks for none: its only `navigator.` use is
-  // `navigator.language`, and `new Audio(herta-voice://…)` needs no
-  // permission. So a blanket deny costs nothing today and means a future
-  // dependency cannot quietly acquire the camera, the microphone, geolocation
-  // or notifications on a window that also holds the app's IPC bridge.
-  session.defaultSession.setPermissionRequestHandler((_wc, _perm, done) => {
-    done(false);
-  });
-  session.defaultSession.setPermissionCheckHandler(() => false);
-
-  // Content-Security-Policy (audit BL2). Injected here rather than as a <meta>
-  // tag so dev and packaged can differ — Vite needs eval and its HMR socket,
-  // the shipped app needs neither. `connect-src 'none'` when packaged is the
-  // directive that matters: the renderer never talks to the network (the
-  // DeepSeek call lives in this process), so an injected script has nowhere to
-  // send a transcript.
-  {
-    const csp = buildCsp({
-      isPackaged: app.isPackaged,
-      indexHtmlPath: join(__dirname, "../renderer/index.html"),
-      ...(devRendererUrl !== undefined ? { devOrigin: devRendererUrl } : {}),
+void app
+  .whenReady()
+  .then(async () => {
+    // Read the per-user settings BEFORE creating the window (2026-07-13; was
+    // fire-and-forget): the close-to-tray flag, the theme (the window now
+    // constructs already tinted — no light flash on a dark launch), and the
+    // saved window geometry/mode all shape the first frame. The read is a
+    // few ms of local IO; a failure falls back to the defaults.
+    const s = await readGlobalSettings(app.getPath("userData")).catch(
+      () => ({}) as Awaited<ReturnType<typeof readGlobalSettings>>,
+    );
+    // Deny every renderer permission request (audit BL22). Electron grants them
+    // by default, and this renderer asks for none: its only `navigator.` use is
+    // `navigator.language`, and `new Audio(herta-voice://…)` needs no
+    // permission. So a blanket deny costs nothing today and means a future
+    // dependency cannot quietly acquire the camera, the microphone, geolocation
+    // or notifications on a window that also holds the app's IPC bridge.
+    session.defaultSession.setPermissionRequestHandler((_wc, _perm, done) => {
+      done(false);
     });
-    session.defaultSession.webRequest.onHeadersReceived((details, done) => {
-      // Documents only. Every request on this session passes through here,
-      // including the DeepSeek calls that installChromiumFetch() below routes
-      // through Chromium — stamping a page policy onto an SSE response would
-      // be meaningless at best, and this keeps the two features from having
-      // to reason about each other. CSP is delivered on the document; its
-      // sub-resources are already governed by it.
-      if (details.resourceType !== "mainFrame") {
-        done({});
-        return;
-      }
-      done({
-        responseHeaders: {
-          ...details.responseHeaders,
-          "Content-Security-Policy": [csp],
-        },
+    session.defaultSession.setPermissionCheckHandler(() => false);
+
+    // Content-Security-Policy (audit BL2). Injected here rather than as a <meta>
+    // tag so dev and packaged can differ — Vite needs eval and its HMR socket,
+    // the shipped app needs neither. `connect-src 'none'` when packaged is the
+    // directive that matters: the renderer never talks to the network (the
+    // DeepSeek call lives in this process), so an injected script has nowhere to
+    // send a transcript.
+    {
+      const csp = buildCsp({
+        isPackaged: app.isPackaged,
+        indexHtmlPath: join(__dirname, "../renderer/index.html"),
+        ...(devRendererUrl !== undefined ? { devOrigin: devRendererUrl } : {}),
       });
-    });
-  }
-
-  // Provider egress through Chromium, not Node (audit S3) — installed before
-  // the session service so every provider it constructs picks it up, and
-  // before the first key validation, which is otherwise the first request the
-  // app makes. Gets the OS proxy configuration and the OS trust store, which
-  // is what a corporate laptop needs and undici does not have.
-  installChromiumFetch();
-
-  // macOS PATH recovery (audit S7) — BEFORE createWindow, because the session
-  // service and the cached `rg` probe both inherit whatever PATH exists when
-  // they first spawn, and detectRg() caches its answer for the process
-  // lifetime. A Finder-launched .app otherwise has only launchd's minimal
-  // PATH, so run_command cannot find node/npm/cargo and search silently
-  // downgrades to the JS walker. No-op off darwin and when launched from a
-  // terminal; bounded so a slow rc file cannot delay startup.
-  await applyLoginPath({ platform: process.platform, env: process.env });
-  // Windows PATH recovery (ADR 0044) — same seam, same reason: the app
-  // inherits Explorer's PATH snapshot, so a node/git installed after that
-  // snapshot resolves in every fresh terminal but not here. Appends the
-  // registry's machine+user PATH entries; never removes or reorders what was
-  // inherited. No-op off win32; bounded by the reg-query timeouts.
-  await applyWindowsPath({ platform: process.platform, env: process.env });
-  closeToTray = s.closeToTray ?? true;
-  lastTheme = s.theme ?? "system";
-  // Native surfaces (tray context menu, system dialogs) follow Chromium's
-  // theme source, not the renderer's CSS — without this, a dark app on a
-  // light-mode OS pops a white tray menu. The pref enum maps 1:1 onto
-  // themeSource, and the renderer only consults prefers-color-scheme while
-  // the pref is "system" (when the source is also "system"), so overriding
-  // it for explicit light/dark can't feed back into theme resolution.
-  nativeTheme.themeSource = lastTheme;
-  lastWindowState = s.windowState ?? null;
-  // Serve voice clips over herta-voice:// — from the bundled resources copy
-  // when packaged, from the workspace's data/voice in dev (2026-07-06).
-  registerVoiceProtocol(
-    resolveVoiceRoot({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      workspaceRoot: appWorkspaceRoot(),
-    }),
-  );
-  // Serve attachment images over herta-attachment:// (ADR 0048). The root is
-  // a GETTER: attachments live under the BACKEND workspace, which the user
-  // can change mid-session, and a captured root would serve stale paths
-  // afterwards. Falls back to the app workspace before any session exists.
-  registerAttachmentProtocol(
-    () => mainService?.backendWorkspace() ?? appWorkspaceRoot(),
-  );
-  // Serve the 3D device card's bundled assets over herta-asset:// (ADR 0057):
-  // Vite copies src/renderer/public into out/renderer, which is what the
-  // package carries; an `electron-vite dev` run never populates that copy,
-  // so the source directory is the fallback root.
-  registerAssetProtocol(
-    resolveDeviceSceneRoot([
-      join(__dirname, "../renderer/device-scene"),
-      join(__dirname, "../../src/renderer/public/device-scene"),
-    ]),
-  );
-  createWindow();
-  // Auto-update: created after the window so state pushes have a target.
-  // The electron-updater import is deferred to here (require-time) so a dev
-  // run without the packaged app-update.yml never touches it unless the
-  // dry-run override is set.
-  {
-    // Dev-only (audit 2026-07-13 T1.3): the override is a private-repo
-    // dry-run lever. Honoring it in a PACKAGED build let anyone who could
-    // set an env var for the launch (malicious shortcut, local process)
-    // point the feed anywhere — and the override also disables the
-    // update-service dev gate, so autoInstallOnAppQuit would run whatever
-    // that feed served.
-    const feedOverride = app.isPackaged
-      ? undefined
-      : process.env.HERTA_UPDATE_URL;
-    // Lazy import keeps electron-updater out of the dev startup path.
-    void import("electron-updater")
-      .then(async ({ default: pkg }) => {
-        const { autoUpdater } = pkg;
-        // The persisted Settings → Update toggle seeds the automatic cycle
-        // (default on); later changes live-apply via onAutoUpdateChanged.
-        const settings = await readGlobalSettings(app.getPath("userData"));
-        updateService = createUpdateService({
-          updater: autoUpdater,
-          isPackaged: app.isPackaged,
-          autoEnabled: settings.autoUpdate ?? true,
-          ...(feedOverride !== undefined && feedOverride !== ""
-            ? { feedUrlOverride: feedOverride }
-            : {}),
-          send: (state) => {
-            const win = mainWindow;
-            if (win !== null && !win.isDestroyed()) {
-              win.webContents.send(EVT.update, state);
-            }
+      session.defaultSession.webRequest.onHeadersReceived((details, done) => {
+        // Documents only. Every request on this session passes through here,
+        // including the DeepSeek calls that installChromiumFetch() below routes
+        // through Chromium — stamping a page policy onto an SSE response would
+        // be meaningless at best, and this keeps the two features from having
+        // to reason about each other. CSP is delivered on the document; its
+        // sub-resources are already governed by it.
+        if (details.resourceType !== "mainFrame") {
+          done({});
+          return;
+        }
+        done({
+          responseHeaders: {
+            ...details.responseHeaders,
+            "Content-Security-Policy": [csp],
           },
         });
-        registerUpdateHandlers();
-        updateService.start();
-      })
-      .catch((err) => {
-        // A failed import/bootstrap must not become an unhandledRejection —
-        // the app just runs without auto-update (manual checks report idle).
-        console.error("[herta] update service bootstrap failed:", err);
       });
-  }
-  tray = createAppTray({
-    listSessions: () => mainService?.listSessions() ?? [],
-    openSession: async (id) => {
-      await mainService?.openSessionFromMain(id);
-    },
-    newChat: async () => {
-      await mainService?.createSessionFromMain();
-    },
-    showWindow: showMainWindow,
-    requestExit,
-    getLocale: async () => {
-      const s = await readGlobalSettings(app.getPath("userData"));
-      return resolveInitialLocale(s, app.getLocale());
-    },
+    }
+
+    // Provider egress through Chromium, not Node (audit S3) — installed before
+    // the session service so every provider it constructs picks it up, and
+    // before the first key validation, which is otherwise the first request the
+    // app makes. Gets the OS proxy configuration and the OS trust store, which
+    // is what a corporate laptop needs and undici does not have.
+    installChromiumFetch();
+
+    // macOS PATH recovery (audit S7) — BEFORE createWindow, because the session
+    // service and the cached `rg` probe both inherit whatever PATH exists when
+    // they first spawn, and detectRg() caches its answer for the process
+    // lifetime. A Finder-launched .app otherwise has only launchd's minimal
+    // PATH, so run_command cannot find node/npm/cargo and search silently
+    // downgrades to the JS walker. No-op off darwin and when launched from a
+    // terminal; bounded so a slow rc file cannot delay startup.
+    await applyLoginPath({ platform: process.platform, env: process.env });
+    // Windows PATH recovery (ADR 0044) — same seam, same reason: the app
+    // inherits Explorer's PATH snapshot, so a node/git installed after that
+    // snapshot resolves in every fresh terminal but not here. Appends the
+    // registry's machine+user PATH entries; never removes or reorders what was
+    // inherited. No-op off win32; bounded by the reg-query timeouts.
+    await applyWindowsPath({ platform: process.platform, env: process.env });
+    closeToTray = s.closeToTray ?? true;
+    lastTheme = s.theme ?? "system";
+    // Native surfaces (tray context menu, system dialogs) follow Chromium's
+    // theme source, not the renderer's CSS — without this, a dark app on a
+    // light-mode OS pops a white tray menu. The pref enum maps 1:1 onto
+    // themeSource, and the renderer only consults prefers-color-scheme while
+    // the pref is "system" (when the source is also "system"), so overriding
+    // it for explicit light/dark can't feed back into theme resolution.
+    nativeTheme.themeSource = lastTheme;
+    lastWindowState = s.windowState ?? null;
+    // Serve voice clips over herta-voice:// — from the bundled resources copy
+    // when packaged, from the workspace's data/voice in dev (2026-07-06).
+    registerVoiceProtocol(
+      resolveVoiceRoot({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        workspaceRoot: appWorkspaceRoot(),
+      }),
+    );
+    // Serve attachment images over herta-attachment:// (ADR 0048). The root is
+    // a GETTER: attachments live under the BACKEND workspace, which the user
+    // can change mid-session, and a captured root would serve stale paths
+    // afterwards. Falls back to the app workspace before any session exists.
+    registerAttachmentProtocol(
+      () => mainService?.backendWorkspace() ?? appWorkspaceRoot(),
+    );
+    // Serve the 3D device card's bundled assets over herta-asset:// (ADR 0057):
+    // Vite copies src/renderer/public into out/renderer, which is what the
+    // package carries; an `electron-vite dev` run never populates that copy,
+    // so the source directory is the fallback root.
+    registerAssetProtocol(
+      resolveDeviceSceneRoot([
+        join(__dirname, "../renderer/device-scene"),
+        join(__dirname, "../../src/renderer/public/device-scene"),
+      ]),
+    );
+    createWindow();
+    // Auto-update: created after the window so state pushes have a target.
+    // The electron-updater import is deferred to here (require-time) so a dev
+    // run without the packaged app-update.yml never touches it unless the
+    // dry-run override is set.
+    {
+      // Dev-only (audit 2026-07-13 T1.3): the override is a private-repo
+      // dry-run lever. Honoring it in a PACKAGED build let anyone who could
+      // set an env var for the launch (malicious shortcut, local process)
+      // point the feed anywhere — and the override also disables the
+      // update-service dev gate, so autoInstallOnAppQuit would run whatever
+      // that feed served.
+      const feedOverride = app.isPackaged
+        ? undefined
+        : process.env.HERTA_UPDATE_URL;
+      // Lazy import keeps electron-updater out of the dev startup path.
+      void import("electron-updater")
+        .then(async ({ default: pkg }) => {
+          const { autoUpdater } = pkg;
+          // The persisted Settings → Update toggle seeds the automatic cycle
+          // (default on); later changes live-apply via onAutoUpdateChanged.
+          const settings = await readGlobalSettings(app.getPath("userData"));
+          updateService = createUpdateService({
+            updater: autoUpdater,
+            isPackaged: app.isPackaged,
+            autoEnabled: settings.autoUpdate ?? true,
+            ...(feedOverride !== undefined && feedOverride !== ""
+              ? { feedUrlOverride: feedOverride }
+              : {}),
+            send: (state) => {
+              const win = mainWindow;
+              if (win !== null && !win.isDestroyed()) {
+                win.webContents.send(EVT.update, state);
+              }
+            },
+          });
+          registerUpdateHandlers();
+          updateService.start();
+        })
+        .catch((err) => {
+          // A failed import/bootstrap must not become an unhandledRejection —
+          // the app just runs without auto-update (manual checks report idle).
+          console.error("[herta] update service bootstrap failed:", err);
+        });
+    }
+    tray = createAppTray({
+      listSessions: () => mainService?.listSessions() ?? [],
+      openSession: async (id) => {
+        await mainService?.openSessionFromMain(id);
+      },
+      newChat: async () => {
+        await mainService?.createSessionFromMain();
+      },
+      showWindow: showMainWindow,
+      requestExit,
+      getLocale: async () => {
+        const s = await readGlobalSettings(app.getPath("userData"));
+        return resolveInitialLocale(s, app.getLocale());
+      },
+    });
+    app.on("activate", () => {
+      // macOS dock click: recreate if gone, otherwise surface the (possibly
+      // hidden-to-tray) existing window.
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else showMainWindow();
+    });
+  })
+  .catch((err: unknown) => {
+    // A throw between the settings read and the window — a protocol that
+    // would not register, the PATH repair, the session service — used to be
+    // an unhandled rejection that only logged: the process sat running with
+    // no window, no tray and nothing to say (2026-09-10). Say it, and stop.
+    const message =
+      err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error("[herta] startup failed:", message);
+    try {
+      dialog.showErrorBox("Herta", `启动失败。\n\n${message}`);
+    } catch {
+      // no display — the log line above is all there is
+    }
+    app.exit(1);
   });
-  app.on("activate", () => {
-    // macOS dock click: recreate if gone, otherwise surface the (possibly
-    // hidden-to-tray) existing window.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    else showMainWindow();
-  });
-});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

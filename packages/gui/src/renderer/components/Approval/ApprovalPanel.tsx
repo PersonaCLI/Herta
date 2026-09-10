@@ -179,11 +179,20 @@ export function ApprovalPanel(): JSX.Element | null {
   ): void => {
     if (shown === null || resolving) return;
     setResolving(true);
-    void bridge.resolveApproval(
-      persistence === undefined
-        ? { requestId: shown.requestId, decision }
-        : { requestId: shown.requestId, decision, persistence },
-    );
+    bridge
+      .resolveApproval(
+        persistence === undefined
+          ? { requestId: shown.requestId, decision }
+          : { requestId: shown.requestId, decision, persistence },
+      )
+      .then(undefined, () => {
+        // The resolve never reached the session (it was disposed or
+        // switched between the overlay and the click): the latch would
+        // otherwise leave all four buttons disabled with no message until
+        // the next request (2026-09-10). Re-arm; the overlay's own events
+        // decide whether there is still anything to answer.
+        setResolving(false);
+      });
   };
 
   // Escape denies while a live request is shown AND this panel is the top

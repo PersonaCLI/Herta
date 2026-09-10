@@ -2247,24 +2247,18 @@ describe("Session — the repository probe behind the rail's card (ADR 0058)", (
     const watched: string[] = [];
     const hook: { fire: ((gone?: boolean) => void) | null } = { fire: null };
     let calls = 0;
-    const { session, cleanup } = await mkStubSession(
-      cfg,
-      undefined,
-      1,
-      undefined,
-      {
-        repoDescriber: async () => {
-          calls += 1;
-          return sample;
-        },
-        repoWatcher: (gitDir, onChange) => {
-          watched.push(gitDir);
-          hook.fire = onChange;
-          return () => undefined;
-        },
-        repoWatchDebounceMs: 20,
+    const { cleanup } = await mkStubSession(cfg, undefined, 1, undefined, {
+      repoDescriber: async () => {
+        calls += 1;
+        return sample;
       },
-    );
+      repoWatcher: (gitDir, onChange) => {
+        watched.push(gitDir);
+        hook.fire = onChange;
+        return () => undefined;
+      },
+      repoWatchDebounceMs: 20,
+    });
     await until(() => watched.length === 1);
     expect(calls).toBe(1);
     // `rm -rf .git && git init`: the watcher closed itself, the probe finds

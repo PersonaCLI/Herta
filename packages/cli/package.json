@@ -17,9 +17,7 @@
     "@herta/app-server": "workspace:*",
     "@herta/core": "workspace:*",
     "@herta/herta": "workspace:*",
-    "@herta/knowledge": "workspace:*",
     "@herta/tools": "workspace:*",
-    "@herta/memory": "workspace:*",
     "@herta/providers": "workspace:*"
   },
   "devDependencies": {

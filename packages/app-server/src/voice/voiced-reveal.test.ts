@@ -168,9 +168,7 @@ describe("createVoicedReveal — after a veto (ADR 0042 §7b)", () => {
     h.synth.resolve(1, 1000);
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(2200);
-    expect(h.tts().map((t) => (t.kind === "tts" ? t.seq : -1))).toEqual([
-      0, 1,
-    ]);
+    expect(h.tts().map((t) => (t.kind === "tts" ? t.seq : -1))).toEqual([0, 1]);
     expect(h.text()).toBe(`${S1b}${S1}`);
   });
 

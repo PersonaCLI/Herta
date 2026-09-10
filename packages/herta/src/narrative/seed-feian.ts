@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { dreamDirFor, narrativeDirFor } from "@herta/core";
+import { dreamDirFor, errorMessage, narrativeDirFor } from "@herta/core";
 import { promptAssetsFor } from "./prompt-assets.js";
 import type { PromptLang } from "./prompt-lang.js";
 
@@ -139,9 +139,9 @@ export async function materializeSeedFeian(
         await rename(join(dir, filename), join(archiveDir, filename));
       } catch (err) {
         console.warn(
-          `materializeSeedFeian: failed to archive retired ${filename}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `materializeSeedFeian: failed to archive retired ${filename}: ${errorMessage(
+            err,
+          )}`,
         );
       }
     }
@@ -151,9 +151,9 @@ export async function materializeSeedFeian(
       await writeFile(join(dir, filename), body, "utf-8");
     } catch (err) {
       console.warn(
-        `materializeSeedFeian: failed to write ${filename}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `materializeSeedFeian: failed to write ${filename}: ${errorMessage(
+          err,
+        )}`,
       );
     }
   }

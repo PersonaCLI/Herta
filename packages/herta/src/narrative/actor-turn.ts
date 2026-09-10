@@ -3,6 +3,7 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
 } from "@herta/core";
+import { errorMessage } from "@herta/core";
 import { makeFireBeat } from "./actor-turn-beat.js";
 import {
   ActorTurnAbortedError,
@@ -193,7 +194,7 @@ async function recoverFromVeto(ctx: {
       // via the prompt-dump channel and take the single-stage path.
       deps.onPrompt?.(
         "phase2-out",
-        `[rethink stage failed: ${err instanceof Error ? err.message : String(err)}]`,
+        `[rethink stage failed: ${errorMessage(err)}]`,
       );
     }
   }

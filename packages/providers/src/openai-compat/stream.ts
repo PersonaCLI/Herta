@@ -1,4 +1,5 @@
 import type { ProviderEvent, ToolCallRequest } from "@herta/core";
+import { errorMessage } from "@herta/core";
 import { ProviderError } from "../errors.js";
 
 interface OpenAIDeltaChunk {
@@ -172,7 +173,7 @@ function parseCall(entry: {
       input: {},
       malformedArgs: {
         raw: entry.argsBuf,
-        parseError: cause instanceof Error ? cause.message : String(cause),
+        parseError: errorMessage(cause),
       },
     };
   }

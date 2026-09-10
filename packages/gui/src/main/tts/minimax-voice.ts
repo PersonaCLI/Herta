@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { errorMessage } from "@herta/core";
 import {
   cloneVoice,
   type FetchLike,
@@ -176,7 +177,7 @@ export function createMiniMaxVoiceService(
         throw err;
       }
       log(
-        `could not list the account's clones (${err instanceof Error ? err.message : String(err)}); cloning`,
+        `could not list the account's clones (${errorMessage(err)}); cloning`,
       );
       return null;
     }
@@ -242,9 +243,7 @@ export function createMiniMaxVoiceService(
       if (lastError === null) {
         lastError = err instanceof MiniMaxError ? err.reason : "other";
       }
-      log(
-        `prepare failed (${lastError}): ${err instanceof Error ? err.message : String(err)}`,
-      );
+      log(`prepare failed (${lastError}): ${errorMessage(err)}`);
     } finally {
       preparing = false;
       inFlight = null;

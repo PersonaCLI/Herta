@@ -1,3 +1,4 @@
+import { errorMessage } from "@herta/core";
 import { ProviderError } from "../errors.js";
 import { isAbortError } from "./abort.js";
 
@@ -96,9 +97,7 @@ export async function* parseSSE(
         throw new ProviderError({
           code: "network",
           retryable: false,
-          message: `stream terminated mid-response: ${
-            cause instanceof Error ? cause.message : String(cause)
-          }`,
+          message: `stream terminated mid-response: ${errorMessage(cause)}`,
           cause,
         });
       }

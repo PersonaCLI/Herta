@@ -34,6 +34,7 @@ import {
   type CompletionProviderAdapter,
   dreamDirFor,
   type EventBus,
+  errorMessage,
   InMemoryEventBus,
   InMemoryToolRegistry,
   narrativeDirFor,
@@ -665,7 +666,7 @@ function makePromptDump(
   try {
     mkdirSync(promptsDir, { recursive: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     note?.(`prompt dump disabled (mkdir failed: ${msg})`);
     return undefined;
   }
@@ -677,7 +678,7 @@ function makePromptDump(
       const filename = `turn-${String(promptCounter).padStart(3, "0")}-${label}.txt`;
       writeFileSync(join(promptsDir, filename), prompt, "utf-8");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       note?.(`prompt dump failed: ${msg}`);
     }
   };

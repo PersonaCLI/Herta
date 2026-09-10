@@ -20,6 +20,7 @@
 import {
   ApprovalPolicy,
   type AskResolver,
+  abortError,
   type PendingPermissionApproval,
   type PermissionRequest,
   type ProjectCommandRuleStore,
@@ -64,14 +65,11 @@ export type ResolveExternalResult =
       readonly reason: "stale_request" | "no_pending_overlay";
     };
 
-/** Constructed (not `signal.reason`) so the name is ALWAYS "AbortError" —
- *  `isAbortError` classifies by name, and a reason-less abort() or a custom
- *  reason must not demote the interrupt to `permission_failed`. */
-function gateAbortError(): Error {
-  const e = new Error("permission gate aborted by interrupt");
-  e.name = "AbortError";
-  return e;
-}
+/** Constructed (core's `abortError`, not `signal.reason`) so the name is
+ *  ALWAYS "AbortError" — a reason-less abort() or a custom reason must not
+ *  demote the interrupt to `permission_failed`. */
+const gateAbortError = (): Error =>
+  abortError("permission gate aborted by interrupt");
 
 export class OverlayAskResolver implements AskResolver {
   private pending: {

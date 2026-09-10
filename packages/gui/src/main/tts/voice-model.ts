@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createGunzip } from "node:zlib";
+import { errorMessage, isAbortError } from "@herta/core";
 import { verifyBundle } from "./bundle-verify.js";
 import { extractTar } from "./tar-extract.js";
 import { ttsBundleComplete } from "./tts-path.js";
@@ -90,10 +91,6 @@ export function voiceModelPaths(
   };
 }
 
-function isAbort(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
 /** The local disk saying no — a full volume, a permission, a dying drive.
  *  Told apart from the transfer (2026-09-10): a `write` that fails with
  *  ENOSPC inside the body loop used to be reported as `network`, and the
@@ -164,8 +161,8 @@ export async function downloadVoiceModel(
       res = await opts.fetch(archive.url, { signal });
     } catch (err) {
       throw new VoiceModelError(
-        isAbort(err) || signal.aborted ? "cancelled" : "network",
-        err instanceof Error ? err.message : String(err),
+        isAbortError(err) || signal.aborted ? "cancelled" : "network",
+        errorMessage(err),
       );
     }
     if (!res.ok) throw new VoiceModelError("http", `HTTP ${res.status}`);
@@ -190,12 +187,12 @@ export async function downloadVoiceModel(
     } catch (err) {
       if (err instanceof VoiceModelError) throw err;
       throw new VoiceModelError(
-        isAbort(err) || signal.aborted
+        isAbortError(err) || signal.aborted
           ? "cancelled"
           : isDiskError(err)
             ? "disk"
             : "network",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
       );
     } finally {
       await fh.close();
@@ -223,7 +220,7 @@ export async function downloadVoiceModel(
       if (err instanceof VoiceModelError) throw err;
       throw new VoiceModelError(
         isDiskError(err) ? "disk" : "archive",
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
       );
     }
 
@@ -246,10 +243,7 @@ export async function downloadVoiceModel(
   } catch (err) {
     await cleanup();
     if (err instanceof VoiceModelError) throw err;
-    throw new VoiceModelError(
-      "disk",
-      err instanceof Error ? err.message : String(err),
-    );
+    throw new VoiceModelError("disk", errorMessage(err));
   }
 }
 
@@ -355,9 +349,7 @@ export function createVoiceModelService(
         err instanceof VoiceModelError ? err.reason : ("disk" as const);
       if (reason !== "cancelled") {
         lastError = reason;
-        log(
-          `voice model download failed (${reason}): ${err instanceof Error ? err.message : String(err)}`,
-        );
+        log(`voice model download failed (${reason}): ${errorMessage(err)}`);
       }
     } finally {
       live = null;

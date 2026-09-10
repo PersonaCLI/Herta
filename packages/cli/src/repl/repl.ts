@@ -4,7 +4,7 @@ import type {
   ToolRegistry,
   V2RecordPersister,
 } from "@herta/core";
-import { isAbortError } from "@herta/core";
+import { errorMessage, isAbortError } from "@herta/core";
 import type { PromptLang, V2ActorDriver } from "@herta/herta";
 import { ProviderError } from "@herta/providers";
 import { aliasBrickInput } from "../render/banzhuan-alias.js";
@@ -94,7 +94,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
       if (typeof rendererWithCancel.cancelStream === "function") {
         rendererWithCancel.cancelStream();
       }
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       // Classify before printing (audit 2026-07-24, 1.13). Ctrl+C — which the
       // greeting advertises — printed a red `✗ internal: turn aborted`,
       // indistinguishable from a crash, and a 401 sent the user to debug

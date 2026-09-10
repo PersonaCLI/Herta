@@ -22,6 +22,7 @@ import type {
 import {
   composeMarkerSummary,
   countDiffLines as countDiffLinesShared,
+  errorMessage,
   type MarkerSummaryLabels,
 } from "@herta/core";
 import {
@@ -1599,7 +1600,7 @@ async function invokeBanzhuanBridgeInner(
         ? (err as AgentError)
         : {
             kind: "internal",
-            message: err instanceof Error ? err.message : String(err),
+            message: errorMessage(err),
           };
     deps.bus.publish({ type: "turn.failed", layer: "backend", error });
     const marker = sanitizeSystemBlock(buildBridgeFailureMarker(err));

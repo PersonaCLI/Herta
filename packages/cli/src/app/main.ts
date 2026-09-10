@@ -9,6 +9,7 @@ import {
 } from "@herta/app-server/wiring";
 import {
   ensureHertaGitignore,
+  errorMessage,
   InMemoryToolRegistry,
   listSessions,
   readSessionFile,
@@ -188,7 +189,7 @@ export async function main(
       homedir: deps?.homedir,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     stderr.write(`herta: ${msg}\n`);
     return 2;
   }

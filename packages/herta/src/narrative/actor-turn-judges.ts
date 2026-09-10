@@ -11,6 +11,7 @@ import type {
   ProviderAdapter,
   TerminalRecord,
 } from "@herta/core";
+import { errorMessage } from "@herta/core";
 import {
   ActorTurnAbortedError,
   type ActorTurnDeps,
@@ -186,7 +187,7 @@ export async function runSupervisorVerdict(opts: {
         throw new ActorTurnAbortedError(opts.record);
       }
       const timedOut = judgeSignal.aborted;
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = errorMessage(err);
       deps.onPrompt?.(
         "supervisor-out",
         formatSupervisorOutDump({
@@ -299,7 +300,7 @@ export async function judgeTriggerAndNeutralize(opts: {
       return { text: candidate };
     } catch (err) {
       if (signal.aborted) throw err;
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = errorMessage(err);
       deps.onPrompt?.(
         "supervisor-retry-out",
         formatSupervisorOutDump({
@@ -378,7 +379,7 @@ async function runMissingDispatchJudge(opts: {
       return null;
     } catch (err) {
       if (signal.aborted) throw err;
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = errorMessage(err);
       deps.onPrompt?.(
         "supervisor-retry-out",
         formatSupervisorOutDump({

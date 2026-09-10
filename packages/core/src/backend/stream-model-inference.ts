@@ -1,3 +1,4 @@
+import { errorMessage, isAbortError } from "../errors.js";
 import type { EventBus } from "../event-bus.js";
 import type { AgentError } from "../types/errors.js";
 import type { AgentEvent } from "../types/events.js";
@@ -79,26 +80,15 @@ export async function streamModelInference(
   return { text, reasoning, toolCalls, finishReason, deltas };
 }
 
-/**
- * The ONE abort predicate (2026-09-03). Five sites had their own — this
- * name-only check, the providers' wider one, two inline `name ===
- * "AbortError"` tests in the tools — with two definitions between them.
- * This is the wide one: `name === "AbortError"` (a DOMException, a fetch
- * abort, the harness's own constructed errors) OR `code === "ABORT_ERR"`
- * (undici surfaces some interrupts with that code and a different name).
- * Every seam that asks "was this the user's interrupt?" must answer the
- * same way, or one layer re-badges an interrupt as a failure.
- */
-export function isAbortError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const e = err as { name?: unknown; code?: unknown };
-  return e.name === "AbortError" || e.code === "ABORT_ERR";
-}
+// The ONE abort predicate lives in ../errors.ts since 2026-09-11 (with the
+// abort constructor and `errorMessage`); re-exported here for the callers
+// that import it by this path.
+export { isAbortError };
 
 export function toProviderError(err: unknown): AgentError {
   return {
     kind: "provider_failed",
-    message: err instanceof Error ? err.message : String(err),
+    message: errorMessage(err),
     cause: err,
   };
 }

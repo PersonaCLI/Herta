@@ -10,6 +10,8 @@
  * other answers 2049 "invalid api key". `probeHost` tries both with a cheap
  * authenticated call and remembers which one worked.
  */
+import { errorMessage, isAbortError } from "@herta/core";
+
 export const MINIMAX_HOSTS: readonly string[] = [
   "https://api.minimax.io",
   "https://api.minimaxi.com",
@@ -89,10 +91,6 @@ export function classifyStatus(
   return "other";
 }
 
-function isAbort(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
 /** A request that ended on its signal: the caller's cancel is `cancelled`;
  *  a deadline (`deadlineSignal`, whose reason is a TimeoutError) is the
  *  platform not answering — `network`, which is what the user can act on.
@@ -154,10 +152,10 @@ async function call(
     res = await fetch(url, init);
   } catch (err) {
     throw new MiniMaxError(
-      isAbort(err) || init.signal?.aborted === true
+      isAbortError(err) || init.signal?.aborted === true
         ? abortedAs(init)
         : "network",
-      err instanceof Error ? err.message : String(err),
+      errorMessage(err),
     );
   }
   let text: string;
@@ -165,10 +163,10 @@ async function call(
     text = await res.text();
   } catch (err) {
     throw new MiniMaxError(
-      isAbort(err) || init.signal?.aborted === true
+      isAbortError(err) || init.signal?.aborted === true
         ? abortedAs(init)
         : "network",
-      err instanceof Error ? err.message : String(err),
+      errorMessage(err),
     );
   }
   let json: Record<string, unknown>;

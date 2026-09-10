@@ -1,3 +1,4 @@
+import { errorMessage } from "@herta/core";
 import type { FetchLike } from "./minimax-api.js";
 
 /**
@@ -37,9 +38,9 @@ export function createFallbackFetch(
     } catch (err) {
       if (init.signal?.aborted === true) throw err;
       log(
-        `[herta-minimax] stack ${first} could not connect (${
-          err instanceof Error ? err.message : String(err)
-        }); trying stack ${second}`,
+        `[herta-minimax] stack ${first} could not connect (${errorMessage(
+          err,
+        )}); trying stack ${second}`,
       );
       let res: Response;
       try {

@@ -4,6 +4,7 @@ import type {
   TerminalRecord,
 } from "@herta/core";
 import {
+  errorMessage,
   readSessionTitle,
   readSessionTopics,
   writeSessionTitle,
@@ -355,7 +356,7 @@ export class SessionTitler {
       // logged, so a stuck 未命名 can be diagnosed from the log.
       console.warn(
         `[herta] title: generation failed — session ${sessionId}:`,
-        err instanceof Error ? err.message : String(err),
+        errorMessage(err),
       );
     } finally {
       this.genInFlight = false;

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   dreamDirFor,
+  errorMessage,
   listSessions,
   narrativeDirFor,
   readSessionFile,
@@ -541,11 +542,7 @@ async function runVoiceAlign(
     cnMap = loadTextMap(join(textmapDir, TEXTMAP_CN_FILENAME));
     targetMap = loadTextMap(join(textmapDir, targetFile));
   } catch (e) {
-    io.err(
-      `failed to load TextMaps from ${textmapDir}: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
+    io.err(`failed to load TextMaps from ${textmapDir}: ${errorMessage(e)}`);
     io.err(
       `expected ${TEXTMAP_CN_FILENAME} + ${targetFile} — see textmap-glossary.ts for the upstream source`,
     );
@@ -1046,11 +1043,7 @@ async function runGlossary(
     cnMap = loadTextMap(join(textmapDir, TEXTMAP_CN_FILENAME));
     enMap = loadTextMap(join(textmapDir, TEXTMAP_EN_FILENAME));
   } catch (e) {
-    io.err(
-      `failed to load TextMaps from ${textmapDir}: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
+    io.err(`failed to load TextMaps from ${textmapDir}: ${errorMessage(e)}`);
     io.err(
       "expected TextMapCHS.json + TextMapEN.json — see textmap-glossary.ts for the upstream source",
     );

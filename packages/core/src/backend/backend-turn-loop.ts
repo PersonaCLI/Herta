@@ -1,4 +1,5 @@
 import type { HertaToAgentBrief } from "../bridge/types.js";
+import { abortError, errorMessage, isAbortError } from "../errors.js";
 import type { EventBus } from "../event-bus.js";
 import type { FindingsLedger } from "../findings-ledger.js";
 import type { MemoryManager } from "../memory-manager.js";
@@ -32,7 +33,6 @@ import {
   fitMessagesToBudget,
 } from "./context-budget.js";
 import {
-  isAbortError,
   type ModelInferenceResult,
   streamModelInference,
 } from "./stream-model-inference.js";
@@ -70,21 +70,15 @@ export interface BackendTurnDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
-function backoffAbortError(): Error {
-  const e = new Error("aborted during backoff");
-  e.name = "AbortError";
-  return e;
-}
-
 function defaultBackoffSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
-      reject(backoffAbortError());
+      reject(abortError("aborted during backoff"));
       return;
     }
     const onAbort = (): void => {
       clearTimeout(timer);
-      reject(backoffAbortError());
+      reject(abortError("aborted during backoff"));
     };
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
@@ -235,7 +229,7 @@ export async function* runBackendTurnLoop(
             ok: false,
             error: {
               code: "permission_failed",
-              message: err instanceof Error ? err.message : String(err),
+              message: errorMessage(err),
               retryable: false,
             },
             summary: "permission resolver failed",
@@ -370,7 +364,7 @@ export async function* runBackendTurnLoop(
           if (decision.kind === "surface") {
             const error: AgentError = {
               kind: "provider_failed",
-              message: `${err instanceof Error ? err.message : String(err)} (${decision.detail})`,
+              message: `${errorMessage(err)} (${decision.detail})`,
               cause: err,
             };
             yield* emit({ type: "turn.failed", error });
@@ -695,7 +689,7 @@ export async function* runBackendTurnLoop(
     }
     const error: AgentError = {
       kind: "internal",
-      message: err instanceof Error ? err.message : String(err),
+      message: errorMessage(err),
       cause: err,
     };
     yield* emit({ type: "turn.failed", error });
@@ -789,7 +783,7 @@ function crashedResult(toolName: string, err: unknown): ToolResult {
     ok: false,
     error: {
       code: "tool_crashed",
-      message: err instanceof Error ? err.message : String(err),
+      message: errorMessage(err),
       retryable: false,
     },
     suggestion:

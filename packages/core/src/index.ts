@@ -54,7 +54,6 @@ export {
   SCOPED_MEMORY_MAX_ITEMS,
 } from "./backend/scoped-memory.js";
 export {
-  isAbortError,
   type ModelInferenceResult,
   streamModelInference,
 } from "./backend/stream-model-inference.js";
@@ -70,6 +69,7 @@ export {
 } from "./backend/tool-result-persistence.js";
 export { ExecutionReportBuilder } from "./bridge/report-builder.js";
 export type * from "./bridge/types.js";
+export { abortError, errorMessage, isAbortError } from "./errors.js";
 export type { EventBus } from "./event-bus.js";
 export { InMemoryEventBus, publishWithLayer } from "./event-bus.js";
 export {

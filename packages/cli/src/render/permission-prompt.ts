@@ -1,8 +1,9 @@
 import type { Readable } from "node:stream";
-import type {
-  AskResolver,
-  CommandConsequence,
-  PermissionRequest,
+import {
+  type AskResolver,
+  abortError,
+  type CommandConsequence,
+  type PermissionRequest,
 } from "@herta/core";
 import type { Style } from "./style.js";
 
@@ -188,16 +189,14 @@ export class CliAskResolver implements AskResolver {
       // (audit 2026-07-10, finding 4 — the ADR-0010 poisoned-history class).
       // Rejecting with an AbortError still settles the promise (no hang) and
       // the turn loop rethrows it into turn.failed{interrupted} — no
-      // permission.resolved, no fabricated tool result. Name is constructed
-      // (not signal.reason) so isAbortError always classifies it.
+      // permission.resolved, no fabricated tool result. Constructed (core's
+      // abortError, not signal.reason) so isAbortError always classifies it.
       const onAbort = (): void => {
         if (settled) return;
         settled = true;
         cleanup();
         this.stdout.write("\n");
-        const e = new Error("permission gate aborted by interrupt");
-        e.name = "AbortError";
-        reject(e);
+        reject(abortError("permission gate aborted by interrupt"));
       };
 
       const cleanup = (): void => {

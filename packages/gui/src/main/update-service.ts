@@ -1,3 +1,4 @@
+import { errorMessage } from "@herta/core";
 import { app } from "electron";
 import type { AppUpdater, UpdateInfo } from "electron-updater";
 // The state shape lives with the IPC contract (bridge-types is deliberately
@@ -144,7 +145,7 @@ export function createUpdateService(deps: UpdateServiceDeps): UpdateService {
    * stays silent as before; a manual check reports whatever it hit.
    */
   const report = (err: unknown): void => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     if (isUnreachable(message)) {
       set({ phase: "error", message, network: true });
     } else if (manualCheck) {

@@ -14,7 +14,7 @@ import {
   type SessionMetadata,
   type SpeechSynthesizer,
 } from "@herta/app-server";
-import { SessionFileError } from "@herta/core";
+import { errorMessage, SessionFileError } from "@herta/core";
 import { validateDeepSeekKey } from "@herta/providers";
 import {
   canonicalWorkspaceRoot,
@@ -1587,7 +1587,7 @@ export function createSessionService(
       console.error("[herta] session bootstrap failed:", err);
       host = null;
       send(EVT.reset, {
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage(err),
       });
     }
   }

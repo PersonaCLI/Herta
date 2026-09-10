@@ -3,6 +3,7 @@ import type {
   SynthesisRequest,
   SynthesizedAudio,
 } from "@herta/app-server";
+import { errorMessage } from "@herta/core";
 import {
   type FetchLike,
   MINIMAX_DEFAULT_MODEL,
@@ -191,9 +192,7 @@ export function createMiniMaxSynthesizer(
           return null;
         }
         lastFailure = "other";
-        log(
-          `unit ${req.seq} failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        log(`unit ${req.seq} failed: ${errorMessage(err)}`);
         return null;
       } finally {
         clearTimeout(timer);

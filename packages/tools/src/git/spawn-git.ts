@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { isAbortError } from "@herta/core";
+import { abortError, errorMessage, isAbortError } from "@herta/core";
 
 export interface SpawnGitOk {
   ok: true;
@@ -76,15 +76,6 @@ export function hardenedGitArgs(args: readonly string[]): string[] {
   return [...HARDENED_CONFIG, ...args];
 }
 
-/** The AbortError `run_command` throws for the same case — the turn loop
- *  classifies the turn as INTERRUPTED off this, instead of recording a tool
- *  failure that never happened. */
-function abortError(): Error {
-  const err = new Error("aborted");
-  err.name = "AbortError";
-  return err;
-}
-
 const MAX_BUF = 4 * 1024 * 1024;
 
 export async function spawnGit(
@@ -124,7 +115,7 @@ export async function spawnGit(
       resolve({
         ok: false,
         code: "spawn_failed",
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
         cause: existsSync(cwd) ? "other" : "workspace_missing",
       });
       return;

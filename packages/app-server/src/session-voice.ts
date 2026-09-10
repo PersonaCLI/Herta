@@ -216,7 +216,7 @@ export async function loadSessionVoice(
 
   const synth = opts.synth;
   const synthAvailable = (): boolean =>
-    voiceCuesEnabled && synth !== undefined && synth.available();
+    voiceCuesEnabled && (synth?.available() ?? false);
   let eggSeq = 0;
   let armed: ArmedReaction | null = null;
   let fillerSeq = 0;

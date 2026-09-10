@@ -515,7 +515,7 @@ export function VoiceSettings(): JSX.Element {
             description={t("voice.realtimeDesc")}
             control={
               <Toggle
-                checked={rt !== null && rt.enabled && canSpeak}
+                checked={(rt?.enabled ?? false) && canSpeak}
                 ariaLabel={t("voice.realtime")}
                 disabled={rt === null || !canSpeak}
                 onChange={onRealtimeChange}

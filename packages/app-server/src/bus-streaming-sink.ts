@@ -185,7 +185,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    *  opening so the recorded clip and the synthesized line never both
    *  play (ADR 0042 amendment 2026-09-08). */
   voiceAvailable(): boolean {
-    return this.voice !== null && this.voice.synth.available();
+    return this.voice?.synth.available() ?? false;
   }
 
   /** True when the stream about to open should be voiced. */

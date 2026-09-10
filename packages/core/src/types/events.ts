@@ -30,8 +30,6 @@ export interface PermissionRequest {
   consequence?: CommandConsequence;
 }
 
-// Opaque in slice B; real shape lives in tools / dialogue specs.
-// biome-ignore lint/complexity/noBannedTypes: deliberate placeholder
 /** What a test run came back with. `passed` was added 2026-09-03 so the
  *  beat classifier can tell a green run (no beat — the synthesis reports
  *  it) from a red one (Herta reacts while 板砖 fixes it); absent when the

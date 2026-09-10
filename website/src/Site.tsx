@@ -424,7 +424,7 @@ const ZH: SiteCopy = {
   navWhy: "为什么",
   navSelf: "自我与记忆",
   navMech: "机制",
-  navDesk: "工作台",
+  navDesk: "终端",
   navTech: "技术",
   navDl: "下载",
   langToggle: "EN",
@@ -535,10 +535,9 @@ const ZH: SiteCopy = {
   dreamAlt: "入梦循环：离开触发、四道门控、写入自传、下次开场随身携带",
   visionAlt:
     "她的自传：身份、记忆、世界、现在——三个时间尺度的循环持续续写同一份第一人称文本",
-  deskKicker: "工作台 · what she works in",
-  deskH2: "看得见的工作台。",
-  deskLead:
-    "0.1.5 里的三处变化：协处理器的设备成了一件被光照着的物体，仓库就在手边，而她开口说话。",
+  deskKicker: "终端 · the live terminal",
+  deskH2: "动态终端。",
+  deskLead: "差分协处理器 PBR 动态渲染，Git 仓库适配，本地/云端实时语音。",
   desk: [
     {
       id: "device",
@@ -546,7 +545,7 @@ const ZH: SiteCopy = {
       sub: "PBR 渲染 · a lit object",
       body:
         "协处理器的设备卡片按物理渲染：随本地时钟从清晨走到深夜，云影拂过白色的房间，" +
-        "工作时呼吸，出错时闪动。这里是它一天里的四个时刻。",
+        "工作时呼吸，出错时闪动。",
       alt: "板砖设备卡片在清晨、正午、黄昏与深夜的四张渲染",
     },
     {
@@ -554,7 +553,7 @@ const ZH: SiteCopy = {
       title: "Git 前端",
       sub: "the repository at hand",
       body:
-        "工作区的仓库就在栏里：分支与上游、未提交的改动、最近的提交，实时更新。" +
+        "工作区适配 Git 仓库：分支与上游、未提交的改动、最近的提交，实时更新。" +
         "点一处改动看它的差异，点一个提交看它改了什么，翻历史不用离开对话。",
       alt: "仓库卡片，以及在对话旁边打开的提交标签页",
     },
@@ -562,9 +561,7 @@ const ZH: SiteCopy = {
       id: "voice",
       title: "实时语音",
       sub: "she speaks · in step with the text",
-      body:
-        "她的回复由本地模型实时合成，文字随语音同步显示；被否掉的那一句，由她自己的声音收回。" +
-        "模型按需下载（76 MB）；也可接入 MiniMax 云端音色。",
+      body: "本地模型或云端实时语音合成，文字随语音同步显示。",
       alt: "她说话时的对话与输入栏：文字随语音显示，声波在输入栏里起伏",
     },
   ],
@@ -627,7 +624,7 @@ const EN: SiteCopy = {
   navWhy: "Why",
   navSelf: "Self & memory",
   navMech: "Mechanisms",
-  navDesk: "The desk",
+  navDesk: "The terminal",
   navTech: "Technical",
   navDl: "Download",
   langToggle: "中",
@@ -756,10 +753,10 @@ const EN: SiteCopy = {
     "The dream cycle: triggered while away, four gates, written into her autobiography, carried into the next opening",
   visionAlt:
     "Her autobiography: identity, memory, world, present — loops on three timescales keep writing one first-person text",
-  deskKicker: "the desk · 工作台",
-  deskH2: "A desk you can see.",
+  deskKicker: "the terminal · 终端",
+  deskH2: "A live terminal.",
   deskLead:
-    "Three things changed in 0.1.5: the coprocessor's device became a lit object, the repository sits at hand, and she speaks.",
+    "The coprocessor's device rendered live in PBR, the Git repository fitted to the workspace, real-time voice local or cloud.",
   desk: [
     {
       id: "device",
@@ -768,7 +765,7 @@ const EN: SiteCopy = {
       body:
         "The coprocessor's device card is physically rendered: it follows the local clock from " +
         "morning to night, clouds drift across the white room, it breathes while working and " +
-        "flashes on failure. Four moments of its day.",
+        "flashes on failure.",
       alt: "The coprocessor's device card rendered at morning, noon, dusk and night",
     },
     {
@@ -776,7 +773,7 @@ const EN: SiteCopy = {
       title: "The repository at hand",
       sub: "Git 前端",
       body:
-        "The workspace's repository sits in the rail: branch and upstream, uncommitted changes, " +
+        "The workspace fits its Git repository: branch and upstream, uncommitted changes, " +
         "recent commits — kept live. Click a change for its diff, a commit for what it touched, " +
         "page the history, without leaving the conversation.",
       alt: "The repository card, and a commit tab opened beside the conversation",
@@ -786,9 +783,8 @@ const EN: SiteCopy = {
       title: "She speaks",
       sub: "实时语音 · in step with the text",
       body:
-        "Her replies are synthesized in real time by a local model, the text revealed in step " +
-        "with her voice; a line she takes back, she takes back in her own voice. The model " +
-        "downloads on demand (76 MB); a MiniMax cloud voice can be added.",
+        "Real-time speech synthesized by a local model or in the cloud, the text revealed in " +
+        "step with her voice.",
       alt: "The conversation and the composer while she speaks: text keeping step with the voice, the wave moving in the composer",
     },
   ],

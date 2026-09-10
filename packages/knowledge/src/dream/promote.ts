@@ -1,5 +1,6 @@
-import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { writeFileAtomicSync } from "@herta/core";
 import { nextFeianIndex } from "./feian-format.js";
 
 /** D4 guard: throws unless `target` resolves to a path inside `root`. */
@@ -46,12 +47,11 @@ export function promoteCandidate(input: PromoteInput): PromoteResult {
     /^### 废案(?:_\d+)?：.*$/m,
     `### 废案_${pad(nn)}：${input.title}`,
   );
-  // Fix 1 (D4 guard): target path must be inside narrativeDir.
-  assertUnderDreamRoot(join(input.narrativeDir, file), input.narrativeDir);
-  // Fix 3: temp file is unique per candidate (nn included).
-  const tmp = join(input.narrativeDir, `.dream-tmp-${input.runId}-${pad(nn)}`);
-  writeFileSync(tmp, body, "utf8");
-  renameSync(tmp, join(input.narrativeDir, file));
+  // Fix 1 (D4 guard): target path must be inside narrativeDir. The atomic
+  // write's temp sits beside the target, so it is inside too.
+  const target = join(input.narrativeDir, file);
+  assertUnderDreamRoot(target, input.narrativeDir);
+  writeFileAtomicSync(target, body);
   return { nn, file };
 }
 

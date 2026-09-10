@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "@herta/core";
 
 export type Locale = "zh" | "en";
 export type ThemePref = "light" | "dark" | "system";
@@ -209,9 +210,7 @@ export async function writeGlobalSettings(
 ): Promise<void> {
   const path = settingsPath(userDataDir);
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-  await rename(tmp, path);
+  await writeFileAtomic(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 /** All settings.json read-modify-write cycles chain through this promise.

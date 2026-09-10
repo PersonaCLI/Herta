@@ -6,6 +6,11 @@ export {
   commandCwd,
 } from "./approval-policy.js";
 export {
+  type AtomicWriteOptions,
+  writeFileAtomic,
+  writeFileAtomicSync,
+} from "./atomic-write.js";
+export {
   BACKEND_EXECUTION_CONTRACT,
   BACKEND_EXECUTION_CONTRACT_EN,
   type BackendBuildInput,

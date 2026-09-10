@@ -1,11 +1,6 @@
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomicSync } from "../atomic-write.js";
 
 /**
  * One entry of the session's TOPIC history (2026-07-12, topic rail): every
@@ -72,27 +67,14 @@ export function writeSessionTitle(
     generatedAt: new Date().toISOString(),
     ...(topics !== undefined && topics.length > 0 ? { topics } : {}),
   };
-  // tmp + rename (audit BL7). A torn write here is not recoverable by
+  // Atomic (audit BL7). A torn write here is not recoverable by
   // regeneration: `synthesizeInitialTopic` can only ever make ONE entry, so a
   // half-written sidecar erases the topic rail for that session permanently.
-  const target = sidecarPath(transcriptDir, sessionId);
-  const tmp = `${target}.${process.pid}.${titleWriteSeq++}.tmp`;
-  try {
-    writeFileSync(tmp, `${JSON.stringify(payload)}\n`, "utf8");
-    renameSync(tmp, target);
-  } catch (err) {
-    try {
-      rmSync(tmp, { force: true });
-    } catch {
-      /* temp already gone or undeletable — nothing further to do */
-    }
-    throw err;
-  }
+  writeFileAtomicSync(
+    sidecarPath(transcriptDir, sessionId),
+    `${JSON.stringify(payload)}\n`,
+  );
 }
-
-/** Per-process counter for temp names, so two writes in the same millisecond
- *  cannot collide on one path. */
-let titleWriteSeq = 0;
 
 function readSidecar(
   transcriptDir: string,

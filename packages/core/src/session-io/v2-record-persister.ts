@@ -1,11 +1,6 @@
-import {
-  appendFileSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeFileAtomicSync } from "../atomic-write.js";
 import type { TerminalRecordBlock } from "../types/terminal-record.js";
 
 export interface ForNewSessionOpts {
@@ -66,9 +61,7 @@ function healTrailingPartialLine(sessionFile: string): void {
   if (raw.length === 0 || raw.endsWith("\n")) return;
   const lastNewline = raw.lastIndexOf("\n");
   if (lastNewline === -1) return; // partial header — leave for readSessionFile
-  const tmp = `${sessionFile}.heal-tmp`;
-  writeFileSync(tmp, raw.slice(0, lastNewline + 1), "utf8");
-  renameSync(tmp, sessionFile);
+  writeFileAtomicSync(sessionFile, raw.slice(0, lastNewline + 1));
   console.warn(
     `V2RecordPersister: healed truncated trailing line in ${sessionFile} (${raw.length - lastNewline - 1} chars dropped)`,
   );
@@ -271,9 +264,7 @@ export class V2RecordPersister {
       kept.push(line);
       if (isBlock) blockCount += 1;
     }
-    const tmp = `${this.sessionFile}.rewind-tmp`;
-    writeFileSync(tmp, `${kept.join("\n")}\n`, "utf8");
-    renameSync(tmp, this.sessionFile);
+    writeFileAtomicSync(this.sessionFile, `${kept.join("\n")}\n`);
   }
 
   /**
@@ -331,8 +322,6 @@ export class V2RecordPersister {
       blockCount += 1;
     }
     if (!replaced) return;
-    const tmp = `${this.sessionFile}.replace-tmp`;
-    writeFileSync(tmp, `${lines.join("\n")}\n`, "utf8");
-    renameSync(tmp, this.sessionFile);
+    writeFileAtomicSync(this.sessionFile, `${lines.join("\n")}\n`);
   }
 }

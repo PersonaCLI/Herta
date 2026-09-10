@@ -11,6 +11,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { writeFileAtomicSync } from "@herta/core";
 
 export interface PersonaStoreOpts {
   /** Directory containing per-component JSON files. Typically .herta/persona/. */
@@ -19,7 +20,7 @@ export interface PersonaStoreOpts {
 
 /**
  * Thin JSON-backed store for persona components. One file per component id.
- * Writes are atomic (write to .tmp + rename). No locking — the actor is
+ * Writes are atomic (core's writeFileAtomicSync). No locking — the actor is
  * single-threaded; the only other writer is the offline persona-seed CLI,
  * which runs while the actor isn't.
  */
@@ -54,9 +55,7 @@ export class PersonaStore {
   save(componentId: string, data: unknown): void {
     const p = this.pathFor(componentId);
     fs.mkdirSync(this.root, { recursive: true });
-    const tmp = `${p}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
-    fs.renameSync(tmp, p);
+    writeFileAtomicSync(p, JSON.stringify(data, null, 2));
   }
 
   private pathFor(componentId: string): string {

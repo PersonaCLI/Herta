@@ -1,14 +1,15 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
-import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
 import {
   countDiffLinesFor,
+  errorMessage,
   type HertaTool,
   type ToolCallRequest,
   type ToolContext,
   type ToolResult,
   type ToolSchema,
+  writeFileAtomic,
 } from "@herta/core";
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
@@ -193,36 +194,17 @@ export function editFileTool(): HertaTool {
       const afterBuf = Buffer.from(reattachBom(after, decoded.bom), "utf-8");
       const diff = computeUnifiedDiff(before, after, safe.relative);
 
-      const tmp = join(
-        dirname(safe.resolved),
-        `.${basenameOf(safe.resolved)}.herta-tmp-${randomUUID()}`,
-      );
+      // Atomic replace (core's helper: unique temp beside the target, rename
+      // over it, the temp removed on failure). A busy file is retryable.
       try {
-        await writeFile(tmp, afterBuf, { flag: "wx" });
+        await writeFileAtomic(safe.resolved, afterBuf);
       } catch (err: unknown) {
         const code = (err as { code?: string }).code;
         return errResult(
           "write_failed",
-          (err as Error).message ?? "temp write failed",
+          errorMessage(err),
           undefined,
           "write failed",
-          code === "EBUSY" || code === "EAGAIN",
-        );
-      }
-      try {
-        await rename(tmp, safe.resolved);
-      } catch (err: unknown) {
-        try {
-          await unlink(tmp);
-        } catch {
-          // best-effort
-        }
-        const code = (err as { code?: string }).code;
-        return errResult(
-          "write_failed",
-          (err as Error).message ?? "rename failed",
-          undefined,
-          "rename failed",
           code === "EBUSY" || code === "EAGAIN",
         );
       }
@@ -248,11 +230,6 @@ export function editFileTool(): HertaTool {
       };
     },
   };
-}
-
-function basenameOf(p: string): string {
-  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i < 0 ? p : p.slice(i + 1);
 }
 
 function suggestionFor(code: string): string {

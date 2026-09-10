@@ -1,15 +1,6 @@
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { recapCachePath } from "@herta/core";
+import { recapCachePath, writeFileAtomicSync } from "@herta/core";
 import type { RecapCache } from "./session-recap.js";
 
 function cacheDir(workspaceRoot: string): string {
@@ -73,20 +64,12 @@ export function writeRecapCache(
   sessionId: string,
   cache: RecapCache,
 ): void {
-  const dir = cacheDir(workspaceRoot);
-  mkdirSync(dir, { recursive: true });
-  const target = cacheFile(workspaceRoot, sessionId);
-  const tmp = join(dir, `.${sessionId}.json.${process.pid}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-  try {
-    const fd = openSync(tmp, "r+");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    // best-effort durability; rename below still gives atomicity vs process-kill
-  }
-  renameSync(tmp, target);
+  mkdirSync(cacheDir(workspaceRoot), { recursive: true });
+  // fsync'd: the cache must survive a power loss intact or not at all — a
+  // renamed-but-empty file would read as "no cache" and cost a re-derive.
+  writeFileAtomicSync(
+    cacheFile(workspaceRoot, sessionId),
+    `${JSON.stringify(cache, null, 2)}\n`,
+    { fsync: true },
+  );
 }

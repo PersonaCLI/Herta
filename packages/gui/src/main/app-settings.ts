@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "@herta/core";
 
 /**
  * User app settings, persisted to `<workspaceRoot>/.herta/settings.json`
@@ -151,22 +152,10 @@ export async function writeAppSettings(
 ): Promise<void> {
   const path = settingsPath(workspaceRoot);
   await mkdir(dirname(path), { recursive: true });
-  // Unique temp name (audit BL7). A FIXED `.tmp` path with no serialization
-  // meant two concurrent writes — two Settings panes, or a fast toggle —
-  // interleaved on the same file: writer A's rename could publish writer B's
-  // half-written bytes. That race is what made the Settings error-note bug
-  // (BL14) reachable at all.
-  const tmp = `${path}.${process.pid}.${settingsWriteSeq++}.tmp`;
-  try {
-    await writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-    await rename(tmp, path);
-  } catch (err) {
-    await rm(tmp, { force: true }).catch(() => {
-      /* temp already gone or undeletable */
-    });
-    throw err;
-  }
+  // Atomic, unique temp (audit BL7). A FIXED `.tmp` path with no
+  // serialization meant two concurrent writes — two Settings panes, or a
+  // fast toggle — interleaved on the same file: writer A's rename could
+  // publish writer B's half-written bytes. That race is what made the
+  // Settings error-note bug (BL14) reachable at all.
+  await writeFileAtomic(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
-
-/** Per-process counter for temp names. */
-let settingsWriteSeq = 0;

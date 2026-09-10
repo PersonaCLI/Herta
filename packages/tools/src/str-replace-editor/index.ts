@@ -1,27 +1,14 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
-  mkdir,
-  readFile,
-  rename,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
-import type {
-  HertaTool,
-  ToolCallRequest,
-  ToolContext,
-  ToolResult,
-  ToolSchema,
+  errorMessage,
+  type HertaTool,
+  type ToolCallRequest,
+  type ToolContext,
+  type ToolResult,
+  type ToolSchema,
+  writeFileAtomic,
 } from "@herta/core";
 import { PersistentShell, SHELL_BG_ID } from "../bash/persistent-shell.js";
 import { type ShellPaths, shellPathsFor } from "../bash/shell-paths.js";
@@ -390,31 +377,15 @@ export function strReplaceEditorTool(
   };
 }
 
+/** Core's atomic replace, answered as this tool's result shape. */
 async function atomicWrite(
   resolved: string,
   content: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  const tmp = join(
-    dirname(resolved),
-    `.${basename(resolved)}.herta-tmp-${randomUUID()}`,
-  );
   try {
-    await writeFile(tmp, content, { encoding: "utf-8", flag: "wx" });
+    await writeFileAtomic(resolved, content);
+    return { ok: true };
   } catch (err: unknown) {
-    return {
-      ok: false,
-      message: (err as Error).message ?? "temp write failed",
-    };
+    return { ok: false, message: errorMessage(err) };
   }
-  try {
-    await rename(tmp, resolved);
-  } catch (err: unknown) {
-    try {
-      await unlink(tmp);
-    } catch {
-      // best-effort
-    }
-    return { ok: false, message: (err as Error).message ?? "rename failed" };
-  }
-  return { ok: true };
 }

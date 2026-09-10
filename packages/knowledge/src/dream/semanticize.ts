@@ -19,14 +19,9 @@
  * - Best-effort: any failure leaves the old page untouched and NEVER blocks
  *   the eviction that triggered it.
  */
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomicSync } from "@herta/core";
 import { stripDisplayUnsafe } from "@herta/core/text-sanitize";
 import type { DeepSeekClient } from "../llm/types.js";
 import {
@@ -182,9 +177,7 @@ export function writeTrailblazerNotes(
   const target = join(narrativeDir, notesFileFor(lang));
   assertUnderDreamRoot(target, narrativeDir);
   backupNotesPage(target, lang, runId, dreamDir);
-  const tmp = join(narrativeDir, `.dream-notes-tmp-${runId}`);
-  writeFileSync(tmp, `${notesHeaderFor(lang)}${body.trim()}\n`, "utf8");
-  renameSync(tmp, target);
+  writeFileAtomicSync(target, `${notesHeaderFor(lang)}${body.trim()}\n`);
 }
 
 /**

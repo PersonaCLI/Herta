@@ -1,13 +1,6 @@
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomicSync } from "@herta/core";
 import { computeStrength } from "./retention.js";
 import type {
   DreamConfig,
@@ -66,31 +59,17 @@ export function lastFullPassAtMs(m: DreamManifest): number | null {
 
 export function writeManifest(dreamDir: string, m: DreamManifest): void {
   mkdirSync(dreamDir, { recursive: true });
-  // Durable atomic replace: write a temp file, fsync its bytes, then rename it
-  // over the target. The fsync makes the new manifest's data durable BEFORE the
-  // rename publishes it, so even a true power-off can only leave the prior
-  // manifest or the new one fully intact — never a renamed-but-empty file that
-  // readManifest would reset to an empty ledger (losing all dedup history,
-  // provenance, and the cadence anchor). The rename is atomic for the name; if
-  // its directory entry isn't yet durable at power-off, the prior manifest
-  // survives — also intact. fsync is best-effort: if the platform/FS rejects it
-  // we fall back to rename-only atomicity (still safe against process-kill, the
-  // dominant crash mode for this detached pass). The pid-suffixed temp keeps two
-  // writers from colliding on the same temp name.
-  const target = join(dreamDir, FILE);
-  const tmp = join(dreamDir, `.${FILE}.${process.pid}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify(m, null, 2)}\n`, "utf8");
-  try {
-    const fd = openSync(tmp, "r+");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    // fsync unsupported/failed — rename-only atomicity remains.
-  }
-  renameSync(tmp, target);
+  // Durable atomic replace (core's helper, fsync on): the new manifest's
+  // data is durable BEFORE the rename publishes it, so even a true power-off
+  // can only leave the prior manifest or the new one fully intact — never a
+  // renamed-but-empty file that readManifest would reset to an empty ledger
+  // (losing all dedup history, provenance, and the cadence anchor). fsync is
+  // best-effort inside the helper: if the platform/FS rejects it, rename-only
+  // atomicity remains (still safe against process-kill, the dominant crash
+  // mode for this detached pass).
+  writeFileAtomicSync(join(dreamDir, FILE), `${JSON.stringify(m, null, 2)}\n`, {
+    fsync: true,
+  });
 }
 
 /** Linear scan of the episode ledger. Fine for a one-off query; `runDreamPass`

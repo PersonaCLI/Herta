@@ -1,20 +1,15 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
-  mkdir,
-  readFile,
-  rename,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
-import type {
-  HertaTool,
-  ToolCallRequest,
-  ToolContext,
-  ToolResult,
-  ToolSchema,
+  errorMessage,
+  type HertaTool,
+  type ToolCallRequest,
+  type ToolContext,
+  type ToolResult,
+  type ToolSchema,
+  writeFileAtomic,
 } from "@herta/core";
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
@@ -31,11 +26,6 @@ export interface WriteNewFileData {
   relPath: string;
   bytesWritten: number;
   sha256: string;
-}
-
-function basenameOf(p: string): string {
-  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i < 0 ? p : p.slice(i + 1);
 }
 
 export function writeNewFileTool(): HertaTool {
@@ -122,36 +112,17 @@ export function writeNewFileTool(): HertaTool {
       }
 
       const contentBuf = Buffer.from(content, "utf-8");
-      const tmp = join(
-        parentDir,
-        `.${basenameOf(safe.resolved)}.herta-tmp-${randomUUID()}`,
-      );
+      // Atomic replace (core's helper: unique temp beside the target, rename
+      // over it, the temp removed on failure). A busy file is retryable.
       try {
-        await writeFile(tmp, contentBuf, { flag: "wx" });
+        await writeFileAtomic(safe.resolved, contentBuf);
       } catch (err: unknown) {
         const code = (err as { code?: string }).code;
         return errResult(
           "write_failed",
-          (err as Error).message ?? "temp write failed",
+          errorMessage(err),
           undefined,
           "write failed",
-          code === "EBUSY" || code === "EAGAIN",
-        );
-      }
-      try {
-        await rename(tmp, safe.resolved);
-      } catch (err: unknown) {
-        try {
-          await unlink(tmp);
-        } catch {
-          // best-effort
-        }
-        const code = (err as { code?: string }).code;
-        return errResult(
-          "write_failed",
-          (err as Error).message ?? "rename failed",
-          undefined,
-          "rename failed",
           code === "EBUSY" || code === "EAGAIN",
         );
       }

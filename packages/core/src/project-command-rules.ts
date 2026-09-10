@@ -1,11 +1,6 @@
-import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomicSync } from "./atomic-write.js";
 
 /**
  * Project-scoped command allow rules (ADR 0030).
@@ -242,10 +237,6 @@ export function normalizeRuleCwd(cwd: string | undefined): string {
   return trimmed === "." || trimmed === "" ? "" : trimmed;
 }
 
-/** Per-process counter for temp-file names, so two writes in the same
- *  millisecond cannot pick the same path. */
-let writeSeq = 0;
-
 interface PermissionsFile {
   readonly version: 1;
   readonly commandAllow: readonly ProjectCommandRule[];
@@ -365,22 +356,12 @@ export class ProjectCommandRuleStore {
     const dir = join(this.rootProvider(), ".herta");
     mkdirSync(dir, { recursive: true });
     const payload: PermissionsFile = { version: 1, commandAllow: rules };
-    // tmp + rename (audit BL7). A torn write here fails CLOSED — the loader
-    // drops an unparseable file and everything re-prompts — so this is about
-    // not silently losing the user's grants, not about safety. The unique
-    // suffix keeps two concurrent writes from clobbering each other's temp.
-    const target = join(dir, "permissions.json");
-    const tmp = `${target}.${process.pid}.${writeSeq++}.tmp`;
-    try {
-      writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-      renameSync(tmp, target);
-    } catch (err) {
-      try {
-        rmSync(tmp, { force: true });
-      } catch {
-        /* the temp is already gone, or undeletable — nothing left to do */
-      }
-      throw err;
-    }
+    // Atomic (audit BL7). A torn write here fails CLOSED — the loader drops
+    // an unparseable file and everything re-prompts — so this is about not
+    // silently losing the user's grants, not about safety.
+    writeFileAtomicSync(
+      join(dir, "permissions.json"),
+      `${JSON.stringify(payload, null, 2)}\n`,
+    );
   }
 }

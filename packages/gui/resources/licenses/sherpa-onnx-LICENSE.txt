@@ -9,7 +9,9 @@ replies (ADR 0042); the voice model itself is a separate download (ADR 0061).
 The runtime's C API library statically links the sherpa-onnx fork of
 espeak-ng (GPL-3.0-or-later, https://github.com/espeak-ng/espeak-ng) and
 piper-phonemize (MIT, https://github.com/rhasspy/piper-phonemize) for its
-text frontend. The license text follows.
+text frontend — each has its own notice beside this one (espeak-ng-LICENSE.txt
+and piper-phonemize-LICENSE.txt) carrying its license text and the location
+of the source it was built from. The Apache license text follows.
 Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

@@ -300,6 +300,36 @@ if (existsSync(SHERPA_PKG)) {
     shipped: "resources/tts-runtime/ (native library)",
     files: [{ name: "LICENSE", text: licenseText("onnxruntime-LICENSE.txt") }],
   });
+  // The runtime's text frontend, statically linked into sherpa-onnx-c-api
+  // (2026-09-10): espeak-ng is GPL-3.0-or-later, so the binary we ship must
+  // carry that license text and clear directions to the corresponding
+  // source (GPLv3 §6(d)) — the notice file has both, and the release page
+  // repeats the directions. piper-phonemize (MIT) drives it. Both are the
+  // sherpa-onnx fork commits its CMake tree pins for this version.
+  extras.push({
+    name: "espeak-ng (linked into the neural-voice runtime)",
+    version: "sherpa-onnx fork, commit ed530aa1",
+    license: "GPL-3.0-or-later",
+    author: "Jonathan Duddington, Reece H. Dunn and the eSpeak NG contributors",
+    url: "https://github.com/csukuangfj/espeak-ng/tree/ed530aa113046142eb5115cf2fc9157854d0ffe1",
+    sections: new Set(["main"]),
+    shipped:
+      "resources/tts-runtime/ (statically linked into sherpa-onnx-c-api; source at the URL above, built by sherpa-onnx 1.13.6's CMake tree)",
+    files: [{ name: "COPYING", text: licenseText("espeak-ng-LICENSE.txt") }],
+  });
+  extras.push({
+    name: "piper-phonemize (linked into the neural-voice runtime)",
+    version: "sherpa-onnx fork, commit f3ff95af",
+    license: "MIT",
+    author: "Michael Hansen",
+    url: "https://github.com/csukuangfj/piper-phonemize/tree/f3ff95afc03640bc1399e113e83361192a2fafb4",
+    sections: new Set(["main"]),
+    shipped:
+      "resources/tts-runtime/ (statically linked into sherpa-onnx-c-api)",
+    files: [
+      { name: "LICENSE", text: licenseText("piper-phonemize-LICENSE.txt") },
+    ],
+  });
 }
 const listed = [...entries, ...extras].sort(
   (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version),

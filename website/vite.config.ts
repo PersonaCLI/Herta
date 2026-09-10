@@ -46,6 +46,37 @@ export default defineConfig({
         find: /^.*\/assets\/agent_device_night\.png$/,
         replacement: resolve(__dirname, "src/assets/agent_device_night.webp"),
       },
+      // The galaxy row's four planet/station icons are 1254² palette PNGs
+      // in the app (31–85 KB each); the row shows them at a few dozen CSS
+      // px. 256² WebP twins (11–22 KB) at the import, same as the device.
+      {
+        find: /^.*\/assets\/earth-icon\.png$/,
+        replacement: resolve(__dirname, "src/assets/earth-icon.webp"),
+      },
+      {
+        find: /^.*\/assets\/earth-icon-night\.png$/,
+        replacement: resolve(__dirname, "src/assets/earth-icon-night.webp"),
+      },
+      {
+        find: /^.*\/assets\/herta-station-icon\.png$/,
+        replacement: resolve(__dirname, "src/assets/herta-station-icon.webp"),
+      },
+      {
+        find: /^.*\/assets\/herta-station-icon-night\.png$/,
+        replacement: resolve(
+          __dirname,
+          "src/assets/herta-station-icon-night.webp",
+        ),
+      },
+      // No 3D on the site (owner 2026-09-10): the demo bridge has no scene
+      // surface, so the card never mounts the scene — but its import alone
+      // emitted the three.js chunk and the Basis transcoder (~1.7 MB) into
+      // every deploy. A stub takes the import; the site shows PICTURES of
+      // the scene instead (src/assets/device-*.webp).
+      {
+        find: /^.*\/device-scene\/DeviceScene\.js$/,
+        replacement: resolve(__dirname, "src/demo-device-scene.tsx"),
+      },
       {
         find: "@gui",
         replacement: resolve(__dirname, "../packages/gui/src/renderer"),

@@ -125,12 +125,34 @@ export function crashLog(): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** The test the repository card lists as added (`A`, 2026-09-10): the
+ *  drain-on-subscribe case the patched bus now passes. */
+export function eventBusTest(): string {
+  return `import { describe, expect, it } from "vitest";
+import { InMemoryEventBus } from "./event-bus.js";
+
+describe("InMemoryEventBus", () => {
+  it("drains events published before the subscriber arrived", async () => {
+    const bus = new InMemoryEventBus();
+    bus.publish({ type: "turn.started", layer: "actor", userText: "hi" });
+    const seen: string[] = [];
+    for await (const event of bus.subscribe("turn.started")) {
+      seen.push(event.type);
+      break;
+    }
+    expect(seen).toEqual(["turn.started"]);
+  });
+});
+`;
+}
+
 /** Stored path → content, keyed exactly as the showcase rows spell them. */
 export function demoWorkspaceFiles(
   eventBusNote: string,
 ): Readonly<Record<string, string>> {
   return {
     "packages/core/src/event-bus.ts": eventBusAfterPatch(eventBusNote),
+    "packages/core/src/event-bus.test.ts": eventBusTest(),
     "logs/alerts/2026-07-31.log": alertsLog(),
     ".herta/attachments/s-4f1c/crash-2026-08-02-3f9c1a20.log": crashLog(),
   };

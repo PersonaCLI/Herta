@@ -613,6 +613,146 @@ html {
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
 }
 
+/* ── the desk — the visible features, with pictures (2026-09-10) ──────
+   Three glass cards like the feature cards, each led by a picture: the
+   device's day (four renders of the real scene, crossfading), the
+   repository card beside its commit tab (the app itself), and the composer
+   while she speaks. The pictures are WebP twins chosen per theme (and per
+   language for the one with words) — never the 3D scene or its assets. */
+.desk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.desk-card {
+  background: var(--site-glass);
+  border: 1px solid var(--site-hairline);
+  border-radius: 18px;
+  padding: 16px 16px 22px;
+  box-shadow: 0 18px 42px var(--site-shadow-soft);
+  backdrop-filter: blur(14px);
+}
+.desk-card h3 {
+  margin: 0 0 10px;
+  padding: 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.desk-card h3 .en {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--site-muted);
+}
+.desk-card p {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--site-body-ink);
+}
+.desk-card__pic {
+  margin: 0 0 16px;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.desk-card__pic img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+/* The repository card and the commit tab side by side; on a phone the
+   tab goes under the card. Both are app screenshots at 2×. */
+.desk-card__pic--two {
+  display: grid;
+  grid-template-columns: 1fr 1.28fr;
+  gap: 8px;
+  border-radius: 0;
+  overflow: visible;
+}
+.desk-card__pic--two img {
+  border-radius: 12px;
+  border: 1px solid var(--site-hairline);
+}
+@media (max-width: 420px) {
+  .desk-card__pic--two {
+    grid-template-columns: 1fr;
+  }
+}
+/* The device's day: four pictures stacked, each visible a quarter of a
+   20 s loop with a 1.5 s crossfade; the hour label rides the same clock.
+   Negative delays (set inline) start every layer mid-cycle, so the loop
+   is continuous from the first frame. */
+.device-cycle {
+  position: relative;
+  aspect-ratio: 676 / 660;
+  background: transparent;
+}
+.device-cycle img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  animation: deviceCycle 20s linear infinite;
+}
+/* The hour label: one pill at the picture's foot, its four words stacked
+   in place and crossfading on the pictures' clock. The pill is dark on
+   every picture — the noon room is white, the night room black — and the
+   figcaption needs a width of its own, or its absolutely placed spans
+   shrink to nothing and a CJK word wraps character by character. */
+.device-cycle figcaption {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 96px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(17, 20, 23, 0.55);
+  backdrop-filter: blur(6px);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+.device-cycle figcaption span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  white-space: nowrap;
+  text-indent: 0.12em;
+  opacity: 0;
+  animation: deviceCycle 20s linear infinite;
+}
+@keyframes deviceCycle {
+  0%,
+  17.5% {
+    opacity: 1;
+  }
+  25%,
+  92.5% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .device-cycle img,
+  .device-cycle figcaption span {
+    animation: none;
+  }
+  .device-cycle img:first-child,
+  .device-cycle figcaption span:first-child {
+    opacity: 1;
+  }
+}
+
 /* ── scholarship → mechanism pairings ──────────────────────────────── */
 .scholar-grid {
   display: grid;

@@ -40,6 +40,7 @@ import type {
   AgentEvent,
   OverlayEvent,
   RecordEvent,
+  RepoContextSnapshot,
   SessionAgentEvent,
   SessionDeletedEvent,
   SessionMetadata,
@@ -114,6 +115,59 @@ interface DemoContent {
   readonly showcase: () => {
     record: TerminalRecordBlock[];
     topics: SessionTopic[];
+  };
+  /** The showcase workspace's repository, as the rail's repository card
+   *  shows it (ADR 0058; on the site since 2026-09-10): what the record
+   *  implies — the patched bus and its new test uncommitted, the last
+   *  commit not yet pushed. Carried on the session's own snapshot, the way
+   *  the desktop app answers a probe that has already finished. */
+  readonly repo: RepoContextSnapshot;
+}
+
+/** The showcase repository. The commits are the ones the 0.1.5 release film
+ *  shows on the same card, so the two tell one story. */
+function showcaseRepo(root: string): RepoContextSnapshot {
+  const commits = [
+    {
+      shortSha: "e4f1c02",
+      subject: "fix: reset parser cursor",
+      unpushed: true,
+    },
+    {
+      shortSha: "b7a9d31",
+      subject: "feat: async subscribe()",
+      unpushed: false,
+    },
+    { shortSha: "9c02ee7", subject: "test: drain under load", unpushed: false },
+  ] as const;
+  const recentCommits = commits.map((c) => ({
+    // A full id the card never shows; the tab it would open is not on the
+    // demo bridge, so the ids stay plain text (ADR 0059's optional seam).
+    sha: `${c.shortSha}${"0123456789abcdef".repeat(3).slice(0, 33)}`,
+    shortSha: c.shortSha,
+    subject: c.subject,
+    unpushed: c.unpushed,
+  }));
+  return {
+    root,
+    prefix: "",
+    gitDir: null,
+    branch: "main",
+    detached: false,
+    headShort: "e4f1c02",
+    upstream: "origin/main",
+    ahead: 1,
+    behind: 0,
+    defaultBranch: "origin/main",
+    inProgress: null,
+    conflicted: [],
+    dirty: [
+      { x: " ", y: "M", path: "packages/core/src/event-bus.ts" },
+      { x: "A", y: " ", path: "packages/core/src/event-bus.test.ts" },
+    ],
+    dirtyTotal: 2,
+    recentSubjects: recentCommits.map((c) => `${c.shortSha} ${c.subject}`),
+    recentCommits,
   };
 }
 
@@ -541,6 +595,7 @@ const PANEL_IMAGES = {
 
 const ZH: DemoContent = {
   workspaceRoot: "/黑塔空间站",
+  repo: showcaseRepo("/黑塔空间站"),
   opening:
     "进度条还在跑最后的百分之二。你有一段非常短的窗口期——别寒暄，说正事。",
   openingVoiceMs: 6580,
@@ -742,6 +797,7 @@ const ZH: DemoContent = {
 
 const EN: DemoContent = {
   workspaceRoot: "/herta-station",
+  repo: showcaseRepo("/herta-station"),
   opening:
     "The progress bar's still crawling through the last two percent. That gives you a very short window — skip the small talk, get to the point.",
   openingVoiceMs: null, // no EN voice clip — EN opens silent, paced by word
@@ -1108,6 +1164,10 @@ export function createDemoBridge(
       ...(s.topics !== undefined ? { topics: [...s.topics] } : {}),
       backendWorkspace: "~/.herta/workspaces/demo",
       backendWorkspaceIsDefault: true,
+      // The repository card (ADR 0058): the showcase workspace is a
+      // repository, the visitor's own session is the managed sandbox, which
+      // is not — the card slides in for one and stays away for the other.
+      repo: id === SHOWCASE_ID ? c.repo : null,
     };
   };
 

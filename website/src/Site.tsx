@@ -8,9 +8,30 @@ import demoPoster from "./assets/demo-poster.webp";
 import demoPosterDark from "./assets/demo-poster-dark.webp";
 import demoPosterEn from "./assets/demo-poster-en.webp";
 import demoPosterEnDark from "./assets/demo-poster-en-dark.webp";
+// The desk section's pictures (2026-09-10, owner: "flat device images
+// instead of 3D models"): the device card is the REAL scene rendered at four
+// hours through the release film's driven mode (trailer-materials/film,
+// DeviceStill) — the site loads no three.js and none of the scene's assets;
+// the repository card and the commit tab are the desktop app itself over
+// CDP, per theme; her speaking is the app's composer and bubble from the
+// same film kit, per language and theme. All WebP, 8–45 KB each.
+import deviceDusk from "./assets/device-dusk.webp";
+import deviceMorning from "./assets/device-morning.webp";
+import deviceNight from "./assets/device-night.webp";
+import deviceNoon from "./assets/device-noon.webp";
 import dreamCycleSvg from "./assets/dream-cycle.svg";
 import dreamCycleSvgEn from "./assets/dream-cycle-en.svg";
-import hertaIcon from "./assets/herta-icon.png";
+import gitCardDark from "./assets/feature-git-card-dark.webp";
+import gitCardLight from "./assets/feature-git-card-light.webp";
+import gitCommitDark from "./assets/feature-git-commit-dark.webp";
+import gitCommitLight from "./assets/feature-git-commit-light.webp";
+import voiceEnDark from "./assets/feature-voice-en-dark.webp";
+import voiceEnLight from "./assets/feature-voice-en-light.webp";
+import voiceZhDark from "./assets/feature-voice-zh-dark.webp";
+import voiceZhLight from "./assets/feature-voice-zh-light.webp";
+// 256² WebP (25 KB) in place of the 512² palette PNG (59 KB): the tile shows
+// it at 84 CSS px at most.
+import hertaIcon from "./assets/herta-icon.webp";
 import turnFlowSvg from "./assets/turn-flow.svg";
 import turnFlowSvgEn from "./assets/turn-flow-en.svg";
 import visionSvg from "./assets/vision-autobiography.svg";
@@ -174,6 +195,83 @@ function DemoFrame(props: {
   );
 }
 
+/** The device's day: four renders of the real scene, crossfading on a slow
+ *  loop (CSS; reduced motion holds the first). The pictures are the scene at
+ *  7:30, 12:30, 18:30 and 22:30 — the card's chrome follows the theme the app
+ *  would be in at that hour. */
+const DEVICE_DAY = [
+  deviceMorning,
+  deviceNoon,
+  deviceDusk,
+  deviceNight,
+] as const;
+
+function DeskPicture(props: {
+  readonly id: DeskCard["id"];
+  readonly alt: string;
+  readonly lang: Lang;
+  readonly theme: Theme;
+  readonly hours: readonly [string, string, string, string];
+}): JSX.Element {
+  const dark = props.theme === "dark";
+  if (props.id === "device") {
+    return (
+      <figure className="desk-card__pic device-cycle" aria-label={props.alt}>
+        {DEVICE_DAY.map((src, i) => (
+          <img
+            key={src}
+            src={src}
+            alt={i === 0 ? props.alt : ""}
+            aria-hidden={i !== 0}
+            loading="lazy"
+            decoding="async"
+            style={{ animationDelay: `${-i * 5}s` }}
+          />
+        ))}
+        <figcaption>
+          {props.hours.map((h, i) => (
+            <span key={h} style={{ animationDelay: `${-i * 5}s` }}>
+              {h}
+            </span>
+          ))}
+        </figcaption>
+      </figure>
+    );
+  }
+  if (props.id === "git") {
+    return (
+      <figure className="desk-card__pic desk-card__pic--two">
+        <img
+          src={dark ? gitCardDark : gitCardLight}
+          alt={props.alt}
+          loading="lazy"
+          decoding="async"
+        />
+        <img
+          src={dark ? gitCommitDark : gitCommitLight}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          decoding="async"
+        />
+      </figure>
+    );
+  }
+  const voice =
+    props.lang === "en"
+      ? dark
+        ? voiceEnDark
+        : voiceEnLight
+      : dark
+        ? voiceZhDark
+        : voiceZhLight;
+  return (
+    <figure className="desk-card__pic">
+      <img src={voice} alt={props.alt} loading="lazy" decoding="async" />
+    </figure>
+  );
+}
+
 /** Scroll-reveal: elements with .reveal slide in once, when 15% visible.
  *  Reduced-motion visitors get everything immediately. */
 function useReveal(dep: unknown): void {
@@ -248,11 +346,18 @@ interface GroundingCard extends Card {
   readonly impl: string;
   readonly wide?: boolean;
 }
+/** One of the desk section's three features; the picture is chosen by
+ *  the JSX from `id`, the words come from the copy. */
+interface DeskCard extends Card {
+  readonly id: "device" | "git" | "voice";
+  readonly alt: string;
+}
 
 interface SiteCopy {
   readonly navWhy: string;
   readonly navSelf: string;
   readonly navMech: string;
+  readonly navDesk: string;
   readonly navTech: string;
   readonly navDl: string;
   readonly langToggle: string;
@@ -287,6 +392,12 @@ interface SiteCopy {
   readonly dreamCaption: string;
   readonly dreamAlt: string;
   readonly visionAlt: string;
+  readonly deskKicker: string;
+  readonly deskH2: string;
+  readonly deskLead: string;
+  readonly desk: readonly DeskCard[];
+  /** The four moments of the device's day, in the crossfade's order. */
+  readonly deskHours: readonly [string, string, string, string];
   readonly techKicker: string;
   readonly techH2: string;
   readonly research: readonly Card[];
@@ -313,6 +424,7 @@ const ZH: SiteCopy = {
   navWhy: "为什么",
   navSelf: "自我与记忆",
   navMech: "机制",
+  navDesk: "工作台",
   navTech: "技术",
   navDl: "下载",
   langToggle: "EN",
@@ -423,6 +535,40 @@ const ZH: SiteCopy = {
   dreamAlt: "入梦循环：离开触发、四道门控、写入自传、下次开场随身携带",
   visionAlt:
     "她的自传：身份、记忆、世界、现在——三个时间尺度的循环持续续写同一份第一人称文本",
+  deskKicker: "工作台 · what she works in",
+  deskH2: "看得见的工作台。",
+  deskLead:
+    "0.1.5 里的三处变化：协处理器的设备成了一件被光照着的物体，仓库就在手边，而她开口说话。",
+  desk: [
+    {
+      id: "device",
+      title: "立体板砖",
+      sub: "PBR 渲染 · a lit object",
+      body:
+        "协处理器的设备卡片按物理渲染：随本地时钟从清晨走到深夜，云影拂过白色的房间，" +
+        "工作时呼吸，出错时闪动。这里是它一天里的四个时刻。",
+      alt: "板砖设备卡片在清晨、正午、黄昏与深夜的四张渲染",
+    },
+    {
+      id: "git",
+      title: "Git 前端",
+      sub: "the repository at hand",
+      body:
+        "工作区的仓库就在栏里：分支与上游、未提交的改动、最近的提交，实时更新。" +
+        "点一处改动看它的差异，点一个提交看它改了什么，翻历史不用离开对话。",
+      alt: "仓库卡片，以及在对话旁边打开的提交标签页",
+    },
+    {
+      id: "voice",
+      title: "实时语音",
+      sub: "she speaks · in step with the text",
+      body:
+        "她的回复由本地模型实时合成，文字随语音同步显示；被否掉的那一句，由她自己的声音收回。" +
+        "模型按需下载（76 MB）；也可接入 MiniMax 云端音色。",
+      alt: "她说话时的对话与输入栏：文字随语音显示，声波在输入栏里起伏",
+    },
+  ],
+  deskHours: ["清晨", "正午", "黄昏", "深夜"],
   techKicker: "技术要点 · technical notes",
   techH2: "四个设计决定。",
   research: [
@@ -481,6 +627,7 @@ const EN: SiteCopy = {
   navWhy: "Why",
   navSelf: "Self & memory",
   navMech: "Mechanisms",
+  navDesk: "The desk",
   navTech: "Technical",
   navDl: "Download",
   langToggle: "中",
@@ -609,6 +756,43 @@ const EN: SiteCopy = {
     "The dream cycle: triggered while away, four gates, written into her autobiography, carried into the next opening",
   visionAlt:
     "Her autobiography: identity, memory, world, present — loops on three timescales keep writing one first-person text",
+  deskKicker: "the desk · 工作台",
+  deskH2: "A desk you can see.",
+  deskLead:
+    "Three things changed in 0.1.5: the coprocessor's device became a lit object, the repository sits at hand, and she speaks.",
+  desk: [
+    {
+      id: "device",
+      title: "A lit object",
+      sub: "立体板砖 · PBR",
+      body:
+        "The coprocessor's device card is physically rendered: it follows the local clock from " +
+        "morning to night, clouds drift across the white room, it breathes while working and " +
+        "flashes on failure. Four moments of its day.",
+      alt: "The coprocessor's device card rendered at morning, noon, dusk and night",
+    },
+    {
+      id: "git",
+      title: "The repository at hand",
+      sub: "Git 前端",
+      body:
+        "The workspace's repository sits in the rail: branch and upstream, uncommitted changes, " +
+        "recent commits — kept live. Click a change for its diff, a commit for what it touched, " +
+        "page the history, without leaving the conversation.",
+      alt: "The repository card, and a commit tab opened beside the conversation",
+    },
+    {
+      id: "voice",
+      title: "She speaks",
+      sub: "实时语音 · in step with the text",
+      body:
+        "Her replies are synthesized in real time by a local model, the text revealed in step " +
+        "with her voice; a line she takes back, she takes back in her own voice. The model " +
+        "downloads on demand (76 MB); a MiniMax cloud voice can be added.",
+      alt: "The conversation and the composer while she speaks: text keeping step with the voice, the wave moving in the composer",
+    },
+  ],
+  deskHours: ["morning", "noon", "dusk", "night"],
   techKicker: "technical notes · 技术要点",
   techH2: "Four design decisions.",
   research: [
@@ -747,6 +931,9 @@ export function Site(): JSX.Element {
           </a>
           <a className="nav-link" href="#mechanisms">
             {t.navMech}
+          </a>
+          <a className="nav-link" href="#desk">
+            {t.navDesk}
           </a>
           <a className="nav-link" href="#research">
             {t.navTech}
@@ -909,6 +1096,32 @@ export function Site(): JSX.Element {
                 alt={t.dreamAlt}
               />
             </figure>
+          </div>
+        </div>
+      </section>
+
+      <section className="section" id="desk">
+        <div className="site-inner">
+          <p className="kicker reveal">{t.deskKicker}</p>
+          <h2 className="reveal">{t.deskH2}</h2>
+          <p className="section-lead reveal">{t.deskLead}</p>
+          <div className="desk-grid">
+            {t.desk.map((d) => (
+              <div className="desk-card reveal" key={d.id}>
+                <DeskPicture
+                  id={d.id}
+                  alt={d.alt}
+                  lang={lang}
+                  theme={theme}
+                  hours={t.deskHours}
+                />
+                <h3>
+                  {d.title}
+                  <span className="en">{d.sub}</span>
+                </h3>
+                <p>{d.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>

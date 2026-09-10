@@ -152,6 +152,72 @@ describe("createVoicedReveal — after a veto (ADR 0042 §7b)", () => {
     h.ctl.finishInput();
     expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 1]);
   });
+
+  it("the heard list is a PREFIX: once a sentence differs, a later match is spoken, not skipped", async () => {
+    // Vetoed 「S0 S1」 with both played; the retry changes only S0.
+    const h = harness({ alreadySpoken: [S0, S1] });
+    h.ctl.pushToken(`${S1b}${S1}`);
+    h.ctl.finishInput();
+    // Both synthesized: S1 follows a spoken-anew sentence, so it is heard
+    // again in its new context rather than landing silently.
+    expect(h.synth.requests.map((r) => [r.seq, r.text])).toEqual([
+      [0, S1b],
+      [1, S1],
+    ]);
+    h.synth.resolve(0, 1000);
+    h.synth.resolve(1, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(2200);
+    expect(h.tts().map((t) => (t.kind === "tts" ? t.seq : -1))).toEqual([
+      0, 1,
+    ]);
+    expect(h.text()).toBe(`${S1b}${S1}`);
+  });
+
+  it("onFirstUnitRequested fires once, at the first synthesis request — before the stream begins", async () => {
+    const fired: number[] = [];
+    const h = harness({
+      verdictPending: new Promise<void>(() => {}),
+      onFirstUnitRequested: () => fired.push(h.synth.requests.length),
+    });
+    h.ctl.pushToken(S0);
+    h.ctl.finishInput();
+    expect(fired).toEqual([1]); // after the request, once
+    expect(h.begun()).toBe(0);
+    h.ctl.pushToken(S1); // nothing more can arrive after finishInput
+    h.ctl.done.catch(() => undefined);
+    h.ctl.cancel();
+    // A silent-only stream never requests, so it never fires.
+    const silent: number[] = [];
+    const s = harness({ onFirstUnitRequested: () => silent.push(1) });
+    s.ctl.pushToken("```\ncode\n```\n");
+    s.ctl.finishInput();
+    expect(silent).toEqual([]);
+    await vi.advanceTimersByTimeAsync(SILENT_UNIT_MS + 10);
+    await s.ctl.done;
+  });
+
+  it("silence() stops the audio and the pending synthesis, but lands no text — the terminal call still owns the text", async () => {
+    const h = harness();
+    h.ctl.pushToken(S0);
+    h.ctl.finishInput();
+    h.synth.resolve(0, 1000);
+    await vi.advanceTimersByTimeAsync(0);
+    // A lone unit on finished input plays at once; partway through it:
+    await vi.advanceTimersByTimeAsync(300);
+    const shown = h.text();
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.length).toBeLessThan(S0.length);
+    h.ctl.silence();
+    expect(h.stops()).toEqual([{ kind: "ttsStop", utteranceId: "u1" }]);
+    expect(h.synth.cancelled).toEqual(["u1"]);
+    // Nothing landed by the silence itself.
+    expect(h.text()).toBe(shown);
+    // The actor's cancel follows and retracts: still no flash.
+    expect(h.ctl.cancel()).toBe(true);
+    expect(h.text()).toBe(shown);
+    await expect(h.ctl.done).rejects.toThrow("slow-stream cancelled");
+  });
 });
 
 describe("createVoicedReveal", () => {

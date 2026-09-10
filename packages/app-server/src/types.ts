@@ -121,6 +121,11 @@ export interface SynthesisRequest {
   readonly seq: number;
   readonly text: string;
   readonly lang: "zh" | "en";
+  /** `low`: synthesize when nothing else is queued — the veto reaction's
+   *  filler (ADR 0042 §7b), armed as early as the reply's first unit is in
+   *  flight and never allowed ahead of the reply's own sentences. Absent
+   *  = the reply's units, in order. */
+  readonly priority?: "low";
 }
 
 /** Mono PCM for one unit. Int16 so it crosses IPC compactly (24 kHz mono ≈

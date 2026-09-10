@@ -120,10 +120,13 @@ export interface SessionVoice {
    *  beats, or regenerate): match the leading particle and cue a random
    *  variant on the same voice channel the opening uses. */
   onPrimarySpeechStart(text: string): void;
-  /** A supervised VOICED reply has begun (the sink's hook): roll the veto
-   *  reaction now and synthesize it, so a veto has it in hand. No-op
-   *  without the synthesizer. */
+  /** A supervised VOICED reply has its first unit in flight (the sink's
+   *  hook): roll the veto reaction now and synthesize it at low priority,
+   *  so a veto has it in hand and the reply's units are never behind it.
+   *  No-op without the synthesizer. */
   armVetoReaction(): void;
+  /** The turn ended without a veto: drop the armed reaction. */
+  disarmVetoReaction(): void;
   /** The rejection moment (see pickVetoReaction). Returns how long the
    *  voice lane should hold for the reaction's audio — 0 for a recorded
    *  clip or silence, which the lane need not wait for. */
@@ -282,7 +285,13 @@ export async function loadSessionVoice(
         reaction,
         utteranceId,
         audio: synth
-          .synthesize({ utteranceId, seq: 0, text, lang: "zh" })
+          .synthesize({
+            utteranceId,
+            seq: 0,
+            text,
+            lang: "zh",
+            priority: "low",
+          })
           .catch(() => null),
         ready: undefined,
       };
@@ -290,6 +299,14 @@ export async function loadSessionVoice(
         entry.ready = audio;
       });
       armed = entry;
+    },
+    disarmVetoReaction(): void {
+      const a = armed;
+      armed = null;
+      // Queued and not yet synthesized: nothing to keep the worker on.
+      if (a !== null && a.ready === undefined && synth !== undefined) {
+        synth.cancel(a.utteranceId);
+      }
     },
     // Veto voice, diversified (user 2026-07-11): the rejection moment rolls
     // one of three reactions instead of always a full "catching-herself"

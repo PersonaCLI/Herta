@@ -82,6 +82,12 @@ export interface VoicedRevealDeps {
   onBegin(): void;
   onFinish(begun: boolean): void;
   emitVoice(ev: VoiceCueEvent): void;
+  /** The first unit's synthesis has been requested — the stream is in
+   *  flight before it has begun (a supervised reply's begin waits for the
+   *  verdict; the pre-roll waits for two units). The sink arms the veto
+   *  reaction here (ADR 0042 §7b), so a veto that comes before the first
+   *  unit has started finds the filler in hand. Once per stream. */
+  onFirstUnitRequested?(): void;
 }
 
 export interface VoicedReveal {
@@ -92,6 +98,14 @@ export interface VoicedReveal {
   fastForward(): Promise<void>;
   flushTail(): void;
   cancel(): boolean;
+  /** Stop the AUDIO now and leave the text to the stream's own terminal
+   *  call (the actor's `cancel` or `flushTail`, which follow an abort
+   *  within the same tick or the next few). The stop click (ADR 0042):
+   *  silence at once, without landing text the actor has not released —
+   *  a supervised candidate under its hold must not flash. Units still
+   *  synthesizing resolve null and type at the fallback cadence until the
+   *  terminal call lands. */
+  silence(): void;
   /** The units that played to their end, in order — what a retry after a
    *  veto may skip (`alreadySpoken`). The unit the cut landed in is not
    *  among them. */
@@ -244,6 +258,7 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
     requestSynthesis();
   };
 
+  let requestedOnce = false;
   const requestSynthesis = (): void => {
     const upto = Math.min(units.length, playIdx + 1 + lookahead);
     for (let idx = playIdx; idx < upto; idx += 1) {
@@ -251,11 +266,16 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       const unit = units[idx];
       if (unit === undefined) continue;
       // Already heard from the vetoed stream, same sentence at the same
-      // position: nothing to synthesize, nothing to wait for.
+      // position: nothing to synthesize, nothing to wait for. A PREFIX
+      // (2026-09-10): once a sentence differs, everything after it is
+      // spoken even where it matches — the listener heard those sentences
+      // in another context, and a retry that lands them silently after a
+      // spoken one loses the lockstep §7b exists for.
       if (
         deps.alreadySpoken !== undefined &&
         idx < deps.alreadySpoken.length &&
-        rawOf(unit) === deps.alreadySpoken[idx]
+        rawOf(unit) === deps.alreadySpoken[idx] &&
+        (idx === 0 || states.get(idx - 1)?.status === "spoken")
       ) {
         states.set(idx, { status: "spoken" });
         continue;
@@ -265,6 +285,8 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
         continue;
       }
       states.set(idx, { status: "pending" });
+      const first = !requestedOnce;
+      requestedOnce = true;
       deps.synth
         .synthesize({
           utteranceId: deps.utteranceId,
@@ -289,6 +311,9 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
             tryAdvance();
           },
         );
+      // After the request is issued, so a filler armed here queues behind
+      // the reply's first unit even on a synthesizer without priorities.
+      if (first) deps.onFirstUnitRequested?.();
     }
   };
 
@@ -517,6 +542,11 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       await done;
     },
     flushTail,
+    silence: (): void => {
+      if (cancelled || finished) return;
+      deps.emitVoice({ kind: "ttsStop", utteranceId: deps.utteranceId });
+      deps.synth.cancel(deps.utteranceId);
+    },
     cancel: (): boolean => {
       if (cancelled) return false;
       clearActive();

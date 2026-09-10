@@ -390,6 +390,8 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
             seq: req.seq,
             text: req.text,
             lang: req.lang,
+            // The worker's queue lets a normal request pass a low one.
+            ...(req.priority === "low" ? { low: true } : {}),
           });
         } catch (err) {
           log(

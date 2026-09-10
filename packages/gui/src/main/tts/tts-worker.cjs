@@ -39,8 +39,16 @@ let effect = "none";
 /** Text mapper built from the bundle's lexicons at init (see
  *  sherpa-punctuation.cjs); `punctuation` false = the text goes as is. */
 let mapper = { punctuation: false, english: false, toSherpaText: (t) => t };
-/** FIFO of { id, utteranceId, seq, text }. */
+/** FIFO of { id, utteranceId, seq, text, lang, low }. A `low` entry (the
+ *  veto reaction's filler, ADR 0042 §7b) waits until no normal entry is
+ *  queued — it must never delay the reply's own sentences. */
 const queue = [];
+/** The next entry to synthesize: the first normal one, else the head. */
+function takeNext() {
+  const normal = queue.findIndex((req) => req.low !== true);
+  const at = normal >= 0 ? normal : 0;
+  return queue.splice(at, 1)[0];
+}
 /** Utterance ids whose queued (not-yet-started) work should be dropped. */
 const cancelled = new Set();
 let draining = false;
@@ -111,7 +119,7 @@ async function drain() {
       // Yield first so a `cancel` posted while the previous (blocking)
       // synthesis ran is processed before the next unit starts.
       await new Promise((r) => setImmediate(r));
-      const req = queue.shift();
+      const req = takeNext();
       if (req === undefined) break;
       if (cancelled.has(req.utteranceId)) {
         reply({ type: "synthError", id: req.id, cancelled: true });
@@ -246,6 +254,7 @@ process.parentPort.on("message", (evt) => {
       seq: data.seq,
       text: data.text,
       lang: data.lang,
+      low: data.low === true,
     });
     void drain();
     return;

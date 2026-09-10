@@ -104,12 +104,19 @@ afterEach(() => {
 });
 
 describe("session voice — the veto reaction in her own voice (ADR 0042 §7b)", () => {
-  it("armed when the voiced reply begins, spoken at the veto: everything stops, the line plays, the lane holds for its length", async () => {
+  it("armed when the voiced reply is in flight, spoken at the veto: everything stops, the line plays, the lane holds for its length", async () => {
     const synth = fakeSynth({ available: true });
     const { v, emitted } = await voice({ synth });
     v.armVetoReaction();
+    // Low priority: the filler never delays the reply's own units.
     expect(synth.requests).toEqual([
-      { utteranceId: "veto1", seq: 0, text: VETO_LINE, lang: "zh" },
+      {
+        utteranceId: "veto1",
+        seq: 0,
+        text: VETO_LINE,
+        lang: "zh",
+        priority: "low",
+      },
     ]);
     await flush();
     expect(emitted).toEqual([]); // nothing until the veto
@@ -130,6 +137,31 @@ describe("session voice — the veto reaction in her own voice (ADR 0042 §7b)",
     // back to the recorded roll.
     expect(v.onSupervisorVeto()).toBe(0);
     expect(emitted.at(-1)).toMatchObject({ kind: "cue", category: "veto" });
+  });
+
+  it("disarmed at the turn's end: a later veto plays the recording, and a filler still synthesizing is cancelled", async () => {
+    const synth = fakeSynth({ available: true, answer: "deferred" });
+    const cancelled: string[] = [];
+    synth.cancel = (id) => cancelled.push(id);
+    const { v, emitted } = await voice({ synth });
+    v.armVetoReaction();
+    v.disarmVetoReaction();
+    expect(cancelled).toEqual(["veto1"]);
+    // Nothing armed: the recorded roll, no hold — never a stale filler.
+    expect(v.onSupervisorVeto()).toBe(0);
+    expect(emitted).toEqual([
+      { kind: "cue", category: "veto", clipId: VETO_LINE },
+    ]);
+    // A filler that had landed is simply dropped, and nothing is cancelled.
+    const landed = fakeSynth({ available: true });
+    const c2: string[] = [];
+    landed.cancel = (id) => c2.push(id);
+    const w = await voice({ synth: landed });
+    w.v.armVetoReaction();
+    await flush();
+    w.v.disarmVetoReaction();
+    expect(c2).toEqual([]);
+    expect(w.v.onSupervisorVeto()).toBe(0);
   });
 
   it("a sigh is the token trailing off; silence stays silent and asks for nothing", async () => {

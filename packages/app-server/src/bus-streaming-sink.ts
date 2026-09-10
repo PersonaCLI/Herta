@@ -104,10 +104,14 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   private voice: {
     readonly synth: SpeechSynthesizer;
     readonly emitVoice: (ev: VoiceCueEvent) => void;
-    /** A SUPERVISED voiced stream has begun — the moment the veto reaction
-     *  is armed (ADR 0042 §7b): its first units are in flight, so the
-     *  filler queues behind them instead of ahead of the reply. */
-    readonly onVoicedBegin?: () => void;
+    /** A SUPERVISED voiced stream has its first unit in flight — the moment
+     *  the veto reaction is armed (ADR 0042 §7b). At the first REQUEST, not
+     *  the stream's begin (2026-09-10): a single-sentence supervised reply
+     *  never begins before its verdict, and a longer one begins only after
+     *  the pre-roll, so a veto that came first found nothing armed and
+     *  played the recorded clip §7b was written to retire. The filler is
+     *  requested at low priority, so it never delays the reply's units. */
+    readonly onSupervisedVoice?: () => void;
   } | null = null;
   private utteranceSeq = 0;
   /** One voice at a time: every voiced driver starts after the previous
@@ -118,8 +122,11 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    *  driver skips the sentences it fully played, and the retract floor
    *  snaps to the start of the sentence the retry will speak whole. */
   private lastVetoed: VoicedReveal | null = null;
-  /** Voiced drivers not yet settled — `settleVoice` lands their text. */
-  private readonly liveVoiced = new Set<VoicedReveal>();
+  /** Voiced drivers not yet settled, by lane — `settleVoice` lands their
+   *  text at turn end; at an interrupt only the BEAT lane's, the controller
+   *  lane's audio is silenced and its text left to the actor's own abort
+   *  path (see `settleVoice`). */
+  private readonly liveVoiced = new Map<VoicedReveal, "beat" | "controller">();
   /**
    * The BEAT lane's voiced driver (begin/stream/end with no controller —
    * how in-turn beats reach the sink). Tokens route into it instead of the
@@ -163,7 +170,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   attachVoice(voice: {
     readonly synth: SpeechSynthesizer;
     readonly emitVoice: (ev: VoiceCueEvent) => void;
-    readonly onVoicedBegin?: () => void;
+    readonly onSupervisedVoice?: () => void;
   }): void {
     this.voice = voice;
   }
@@ -205,6 +212,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    */
   private makeVoicedDriver(
     voice: NonNullable<typeof this.voice>,
+    lane: "beat" | "controller",
     opts: {
       readonly verdictPending?: Promise<void>;
       readonly baseMsOverride?: number;
@@ -232,14 +240,14 @@ export class BusActorStreamingSink implements ActorStreamingSink {
       emitRange: (text) => {
         publishWithLayer(this.bus, "actor", { type: "assistant.delta", text });
       },
-      onBegin: () => {
-        opts.onBegin();
-        if (supervised) voice.onVoicedBegin?.();
-      },
+      onBegin: opts.onBegin,
       onFinish: opts.onFinish,
       emitVoice: voice.emitVoice,
+      ...(supervised && voice.onSupervisedVoice !== undefined
+        ? { onFirstUnitRequested: voice.onSupervisedVoice }
+        : {}),
     });
-    this.liveVoiced.add(driver);
+    this.liveVoiced.set(driver, lane);
     const settled = driver.done.then(
       () => undefined,
       () => undefined,
@@ -251,12 +259,24 @@ export class BusActorStreamingSink implements ActorStreamingSink {
 
   /**
    * Land every unsettled voiced reveal now — the text in one emit, the audio
-   * stopped — and release the beat gate. Called by the session on interrupt
-   * and at turn end, so a beat still sounding can never outlive its turn or
-   * hold the committed blocks back after the turn has ended.
+   * stopped — and release the beat gate. Called by the session at turn end,
+   * so a beat still sounding can never outlive its turn or hold the
+   * committed blocks back after the turn has ended.
+   *
+   * `interrupt` (the stop click, 2026-09-10): the BEAT lane lands the same
+   * way — its audio has no other path to the abort — but a CONTROLLER lane
+   * driver only falls silent. Its text belongs to the actor's own abort
+   * path, which follows the abort at once: `flushRemainder` for a
+   * post-verdict drain (the same one-emit landing), `cancelAndBackspace`
+   * while the verdict is pending. Landing the controller's text here too
+   * flashed a supervised candidate under its hold — the full, unapproved
+   * sentence appeared on the click and was retracted a beat later.
    */
-  settleVoice(): void {
-    for (const d of this.liveVoiced) d.flushTail();
+  settleVoice(opts?: { readonly interrupt?: boolean }): void {
+    for (const [d, lane] of this.liveVoiced) {
+      if (opts?.interrupt === true && lane === "controller") d.silence();
+      else d.flushTail();
+    }
     this.beatVoice = null;
     this.lastVetoed = null;
     this.drainQueuedRecord();
@@ -405,7 +425,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     if (surface !== "speech" || this.beatVoice !== null) return;
     const voice = this.voiceFor();
     if (voice === null) return;
-    const driver = this.makeVoicedDriver(voice, {
+    const driver = this.makeVoicedDriver(voice, "beat", {
       onBegin: () => undefined,
       onFinish: () => undefined,
     });
@@ -507,7 +527,7 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     const voice = this.voiceFor(opts);
     const voicedDriver: VoicedReveal | null =
       voice !== null
-        ? this.makeVoicedDriver(voice, {
+        ? this.makeVoicedDriver(voice, "controller", {
             ...(opts?.verdictPending !== undefined
               ? { verdictPending: opts.verdictPending }
               : {}),

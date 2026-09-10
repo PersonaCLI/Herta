@@ -593,6 +593,11 @@ export class SessionImpl implements Session {
       if (hooks.rethrow) throw err;
     } finally {
       settleTurn();
+      // A veto reaction armed for this turn and not spent is dropped (ADR
+      // 0042 §7b): the next turn's supervised reply arms its own, and a
+      // veto in a turn that never armed one must not play a filler rolled
+      // against another turn's particle.
+      this.voice.disarmVetoReaction();
       // A turn may have committed, pushed or dirtied the tree: the
       // repository card learns at the turn's end (ADR 0058).
       void this.refreshRepo();
@@ -883,8 +888,10 @@ export class SessionImpl implements Session {
     // (ADR 0042): the abort reaches the primary controller through the
     // actor's flush arming, but an in-turn beat's audio has no such path,
     // and a voice that keeps talking after "stop" reads as a hang. Mirrors
-    // the renderer cutting clip playback on the same click.
-    this.sink.settleVoice();
+    // the renderer cutting clip playback on the same click. `interrupt`:
+    // the primary's TEXT is the actor's (cancel or flush, on the abort
+    // below) — landing it here flashed a held candidate (2026-09-10).
+    this.sink.settleVoice({ interrupt: true });
     this.currentTurn.abortController.abort(
       new DOMException("Interrupted by session.interrupt()", "AbortError"),
     );
@@ -1578,15 +1585,15 @@ export class SessionImpl implements Session {
     // 0013 §5): the model IS bilingual, but her English speaking voice has
     // never been reviewed, and shipping an unreviewed voice is a bigger claim
     // than shipping none.
-    // The cue module is built below; the sink's begin hook reaches it
-    // through this cell (ADR 0042 §7b: the veto reaction is armed when a
-    // supervised voiced reply begins).
+    // The cue module is built below; the sink's hook reaches it through
+    // this cell (ADR 0042 §7b: the veto reaction is armed as soon as a
+    // supervised voiced reply has its first unit in flight).
     let voiceCues: SessionVoice | null = null;
     if (config.speech !== undefined && lang === "zh") {
       sink.attachVoice({
         synth: config.speech.synthesizer,
         emitVoice: (ev) => projector.emitVoice(ev),
-        onVoicedBegin: () => voiceCues?.armVetoReaction(),
+        onSupervisedVoice: () => voiceCues?.armVetoReaction(),
       });
     }
 

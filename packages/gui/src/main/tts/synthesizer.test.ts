@@ -386,6 +386,26 @@ describe("resolveSherpaEntry", () => {
     ).toBe(join(staged, "sherpa-onnx.js"));
   });
 
+  it("packaged: a node_modules copy is NOT a runtime — an asar wrapper without its addon must not report the voice present", () => {
+    // The app.asar layout: out/main beside a node_modules holding the JS
+    // wrapper only (what electron-builder packed from the production
+    // dependency), and no staged tts-runtime under resources.
+    const res = tmp();
+    const app = join(res, "app.asar");
+    const wrapper = join(app, "node_modules", "sherpa-onnx-node");
+    mkdirSync(wrapper, { recursive: true });
+    writeFileSync(join(wrapper, "sherpa-onnx.js"), "x");
+    const startDir = join(app, "out", "main");
+    mkdirSync(startDir, { recursive: true });
+    expect(
+      resolveSherpaEntry({ isPackaged: true, resourcesPath: res, startDir }),
+    ).toBeNull();
+    // Dev, same tree: the walk-up is the intended path.
+    expect(
+      resolveSherpaEntry({ isPackaged: false, resourcesPath: res, startDir }),
+    ).toBe(join(wrapper, "sherpa-onnx.js"));
+  });
+
   it("dev: walks up to a node_modules that holds the package", () => {
     const root = tmp();
     const pkg = join(root, "node_modules", "sherpa-onnx-node");

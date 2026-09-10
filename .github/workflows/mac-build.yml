@@ -182,6 +182,19 @@ jobs:
         working-directory: packages/gui
         run: node scripts/check-voice-payload.mjs
 
+      # The neural-voice RUNTIME (ADR 0042 §5, ADR 0061): a native addon the
+      # `dist` scripts stage into packages/gui/tts-runtime before packaging.
+      # This workflow calls electron-builder directly and, until 2026-09-10,
+      # never staged it — electron-builder logs one line about the missing
+      # extraResources source and packages a voiceless app that looks
+      # complete (the B3 pattern check-tts-payload exists for). Both darwin
+      # arches are staged; the runner's own arch comes from node_modules and
+      # the other is fetched with `npm install --force` (network).
+      - name: stage the neural-voice runtime
+        run: node packages/gui/scripts/stage-tts.mjs --mac
+      - name: assert the voice runtime is staged (and the model is not)
+        run: node packages/gui/scripts/check-tts-payload.mjs --strict
+
       - name: build the mac app
         # Measured, not guessed (run 31069865459): packaging plus the entire
         # signing walk is seconds. So 12 minutes is generous for a no-notarize
@@ -301,6 +314,25 @@ jobs:
             echo "voice clips in $APP: $COUNT"
             if [ "$COUNT" -lt 1 ]; then
               echo "::error::$APP contains NO voice clips — it would ship silent"
+              exit 1
+            fi
+          done
+          if [ "$FOUND" -eq 0 ]; then echo "::error::no .app produced"; exit 1; fi
+
+      # The staged runtime having existed does not prove it reached the .app
+      # either (the extraResources path, a filter, the arch layout). Check the
+      # artifact: every .app must carry at least one platform addon under
+      # Contents/Resources/tts-runtime — and, once a signed run has passed
+      # this, ADR 0042 §7.2's "unverified on the runner" is answered.
+      - name: assert the voice runtime reached the .app
+        run: |
+          FOUND=0
+          for APP in $(find packages/gui/release -maxdepth 3 -name "Herta.app" -type d); do
+            FOUND=$((FOUND + 1))
+            ADDONS=$(find "$APP/Contents/Resources/tts-runtime" -name 'sherpa-onnx.node' 2>/dev/null | wc -l | tr -d ' ')
+            echo "voice runtime addons in $APP: $ADDONS"
+            if [ "$ADDONS" -lt 1 ]; then
+              echo "::error::$APP has no tts-runtime addon — it would ship without the voice"
               exit 1
             fi
           done

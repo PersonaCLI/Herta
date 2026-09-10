@@ -14,23 +14,30 @@ directories:
   output: release
 
 # The app payload is just the compiled output plus runtime resources: main and
-# preload bundle their entire dependency graph (see electron.vite.config.ts),
-# and every package.json dep is a devDependency, so electron-builder collects
-# zero node_modules into the archive.
+# preload bundle their entire dependency graph (see electron.vite.config.ts).
+# The ONE production dependency, sherpa-onnx-node (ADR 0042), is a native
+# runtime that ships as a plain directory copy under extraResources (below),
+# never through the archive: without the exclusion electron-builder packed
+# its JS wrapper into app.asar, where the synthesizer's walk-up found it on a
+# build whose runtime had NOT been staged (the mac workflow, until
+# 2026-09-10) and reported the voice runtime present with no addon behind it.
 files:
   - out/**
   # The build-time module manifest electron.vite.config.ts writes for the
   # third-party notices generator — build metadata, not app payload.
   - "!out/bundle-manifest.json"
   - resources/**
+  - "!node_modules/**"
 # The window icon is read from disk at runtime via the `?asset` import
 # (out/main resolves ../../resources/herta-icon.png); keep it as a real file
 # rather than an asar entry, per the electron-vite packaging convention.
 asarUnpack:
   - resources/**
 
-# Nothing native ships (better-sqlite3 is tree-shaken out of the bundle), so
-# there is nothing to rebuild against Electron's ABI.
+# Nothing native is REBUILT: better-sqlite3 is tree-shaken out of the bundle,
+# and the one native runtime that ships (tts-runtime, below) is a prebuilt
+# Node-API addon loaded by a utility process — Node-API is ABI-stable across
+# Electron's Node, so it needs no rebuild against Electron's headers.
 npmRebuild: false
 
 # Ship only the Chromium UI locales the app can actually speak (size audit

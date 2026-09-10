@@ -408,6 +408,13 @@ function libraryPathEnv(dir: string): NodeJS.ProcessEnv {
  *     lookup (`../sherpa-onnx-<platform>-<arch>/sherpa-onnx.node`) resolves
  *     inside `.pnpm` where the platform package is a real sibling.
  *
+ * A PACKAGED app never walks up (2026-09-10): a wrapper copy that
+ * electron-builder had packed into app.asar answered the walk-up on a
+ * build whose runtime was not staged — `runtime: true` in the Settings
+ * pane, the model downloaded, and then the worker's `require` failed on
+ * the addon the asar never held. The staged directory is the only layout a
+ * packaged app can load from, so it is the only one it looks at.
+ *
  * Pure apart from `existsSync`, so it unit-tests without electron.
  */
 export function resolveSherpaEntry(opts: {
@@ -425,17 +432,17 @@ export function resolveSherpaEntry(opts: {
         "sherpa-onnx.js",
       ),
     );
-  }
-  // Walk up looking for a node_modules that holds the package (dev, and a
-  // belt-and-braces fallback for an unusual packaged layout).
-  let dir = opts.startDir;
-  for (let i = 0; i < 8; i += 1) {
-    candidates.push(
-      join(dir, "node_modules", "sherpa-onnx-node", "sherpa-onnx.js"),
-    );
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
+  } else {
+    // Walk up looking for a node_modules that holds the package.
+    let dir = opts.startDir;
+    for (let i = 0; i < 8; i += 1) {
+      candidates.push(
+        join(dir, "node_modules", "sherpa-onnx-node", "sherpa-onnx.js"),
+      );
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
   }
   for (const c of candidates) {
     if (existsSync(c)) return c;

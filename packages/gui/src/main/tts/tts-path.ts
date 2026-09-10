@@ -83,7 +83,8 @@ export function resolveVoiceCloneReference(opts: {
  *  tree is NOT among them — verified by smoke synthesis). `available()`
  *  reports false unless every one is present, so a partial/absent bundle
  *  degrades to the paced text reveal instead of a worker that dies on init.
- *  Mirrored in `scripts/check-tts-payload.mjs` and `scripts/tts-bundle.mjs`. */
+ *  Mirrored in the private `scripts/tts-bundle.mjs` (the bundle installer)
+ *  and in `bundle-verify.ts`'s manifest check after a download. */
 const REQUIRED_FILES: readonly string[] = [
   TTS_MODEL_FILE,
   "voices.bin",

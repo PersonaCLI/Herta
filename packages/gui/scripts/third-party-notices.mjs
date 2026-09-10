@@ -258,6 +258,46 @@ if (existsSync(BASIS_WASM)) {
     files: [{ name: "LICENSE", text }],
   });
 }
+/**
+ * The neural-voice runtime (ADR 0042 / ADR 0061): `sherpa-onnx-node` and its
+ * platform package are staged by `scripts/stage-tts.mjs` into
+ * `<resources>/tts-runtime/` as a plain directory — a native addon the
+ * worker `require`s by path, never rendered into a chunk, so the manifest
+ * above cannot see it either. Neither npm package ships a license file; the
+ * texts are kept in resources/licenses. Gated on the DEPENDENCY being
+ * installed rather than on the staged directory: the daily CI regenerates
+ * the notices without ever staging, and gating on `tts-runtime/` would have
+ * it report the release's notices as stale.
+ */
+const SHERPA_PKG = resolve(HERE, "../node_modules/sherpa-onnx-node/package.json");
+if (existsSync(SHERPA_PKG)) {
+  const sherpa = readJson(SHERPA_PKG) ?? {};
+  const licenseText = (name) =>
+    readFileSync(resolve(HERE, `../resources/licenses/${name}`), "utf8")
+      .replace(/\r\n?/g, "\n")
+      .replace(/[ \t]+$/gm, "")
+      .trim();
+  extras.push({
+    name: "sherpa-onnx (neural-voice runtime)",
+    version: String(sherpa.version ?? "unknown"),
+    license: "Apache-2.0",
+    author: "The next-gen Kaldi team (Xiaomi Corporation)",
+    url: "https://github.com/k2-fsa/sherpa-onnx",
+    sections: new Set(["main"]),
+    shipped: "resources/tts-runtime/ (native addon, utility process)",
+    files: [{ name: "LICENSE", text: licenseText("sherpa-onnx-LICENSE.txt") }],
+  });
+  extras.push({
+    name: "onnxruntime (bundled by sherpa-onnx)",
+    version: `as bundled by sherpa-onnx ${sherpa.version ?? "unknown"}`,
+    license: "MIT",
+    author: "Microsoft Corporation",
+    url: "https://github.com/microsoft/onnxruntime",
+    sections: new Set(["main"]),
+    shipped: "resources/tts-runtime/ (native library)",
+    files: [{ name: "LICENSE", text: licenseText("onnxruntime-LICENSE.txt") }],
+  });
+}
 const listed = [...entries, ...extras].sort(
   (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
 );

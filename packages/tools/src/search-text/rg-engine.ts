@@ -54,11 +54,6 @@ export function detectRg(): Promise<string | null> {
   return rgProbe;
 }
 
-/** Test seam: reset the cached probe (e.g. after PATH manipulation). */
-export function resetRgProbe(): void {
-  rgProbe = undefined;
-}
-
 export function runRgFinder(opts: {
   rgBin: string;
   pattern: string;

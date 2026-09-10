@@ -423,10 +423,6 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
     if (voice.minimaxVoice === null) throw new Error("cloud voice not up");
     return voice.minimaxVoice.prepare();
   });
-  handle(CMD.resetMiniMaxVoice, async () => {
-    if (voice.minimaxVoice === null) throw new Error("cloud voice not up");
-    return voice.minimaxVoice.reset();
-  });
   handle(CMD.setRealtimeVoice, async (_e, enabled: boolean) => {
     const next = enabled === true;
     voice.realtimeEnabled = next;

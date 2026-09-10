@@ -215,7 +215,6 @@ export interface MockHertaBridge {
     setMiniMaxPlanKey: string[];
     clearMiniMaxPlanKey: number;
     prepareMiniMaxVoice: number;
-    resetMiniMaxVoice: number;
     windowMinimize: number;
     windowToggleMaximize: number;
     windowClose: number;
@@ -316,7 +315,6 @@ export function createMockHertaBridge(
     setMiniMaxPlanKey: [],
     clearMiniMaxPlanKey: 0,
     prepareMiniMaxVoice: 0,
-    resetMiniMaxVoice: 0,
     windowMinimize: 0,
     windowToggleMaximize: 0,
     windowClose: 0,
@@ -814,11 +812,6 @@ export function createMockHertaBridge(
     prepareMiniMaxVoice: async () => {
       calls.prepareMiniMaxVoice += 1;
       mockPrepare();
-      return minimaxVoice;
-    },
-    resetMiniMaxVoice: async () => {
-      calls.resetMiniMaxVoice += 1;
-      pushMiniMax({ phase: "absent" });
       return minimaxVoice;
     },
     onMiniMaxVoice: (cb) => sub(minimaxCbs, cb),

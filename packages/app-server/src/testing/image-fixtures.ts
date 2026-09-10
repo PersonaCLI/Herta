@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 
 /**
@@ -98,9 +97,4 @@ export function makeJpeg(width: number, height: number): Buffer {
     sof.subarray(1),
     Buffer.from([0xff, 0xd9]),
   ]);
-}
-
-/** The stored-name hash a fixture will get, for path assertions. */
-export function storedHash(bytes: Buffer): string {
-  return createHash("sha256").update(bytes).digest("hex").slice(0, 8);
 }

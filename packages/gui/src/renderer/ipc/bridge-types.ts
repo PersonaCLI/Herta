@@ -684,8 +684,6 @@ export interface HertaBridge {
   /** Make the clone from the shipped reference; resolves with the state it
    *  ended in. Progress rides `onMiniMaxVoice`. */
   prepareMiniMaxVoice?(): Promise<MiniMaxVoiceState>;
-  /** Forget the clone (the platform's copy expires on its own). */
-  resetMiniMaxVoice?(): Promise<MiniMaxVoiceState>;
   onMiniMaxVoice?(cb: (e: MiniMaxVoiceState) => void): () => void;
   /** Read the masked DeepSeek key status (Settings → DeepSeek). */
   getDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus>;

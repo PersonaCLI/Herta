@@ -1,6 +1,7 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeFileAtomic } from "@herta/core";
+import { MINIMAX_HOSTS } from "./tts/minimax-api.js";
 
 export type Locale = "zh" | "en";
 export type ThemePref = "light" | "dark" | "system";
@@ -177,8 +178,10 @@ function isValidMiniMaxVoice(v: unknown): v is MiniMaxVoiceRecord {
   return (
     typeof r.voiceId === "string" &&
     r.voiceId.length > 0 &&
+    // The host is one of the two platforms the app talks to, not any
+    // https URL a hand-edited file might carry (review 2026-09-10).
     typeof r.host === "string" &&
-    r.host.startsWith("https://") &&
+    MINIMAX_HOSTS.includes(r.host) &&
     typeof r.clonedAt === "string" &&
     (r.lastUsedAt === undefined || typeof r.lastUsedAt === "string")
   );

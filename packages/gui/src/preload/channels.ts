@@ -64,7 +64,6 @@ export const CMD = {
   setMiniMaxPlanKey: "settings:setMiniMaxPlanKey",
   clearMiniMaxPlanKey: "settings:clearMiniMaxPlanKey",
   prepareMiniMaxVoice: "voice:prepareMiniMax",
-  resetMiniMaxVoice: "voice:resetMiniMax",
   getDeepSeekKeyStatus: "settings:getDeepSeekKeyStatus",
   setDeepSeekKey: "settings:setDeepSeekKey",
   clearDeepSeekKey: "settings:clearDeepSeekKey",

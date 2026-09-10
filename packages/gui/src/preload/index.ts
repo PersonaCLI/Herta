@@ -109,7 +109,6 @@ const bridge: HertaBridge = {
   setMiniMaxPlanKey: (key) => ipcRenderer.invoke(CMD.setMiniMaxPlanKey, key),
   clearMiniMaxPlanKey: () => ipcRenderer.invoke(CMD.clearMiniMaxPlanKey),
   prepareMiniMaxVoice: () => ipcRenderer.invoke(CMD.prepareMiniMaxVoice),
-  resetMiniMaxVoice: () => ipcRenderer.invoke(CMD.resetMiniMaxVoice),
   onMiniMaxVoice: (cb) => subscribe(EVT.voiceMinimax, cb),
   getDeepSeekKeyStatus: () => ipcRenderer.invoke(CMD.getDeepSeekKeyStatus),
   setDeepSeekKey: (key) => ipcRenderer.invoke(CMD.setDeepSeekKey, key),

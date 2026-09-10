@@ -20,9 +20,11 @@ export {
   type BanzhuanBridgeDeps,
   type BeatFirer,
   invokeBanzhuanBridge,
+} from "./narrative/backend-bridge.js";
+export {
   projectBackendEvent,
   sanitizeSystemBlock,
-} from "./narrative/backend-bridge.js";
+} from "./narrative/backend-record-projection.js";
 export {
   BeatPolicy,
   type BeatPolicyOpts,

@@ -14,8 +14,8 @@ import {
   type BanzhuanBridgeDeps,
   type BeatFirer,
   invokeBanzhuanBridge,
-  projectBackendEvent,
 } from "./backend-bridge.js";
+import { projectBackendEvent } from "./backend-record-projection.js";
 import { BeatPolicy, type TriggerSpec } from "./beat-policy.js";
 import type { ActorStreamingSink } from "./streaming-sink.js";
 

@@ -123,6 +123,15 @@ describe("resolveWindowsPath", () => {
   // win32-only: hits the real registry through the real reg.exe — proves the
   // query shape and the parser against a live machine PATH (every Windows
   // machine PATH contains %SystemRoot%\system32).
+  //
+  // Not under test here: the 2 s startup budget on each probe. Under
+  // full-suite contention a reg.exe spawn has taken 2.7 s (~88 ms alone), and
+  // a probe killed at its deadline is reported as "hive unreadable" — the
+  // resolver then answers with the user PATH alone, which this assertion
+  // would misread as a wrong PATH. So the probe deadline is lifted PAST the
+  // per-test timeout: a registry too slow for the suite fails as a timeout,
+  // and a missing system32 can only mean the query or the parser is wrong.
+  const REAL_REGISTRY_TEST_TIMEOUT_MS = 30_000;
   it.skipIf(process.platform !== "win32")(
     "reads the real machine PATH from the registry",
     async () => {
@@ -131,9 +140,11 @@ describe("resolveWindowsPath", () => {
         // An empty inherited PATH forces the merge to differ, so the resolved
         // value IS the expanded registry PATH.
         env: { PATH: "", SystemRoot: process.env.SystemRoot },
+        probeTimeoutMs: REAL_REGISTRY_TEST_TIMEOUT_MS * 2,
       });
       expect(r).not.toBeNull();
       expect((r ?? "").toLowerCase()).toContain("system32");
     },
+    REAL_REGISTRY_TEST_TIMEOUT_MS,
   );
 });

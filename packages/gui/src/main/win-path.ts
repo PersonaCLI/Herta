@@ -38,6 +38,13 @@ export interface WinPathDeps {
    *  RAW (unexpanded) registry value, or null when the value is absent or
    *  the query fails. */
   readonly probe?: (hive: RegistryHive) => Promise<string | null>;
+  /** Bound on each real `reg query`, in ms; defaults to the startup budget
+   *  (REG_PROBE_TIMEOUT_MS). Injected by the real-registry test, which is
+   *  about the query shape and the parser rather than the budget: a probe
+   *  killed at its deadline reads as "hive unreadable", so under a
+   *  saturated machine the startup bound would turn a slow HKLM read into
+   *  a user-PATH-only answer. */
+  readonly probeTimeoutMs?: number;
 }
 
 const HIVE_KEYS: Record<RegistryHive, string> = {
@@ -97,6 +104,7 @@ export function mergeWindowsPath(
 function realProbe(
   hive: RegistryHive,
   env: Readonly<Record<string, string | undefined>>,
+  timeoutMs: number,
 ): Promise<string | null> {
   return new Promise((resolve) => {
     // Absolute reg.exe path: if the inherited PATH is broken enough to need
@@ -105,7 +113,7 @@ function realProbe(
     const child = execFile(
       regExe,
       ["query", HIVE_KEYS[hive], "/v", "Path"],
-      { timeout: REG_PROBE_TIMEOUT_MS, windowsHide: true },
+      { timeout: timeoutMs, windowsHide: true },
       (err, stdout) => {
         resolve(err !== null ? null : parseRegPathOutput(stdout));
       },
@@ -124,8 +132,10 @@ export async function resolveWindowsPath(
   deps: WinPathDeps,
 ): Promise<string | null> {
   if (deps.platform !== "win32") return null;
+  const timeoutMs = deps.probeTimeoutMs ?? REG_PROBE_TIMEOUT_MS;
   const probe =
-    deps.probe ?? ((hive: RegistryHive) => realProbe(hive, deps.env));
+    deps.probe ??
+    ((hive: RegistryHive) => realProbe(hive, deps.env, timeoutMs));
   // Machine before user — the order the OS concatenates them in at logon.
   const [machine, user] = await Promise.all([
     probe("machine").catch(() => null),

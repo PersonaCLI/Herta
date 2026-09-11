@@ -5436,6 +5436,37 @@ button.repo-card__path,
   opacity: 1;
   transition-delay: 180ms;
 }
+/* The open slide moves a FINISHED layout (owner 2026-09-11: the panel was
+   sized by its track on every frame, so the text re-wrapped as the track
+   widened and only settled at the end — Codex lays the panel out at its
+   final width first, then slides it in). While the shell holds
+   `viewer-opening` — exactly the track transition's length — the panel
+   LEAVES the grid: absolute at its final place (the track's area, the
+   overlay sheet's coordinates) and its final width, and it slides in by
+   transform on the track's own clock and curve, so it rides the yielding
+   conversation edge to the pixel. Out of flow on purpose: a grid item
+   with an explicit width feeds that width into the workspace's intrinsic
+   size, the .app 1fr column grows past the window to fit it, the body
+   re-measures wider, the 40% default chases it — measured live as a
+   stuttering slide whose width kept changing. When the hold drops the
+   panel is the track item again, at the same place and width (the
+   track's min() cap keeps ruling the steady state — the three-layer
+   width guarantee is untouched; --viewer-w is already clamped to it). */
+.workspace-body.viewer-opening .file-viewer {
+  position: absolute;
+  top: 0;
+  bottom: 26px;
+  right: 24px;
+  width: var(--viewer-w, 480px);
+  animation: fileViewerDockIn var(--dur-morph) var(--ease-signature) both;
+}
+@keyframes fileViewerDockIn {
+  from { transform: translateX(calc(var(--viewer-w, 480px) + 24px)); }
+  to { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-body.viewer-opening .file-viewer { animation: none; }
+}
 /* Threshold fallback (ADR 0050): the sheet floats over the right side —
    nothing reflows, the rail stays live. */
 .workspace-body.viewer-overlay .file-viewer {

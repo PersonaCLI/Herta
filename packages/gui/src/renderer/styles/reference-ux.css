@@ -619,8 +619,16 @@ body:after{
      short viewports (the rail cards flex-shrink gracefully instead). */
   grid-template-rows:minmax(0,1fr);
   gap:0;
-  padding:0 24px 26px 28px;
-  /* The overlay-mode sheet anchors here (ADR 0050 thresholds). */
+  /* The padding as tokens: the rail and the file viewer leave the grid for
+     their slides (see the viewer block) and sit absolute on the SAME
+     geometry as their tracks — the offsets below are those tokens, so the
+     two can never drift apart (the ≤1200px media block re-tokens both). */
+  --body-pad-top:0px;
+  --body-pad-right:24px;
+  --body-pad-bottom:26px;
+  --body-pad-left:28px;
+  padding:var(--body-pad-top) var(--body-pad-right) var(--body-pad-bottom) var(--body-pad-left);
+  /* The overlay-mode sheet and the sliding rail/panel anchor here. */
   position:relative;
 }
 /* Mode A — the rail yields (ADR 0050, owner-picked): the rail track
@@ -1035,7 +1043,7 @@ body:after{
    card re-centred its 216px PNG inside a 90px card (2026-09-02). Fixed
    tracks ignore item size, so the pin never widens the track; while the
    rail overflows its collapsed track it is translated off + faded. */
-.utility-rail{display:flex;flex-direction:column;gap:20px;min-width:0;width:var(--rail-w)}.device-card{position:relative;border-radius:18px;background:var(--speech-card-bg);border:1px solid var(--speech-border);box-shadow:0 18px 48px var(--speech-shadow),inset 0 1px 0 rgba(255,255,255,.82);backdrop-filter:blur(18px) saturate(140%);overflow:hidden;height:330px;display:grid;place-items:center}.device-card:before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--glass-a72),var(--glass-a44));pointer-events:none}
+.utility-rail{grid-column:2;display:flex;flex-direction:column;gap:20px;min-width:0;width:var(--rail-w)}.device-card{position:relative;border-radius:18px;background:var(--speech-card-bg);border:1px solid var(--speech-border);box-shadow:0 18px 48px var(--speech-shadow),inset 0 1px 0 rgba(255,255,255,.82);backdrop-filter:blur(18px) saturate(140%);overflow:hidden;height:330px;display:grid;place-items:center}.device-card:before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--glass-a72),var(--glass-a44));pointer-events:none}
 .agent-preview{position:relative;width:216px;height:270px;z-index:2}.agent-layer{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;pointer-events:none}.agent-shadow{z-index:1;opacity:.85}.agent-device-img{z-index:2}.agent-spill{position:absolute;z-index:3;left:44.56%;top:33.17%;width:41.9%;height:37.1%;transform:translate(-50%,-45%);opacity:.68;pointer-events:none;mix-blend-mode:screen;filter:blur(5px);background:radial-gradient(ellipse 20% 20% at 50% 38%,rgba(230,255,255,.64) 0%,rgba(126,236,255,.48) 42%,rgba(85,156,255,.20) 70%,rgba(85,156,255,0) 100%),radial-gradient(ellipse 42% 42% at 50% 38%,rgba(98,156,255,.54) 0%,rgba(72,133,255,.38) 38%,rgba(80,140,255,.18) 66%,rgba(80,140,255,0) 86%),radial-gradient(ellipse 54% 62% at 50% 44%,rgba(125,190,255,.34) 0%,rgba(95,150,255,.22) 46%,rgba(95,150,255,.08) 72%,rgba(95,150,255,0) 90%);animation:spillBreathe var(--agent-breathe-duration) ease-in-out infinite}.agent-ring{position:absolute;z-index:4;left:44.56%;top:33.17%;width:8.91%;height:7.49%;transform:translate(-50%,-50%);opacity:var(--agent-ring-opacity);animation:ringBreathe var(--agent-breathe-duration) ease-in-out infinite}.agent-ring svg{width:100%;height:100%;display:block;overflow:visible}@keyframes ringBreathe{0%,100%{opacity:.93;transform:translate(-50%,-50%) scale(.997);filter:brightness(.98) saturate(1.03)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.012);filter:brightness(1.10) saturate(1.12)}}@keyframes spillBreathe{0%,100%{opacity:.50;transform:translate(-50%,-45%) scale(.992)}50%{opacity:.66;transform:translate(-50%,-45%) scale(1.012)}}.disclaimer{height:34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted-2);border-top:1px solid rgba(17,20,23,.045);background:var(--strip-bg)}
 /* Morph-flight frost suspension (perf 2026-07-13): the device card's
    backdrop-filter re-samples its backdrop EVERY FRAME while the card is
@@ -1048,7 +1056,7 @@ body:after{
 .app:has(.workspace.is-morphing) .device-card {
   backdrop-filter: none;
 }
-@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{--rail-w:300px;grid-template-columns:minmax(0,1fr) var(--rail-w) 0px;gap:0;padding:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px min(var(--viewer-w,420px), calc(100% - 440px))}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
+@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{--rail-w:300px;grid-template-columns:minmax(0,1fr) var(--rail-w) 0px;gap:0;--body-pad-top:18px;--body-pad-right:18px;--body-pad-bottom:18px;--body-pad-left:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px min(var(--viewer-w,420px), calc(100% - 440px))}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
 @media(max-width:900px){.utility-rail{display:none}.workspace-body{grid-template-columns:minmax(0,1fr) 0px 0px}.workspace{margin-right:0}.app{grid-template-columns:210px 1fr}.sidebar{--sidebar-content-w:156px}}
 /* Slice 3 additions — Conversation message rows and bubbles */
 .message-row {
@@ -5386,18 +5394,44 @@ button.repo-card__path,
    card's true middle as the card widened). Two causes, traced by seeking
    the transitions frame by frame: translateX(130%) resolved against the
    rail's OWN box, which rode the collapsing 338px→0 track — 130% × a
-   shrinking width is a hump (0 → ~110px → 0 over the slide), and the
-   card's place-items:center re-centred the device in each frame's sliver.
-   Now the rail is pinned at --rail-w (see .utility-rail) and the slide is
-   a PIXEL distance past the incoming panel: the rail's slot moves LEFT by
-   (viewer − rail) as the conversation yields, so the translate adds
-   --viewer-w to keep the exit monotonic — 777px of on-screen travel for
-   any panel width, the same as the disconnect slide (338 + 1.3 × 338).
-   The transform also starts WITH the track (delay 0): staggered 120ms
-   behind it, the pinned card visibly followed the conversation edge left
-   before turning right. The fade keeps its 120ms stagger. */
+   shrinking width is a hump, and the card's place-items:center re-centred
+   the device in each frame's sliver. The rail was pinned at --rail-w (see
+   .utility-rail) and the translate added --viewer-w to cancel the slot's
+   own drift — which held only while the two moved in lockstep.
+
+   2026-09-11 (owner: on close the cards "suddenly appear in the middle of
+   the empty space", get "pushed to the edge of the app", then "jump back";
+   most often after a width drag or with several tabs open). The transform
+   runs on the COMPOSITOR thread; the grid-template-columns slide that
+   moved the rail's slot runs on the MAIN thread. A busy main thread at
+   close — the record re-wrapping to a wider column every frame, the tabs'
+   views unmounting — lets the rail finish its slide over a FROZEN slot,
+   and when layout catches up the slot drags the rail to the edge and it
+   snaps back (reproduced with a 350ms stall: screencast frames 437/660/803
+   are the owner's three pictures). No compensation term can hold two
+   threads in step, so the rail LEAVES the grid for both slides: absolute
+   on its rest geometry (the padding tokens — the same box as its track),
+   translated a constant 777px (2.3 × --rail-w, the disconnect slide's
+   338 + 1.3 × 338) with no --viewer-w term, because the slot no longer
+   moves under it. The shell holds `viewer-closing` for the close slide's
+   length (the grid's own transitionend), and only then does the rail
+   become the track item again — at the same place and width. Under any
+   stall the rail now arrives at its rest and waits for the conversation.
+   The transform starts WITH the track (delay 0); the fade keeps its 120ms
+   stagger. */
+.workspace-body.viewer-docked .utility-rail,
+.workspace-body.viewer-closing .utility-rail {
+  position: absolute;
+  /* An absolute grid child's containing block is the grid AREA its
+     placement names; auto names the padding box, which the offsets below
+     are written against. */
+  grid-column: auto;
+  top: var(--body-pad-top);
+  right: var(--body-pad-right);
+  bottom: var(--body-pad-bottom);
+}
 .workspace-body.viewer-docked .utility-rail {
-  transform: translateX(calc(var(--viewer-w, 0px) + var(--rail-w) * 1.3));
+  transform: translateX(calc(var(--rail-w) * 2.3));
   opacity: 0;
   pointer-events: none;
   content-visibility: hidden;
@@ -5413,6 +5447,13 @@ button.repo-card__path,
    re-samples its backdrop every frame (the device-card morph lesson). */
 .file-viewer {
   position: relative;
+  /* Placed by NAME, as is the rail (grid-column: 2): the rail leaves the
+     grid (position: absolute) while the viewer is docked, and an absolute
+     child takes no cell, so an auto-placed panel slid into the rail's 0px
+     column and collapsed — caught live 2026-09-11. The absolute states
+     below reset the placement to auto so their offsets resolve against
+     the body's padding box, not a track. */
+  grid-column: 3;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -5454,14 +5495,19 @@ button.repo-card__path,
    width guarantee is untouched; --viewer-w is already clamped to it). */
 .workspace-body.viewer-opening .file-viewer {
   position: absolute;
-  top: 0;
-  bottom: 26px;
-  right: 24px;
+  grid-column: auto;
+  top: var(--body-pad-top);
+  bottom: var(--body-pad-bottom);
+  right: var(--body-pad-right);
   width: var(--viewer-w, 480px);
   animation: fileViewerDockIn var(--dur-morph) var(--ease-signature) both;
 }
 @keyframes fileViewerDockIn {
-  from { transform: translateX(calc(var(--viewer-w, 480px) + 24px)); }
+  from {
+    transform: translateX(
+      calc(var(--viewer-w, 480px) + var(--body-pad-right, 24px))
+    );
+  }
   to { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -5471,9 +5517,10 @@ button.repo-card__path,
    nothing reflows, the rail stays live. */
 .workspace-body.viewer-overlay .file-viewer {
   position: absolute;
-  top: 0;
-  bottom: 26px;
-  right: 24px;
+  grid-column: auto;
+  top: var(--body-pad-top);
+  bottom: var(--body-pad-bottom);
+  right: var(--body-pad-right);
   width: min(var(--viewer-w, 420px), calc(100% - 160px));
   z-index: 40;
   opacity: 1;

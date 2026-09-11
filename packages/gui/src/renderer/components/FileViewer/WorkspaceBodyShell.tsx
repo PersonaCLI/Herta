@@ -9,12 +9,20 @@ import {
 import { FileViewerPanel } from "./FileViewerPanel.js";
 import { useFileViewerState } from "./file-viewer-context.js";
 
-/** The docked open slide's length — MUST match `--dur-morph` in
- *  reference-ux.css (the grid-template-columns transition the slide rides).
- *  The `viewer-opening` hold ends on that transition's own end event; this
- *  is the floor for the cases that fire none (reduced motion runs no
- *  transition; a divider drag mid-slide cancels it). */
+/** The docked slides' length — MUST match `--dur-morph` in
+ *  reference-ux.css (the grid-template-columns transition the slides ride).
+ *  The `viewer-opening` / `viewer-closing` holds end on that transition's
+ *  own end event; the timer floor below covers the cases that fire none
+ *  (reduced motion runs no transition; a divider drag mid-slide cancels
+ *  it). */
 export const DOCK_SLIDE_MS = 800;
+/** The floor sits well past the slide: a busy main thread delays the grid
+ *  transition's end, and dropping a hold before the track has reached its
+ *  rest would snap the rail into a half-open slot — the very glitch the
+ *  holds exist to prevent. Under reduced motion the extra beat is
+ *  invisible (the absolute box IS the track's geometry). */
+export const DOCK_HOLD_FLOOR_MS = DOCK_SLIDE_MS * 2;
+type SlidePhase = "idle" | "opening" | "closing";
 
 /**
  * The `.workspace-body` grid, viewer-aware (ADR 0050 §3). Owns the one
@@ -24,12 +32,14 @@ export const DOCK_SLIDE_MS = 800;
  * or `viewer-overlay` (threshold fallback — absolute sheet, nothing
  * reflows), with `--viewer-w` carrying the panel width either way.
  *
- * Plus `viewer-opening` for exactly the docked open slide (owner
- * 2026-09-11: the panel was sized by its track on every frame, so the
- * text re-wrapped as the track widened and settled only at the end —
- * Codex lays the panel out at its final width first and then slides it).
- * While the class is on, the CSS takes the panel out of the grid at its
- * final place and width and slides it in on the track's own clock; the
+ * Plus one of `viewer-opening` / `viewer-closing` for exactly the docked
+ * slides (owner 2026-09-11, two reports): opening, the panel was sized by
+ * its track on every frame, so its text re-wrapped as the track widened;
+ * closing, the rail's compositor-driven slide ran over its main-thread
+ * slot and, on a busy frame, the cards "appeared in the middle, got pushed
+ * to the edge, then jumped back". While a hold is on, the CSS takes the
+ * panel (opening) and the rail (both) out of the grid at their rest
+ * geometry and slides them by transform on the track's own clock; the
  * hold drops on the grid's own transitionend, so the hand-over to the
  * track-sized steady state lands on the frame the slide finishes.
  */
@@ -44,16 +54,18 @@ export function WorkspaceBodyShell({
   const docked = v?.open === true && v.docked;
 
   // Layout effect, not effect: the hold must be on the FIRST painted frame
-  // beside `viewer-docked`, or that frame lays the panel out in a 0px track.
-  const [opening, setOpening] = useState(false);
+  // beside the docked class change, or that frame lays the panel out in a
+  // 0px track (opening) / snaps the rail into a 0px slot (closing).
+  const [phase, setPhase] = useState<SlidePhase>("idle");
+  const wasDocked = useRef(false);
   useLayoutEffect(() => {
-    if (!docked) {
-      setOpening(false);
-      return;
-    }
+    const was = wasDocked.current;
+    wasDocked.current = docked;
+    // Only a docked EDGE is a slide; tab changes while open re-run nothing.
+    if (docked === was) return;
     const el = ref.current;
-    setOpening(true);
-    const done = (): void => setOpening(false);
+    setPhase(docked ? "opening" : "closing");
+    const done = (): void => setPhase("idle");
     // The rail's transform and the conversation's margin end on the same
     // clock and their events bubble through here — only the grid's own
     // track transition is the slide.
@@ -61,7 +73,7 @@ export function WorkspaceBodyShell({
       if (e.target === el && e.propertyName === "grid-template-columns") done();
     };
     el?.addEventListener("transitionend", onEnd);
-    const timer = window.setTimeout(done, DOCK_SLIDE_MS + 100);
+    const timer = window.setTimeout(done, DOCK_HOLD_FLOOR_MS);
     return () => {
       el?.removeEventListener("transitionend", onEnd);
       window.clearTimeout(timer);
@@ -101,7 +113,7 @@ export function WorkspaceBodyShell({
 
   const cls =
     v?.open === true ? (v.docked ? " viewer-docked" : " viewer-overlay") : "";
-  const hold = opening ? " viewer-opening" : "";
+  const hold = phase === "idle" ? "" : ` viewer-${phase}`;
   const style = {
     "--viewer-w": `${v?.widthPx ?? 0}px`,
   } as CSSProperties;

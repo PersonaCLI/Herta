@@ -6,7 +6,11 @@ import {
   FileViewerProvider,
   useFileViewerOpen,
 } from "./file-viewer-context.js";
-import { DOCK_SLIDE_MS, WorkspaceBodyShell } from "./WorkspaceBodyShell.js";
+import {
+  DOCK_HOLD_FLOOR_MS,
+  DOCK_SLIDE_MS,
+  WorkspaceBodyShell,
+} from "./WorkspaceBodyShell.js";
 
 // jsdom has no ResizeObserver and measures every box at 0; the shell's own
 // measure reads the body's rect, so the test hands it a width through a
@@ -20,9 +24,18 @@ class FakeRO {
 function Probe(): JSX.Element {
   const open = useFileViewerOpen();
   return (
-    <button type="button" data-testid="probe" onClick={() => open?.("a.ts")}>
-      open
-    </button>
+    <>
+      <button type="button" data-testid="probe" onClick={() => open?.("a.ts")}>
+        open
+      </button>
+      <button
+        type="button"
+        data-testid="probe-b"
+        onClick={() => open?.("b.ts")}
+      >
+        open b
+      </button>
+    </>
   );
 }
 
@@ -66,13 +79,24 @@ function setup(bodyWidth: number): { body: () => HTMLElement } {
   };
 }
 
-function gridTransitionEnd(propertyName: string): Event {
+function transitionEnd(propertyName: string): Event {
   const ev = new Event("transitionend", { bubbles: true });
   Object.defineProperty(ev, "propertyName", { value: propertyName });
   return ev;
 }
 
-describe("WorkspaceBodyShell — the docked open slide holds the final layout", () => {
+/** The grid's own track transition ending on the body. */
+function endGridSlide(body: HTMLElement): void {
+  act(() => {
+    body.dispatchEvent(transitionEnd("grid-template-columns"));
+  });
+}
+
+const closePanel = (): void => {
+  fireEvent.keyDown(screen.getByTestId("file-viewer"), { key: "Escape" });
+};
+
+describe("WorkspaceBodyShell — the docked slides hold their finished layouts", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -90,22 +114,27 @@ describe("WorkspaceBodyShell — the docked open slide holds the final layout", 
     // and bubble through the body — neither is the slide.
     const panel = screen.getByTestId("file-viewer");
     act(() => {
-      panel.dispatchEvent(gridTransitionEnd("grid-template-columns"));
+      panel.dispatchEvent(transitionEnd("grid-template-columns"));
     });
     expect(body().classList.contains("viewer-opening")).toBe(true);
     act(() => {
-      body().dispatchEvent(gridTransitionEnd("opacity"));
+      body().dispatchEvent(transitionEnd("opacity"));
     });
     expect(body().classList.contains("viewer-opening")).toBe(true);
 
-    act(() => {
-      body().dispatchEvent(gridTransitionEnd("grid-template-columns"));
-    });
-    expect(body().classList.contains("viewer-opening")).toBe(false);
-    expect(body().classList.contains("viewer-docked")).toBe(true);
+    endGridSlide(body());
+    expect(body().className).toBe("workspace-body viewer-docked");
   });
 
-  it("with no transition to end (reduced motion, a cancelled slide) the hold drops after the slide's length", () => {
+  it("a second tab while open is not a slide — the finished hold stays off", () => {
+    const { body } = setup(1400);
+    fireEvent.click(screen.getByTestId("probe"));
+    endGridSlide(body());
+    fireEvent.click(screen.getByTestId("probe-b"));
+    expect(body().className).toBe("workspace-body viewer-docked");
+  });
+
+  it("with no transition to end (reduced motion, a cancelled slide) the hold drops on the floor timer, which sits past the slide", () => {
     vi.useFakeTimers();
     const { body } = setup(1400);
     fireEvent.click(screen.getByTestId("probe"));
@@ -113,20 +142,64 @@ describe("WorkspaceBodyShell — the docked open slide holds the final layout", 
     act(() => {
       vi.advanceTimersByTime(DOCK_SLIDE_MS);
     });
+    // A busy main thread ends the grid transition late; the floor must not
+    // beat it.
     expect(body().classList.contains("viewer-opening")).toBe(true);
     act(() => {
-      vi.advanceTimersByTime(200);
+      vi.advanceTimersByTime(DOCK_HOLD_FLOOR_MS - DOCK_SLIDE_MS);
     });
-    expect(body().classList.contains("viewer-opening")).toBe(false);
-    expect(body().classList.contains("viewer-docked")).toBe(true);
+    expect(body().className).toBe("workspace-body viewer-docked");
   });
 
-  it("closing mid-slide drops the hold with the panel", () => {
+  it("closing after a finished open holds `viewer-closing` — the rail's slide-back — until the grid's own transition ends (owner 2026-09-11)", () => {
+    const { body } = setup(1400);
+    fireEvent.click(screen.getByTestId("probe"));
+    endGridSlide(body());
+    closePanel();
+    expect(body().className).toBe("workspace-body viewer-closing");
+    act(() => {
+      body().dispatchEvent(transitionEnd("transform"));
+    });
+    expect(body().className).toBe("workspace-body viewer-closing");
+    endGridSlide(body());
+    expect(body().className).toBe("workspace-body");
+  });
+
+  it("closing mid-slide swaps the opening hold for the closing one", () => {
     const { body } = setup(1400);
     fireEvent.click(screen.getByTestId("probe"));
     expect(body().classList.contains("viewer-opening")).toBe(true);
-    fireEvent.keyDown(screen.getByTestId("file-viewer"), { key: "Escape" });
+    closePanel();
+    expect(body().className).toBe("workspace-body viewer-closing");
+    endGridSlide(body());
     expect(body().className).toBe("workspace-body");
+  });
+
+  it("the closing hold also drops on the floor timer", () => {
+    vi.useFakeTimers();
+    const { body } = setup(1400);
+    fireEvent.click(screen.getByTestId("probe"));
+    act(() => {
+      vi.advanceTimersByTime(DOCK_HOLD_FLOOR_MS);
+    });
+    closePanel();
+    expect(body().className).toBe("workspace-body viewer-closing");
+    act(() => {
+      vi.advanceTimersByTime(DOCK_HOLD_FLOOR_MS);
+    });
+    expect(body().className).toBe("workspace-body");
+  });
+
+  it("reopening during the close slide goes straight back to an opening hold", () => {
+    const { body } = setup(1400);
+    fireEvent.click(screen.getByTestId("probe"));
+    endGridSlide(body());
+    closePanel();
+    expect(body().className).toBe("workspace-body viewer-closing");
+    fireEvent.click(screen.getByTestId("probe"));
+    expect(body().className).toBe(
+      "workspace-body viewer-docked viewer-opening",
+    );
   });
 
   it("the overlay sheet (a body too narrow to dock) never holds — nothing reflows there", () => {
@@ -134,5 +207,7 @@ describe("WorkspaceBodyShell — the docked open slide holds the final layout", 
     fireEvent.click(screen.getByTestId("probe"));
     expect(body().classList.contains("viewer-overlay")).toBe(true);
     expect(body().classList.contains("viewer-opening")).toBe(false);
+    closePanel();
+    expect(body().className).toBe("workspace-body");
   });
 });

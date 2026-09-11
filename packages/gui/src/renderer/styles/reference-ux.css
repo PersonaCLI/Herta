@@ -423,6 +423,60 @@ body:after{
      pre-blurred gradient above — identical look over a static backdrop,
      none of the per-frame re-filtering cost. */
 }
+/* ── Selection policy (owner 2026-09-11) ────────────────────────────────
+   Chrome is not selectable; content is — the line Codex draws. A drag or
+   Ctrl+A across the window used to paint the sidebar's session names,
+   dates and group labels, the composer's placeholder, the rail cards'
+   labels and their … menu, the bubble timestamps, the record's fold
+   rows — all blue, as if they were the conversation. `user-select` is
+   inherited through `auto`, so the body says none and the content
+   surfaces below opt back in with `text`. Editable controls (the
+   composer textarea, the settings inputs, the history search) resolve to
+   `contain` on their own and keep working under the body's none. Chrome
+   nested INSIDE a content surface — a bubble's action row, a record
+   row's ×, a code card's head, the viewer's gutters, grid heads, slide
+   bars and every button — says none again. Portals (tooltips, the
+   lightbox, the confirm pill) hang off body, so body is the root, not
+   .app. */
+body {
+  user-select: none;
+}
+.message-text,
+.code-block,
+.code-standalone,
+.activity-step__text,
+.activity-step__headline,
+.activity-step__detail,
+.activity-plan__text,
+.diff-body,
+.file-viewer__body {
+  user-select: text;
+}
+button,
+[role="button"],
+[role="tab"],
+.message-actions,
+.streaming-caret,
+.code-card__head,
+.activity-step__icon,
+.activity-step__fold-chevron,
+.activity-step__remove,
+.activity-step__detail-toggle,
+.diff-body__gutter,
+.file-viewer__gutter,
+.file-viewer__anchor,
+.file-viewer__gridhead,
+.file-viewer__rowhead,
+.file-viewer__colhead,
+.file-viewer__corner,
+.file-viewer__sheet-tabs,
+.file-viewer__slides-bar,
+.file-viewer__thumbs,
+.log-view__tools,
+.log-view__more {
+  user-select: none;
+}
+
 .sidebar{
   /* Expanded content-box width: column 276 − margin-left 18 − padding 36.
      The collapse pins children to THIS width (see below) so text never

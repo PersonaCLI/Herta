@@ -226,12 +226,20 @@ const entries = [...packages.values()]
 // ---- files shipped OUTSIDE the bundles --------------------------------------
 
 /**
- * The 3D device card's Basis Universal transcoder (ADR 0057) is copied from
- * three's examples into `src/renderer/public/device-scene/basis/`, which
- * Vite carries into out/renderer as-is — never rendered into a chunk, so the
- * manifest above cannot see it. Listed by hand, gated on the file actually
- * being in the build output, with the Apache-2.0 text kept beside it in
- * resources/licenses (three's package ships only a README pointer).
+ * The 3D device card's Basis Universal transcoder (ADR 0057) is VENDORED into
+ * `src/renderer/public/device-scene/basis/`, which Vite carries into
+ * out/renderer as-is — never rendered into a chunk, so the manifest above
+ * cannot see it. Listed by hand, gated on the file actually being in the build
+ * output, with the Apache-2.0 text kept beside it in resources/licenses
+ * (three's package ships only a README pointer).
+ *
+ * It is NOT three's prebuilt copy any more: that build's embind glue compiles
+ * its invoker functions with the Function constructor, which the packaged CSP
+ * (csp.ts) refuses inside the transcoder's worker — and three's WorkerPool has
+ * no error path, so the atlas load never settles. This pair is rebuilt from
+ * upstream basis_universal v1_50_0_2 with -sDYNAMIC_EXECUTION=0
+ * (scripts/rebuild-basis-transcoder.sh is the recipe and its checks). The
+ * version string below says so: Apache-2.0 §4 asks a modified build be marked.
  */
 const BASIS_WASM = resolve(
   HERE,
@@ -239,7 +247,6 @@ const BASIS_WASM = resolve(
 );
 const extras = [];
 if (existsSync(BASIS_WASM)) {
-  const three = readJson(resolve(HERE, "../node_modules/three/package.json"));
   const text = readFileSync(
     resolve(HERE, "../resources/licenses/basis-universal-LICENSE.txt"),
     "utf8",
@@ -249,7 +256,7 @@ if (existsSync(BASIS_WASM)) {
     .trim();
   extras.push({
     name: "basis_universal (KTX2 transcoder)",
-    version: `as vendored by three ${three?.version ?? "unknown"}`,
+    version: "v1_50_0_2, rebuilt with -sDYNAMIC_EXECUTION=0",
     license: "Apache-2.0",
     author: "Binomial LLC",
     url: "https://github.com/BinomialLLC/basis_universal",

@@ -35,6 +35,7 @@ import * as THREE from "three/webgpu";
 import type { BanzhuanDeviceState } from "../../../hooks/useDeviceState.js";
 import type { ResolvedTheme } from "../../../hooks/useResolvedTheme.js";
 import { unpadRows } from "./art-export-math.js";
+import { withDeadline } from "./asset-deadline.js";
 import { advanceLift, createLiftPose } from "./lift.js";
 import {
   applyCloudy,
@@ -66,9 +67,10 @@ import { pictureChanged, type ShownPicture } from "./render-gate.js";
  * Dropped: the mineral-room material noise and shaped light, weather, the
  * time slider and day playback, the compare wipe, the quality and
  * asset-profile selectors, the source-texture fallbacks (a machine that
- * cannot transcode KTX2 keeps the flat card). Time of day follows the
- * CLOCK in the light theme, folded so the card never leaves daylight, and
- * is the study's midnight in the dark theme (lighting.ts `cardHourFor`).
+ * cannot transcode KTX2 keeps the flat card — where a transcoder that never
+ * answers lands too, via ATLAS_DEADLINE_MS). Time of day follows the CLOCK in
+ * the light theme, folded so the card never leaves daylight, and is the
+ * study's midnight in the dark theme (lighting.ts `cardHourFor`).
  *
  * Loaded lazily by DeviceScene.tsx — three.js stays out of the boot bundle.
  */
@@ -111,6 +113,10 @@ const PARK_UNFOCUSED_MS = 5000;
  *  where the loop stops between events. */
 const CLOCK_WAKE_MS = 60_000;
 
+/** The atlas load's bound (ADR 0057 §2.12; asset-deadline.ts says why):
+ *  generous for a cold disk, still half of SCENE_PATIENCE_MS, so a transcoder
+ *  that never answers falls back long before the card gives up on the glass. */
+const ATLAS_DEADLINE_MS = 15_000;
 /** The room's surfaces (linear RGB, roughness), a white room: the card's
  *  frost is about 0.9 linear, the walls sit just under it so the key's
  *  shadow and the ring's spill still read on them; the left wall a step
@@ -910,33 +916,43 @@ export async function createDeviceScene(
     return tex;
   };
   const tex = {} as DeviceTextures;
-  await Promise.all([
-    ...DEVICE_LDR.map(async (name) => {
-      tex[name] = await loadKtx(
-        `baked-v1-${name}.ktx2`,
-        name === "basecolor" ? THREE.SRGBColorSpace : THREE.NoColorSpace,
-      );
-    }),
-    ...DEVICE_SCALAR.map(async (name) => {
-      // Roughness lives in the source's green channel, cavity in red.
-      tex[name] = await loadScalar(
-        `baked-v1-${name}.png`,
-        name === "roughness" ? 1 : 0,
-      );
-    }),
-    ...DEVICE_HDR.map(async (name) => {
-      tex[name] = await loadKtx(
-        `baked-v1-${name}.ktx2`,
-        THREE.LinearSRGBColorSpace,
-      );
-    }),
-    ...SPACE_HDR.map(async (name) => {
-      tex[name] = await loadKtx(
-        `space-v1-${name}.ktx2`,
-        THREE.LinearSRGBColorSpace,
-      );
-    }),
-  ]);
+  // Bounded: three's transcoder pool has no error path, so a worker that
+  // dies leaves this pending forever. On expiry the pool is terminated and
+  // the throw lands in DeviceScene's catch → the flat card.
+  await withDeadline(
+    Promise.all([
+      ...DEVICE_LDR.map(async (name) => {
+        tex[name] = await loadKtx(
+          `baked-v1-${name}.ktx2`,
+          name === "basecolor" ? THREE.SRGBColorSpace : THREE.NoColorSpace,
+        );
+      }),
+      ...DEVICE_SCALAR.map(async (name) => {
+        // Roughness lives in the source's green channel, cavity in red.
+        tex[name] = await loadScalar(
+          `baked-v1-${name}.png`,
+          name === "roughness" ? 1 : 0,
+        );
+      }),
+      ...DEVICE_HDR.map(async (name) => {
+        tex[name] = await loadKtx(
+          `baked-v1-${name}.ktx2`,
+          THREE.LinearSRGBColorSpace,
+        );
+      }),
+      ...SPACE_HDR.map(async (name) => {
+        tex[name] = await loadKtx(
+          `space-v1-${name}.ktx2`,
+          THREE.LinearSRGBColorSpace,
+        );
+      }),
+    ]),
+    {
+      ms: ATLAS_DEADLINE_MS,
+      reason: `the device atlases produced no answer within ${ATLAS_DEADLINE_MS / 1000} s`,
+      onExpire: () => ktx.dispose(),
+    },
+  );
   ktx.dispose();
   const dayNodes: Vec3Node[] = (
     ["device-morning", "device-midday", "device-evening"] as const

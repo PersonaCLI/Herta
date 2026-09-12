@@ -232,6 +232,43 @@ mac:
 dmg:
   artifactName: Herta-${version}-${arch}.${ext}
 
+# Linux targets (added for community builds). No signing — Linux has no
+# SmartScreen/Gatekeeper equivalent. AppImage is the primary format (no
+# install, works on any distro); deb covers Debian/Ubuntu. The icon.png
+# source is the same 1024x1024 the macOS build uses; electron-builder
+# generates the PNG size set Linux expects from it.
+#
+# TTS runtime: stage-tts.mjs without --win/--mac auto-detects the host
+# platform, so a Linux build machine stages sherpa-onnx-linux-<arch>
+# automatically. Cross-arch (e.g. building arm64 on x64) needs the
+# matching npm package fetched into the cache — the script handles that.
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    # deb is ready to enable the day a maintainer email exists: fpm requires
+    # package.json "homepage" AND an author email (or linux.maintainer), and
+    # neither is this repo's to invent — the copyright block above is exactly
+    # about not asserting things that are not true. To enable: add the
+    # maintainer line below + homepage in package.json, uncomment, done.
+    # - target: deb
+    #   arch: [x64]
+  # maintainer: Herta <email@example.com>
+  category: Development
+  icon: build/icon.png
+  artifactName: Herta-${version}-${arch}.${ext}
+  # The package name is scoped (@herta/gui), and electron-builder derives the
+  # Linux executable name from it — "@hertagui", which the AppImage builder
+  # rejects ('characters that cannot be safely used in file paths'). Windows
+  # and macOS never hit this: those targets name the executable after
+  # productName. Pin the conventional lowercase binary name here.
+  executableName: herta
+  # Window association (electron-builder's own warning): the .desktop file's
+  # StartupWMClass must match the WM_CLASS Electron sets (the app name,
+  # "Herta"), or desktop environments will not group the running window with
+  # its launcher entry.
+  syncDesktopName: true
+
 nsis:
   # Pinned to the dash form electron-updater's latest.yml references. The
   # default (`Herta Setup <ver>.exe`, spaces) forces a manual rename at upload

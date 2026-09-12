@@ -12,7 +12,7 @@
 [**Philosophy**](./PHILOSOPHY.md)
 
 ![license](https://img.shields.io/badge/license-MIT%20(code)-blue)
-![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078d4)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078d4)
 ![self](https://img.shields.io/badge/self-DeepSeek%20completion-4d6bfe)
 
 </div>
@@ -99,7 +99,10 @@ Installers are on the [releases page](https://github.com/PersonaCLI/Herta/releas
 
 ## Build
 
-Requirements: Node 22+ with corepack (pnpm 9).
+Requirements: Node 22 LTS (`.node-version` / `mise.toml`, read by nvm, asdf,
+fnm and mise) with corepack (pnpm 9). Node 26 and newer cannot install this
+workspace: `better-sqlite3` 11.x ships no prebuilt binary for that ABI and its
+C++ does not compile against Node 26's V8, so `pnpm install` dies in node-gyp.
 
 ```sh
 pnpm install

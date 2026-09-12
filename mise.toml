@@ -1,0 +1,7 @@
+# Node 22 LTS. mise reads this ahead of ~/.config/mise/config.toml — a config
+# file outranks the idiomatic .node-version beside it. Node 26 and newer cannot
+# install this workspace: better-sqlite3 11.x ships no prebuilt binary for that
+# ABI and its C++ does not compile against Node 26's V8, so `pnpm install`
+# dies in node-gyp.
+[tools]
+node = "22"

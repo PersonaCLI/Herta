@@ -346,8 +346,12 @@ function createWindow(): BrowserWindow {
   const service = createSessionService(win.webContents, win, {
     // Settings → Language: the tray tooltip is OS-rendered on hover, so it
     // must be re-pushed when the locale changes (user 2026-07-04 — it stayed
-    // 黑塔 after switching to English until restart).
-    onLocaleChanged: () => tray?.refreshTooltip(),
+    // 黑塔 after switching to English until restart). The menu labels need the
+    // same push on Linux, where the host draws the menu we attached.
+    onLocaleChanged: () => {
+      tray?.refreshTooltip();
+      tray?.refreshMenu();
+    },
     // Settings → Window: live-apply the close-to-tray flag.
     onCloseToTrayChanged: (enabled) => {
       closeToTray = enabled;
@@ -390,6 +394,10 @@ function createWindow(): BrowserWindow {
     if (!quitRequested && closeToTray) {
       event.preventDefault();
       win.hide();
+      // The tray is the app's face from here on. On Linux its menu is whatever
+      // was last ATTACHED (the host draws it), so re-attach as the window goes
+      // — the Recent list is then current for the next time it is opened.
+      tray?.refreshMenu();
     }
   });
   win.on("closed", () => {

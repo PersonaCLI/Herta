@@ -1,0 +1,83 @@
+# Maintainer: (a real name and email go here before this reaches the AUR — this
+#             repository does not invent contact details; see the copyright note
+#             in packages/gui/electron-builder.yml)
+#
+# Herta's Linux desktop app, built from source. The build runs the same steps as
+# `pnpm --filter @herta/gui dist:linux` but stops at electron-builder's `dir`
+# target: an Arch package is a tree under /opt, so the AppImage step — and the
+# FUSE requirement that comes with it — is skipped.
+#
+#   cd packaging/arch && makepkg -si
+#
+# Node 22 is a hard build requirement: better-sqlite3 11.x has no prebuilt binary
+# for Node 26's ABI and its C++ does not compile against that V8, so
+# `pnpm install` dies in node-gyp there. extra/nodejs and extra/nodejs-lts-jod
+# conflict, so build in a clean chroot (extra-x86_64-build) or swap the package.
+#
+# The voice clips ship with the releases, not with this repository, so a source
+# build is silent — that is what the `--warn` payload check below records.
+#
+# Build another branch, or a fork's branch (how a Linux port gets reviewed before
+# it is merged):
+#   _repo=https://github.com/<user>/Herta _branch=<branch> makepkg -si
+
+pkgname=herta
+pkgver=0.1.5
+pkgrel=1
+pkgdesc="The self that uses the agent — a desktop companion built on DeepSeek"
+arch=('x86_64')
+url="https://github.com/PersonaCLI/Herta"
+license=('MIT')
+depends=('gtk3' 'nss' 'libxss' 'libnotify' 'libxtst' 'libcups' 'alsa-lib'
+         'at-spi2-core' 'libsecret' 'mesa' 'xdg-utils')
+makedepends=('git' 'nodejs-lts-jod' 'pnpm' 'python')
+optdepends=('gnome-keyring: keep the stored API key encrypted at rest')
+# Electron's binaries keep their own symbols and the ASAR is not strip-safe.
+options=('!strip' '!debug')
+
+_repo=${_repo:-$url}
+_branch=${_branch:-}
+source=("$pkgname::git+$_repo.git${_branch:+#branch=$_branch}"
+        "herta.desktop")
+sha256sums=('SKIP'
+            'SKIP')
+
+pkgver() {
+  cd "$pkgname"
+  git describe --long --tags --abbrev=7 2>/dev/null |
+    sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g' ||
+    printf '0.1.5.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cd "$pkgname"
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  pnpm install --frozen-lockfile
+  pnpm build
+
+  cd packages/gui
+  node scripts/check-voice-payload.mjs --warn
+  node scripts/stage-tts.mjs
+  node scripts/check-tts-payload.mjs
+  pnpm exec electron-vite build
+  node scripts/third-party-notices.mjs --check
+  pnpm exec electron-builder --linux dir
+}
+
+package() {
+  cd "$pkgname"
+  install -dm755 "$pkgdir/opt/herta"
+  cp -a packages/gui/release/linux-unpacked/. "$pkgdir/opt/herta/"
+
+  # Chromium's setuid sandbox helper. Electron falls back to unprivileged user
+  # namespaces without it (which Arch allows), but the packaged default is the
+  # helper, and an install without the bit is a silent downgrade.
+  chmod 4755 "$pkgdir/opt/herta/chrome-sandbox"
+
+  install -Dm644 packages/gui/build/icon.png \
+    "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/herta.png"
+  install -Dm644 "$srcdir/herta.desktop" \
+    "$pkgdir/usr/share/applications/herta.desktop"
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/herta/herta "$pkgdir/usr/bin/herta"
+}

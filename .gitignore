@@ -4,6 +4,9 @@ out/
 *.tsbuildinfo
 # electron-builder output (installers + unpacked app trees)
 /packages/gui/release/
+# staged neural-voice native runtime (scripts/stage-tts.mjs build artifact,
+# ~23 MB/arch; produced by every dist script, never committed)
+/packages/gui/tts-runtime/
 .herta/
 .claude/
 coverage/

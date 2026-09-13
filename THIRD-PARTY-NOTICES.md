@@ -25,7 +25,7 @@ Not listed here, because they travel separately:
 | @iconify/utils | 3.1.4 | MIT | renderer |
 | @mermaid-js/parser | 1.2.1 | MIT | renderer |
 | @upsetjs/venn.js | 2.0.0 | MIT | renderer |
-| basis_universal (KTX2 transcoder) | as vendored by three 0.185.1 | Apache-2.0 | renderer assets (out/renderer/device-scene/basis/) |
+| basis_universal (KTX2 transcoder) | v1_50_0_2, rebuilt with -sDYNAMIC_EXECUTION=0 | Apache-2.0 | renderer assets (out/renderer/device-scene/basis/) |
 | builder-util-runtime | 9.7.0 | MIT | main process |
 | cose-base | 1.0.3 | MIT | renderer |
 | cose-base | 2.2.0 | MIT | renderer |
@@ -225,7 +225,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### basis_universal (KTX2 transcoder) as vendored by three 0.185.1 — Apache-2.0
+### basis_universal (KTX2 transcoder) v1_50_0_2, rebuilt with -sDYNAMIC_EXECUTION=0 — Apache-2.0
 
 - Author: Binomial LLC
 - Source: https://github.com/BinomialLLC/basis_universal
@@ -235,8 +235,11 @@ SOFTWARE.
 Basis Universal GPU texture transcoder (basis_transcoder.js / basis_transcoder.wasm)
 https://github.com/BinomialLLC/basis_universal
 Copyright (C) 2019-2024 Binomial LLC. Licensed under the Apache License, Version 2.0.
-Shipped with Herta as the KTX2 transcoder of the 3D device card (ADR 0057), as
-vendored by three.js (examples/jsm/libs/basis). The license text follows.
+Shipped with Herta as the KTX2 transcoder of the 3D device card (ADR 0057).
+Modified build: compiled by this repository from upstream basis_universal
+v1_50_0_2 (webgl/transcoder) with -sDYNAMIC_EXECUTION=0, so the emitted
+JavaScript contains no dynamic code generation; the recipe is
+packages/gui/scripts/rebuild-basis-transcoder.sh. The license text follows.
 
 Apache License
                            Version 2.0, January 2004

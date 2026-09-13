@@ -1015,23 +1015,26 @@ button,
 }
 /* The hovered topic's label: title + anchoring user message, floating beside
    the rail at the hovered tick's height (`top` is inline, transitioned so
-   it GLIDES between ticks while the pointer walks the rail). Styled as a
-   compact DARK chip, deliberately unlike anything in the record (user
-   2026-07-12: the first white-card version read as another Herta bubble):
-   bubbles and panels here are all light frosted surfaces with 18px radii,
-   so the inverted slate chip — small radius, tight padding, no border —
-   is unambiguous overlay chrome (the minimap-tooltip idiom), and stays
-   legible over any background without frosting. pointer-events none —
-   it's a label, never a hover target, so it can't trap the cursor. */
+   it GLIDES between ticks while the pointer walks the rail). A compact
+   chip deliberately unlike anything in the record (user 2026-07-12: the
+   first white-card version read as another Herta bubble): bubbles and
+   panels are frosted surfaces with 18px radii and no border, so the small
+   radius, tight padding and hairline border mark it as overlay chrome.
+   It was an inverted slate chip until 2026-09-13 (owner: a dark card in
+   the light theme is a bug) — now it is the house pop, the same surface
+   as the hover tip and the tooltip pill: --surface-pop, ink text, a
+   hairline, so it follows the theme like every other pop. pointer-events
+   none — it's a label, never a hover target, so it can't trap the
+   cursor. */
 .topic-rail__card {
   position: absolute;
   left: 52px;
   max-width: 250px;
   padding: 7px 11px;
-  border: 0;
+  border: 1px solid var(--ink-a14);
   border-radius: 9px;
-  background: rgba(38, 45, 54, 0.95);
-  box-shadow: 0 8px 22px rgba(17, 24, 32, 0.26);
+  background: var(--surface-pop);
+  box-shadow: 0 8px 22px var(--shadow-pop);
   pointer-events: none;
   opacity: 0;
   transform: translateX(-6px);
@@ -1048,7 +1051,7 @@ button,
   margin: 0 0 2px;
   font-size: 12px;
   font-weight: 600;
-  color: #f4f7fa;
+  color: var(--ink);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1056,7 +1059,7 @@ button,
 .topic-rail__card-preview {
   margin: 0;
   font-size: 11.5px;
-  color: rgba(238, 242, 246, 0.62);
+  color: var(--muted-3);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

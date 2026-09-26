@@ -109,8 +109,14 @@ Installers are on the [releases page](https://github.com/PersonaCLI/Herta/releas
   unprivileged user namespaces (Ubuntu 24.04's default, for example), it runs
   with Chromium's sandbox turned off. Without a keyring (gnome-keyring or
   KWallet), the API key is kept in an owner-only file rather than encrypted.
-  Arch users can also build from source with
-  [`packaging/arch/PKGBUILD`](./packaging/arch/PKGBUILD).
+- **Arch Linux (x64)** — `herta-bin` on the
+  [AUR](https://aur.archlinux.org/packages/herta-bin) repacks that AppImage
+  (`paru -S herta-bin` or `yay -S herta-bin`). It installs the application
+  payload only and runs on Arch's `electron43`, so it takes about 67 MiB
+  instead of 334 MiB, and Electron security updates arrive through pacman.
+  Because it repacks the release rather than the repository, her voice clips
+  come with it — a source build is silent. Arch users can also build from
+  source with [`packaging/arch/PKGBUILD`](./packaging/arch/PKGBUILD).
 
 ## Build
 

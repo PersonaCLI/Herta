@@ -57,9 +57,9 @@ jobs:
     # what actually caps a stall; this just has to be larger than it.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -565,7 +565,7 @@ jobs:
 
       - name: upload screenshots + boot log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mac-first-look
           path: /tmp/shots
@@ -578,7 +578,7 @@ jobs:
       # assets; this one only has to outlive the build-to-release gap.
       - name: upload the installer
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mac-dist
           path: |

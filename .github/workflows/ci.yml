@@ -28,12 +28,12 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # No `version:` here — pnpm/action-setup reads it from package.json's
       # `packageManager` field (pnpm@9.15.0). Specifying both collides:
       # ERR_PNPM_BAD_PM_VERSION / "Multiple versions of pnpm specified".
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm

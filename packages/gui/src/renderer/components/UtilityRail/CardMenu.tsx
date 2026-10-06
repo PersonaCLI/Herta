@@ -3,6 +3,7 @@ import type { WorkspaceTrust } from "@herta/core";
 import {
   type CSSProperties,
   Fragment,
+  type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -64,6 +65,7 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   // The menu itself lives OUTSIDE the card (2026-09-17): `.device-card`
   // clips its overflow for the frost and the scene, and once the trust row
   // joined the rules the menu ran past the card's bottom edge and was cut
@@ -125,6 +127,7 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
       if (e.key === "Escape" && isTop) {
         e.preventDefault();
         setOpen(false);
+        buttonRef.current?.focus({ preventScroll: true });
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -145,6 +148,38 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
     const t = window.setTimeout(() => setMounted(false), MENU_EXIT_MS);
     return () => window.clearTimeout(t);
   }, [open]);
+  // The menu is a portal at the body, so Tab from ⋯ never reaches it: its
+  // first action takes focus on open, the arrows walk the enabled buttons,
+  // and a keyboard close (Escape above, Tab below) hands focus back to ⋯ —
+  // as the sidebar's SessionMenu does (UX review 2026-09-22, item 25).
+  useEffect(() => {
+    if (!open || !mounted) return;
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus({ preventScroll: true });
+  }, [open, mounted]);
+  const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = [
+      ...(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        "button:not(:disabled)",
+      ) ?? []),
+    ];
+    if (items.length === 0) return;
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next =
+      e.key === "ArrowDown"
+        ? (at + 1) % items.length
+        : (at - 1 + items.length) % items.length;
+    items[next]?.focus({ preventScroll: true });
+  };
   // The device card becomes an actionable workspace menu only when the
   // workspace handlers are wired (DeviceCard always passes them). Without
   // them it stays a static info tooltip.
@@ -153,6 +188,7 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
   return (
     <div className="card-menu" ref={rootRef}>
       <button
+        ref={buttonRef}
         type="button"
         className="card-menu-button"
         aria-label={t("card.deviceInfoAria")}
@@ -169,6 +205,7 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
               className={`card-menu-tooltip card-menu-tooltip--floating${open ? "" : " is-leaving"}`}
               style={floatStyle}
               role="menu"
+              onKeyDown={onMenuKey}
             >
               <div className="card-menu-current">
                 <span className="card-menu-label">

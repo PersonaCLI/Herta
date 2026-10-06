@@ -224,4 +224,75 @@ describe("CardMenu", () => {
     fireEvent.click(btn); // reopen → refresh
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
+
+  // ── Keyboard (UX review 2026-09-22, item 25) ──────────────────────────────
+  // The menu is a portal at the body, so Tab from ⋯ never reaches it: without
+  // focus moving in on open, the keyboard could open the menu and do nothing
+  // with it. Arrows walk its enabled buttons; Escape / Tab hand focus back.
+  describe("keyboard", () => {
+    const keyProps = {
+      cardKind: "device" as const,
+      activeWorkspace: "/p",
+      isDefault: true, // Reset is disabled — the arrows must skip it
+      onSetWorkspace: vi.fn(),
+      onResetWorkspace: vi.fn(),
+      trust: {
+        effective: "ask" as const,
+        explicit: null,
+        isDefaultWorkspace: false,
+      },
+      onSetTrust: vi.fn(),
+      rules: ["node a.js:*"],
+      onRemoveRule: vi.fn(),
+    };
+
+    it("moves focus to the first action when the menu opens", () => {
+      renderWithLocale(<CardMenu {...keyProps} />);
+      fireEvent.click(screen.getByLabelText("device card info"));
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: /Set workspace/ }),
+      );
+    });
+
+    it("walks the enabled actions with the arrows, wrapping at both ends", () => {
+      renderWithLocale(<CardMenu {...keyProps} />);
+      fireEvent.click(screen.getByLabelText("device card info"));
+      const set = screen.getByRole("button", { name: /Set workspace/ });
+      const trust = screen.getByRole("button", { name: /Trust/ });
+      const remove = screen.getByRole("button", {
+        name: "Remove rule node a.js:*",
+      });
+      const down = (): void => {
+        fireEvent.keyDown(document.activeElement as Element, {
+          key: "ArrowDown",
+        });
+      };
+      down();
+      expect(document.activeElement).toBe(trust); // Reset (disabled) skipped
+      down();
+      expect(document.activeElement).toBe(remove);
+      down();
+      expect(document.activeElement).toBe(set); // wraps to the top
+      fireEvent.keyDown(set, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(remove); // and to the bottom
+    });
+
+    it("hands focus back to ⋯ when Escape closes the menu", async () => {
+      renderWithLocale(<CardMenu {...keyProps} />);
+      const button = screen.getByLabelText("device card info");
+      fireEvent.click(button);
+      fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+      await waitForElementToBeRemoved(() => screen.queryByRole("menu"));
+      expect(document.activeElement).toBe(button);
+    });
+
+    it("closes on Tab and hands focus back to ⋯, never stranding it at the body's end", async () => {
+      renderWithLocale(<CardMenu {...keyProps} />);
+      const button = screen.getByLabelText("device card info");
+      fireEvent.click(button);
+      fireEvent.keyDown(document.activeElement as Element, { key: "Tab" });
+      await waitForElementToBeRemoved(() => screen.queryByRole("menu"));
+      expect(document.activeElement).toBe(button);
+    });
+  });
 });

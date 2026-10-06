@@ -97,16 +97,82 @@ interface Waiter {
   /** The live view of this command's output (ADR 0073): whole lines, the
    *  protocol lines taken out. Null when nothing watches. */
   live: ((text: string) => void) | null;
-  /** The incomplete last line held back from `live`. */
-  livePartial: string;
-  /** The command's marker line has gone by: nothing more is its output. */
-  liveDone: boolean;
+  liveLines: LiveLines;
 }
 
 /** A held-back partial line longer than this goes to the live view as it
  *  stands (a `\r` progress bar) — unless it may be a protocol line. */
 const LIVE_PARTIAL_MAX = 4_096;
 const PROTOCOL_LINE_RE = /__HERTA_(WS|PD)_[0-9a-f]{12}__:/;
+
+/** One command's live view, between chunks (ADR 0073). */
+export interface LiveLines {
+  /** The incomplete last line held back. */
+  partial: string;
+  /** An EMPTY last line held back. The wrapper's printf opens the marker
+   *  with a newline of its own, and a chunk can end between that newline
+   *  and the marker (a full suite on Windows split it there, 2026-10-07):
+   *  an empty last line is output only once a line that is not the marker
+   *  follows it. */
+  blank: boolean;
+  /** The command's marker line has gone by: nothing more is its output. */
+  done: boolean;
+}
+
+export const freshLiveLines = (): LiveLines => ({
+  partial: "",
+  blank: false,
+  done: false,
+});
+
+/**
+ * Take one chunk of a command's output (`\r\n` already normalized) and return
+ * what its live view gets now — "" for nothing yet. A whole line at a time:
+ * the shell's protocol lines — the workspace and pid lines of a fresh shell,
+ * the command's own marker line — are recognisable only whole. The marker
+ * line ends the command's output; what follows it belongs to no command.
+ */
+export function feedLiveLines(
+  st: LiveLines,
+  text: string,
+  marker: string,
+): string {
+  if (st.done) return "";
+  const s = st.partial + text;
+  const cut = s.lastIndexOf("\n");
+  if (cut === -1) {
+    if (s.length > LIVE_PARTIAL_MAX && !s.startsWith("__HERTA_")) {
+      // Not the marker: a held blank line before it was output.
+      const blank = st.blank ? "\n" : "";
+      st.partial = "";
+      st.blank = false;
+      return blank + s;
+    }
+    st.partial = s;
+    return "";
+  }
+  st.partial = s.slice(cut + 1);
+  const out: string[] = st.blank ? [""] : [];
+  st.blank = false;
+  for (const line of s.slice(0, cut).split("\n")) {
+    if (line.includes(marker)) {
+      st.done = true;
+      st.partial = "";
+      // The wrapper's printf opens the marker with a newline of its own.
+      if (out[out.length - 1] === "") out.pop();
+      return out.length > 0 ? `${out.join("\n")}\n` : "";
+    }
+    if (PROTOCOL_LINE_RE.test(line)) continue;
+    out.push(line);
+  }
+  // An empty last line may be that newline with its marker still on the
+  // way: hold it until the next line decides.
+  if (out[out.length - 1] === "") {
+    out.pop();
+    st.blank = true;
+  }
+  return out.length > 0 ? `${out.join("\n")}\n` : "";
+}
 
 export class PersistentShell implements BackgroundProcess {
   readonly id = SHELL_BG_ID;
@@ -423,40 +489,13 @@ export class PersistentShell implements BackgroundProcess {
     this.onShellPid?.(group.winpid, { ...group, ps });
   }
 
-  /**
-   * Hand the waiting command's output to its live view (ADR 0073), a whole
-   * line at a time: the shell's protocol lines — the workspace and pid lines
-   * of a fresh shell, the command's own marker line — are recognisable only
-   * whole. The marker line ends the command's output; what follows it
-   * belongs to no command. Separate from `buf`, which this never touches.
-   */
+  /** Hand the waiting command's output to its live view (ADR 0073; the
+   *  line rules are `feedLiveLines`'s). Separate from `buf`, which this
+   *  never touches. */
   private feedLive(w: Waiter, text: string): void {
-    if (w.live === null || w.liveDone) return;
-    const s = w.livePartial + text;
-    const cut = s.lastIndexOf("\n");
-    if (cut === -1) {
-      if (s.length > LIVE_PARTIAL_MAX && !s.startsWith("__HERTA_")) {
-        w.livePartial = "";
-        w.live(s);
-      } else {
-        w.livePartial = s;
-      }
-      return;
-    }
-    w.livePartial = s.slice(cut + 1);
-    const out: string[] = [];
-    for (const line of s.slice(0, cut).split("\n")) {
-      if (line.includes(w.marker)) {
-        w.liveDone = true;
-        w.livePartial = "";
-        // The wrapper's printf opens the marker with a newline of its own.
-        if (out[out.length - 1] === "") out.pop();
-        break;
-      }
-      if (PROTOCOL_LINE_RE.test(line)) continue;
-      out.push(line);
-    }
-    if (out.length > 0) w.live(`${out.join("\n")}\n`);
+    if (w.live === null) return;
+    const out = feedLiveLines(w.liveLines, text, w.marker);
+    if (out.length > 0) w.live(out);
   }
 
   private failWaiter(how: { shellExited: boolean; timedOut: boolean }): void {
@@ -637,8 +676,7 @@ export class PersistentShell implements BackgroundProcess {
         dropped: 0,
         child,
         live: opts.onOutput ?? null,
-        livePartial: "",
-        liveDone: false,
+        liveLines: freshLiveLines(),
       };
       w.timer = setTimeout(() => {
         // Timeout: the state is unknowable now — kill and let the next

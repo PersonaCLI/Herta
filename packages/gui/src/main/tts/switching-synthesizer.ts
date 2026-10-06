@@ -37,6 +37,11 @@ export function createSwitchingSynthesizer(
     available(): boolean {
       return pick(opts.engine()).available();
     },
+    // The engine the stream's first unit will latch to — the reveal reads
+    // this just before that request (ADR 0042 §7d).
+    warm(): boolean {
+      return pick(opts.engine()).warm?.() === true;
+    },
     synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null> {
       let engine = latched.get(req.utteranceId);
       if (engine === undefined) {

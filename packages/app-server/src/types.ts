@@ -157,6 +157,12 @@ export interface SynthesizedAudio {
  */
 export interface SpeechSynthesizer {
   available(): boolean;
+  /** True when a request made now would pay no cold start: the local model
+   *  is loaded, or the engine has none to load (a cloud voice). The voiced
+   *  reveal reads it at a stream's first request — a warm engine's first
+   *  unit is held to the same liveness cap as any later one (ADR 0042 §7d).
+   *  Absent reads as cold: the head keeps its own, longer rules. */
+  warm?(): boolean;
   synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null>;
   cancel(utteranceId: string): void;
 }

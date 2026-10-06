@@ -557,3 +557,47 @@ describe("createVoicedReveal — a unit that stalls mid-stream (ADR 0042 §7c)",
     await h.ctl.done;
   });
 });
+
+describe("createVoicedReveal — a FIRST unit that stalls (ADR 0042 §7d)", () => {
+  it("on a warm engine the first unit gets the same liveness cap: past it the reply types unvoiced and its synthesis is cancelled", async () => {
+    const synth = Object.assign(fakeSynth(), { warm: () => true });
+    const h = harness({ synth });
+    const s0 = "第一句的合成一直没有回来。";
+    const s1 = "第二句只好跟着打字。";
+    h.ctl.pushToken(s0 + s1);
+    h.ctl.finishInput();
+    expect(h.synth.requests.map((r) => r.seq)).toEqual([0, 1]);
+    // Neither unit lands. The screen used to stay blank here until the
+    // synthesizer's own deadline (25 s; 45 s on a first request).
+    await vi.advanceTimersByTimeAsync(UNIT_STALL_MAX_MS - 10);
+    expect(h.text()).toBe("");
+    expect(h.synth.cancelled).toEqual([]);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(h.synth.cancelled).toEqual(["u1"]);
+    // Typing starts at once — a degraded stream has nothing to pre-roll for.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(h.text().length).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(h.text()).toBe(s0 + s1);
+    expect(h.tts()).toHaveLength(0);
+    await h.ctl.done;
+  });
+
+  it.each([
+    ["says it is cold", { warm: () => false }],
+    ["cannot say", {}],
+  ])("an engine that %s keeps the head's own rules: a model load is not a stall", async (_label, extra) => {
+    const synth = Object.assign(fakeSynth(), extra);
+    const h = harness({ synth });
+    h.ctl.pushToken("模型还在加载。");
+    h.ctl.finishInput();
+    await vi.advanceTimersByTimeAsync(UNIT_STALL_MAX_MS * 2);
+    expect(h.text()).toBe("");
+    expect(h.synth.cancelled).toEqual([]);
+    h.synth.resolve(0, 400);
+    await vi.advanceTimersByTimeAsync(450);
+    expect(h.text()).toBe("模型还在加载。");
+    expect(h.tts()).toHaveLength(1);
+    await h.ctl.done;
+  });
+});

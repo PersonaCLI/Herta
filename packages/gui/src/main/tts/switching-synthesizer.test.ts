@@ -53,6 +53,23 @@ describe("createSwitchingSynthesizer", () => {
     expect(minimax.cancels).toEqual(["minimax:u2", "minimax:unknown"]);
   });
 
+  it("warm() is the answer of the engine the next stream would use; an engine that cannot say is cold", () => {
+    let choice: VoiceEngine = "local";
+    let localWarm = false;
+    const local = engine("local");
+    const minimax = engine("minimax");
+    const sw = createSwitchingSynthesizer({
+      engine: () => choice,
+      local: { ...local.synth, warm: () => localWarm },
+      minimax: minimax.synth, // no warm()
+    });
+    expect(sw.warm?.()).toBe(false);
+    localWarm = true;
+    expect(sw.warm?.()).toBe(true);
+    choice = "minimax";
+    expect(sw.warm?.()).toBe(false);
+  });
+
   it("available() is the chosen engine's answer", () => {
     const local = engine("local", false);
     const minimax = engine("minimax", true);

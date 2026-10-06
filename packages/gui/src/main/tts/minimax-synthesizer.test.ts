@@ -98,6 +98,18 @@ describe("createMiniMaxSynthesizer", () => {
     await expect(synth.synthesize(REQ)).resolves.toBeNull();
   });
 
+  it("warm() is always true: a cloud voice has no model to load (ADR 0042 §7d)", () => {
+    const synth = createMiniMaxSynthesizer({
+      fetch: fakeT2a({ delayMs: 0 }).fetch,
+      key: () => "k",
+      voice: () => ({ voiceId: "v", host: "https://h" }),
+      enabled: () => true,
+      log: () => undefined,
+    });
+    expect(synth.warm?.()).toBe(true);
+    synth.dispose();
+  });
+
   it("cancel aborts that utterance's in-flight requests and resolves them null", async () => {
     const t2a = fakeT2a({ delayMs: 10_000 });
     const synth = createMiniMaxSynthesizer({

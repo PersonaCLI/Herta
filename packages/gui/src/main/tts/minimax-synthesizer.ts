@@ -200,6 +200,12 @@ export function createMiniMaxSynthesizer(
       );
     },
 
+    // No model to load: a first unit here pays no cold start, so the reveal
+    // holds it to the same liveness cap as any other (ADR 0042 §7d).
+    warm(): boolean {
+      return true;
+    },
+
     async synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null> {
       // The toggle is read per request (ADR 0042 §7c), like the local engine.
       if (disposed || !opts.enabled()) return null;

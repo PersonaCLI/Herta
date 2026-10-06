@@ -180,6 +180,9 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
 
   let worker: UtilityProcess | null = null;
   let ready: Promise<void> | null = null;
+  /** The running worker has answered `ready` — its model is loaded, so a
+   *  request now pays no cold start (`warm()`, ADR 0042 §7d). */
+  let loaded = false;
   let restarts = 0;
   let failed = false;
   let disposed = false;
@@ -271,6 +274,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
     }
     worker = null;
     ready = null;
+    loaded = false;
   };
 
   const start = (): Promise<void> => {
@@ -313,6 +317,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
             log(
               `worker ready (sampleRate ${msg.sampleRate}, effect ${msg.effect ?? "none"})`,
             );
+            if (worker === child) loaded = true;
             resolve();
           }
           return;
@@ -354,6 +359,7 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
         if (ours) {
           worker = null;
           ready = null;
+          loaded = false;
         }
         rejectAll();
         if (disposed) return;
@@ -387,6 +393,10 @@ export function createTtsSynthesizer(opts: TtsSynthesizerOpts): TtsSynthesizer {
   return {
     available(): boolean {
       return !disposed && bundleOk && runtimeOk && !failed && opts.enabled();
+    },
+
+    warm(): boolean {
+      return !disposed && loaded && worker !== null;
     },
 
     async synthesize(req: SynthesisRequest): Promise<SynthesizedAudio | null> {

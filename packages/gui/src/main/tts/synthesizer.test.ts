@@ -282,6 +282,34 @@ describe("createTtsSynthesizer", () => {
     expect(synth.status().failed).toBe(false);
   });
 
+  it("warm() is true only while a worker that has loaded the model is running (ADR 0042 §7d)", async () => {
+    const { synth } = setup();
+    expect(synth.warm?.()).toBe(false); // nothing forked yet
+    const p = synth.synthesize(REQ);
+    expect(synth.warm?.()).toBe(false); // forked, still loading
+    const child = ready();
+    expect(synth.warm?.()).toBe(true);
+    await Promise.resolve();
+    child.exit(1); // a crash: the next request pays a fresh load
+    await expect(p).resolves.toBeNull();
+    expect(synth.warm?.()).toBe(false);
+
+    const p2 = synth.synthesize({ ...REQ, seq: 1 });
+    ready();
+    expect(synth.warm?.()).toBe(true);
+    await Promise.resolve();
+    synth.stopWorker();
+    await expect(p2).resolves.toBeNull();
+    expect(synth.warm?.()).toBe(false);
+
+    const p3 = synth.synthesize({ ...REQ, seq: 2 });
+    ready();
+    await Promise.resolve();
+    synth.dispose();
+    await expect(p3).resolves.toBeNull();
+    expect(synth.warm?.()).toBe(false);
+  });
+
   it("starts the worker lazily on the first request and reuses it after", async () => {
     const { synth, modelRoot } = setup();
     expect(children).toHaveLength(0); // nothing forked until something speaks

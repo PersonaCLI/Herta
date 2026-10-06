@@ -153,6 +153,11 @@ export const PREROLL_MAX_MS = 8000;
  * so a unit taking longer than this is a stall, not a slow start. Past it
  * the unit types unvoiced, the stream degrades (every later unit types
  * unvoiced at once) and the utterance's synthesis is cancelled.
+ *
+ * The FIRST unit is held to it too when the engine was warm at the
+ * stream's first request (ADR 0042 §7d): no model load rides on that
+ * request, so a first unit past the cap is the same stall. On a cold
+ * engine the head keeps its own rules — a model load is not a stall.
  */
 export const UNIT_STALL_MAX_MS = PREROLL_MAX_MS;
 
@@ -210,6 +215,9 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
   /** Mid-stream stall state (see UNIT_STALL_MAX_MS). */
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
   let degraded = false;
+  /** The engine was warm when the stream's first unit was asked for (ADR
+   *  0042 §7d) — then the head is held to the stall cap as well. */
+  let headWarm = false;
   const clearStall = (): void => {
     if (stallTimer !== null) {
       clearTimeout(stallTimer);
@@ -311,6 +319,9 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
       states.set(idx, { status: "pending" });
       const first = !requestedOnce;
       requestedOnce = true;
+      // Read BEFORE the request: on a cold engine it is the request that
+      // starts the model load.
+      if (first) headWarm = deps.synth.warm?.() === true;
       deps.synth
         .synthesize({
           utteranceId: deps.utteranceId,
@@ -486,12 +497,13 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
     }
     if (st === undefined) return;
     if (st.status === "pending") {
-      // The head waits under the pre-roll (below) and the first request's
-      // own deadline. Mid-stream, a unit past the liveness cap is a stall
-      // (ADR 0042 §7c): it types unvoiced, the stream degrades, and the
-      // utterance's synthesis is cancelled so the worker stops spending on
-      // audio nobody will hear.
-      if (playIdx === 0) return;
+      // A unit past the liveness cap is a stall (ADR 0042 §7c): it types
+      // unvoiced, the stream degrades, and the utterance's synthesis is
+      // cancelled so the worker stops spending on audio nobody will hear.
+      // The head is held to the cap only when the engine was warm at its
+      // request (§7d); on a cold one a model load rides on it, and it waits
+      // for its own request's longer deadline.
+      if (playIdx === 0 && !headWarm) return;
       if (!degraded) {
         if (stallTimer === null) {
           const stalledIdx = playIdx;
@@ -518,7 +530,9 @@ export function createVoicedReveal(deps: VoicedRevealDeps): VoicedReveal {
     // 2026-09-06 whole sentences can be silent) lands in a beat and gives
     // no cover, so counting it as the second unit re-created the stall the
     // pre-roll exists to remove (voice lab: 2.9 s after 哼。 + a silent line).
-    if (playIdx === 0 && !fastForwarding && !prerollExpired) {
+    // A degraded stream (a head that stalled, §7d) types unvoiced: there is
+    // no voice left to keep continuous, so nothing to pre-roll for.
+    if (playIdx === 0 && !fastForwarding && !prerollExpired && !degraded) {
       const windowEnd = Math.min(units.length, 1 + lookahead);
       const head: number[] = [];
       for (let idx = 0; idx < windowEnd && head.length < 2; idx += 1) {

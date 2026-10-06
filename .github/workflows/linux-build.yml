@@ -223,6 +223,8 @@ jobs:
           path: /tmp/shots
           if-no-files-found: warn
 
+      # Kept 7 days, not the 90-day default — the same storage reason as
+      # mac-build.yml's installer upload (2026-10-07).
       - name: upload the AppImage + update feed
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,3 +234,4 @@ jobs:
             packages/gui/release/*.AppImage
             packages/gui/release/latest-linux.yml
           if-no-files-found: warn
+          retention-days: 7

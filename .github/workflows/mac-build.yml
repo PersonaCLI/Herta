@@ -571,6 +571,11 @@ jobs:
           path: /tmp/shots
           if-no-files-found: warn
 
+      # Kept 7 days, not the 90-day default (2026-10-07): a signed `both` run
+      # is ~580 MB, and on the private repo every artifact counts against the
+      # account's Actions storage — 21 runs held 11 GB and exhausted the month's
+      # 2 GB in under a week. The copies users download are the release's own
+      # assets; this one only has to outlive the build-to-release gap.
       - name: upload the installer
         if: always()
         uses: actions/upload-artifact@v4
@@ -582,6 +587,7 @@ jobs:
             packages/gui/release/*.blockmap
             packages/gui/release/latest-mac.yml
           if-no-files-found: warn
+          retention-days: 7
 
       # The runner is ephemeral, but do not rely on that for key material.
       - name: shred the signing material

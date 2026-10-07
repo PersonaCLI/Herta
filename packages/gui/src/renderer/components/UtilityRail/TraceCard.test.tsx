@@ -3,7 +3,12 @@ import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LiveToolSnapshot, LiveToolView } from "../../ipc/bridge-types.js";
 import { renderWithSession } from "../../testing/renderWithSession.js";
-import { CARD_HOLD_MS, CARD_SLIDE_MS } from "./card-motion.js";
+import {
+  CARD_HOLD_MS,
+  CARD_SLIDE_MS,
+  CARD_TICKER_HOLD_MS,
+  CARD_TICKER_MS,
+} from "./card-motion.js";
 import { TraceCard } from "./TraceCard.js";
 import { pendingSteps, stepOf } from "./useTraceCard.js";
 
@@ -88,7 +93,12 @@ const lines = () =>
       note !== undefined ? ` [${note}]` : ""
     }`;
   });
-const ticker = () => document.querySelector('[data-testid="trace-ticker"]');
+/** The LIVE ticker. A node that just folded keeps its last ticker while the
+ *  line eases shut (TickerSlot, 2026-10-08) — hidden, and not the step's. */
+const ticker = () =>
+  document.querySelector(
+    '.trace-node__slot:not(.is-closing) [data-testid="trace-ticker"]',
+  );
 const tickerText = () =>
   ticker()?.querySelector(".trace-ticker__line")?.textContent;
 /** Let the paced ticker catch up (ticker-pacer.ts: a hold is 320 ms). */
@@ -233,6 +243,94 @@ describe("TraceCard — the ticker (ADR 0073)", () => {
     expect(ticker()?.querySelector(".trace-ticker__cursor")).not.toBeNull();
     settle();
     expect(tickerText()).toBe("export const b");
+  });
+
+  it("the ticker eases shut under a node that folds while the next node opens its own — the card never drops a line in one frame (owner 2026-10-08)", () => {
+    // "The new row appeared like a flash": the folded node lost its ticker
+    // line in the same frame the new node arrived, so the card dipped by a
+    // line and grew back.
+    vi.useFakeTimers();
+    const h = renderWithSession(<TraceCard />);
+    h.startBackend();
+    push(h, user(), op("Running", "npm test"));
+    const test = view({
+      tool: "bash",
+      stage: "running",
+      started: true,
+      ordinal: 0,
+      commandLine: "npm test",
+      tail: "PASS a.test.ts",
+      lines: 1,
+    });
+    live(h, [test]);
+    settle();
+    expect(tickerText()).toBe("PASS a.test.ts");
+    // The test passes and 板砖 starts on a file: a new node, another phase.
+    push(h, exit(0, 1), op("Writing", "src/a.ts"));
+    live(h, [
+      { ...test, done: true, ok: true },
+      view({
+        id: "c2",
+        started: true,
+        ordinal: 1,
+        path: "src/a.ts",
+        tail: "export const a = 1;",
+        lines: 1,
+      }),
+    ]);
+    expect(lines()).toEqual([
+      "Verify Ran npm test [exit 0]",
+      "Edit* Writing src/a.ts [1 line]",
+    ]);
+    // The folded node keeps its last line while it eases shut — hidden…
+    const closing = document.querySelector(".trace-node__slot.is-closing");
+    expect(closing?.getAttribute("aria-hidden")).toBe("true");
+    expect(closing?.textContent).toContain("PASS a.test.ts");
+    expect(nodes()[0]?.contains(closing ?? null)).toBe(true);
+    // …the node in flight has its own…
+    expect(nodes()[1]?.contains(ticker())).toBe(true);
+    // …and once the line has eased shut, it is gone.
+    act(() => {
+      vi.advanceTimersByTime(CARD_TICKER_MS + 20);
+    });
+    expect(document.querySelector(".trace-node__slot.is-closing")).toBeNull();
+    expect(nodes()[0]?.querySelector(".trace-node__slot")).toBeNull();
+  });
+
+  it("the node still in flight keeps its ticker through a momentary gap, and lets it go when the gap lasts (lab 2026-10-08)", () => {
+    // While 板砖 writes its next call, the ticker's call is briefly that
+    // draft — here one that makes no op row — and the line used to ease half
+    // shut and open again on every step.
+    vi.useFakeTimers();
+    const h = renderWithSession(<TraceCard />);
+    h.startBackend();
+    push(h, user(), op("Running", "npm test"));
+    const test = view({
+      tool: "bash",
+      stage: "running",
+      started: true,
+      ordinal: 0,
+      commandLine: "npm test",
+      tail: "PASS a.test.ts",
+      lines: 1,
+    });
+    const draft = view({ id: "c2", tool: "report_finding", streams: false });
+    live(h, [test]);
+    settle();
+    expect(tickerText()).toBe("PASS a.test.ts");
+    live(h, [test, draft]);
+    // Still the step in flight…
+    expect(lines()).toEqual(["Verify* Running npm test"]);
+    // …and it holds its ticker: still the live one, not closing.
+    expect(tickerText()).toBe("PASS a.test.ts");
+    live(h, [test]);
+    expect(tickerText()).toBe("PASS a.test.ts");
+    // A gap that lasts: it lets go.
+    live(h, [test, draft]);
+    act(() => {
+      vi.advanceTimersByTime(CARD_TICKER_HOLD_MS + 20);
+    });
+    expect(ticker()).toBeNull();
   });
 
   it("an edit's lines carry their sign as a tint, not a character", () => {

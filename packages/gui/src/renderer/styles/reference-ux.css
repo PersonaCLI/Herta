@@ -4632,6 +4632,11 @@ button.session-item__badge--dismiss {
 .trace-node:last-child::before {
   display: none;
 }
+/* Every dot carries its ring (2026-10-08): a filled dot's is transparent
+   over its own fill. The ring used to exist only on the in-flight and queued
+   states, so finishing a step dropped it in one frame while the fill was
+   still fading in from transparent — the dot blinked out as the next node
+   arrived. Now only colours and the ring's width move, and they cross-fade. */
 .trace-node__dot {
   box-sizing: border-box;
   width: 9px;
@@ -4639,10 +4644,12 @@ button.session-item__badge--dismiss {
   /* Optical centre of the first line (12.5px × 1.45 ≈ 18px). */
   margin-top: 5px;
   border-radius: 50%;
+  border: 1.5px solid transparent;
   background: color-mix(in srgb, var(--banzhuan-led) 42%, transparent);
   transition:
     background-color 260ms ease,
-    border-color 260ms ease;
+    border-color 260ms ease,
+    border-width 260ms ease;
 }
 .trace-node.is-fail .trace-node__dot {
   background: #b98080;
@@ -4651,14 +4658,15 @@ button.session-item__badge--dismiss {
    faint ring, its line in the quietest ink. */
 .trace-node.is-queued .trace-node__dot {
   background: transparent;
-  border: 1px solid var(--hairline-strong);
+  border-width: 1px;
+  border-color: var(--hairline-strong);
 }
 .trace-node.is-queued .trace-node__line {
   color: var(--muted-4);
 }
 .trace-node.is-in-flight .trace-node__dot {
   background: transparent;
-  border: 1.5px solid var(--banzhuan-led);
+  border-color: var(--banzhuan-led);
 }
 /* Parked on an approval: the step is the current one, but nothing is being
    done to it — the ring breaks. */
@@ -4667,6 +4675,33 @@ button.session-item__badge--dismiss {
 }
 .trace-node__body {
   min-width: 0;
+}
+/* The ticker's place under the node in flight (TickerSlot, 2026-10-08): it
+   eases open as a step starts and shut as the node folds, so the card's
+   height glides instead of dipping by a line and growing back. Row heights
+   to and from auto via the 0fr/1fr grid track; the length MUST match
+   CARD_TICKER_MS (card-motion.ts). */
+.trace-node__slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 260ms var(--ease-signature),
+    opacity 200ms ease;
+}
+.trace-node__slot.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+/* Closing: the line goes first, then its room. */
+.trace-node__slot.is-closing {
+  transition:
+    grid-template-rows 260ms var(--ease-signature),
+    opacity 140ms ease;
+}
+.trace-node__slot-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 .trace-node__line {
   display: flex;
@@ -5092,6 +5127,8 @@ button.repo-card__path,
   .plan-card,
   .plan-card__list { transition: none; }
   .trace-ticker__line { animation: none; }
+  .trace-node__slot,
+  .trace-node__dot { transition: none; }
   .plan-card__row { animation: none; }
 }
 .activity-step {

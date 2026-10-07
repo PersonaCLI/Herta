@@ -41,6 +41,16 @@ export const CARD_SLIDE_MS = 640;
 export const CARD_ROW_ENTER_MS = 300;
 export const CARD_ROW_LEAVE_MS = 220;
 
+/** The trace card's ticker line easing open under the node in flight and
+ *  shut under the one that just finished (2026-10-08) — MUST match
+ *  `.trace-node__slot`'s transition in reference-ux.css. */
+export const CARD_TICKER_MS = 260;
+
+/** How long the node in flight keeps a ticker it lost for a moment — the
+ *  ticker's call switching to a queued draft and back (lab 2026-10-08, gaps
+ *  of 15–170ms) — before letting it ease shut. */
+export const CARD_TICKER_HOLD_MS = 250;
+
 /** The hook options for a card: motion off under reduced motion, and off
  *  until the card's first content has been on screen (`settled`) — the
  *  card's own slide is its entrance; the rows move for CHANGES after it. */

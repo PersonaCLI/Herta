@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { useListTransitions } from "../../hooks/useListTransitions.js";
+import { usePresence } from "../../hooks/usePresence.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { LiveToolView } from "../../ipc/bridge-types.js";
@@ -12,6 +13,8 @@ import {
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
 import {
   CARD_ROW_ENTER_MS,
+  CARD_TICKER_HOLD_MS,
+  CARD_TICKER_MS,
   cardRowMotion,
   rowPhaseClass,
 } from "./card-motion.js";
@@ -75,18 +78,30 @@ export function TraceCard(): JSX.Element | null {
 
   // Follow the tail — the node in flight is the one being watched — unless
   // the reader scrolled up to look at an earlier one (the pin releases past
-  // ~1½ rows of drift). An entering node opens from zero height, so the tail
-  // is followed again once its entrance has ended.
+  // ~1½ rows of drift).
+  //
+  // Frame by frame through the entrance (2026-10-08): an entering node opens
+  // from zero height and its ticker eases open under it, so following once
+  // up front left the new node growing below the fold, and the catch-up when
+  // its entrance ended jumped the list by a whole node. Tracking the tail
+  // while it grows makes the list glide with it. A scroll the loop did not
+  // write is the reader's, and ends it.
   useEffect(() => {
     const el = listRef.current;
     if (el === null || trace === null) return;
-    const follow = (): void => {
-      const drift = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (drift < 40 || el.scrollTop === 0) el.scrollTop = el.scrollHeight;
+    const drift = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (drift >= 40 && el.scrollTop !== 0) return;
+    const until = performance.now() + CARD_ROW_ENTER_MS + CARD_TICKER_MS;
+    let written: number | null = null;
+    let frame = 0;
+    const follow = (now: number): void => {
+      if (written !== null && Math.abs(el.scrollTop - written) > 2) return;
+      el.scrollTop = el.scrollHeight;
+      written = el.scrollTop;
+      if (now < until) frame = requestAnimationFrame(follow);
     };
-    follow();
-    const timer = setTimeout(follow, CARD_ROW_ENTER_MS + 20);
-    return () => clearTimeout(timer);
+    follow(performance.now());
+    return () => cancelAnimationFrame(frame);
   }, [trace]);
 
   if (trace === null) return null;
@@ -133,6 +148,8 @@ export function TraceCard(): JSX.Element | null {
             current !== null &&
             row.phase !== "leave" &&
             segment.ordinal === current.segment;
+          // A read has no stream: its node names the step, and that is all.
+          const stream = inFlight && live?.streams === true ? live : null;
           return (
             <li
               key={row.key}
@@ -147,7 +164,7 @@ export function TraceCard(): JSX.Element | null {
                   <InFlight
                     segment={segment}
                     step={segment.ops[current.op - segment.firstOpOrdinal]}
-                    live={live}
+                    live={stream}
                     t={t}
                   />
                 ) : (
@@ -164,6 +181,9 @@ export function TraceCard(): JSX.Element | null {
                     {segmentNote(segment, t)}
                   </div>
                 )}
+                <TickerSlot inFlight={inFlight}>
+                  {stream !== null ? <LiveTicker live={stream} t={t} /> : null}
+                </TickerSlot>
               </div>
             </li>
           );
@@ -174,85 +194,148 @@ export function TraceCard(): JSX.Element | null {
 }
 
 /**
- * The node in flight: its phase and current step, and — while a live view
- * belongs to it — the ticker: what the step is producing, paced for the eye
- * (ticker-pacer.ts). Each new line rises into place and holds long enough to
- * be read; a line still being written waits until it is whole; when the step
- * ends the ticker settles on what it did, not on its last `}`.
+ * The node in flight: its phase and current step, and how many lines the
+ * step has produced. What it is producing — the ticker — is its own
+ * component below the line ({@link TickerSlot}), so it can ease shut when
+ * the node folds instead of vanishing with it.
  */
 function InFlight(props: {
   readonly segment: TraceSegment;
   readonly step: TraceSegment["ops"][number] | undefined;
+  /** The step's streaming view, if it has one (a read has none). */
   readonly live: LiveToolView | null;
   readonly t: T;
 }): JSX.Element {
-  const { segment, step, t } = props;
-  // A read has no stream: its node names the step, and that is all.
-  const live = props.live?.streams === true ? props.live : null;
+  const { segment, step, live, t } = props;
   const text =
     step === undefined
       ? ""
       : `${verbText(step.verb, t)} ${step.arg.length > 0 ? step.arg : "…"}`;
+  return (
+    <div className="trace-node__line">
+      <span className="trace-node__phase">{t(PHASE_KEY[segment.phase])}</span>
+      <span className="trace-card__text" title={text}>
+        {text}
+      </span>
+      {live !== null && live.lines > 0 ? (
+        <span className="trace-card__note">
+          {t(live.lines === 1 ? "trace.live.lineOne" : "trace.live.lines", {
+            n: String(live.lines),
+          })}
+        </span>
+      ) : (
+        step?.note !== undefined && (
+          <span
+            className={`trace-card__note${
+              step.status === "fail" ? " is-fail" : ""
+            }`}
+          >
+            {noteText(step.note, t)}
+          </span>
+        )
+      )}
+    </div>
+  );
+}
+
+/**
+ * The ticker under the node in flight: what the step is producing, paced for
+ * the eye (ticker-pacer.ts). Each new line rises into place and holds long
+ * enough to be read; a line still being written waits until it is whole; when
+ * the step ends the ticker settles on what it did, not on its last `}`.
+ */
+function LiveTicker(props: {
+  readonly live: LiveToolView;
+  readonly t: T;
+}): JSX.Element {
+  const { live, t } = props;
   const ticker = useTickerFrame(live, TICKER_PACED);
   // The step is over once its ticker has settled — a fly-by still playing
   // keeps its cursor.
-  const settled = ticker !== null ? ticker.settled : live?.done === true;
+  const settled = ticker !== null ? ticker.settled : live.done === true;
   return (
-    <>
-      <div className="trace-node__line">
-        <span className="trace-node__phase">{t(PHASE_KEY[segment.phase])}</span>
-        <span className="trace-card__text" title={text}>
-          {text}
+    <div
+      className={`trace-ticker${settled ? " is-done" : ""}${
+        live.ok === false ? " is-fail" : ""
+      }${ticker?.growing === true ? " is-growing" : ""}`}
+      data-testid="trace-ticker"
+    >
+      {ticker === null ? (
+        <span className="trace-ticker__empty">
+          {live.stage === "running" ? t("trace.live.noOutput") : "…"}
         </span>
-        {live !== null && live.lines > 0 ? (
-          <span className="trace-card__note">
-            {t(live.lines === 1 ? "trace.live.lineOne" : "trace.live.lines", {
-              n: String(live.lines),
-            })}
-          </span>
-        ) : (
-          step?.note !== undefined && (
-            <span
-              className={`trace-card__note${
-                step.status === "fail" ? " is-fail" : ""
-              }`}
-            >
-              {noteText(step.note, t)}
-            </span>
-          )
-        )}
-      </div>
-      {live !== null && (
-        <div
-          className={`trace-ticker${settled ? " is-done" : ""}${
-            live.ok === false ? " is-fail" : ""
-          }${ticker?.growing === true ? " is-growing" : ""}`}
-          data-testid="trace-ticker"
+      ) : (
+        <span
+          // A new line rises into place; the same line growing does not
+          // remount, so its characters simply flow in.
+          key={ticker.key}
+          className={`trace-ticker__line${
+            ticker.sign === "+"
+              ? " is-add"
+              : ticker.sign === "-"
+                ? " is-del"
+                : ""
+          }`}
         >
-          {ticker === null ? (
-            <span className="trace-ticker__empty">
-              {live.stage === "running" ? t("trace.live.noOutput") : "…"}
-            </span>
-          ) : (
-            <span
-              // A new line rises into place; the same line growing does not
-              // remount, so its characters simply flow in.
-              key={ticker.key}
-              className={`trace-ticker__line${
-                ticker.sign === "+"
-                  ? " is-add"
-                  : ticker.sign === "-"
-                    ? " is-del"
-                    : ""
-              }`}
-            >
-              <span className="trace-ticker__text">{ticker.text}</span>
-            </span>
-          )}
-          <span className="trace-ticker__cursor" aria-hidden="true" />
-        </div>
+          <span className="trace-ticker__text">{ticker.text}</span>
+        </span>
       )}
-    </>
+      <span className="trace-ticker__cursor" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * The ticker's place under a node, eased open and shut (owner 2026-10-08:
+ * "the new row appeared like a flash"). It used to come and go with the
+ * node's in-flight state, in one frame: when the next node arrived, the
+ * previous one lost its ticker line at once — the card dipped by a line —
+ * and the new one opened from nothing, so every step change jolted the card.
+ *
+ * Closing, it keeps the last ticker it was given (the same element, so the
+ * ticker inside renders exactly what it last showed) while the row eases
+ * shut, marked hidden; a node that comes back in flight mid-close re-opens in
+ * place. Reduced motion: the CSS drops the transition.
+ *
+ * A node still in flight that loses its ticker for a moment keeps it for
+ * {@link CARD_TICKER_HOLD_MS} first (lab 2026-10-08): while 板砖 starts
+ * writing its next call, the ticker's call is briefly that queued draft, not
+ * the step in flight, and the line eased half shut and open again — a blink
+ * on every step. A node that FOLDS lets go at once.
+ */
+function TickerSlot(props: {
+  readonly inFlight: boolean;
+  readonly children: JSX.Element | null;
+}): JSX.Element | null {
+  const has = props.children !== null;
+  const seenAt = useRef(0);
+  const [, recheck] = useReducer((n: number) => n + 1, 0);
+  const now = Date.now();
+  if (has) seenAt.current = now;
+  const held =
+    !has && props.inFlight && now - seenAt.current < CARD_TICKER_HOLD_MS;
+  useEffect(() => {
+    if (!held) return;
+    const timer = setTimeout(
+      recheck,
+      CARD_TICKER_HOLD_MS - (Date.now() - seenAt.current) + 1,
+    );
+    return () => clearTimeout(timer);
+  }, [held]);
+  const active = has || held;
+  const { mounted, open } = usePresence(active, CARD_TICKER_MS);
+  const last = useRef<JSX.Element | null>(null);
+  if (props.children !== null) last.current = props.children;
+  if (!mounted || last.current === null) return null;
+  return (
+    <div
+      className={`trace-node__slot${open ? " is-open" : ""}${
+        active ? "" : " is-closing"
+      }`}
+      aria-hidden={active ? undefined : true}
+    >
+      <div className="trace-node__slot-inner">{last.current}</div>
+    </div>
   );
 }
 

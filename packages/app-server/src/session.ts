@@ -68,6 +68,10 @@ import {
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
 import { BusActorStreamingSink } from "./bus-streaming-sink.js";
 import { dropWithdrawnJournal } from "./dispatch-recovery.js";
+import {
+  offlineChatProvider,
+  offlineCompletionProvider,
+} from "./offline-providers.js";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import { recordTail } from "./record-window.js";
 import {
@@ -1941,14 +1945,22 @@ export class SessionImpl implements Session {
     // The one way both hosts build it (session-wiring.ts): Settings →
     // Coprocessor supplies the model and the thinking level (default
     // "high"), the wiring supplies everything the CLI would spell the same.
+    // Under the test seam a role left unstubbed is offline, never a real
+    // provider (offline-providers.ts) — and the same for the actor's roles
+    // and the title below.
+    const stubs = deps.providerOverrides;
     const backendProvider =
-      deps.providerOverrides?.backend ??
-      createBackendProvider({
-        apiKey,
-        model: config.providers.backendModel,
-        ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
-        ...baseUrl,
-      });
+      stubs?.backend ??
+      (stubs !== undefined
+        ? offlineChatProvider("backend")
+        : createBackendProvider({
+            apiKey,
+            model: config.providers.backendModel,
+            ...(config.thinking !== undefined
+              ? { thinking: config.thinking }
+              : {}),
+            ...baseUrl,
+          }));
 
     // 1. Backend stack (shared wiring — see session-wiring.ts). The
     //    OverlayAskResolver surfaces pending permission requests through the
@@ -2087,14 +2099,17 @@ export class SessionImpl implements Session {
       dream: config.dream,
       promptDumpDir: config.transcriptDir,
       overrides: {
-        ...(deps.providerOverrides?.actor !== undefined
-          ? { actorProvider: deps.providerOverrides.actor }
-          : {}),
-        ...(deps.providerOverrides?.router !== undefined
-          ? { routerProvider: deps.providerOverrides.router }
-          : {}),
-        ...(deps.providerOverrides?.supervisor !== undefined
-          ? { supervisorProvider: deps.providerOverrides.supervisor }
+        ...(stubs !== undefined
+          ? {
+              actorProvider: stubs.actor ?? offlineCompletionProvider("actor"),
+              routerProvider: stubs.router ?? offlineChatProvider("router"),
+              // A router stub still covers the supervisor (and the recap,
+              // which rides its adapter) — the wiring's own test-seam rule.
+              supervisorProvider:
+                stubs.supervisor ??
+                stubs.router ??
+                offlineChatProvider("supervisor"),
+            }
           : {}),
         ...(deps.staticPrefixOverride !== undefined
           ? { staticPrefix: deps.staticPrefixOverride }
@@ -2114,7 +2129,10 @@ export class SessionImpl implements Session {
     // The title model (see createTitleProvider) and the title/topics the
     // session opens with, judged against the record actually loaded.
     const titleProvider =
-      deps.providerOverrides?.title ?? createTitleProvider(apiKey, baseUrl);
+      stubs?.title ??
+      (stubs !== undefined
+        ? offlineChatProvider("title")
+        : createTitleProvider(apiKey, baseUrl));
     const existing = loadSessionTitleState(
       config.transcriptDir,
       sessionId,

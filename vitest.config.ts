@@ -6,6 +6,9 @@ import { DOM_FREE_TESTS } from "./packages/gui/vitest.dom-free.js";
 // file is done (59 263 leaked ones on 2026-09-18 — see the file's header).
 // packages/gui/vitest.config.ts lists it too for the jsdom project.
 const TRACK_TMP_DIRS = "./packages/core/test-setup/track-tmp-dirs.ts";
+// The node project's tests never reach the network: a remote fetch is
+// refused and fails the test that made it (see the file's header).
+const NO_NETWORK = "./packages/core/test-setup/no-network.ts";
 
 // Workspace vitest config — uses Vitest 3's `projects` feature so each
 // package can opt into its own environment / setup files. Without
@@ -25,8 +28,10 @@ export default defineConfig({
           name: "node",
           include: [
             "packages/{app-server,cli,core,herta,knowledge,memory,providers,tools}/src/**/*.test.ts",
+            // The setup files' own tests (outside src: not part of the build).
+            "packages/core/test-setup/*.test.ts",
           ],
-          setupFiles: [TRACK_TMP_DIRS],
+          setupFiles: [TRACK_TMP_DIRS, NO_NETWORK],
           passWithNoTests: true,
         },
       },

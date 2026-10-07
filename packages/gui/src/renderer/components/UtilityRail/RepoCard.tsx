@@ -116,17 +116,27 @@ export function RepoCard(): JSX.Element | null {
         </span>
       </header>
       <div className="repo-card__branch">
-        <span className="repo-card__branch-name" title={branchTitle}>
+        <span
+          className="repo-card__branch-name"
+          // The app's tip, not the OS's (owner 2026-10-08). With the head's
+          // short sha it says more than the name; without it, only a name
+          // cut off needs it.
+          {...hoverTipProps(branchTitle, {
+            whenClipped: branchTitle === branchLabel,
+          })}
+        >
           <SwapText text={branchLabel} reduced={reduced} />
         </span>
         {repo.upstream !== null && (
           <span
             className={`repo-card__upstream${repo.upstreamGone ? " is-gone" : ""}`}
-            title={t(
-              repo.upstreamGone
-                ? "repo.card.upstreamGone"
-                : "repo.card.upstream",
-              { name: repo.upstream },
+            {...hoverTipProps(
+              t(
+                repo.upstreamGone
+                  ? "repo.card.upstreamGone"
+                  : "repo.card.upstream",
+                { name: repo.upstream },
+              ),
             )}
           >
             {repo.upstream}
@@ -138,13 +148,13 @@ export function RepoCard(): JSX.Element | null {
           <span className="repo-card__gone">{t("repo.card.gone")}</span>
         )}
         {deltaParts.length > 0 && (
-          <span className="repo-card__delta" title={deltaTitle}>
+          <span className="repo-card__delta" {...hoverTipProps(deltaTitle)}>
             <SwapText text={deltaParts.join(" ")} reduced={reduced} />
           </span>
         )}
       </div>
       {prefix.length > 0 && (
-        <p className="repo-card__scope" title={repo.root}>
+        <p className="repo-card__scope" {...hoverTipProps(repo.root)}>
           {t("repo.card.scope", { prefix })}
         </p>
       )}
@@ -177,7 +187,7 @@ export function RepoCard(): JSX.Element | null {
               >
                 <span
                   className="plan-card__mark"
-                  title={t(STATUS_KEY[mark.kind])}
+                  {...hoverTipProps(t(STATUS_KEY[mark.kind]))}
                 >
                   {mark.glyph}
                 </span>
@@ -185,7 +195,11 @@ export function RepoCard(): JSX.Element | null {
                   <button
                     type="button"
                     className="repo-card__path"
-                    title={file.path}
+                    // Only a path cut off repeats itself in a tip; one the
+                    // workspace spells differently says where it really is.
+                    {...hoverTipProps(file.path, {
+                      whenClipped: file.path === shown,
+                    })}
                     aria-label={`${
                       diffs && mark.kind !== "conflict"
                         ? t("activity.diff.openAria")
@@ -204,11 +218,12 @@ export function RepoCard(): JSX.Element | null {
                 ) : (
                   <span
                     className="repo-card__path"
-                    title={
+                    {...hoverTipProps(
                       inside
                         ? file.path
-                        : `${file.path} · ${t("viewer.outside")}`
-                    }
+                        : `${file.path} · ${t("viewer.outside")}`,
+                      { whenClipped: inside && file.path === shown },
+                    )}
                   >
                     {shown}
                   </span>
@@ -278,7 +293,7 @@ export function RepoCard(): JSX.Element | null {
                     <button
                       type="button"
                       className="repo-card__path repo-card__subject"
-                      {...hoverTipProps(`${c.shortSha} ${c.subject}`)}
+                      {...hoverTipProps(c.subject, { whenClipped: true })}
                       aria-label={`${t("activity.commit.openAria")} ${c.shortSha}`}
                       onClick={() =>
                         openFile(c.shortSha, {
@@ -292,7 +307,7 @@ export function RepoCard(): JSX.Element | null {
                   ) : (
                     <span
                       className="repo-card__path repo-card__subject"
-                      {...hoverTipProps(`${c.shortSha} ${c.subject}`)}
+                      {...hoverTipProps(c.subject, { whenClipped: true })}
                     >
                       {c.subject}
                     </span>

@@ -269,10 +269,11 @@ export function LogView(): JSX.Element {
                 >
                   <span className="log-view__sha">{e.shortSha}</span>
                   {/* The app's tip, not the OS's, for a subject the row
-                      clipped (owner 2026-09-09). */}
+                      clipped (owner 2026-09-09) — and only then: one seen
+                      whole needs no second copy (owner 2026-10-08). */}
                   <span
                     className="log-view__subject"
-                    {...hoverTipProps(e.subject)}
+                    {...hoverTipProps(e.subject, { whenClipped: true })}
                   >
                     {e.subject}
                   </span>

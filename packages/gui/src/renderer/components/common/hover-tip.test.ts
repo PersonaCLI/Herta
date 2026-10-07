@@ -27,6 +27,29 @@ afterEach(() => {
 });
 
 describe("hover-tip", () => {
+  it("whenClipped: an element showing its whole text raises no tip; one cut off does (owner 2026-10-08)", () => {
+    const el = anchor();
+    const props = hoverTipProps("feat: async subscribe()", {
+      whenClipped: true,
+    });
+    const focus = { currentTarget: el } as unknown as React.FocusEvent<Element>;
+    // jsdom: scrollWidth = clientWidth = 0 — seen whole.
+    props.onFocus?.(focus);
+    expect(getHoverTip()).toBeNull();
+    Object.defineProperty(el, "scrollWidth", { value: 300 });
+    Object.defineProperty(el, "clientWidth", { value: 120 });
+    props.onFocus?.(focus);
+    expect(getHoverTip()?.text).toBe("feat: async subscribe()");
+    hideHoverTip();
+    // Without the option the tip shows whatever the element shows.
+    const always = document.createElement("span");
+    document.body.appendChild(always);
+    hoverTipProps("M · modified").onFocus?.({
+      currentTarget: always,
+    } as unknown as React.FocusEvent<Element>);
+    expect(getHoverTip()?.text).toBe("M · modified");
+  });
+
   it("arms after the dwell with the anchor's rectangle; a leave before then shows nothing", () => {
     const changes: number[] = [];
     const unsub = subscribeHoverTip(() => changes.push(1));

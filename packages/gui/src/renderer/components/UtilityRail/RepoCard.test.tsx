@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { getHoverTip, hideHoverTip } from "../common/hover-tip.js";
 import { FileViewerPanel } from "../FileViewer/FileViewerPanel.js";
 import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
 import { CARD_ROW_LEAVE_MS } from "./card-motion.js";
@@ -14,6 +15,27 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
 });
+
+/** The app's tip an element raises (focus shows it at once), or undefined
+ *  when it raises none. */
+function tipOf(el: Element | null | undefined): string | undefined {
+  if (el === null || el === undefined) return undefined;
+  act(() => {
+    fireEvent.focusIn(el);
+  });
+  const text = getHoverTip()?.text;
+  act(() => {
+    hideHoverTip();
+  });
+  return text;
+}
+
+/** jsdom lays nothing out: give an element the widths of text cut off. */
+function clip(el: Element | null | undefined): void {
+  if (el === null || el === undefined) return;
+  Object.defineProperty(el, "scrollWidth", { value: 300, configurable: true });
+  Object.defineProperty(el, "clientWidth", { value: 120, configurable: true });
+}
 
 const SNAPSHOT = {
   sessionId: "s1",
@@ -384,9 +406,10 @@ describe("RepoCard (ADR 0058)", () => {
     expect(rows[0]?.querySelector("button.repo-card__path")).not.toBeNull();
     expect(rows[1]?.querySelector("button.repo-card__path")).toBeNull();
     expect(rows[1]?.classList.contains("is-outside")).toBe(true);
-    expect(
-      rows[1]?.querySelector(".repo-card__path")?.getAttribute("title"),
-    ).toContain("docs/adr/0058.md");
+    // Its tip says where it really is, even seen whole.
+    expect(tipOf(rows[1]?.querySelector(".repo-card__path"))).toContain(
+      "docs/adr/0058.md",
+    );
   });
 
   it("a dirty row opens its DIFF against HEAD where the bridge reads diffs; a conflict row opens the file (ADR 0059 §5)", async () => {
@@ -518,6 +541,33 @@ describe("RepoCard (ADR 0058)", () => {
     ).toBe("0f0f0f0");
   });
 
+  it("its tips are the app's own, and a path or a commit seen whole raises none (owner 2026-10-08)", () => {
+    // The file rows showed the OS's tooltip, and every commit row repeated
+    // its own fully visible subject in a second box.
+    const { mock, container } = mount(true);
+    act(() => {
+      mock.emitRepo({ kind: "repo", workspace: "/repo", repo: REPO });
+    });
+    const card = container.querySelector(".repo-card");
+    // No OS tooltip anywhere on the card.
+    expect(card?.querySelectorAll("[title]")).toHaveLength(0);
+    // A path seen whole: no tip. Cut off: the path.
+    const path = card?.querySelector(".repo-card__list .repo-card__path");
+    expect(tipOf(path)).toBeUndefined();
+    clip(path);
+    expect(tipOf(path)).toBe(path?.textContent);
+    // A commit subject seen whole: no tip. Cut off: the subject — the sha
+    // beside it is already on the row.
+    const subject = card?.querySelector(".repo-card__subject");
+    expect(tipOf(subject)).toBeUndefined();
+    clip(subject);
+    expect(tipOf(subject)).toBe(subject?.textContent);
+    // A status letter's tip says what it means, always.
+    const mark = card?.querySelector(".repo-card__list .plan-card__mark");
+    expect(tipOf(mark)).toBeTruthy();
+    expect(tipOf(mark)).not.toBe(mark?.textContent);
+  });
+
   it("a window focus asks the session to probe again, throttled", () => {
     vi.useFakeTimers();
     const { mock } = mount();
@@ -588,9 +638,7 @@ describe("RepoCard — a gone upstream (ADR 0058 §7)", () => {
     const card = container.querySelector(".repo-card");
     const upstream = card?.querySelector(".repo-card__upstream");
     expect(upstream?.classList.contains("is-gone")).toBe(true);
-    expect(upstream?.getAttribute("title")).toBe(
-      "上游 origin/feat/repo-card 已不存在",
-    );
+    expect(tipOf(upstream)).toBe("上游 origin/feat/repo-card 已不存在");
     expect(card?.querySelector(".repo-card__gone")?.textContent).toBe("已删除");
     expect(card?.querySelector(".repo-card__delta")).toBeNull();
     const log = [...(card?.querySelectorAll(".repo-card__log-row") ?? [])];

@@ -4,6 +4,7 @@ import { usePresence } from "../../hooks/usePresence.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { LiveToolView } from "../../ipc/bridge-types.js";
+import { hoverTipProps } from "../common/hover-tip.js";
 import { VERB_KEY } from "../Workspace/step-display.js";
 import {
   type TraceNote,
@@ -174,7 +175,11 @@ export function TraceCard(): JSX.Element | null {
                     </span>
                     <span
                       className="trace-card__text"
-                      title={foldedText(segment, t)}
+                      // The app's tip, only while the line is cut off
+                      // (owner 2026-10-08) — never the OS's.
+                      {...hoverTipProps(foldedText(segment, t), {
+                        whenClipped: true,
+                      })}
                     >
                       {foldedText(segment, t)}
                     </span>
@@ -214,7 +219,10 @@ function InFlight(props: {
   return (
     <div className="trace-node__line">
       <span className="trace-node__phase">{t(PHASE_KEY[segment.phase])}</span>
-      <span className="trace-card__text" title={text}>
+      <span
+        className="trace-card__text"
+        {...hoverTipProps(text, { whenClipped: true })}
+      >
         {text}
       </span>
       {live !== null && live.lines > 0 ? (

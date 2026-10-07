@@ -100,20 +100,42 @@ export function armHoverTip(anchor: Element, text: string): void {
   }, HOVER_TIP_DELAY_MS);
 }
 
+/** The element's text is cut off — wider than its box, as an ellipsis
+ *  shows. Read at hover time, so a row the card later widens or narrows
+ *  answers for the width it has then. */
+export function isClipped(el: Element): boolean {
+  return el.scrollWidth - el.clientWidth >= 1;
+}
+
 /** The handlers that give an element the app's tip in place of a native
  *  `title`: a dwell on hover, at once on keyboard focus, gone the moment
- *  the pointer or focus leaves. Empty text → no handlers at all. */
-export function hoverTipProps(text: string): {
+ *  the pointer or focus leaves. Empty text → no handlers at all.
+ *
+ *  `whenClipped` (owner 2026-10-08): the tip only repeats what the element
+ *  already shows, so it is shown only while the element's text is cut
+ *  off — a commit subject or a path seen whole needs no second copy. Leave
+ *  it off when the tip says something the element does not (a status
+ *  letter's meaning, a repository path beside a workspace-relative one). */
+export function hoverTipProps(
+  text: string,
+  opts: { readonly whenClipped?: boolean } = {},
+): {
   readonly onMouseEnter?: (e: React.MouseEvent<Element>) => void;
   readonly onMouseLeave?: () => void;
   readonly onFocus?: (e: React.FocusEvent<Element>) => void;
   readonly onBlur?: () => void;
 } {
   if (text.length === 0) return {};
+  const wanted = (el: Element): boolean =>
+    opts.whenClipped !== true || isClipped(el);
   return {
-    onMouseEnter: (e) => armHoverTip(e.currentTarget, text),
+    onMouseEnter: (e) => {
+      if (wanted(e.currentTarget)) armHoverTip(e.currentTarget, text);
+    },
     onMouseLeave: hideHoverTip,
-    onFocus: (e) => showHoverTip(e.currentTarget, text),
+    onFocus: (e) => {
+      if (wanted(e.currentTarget)) showHoverTip(e.currentTarget, text);
+    },
     onBlur: hideHoverTip,
   };
 }

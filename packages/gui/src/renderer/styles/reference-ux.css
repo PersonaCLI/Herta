@@ -7542,6 +7542,8 @@ button.commit-view__path:hover {
 .hover-tip {
   position: fixed;
   z-index: 60;
+  /* Fits its text, up to the layer's max-width (HoverTipLayer). */
+  width: max-content;
   padding: 7px 10px;
   font-size: 12.5px;
   line-height: 1.5;

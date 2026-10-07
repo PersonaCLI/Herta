@@ -142,6 +142,8 @@ describe("TraceCard — the timeline (ADR 0073)", () => {
     );
     // No live view: no ticker.
     expect(ticker()).toBeNull();
+    // Its lines carry the app's tip, never the OS's (owner 2026-10-08).
+    expect(card()?.querySelectorAll("[title]")).toHaveLength(0);
     // Header counts cover the whole dispatch.
     expect(document.querySelector(".plan-card__count")?.textContent).toBe(
       "6 steps · 2 files",

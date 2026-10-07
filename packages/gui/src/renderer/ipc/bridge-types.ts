@@ -27,6 +27,9 @@ import type {
   TerminalRecord,
   TitleEvent,
   TurnLifecycleEvent,
+  UndoEvent,
+  UndoTarget,
+  UndoTurnEditsResult,
   VoiceCueEvent,
   WorkingDiff,
   WorkspaceEvent,
@@ -86,6 +89,9 @@ export interface SessionSnapshot {
   /** A 继续 is on offer (ADR 0071 §1.4): a reloaded window's strip comes
    *  back. Optional on the wire; absent = no offer. */
   readonly resumable?: boolean;
+  /** The latest turn's edits can be taken back (ADR 0074 §4): a reloaded
+   *  window's card keeps its 撤销 chip. Optional on the wire; absent = no. */
+  readonly undoable?: boolean;
   /** Pictures staged in the composer and not yet sent (ADR 0048 §4): a
    *  reloaded window's strip comes back instead of vanishing while main
    *  still counts them. Optional on the wire; absent = none. */
@@ -517,6 +523,16 @@ export interface HertaBridge {
    *  withdraw animation races a session switch — an unbound rewind then
    *  truncated the WRONG session's latest turn). */
   rewindLastTurn(sessionId: string): Promise<RewindResult>;
+  /** Take a turn's edits back (ADR 0074): `latest` from its card's 撤销,
+   *  `withdrawn` from the rewind notice's 撤销改动. Bound to `sessionId` like
+   *  the rewind. OPTIONAL with `onUndo` — fakes and the website demo omit
+   *  them, and no chip shows. */
+  undoLastTurnEdits?(
+    sessionId: string,
+    target: UndoTarget,
+  ): Promise<UndoTurnEditsResult>;
+  /** Whether the latest turn can be undone changed. */
+  onUndo?(cb: (e: UndoEvent) => void): () => void;
   /** Fire-and-forget: a successful 板砖-card lift may play the easter-egg voice.
    *  The active session owns the 50% roll + per-session hourly throttle. */
   maybePlayEasterEgg(): Promise<void>;

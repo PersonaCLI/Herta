@@ -3061,6 +3061,31 @@ button.agent-preview {
 .composer-notice.is-exiting {
   animation: notice-out 240ms var(--ease-accel) both;
 }
+/* 撤销改动 (ADR 0074 §4): the pill lets clicks through to the record; its
+   one action does not. */
+.composer-notice__action {
+  pointer-events: auto;
+  margin-left: 10px;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink-a06);
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.composer-notice__action:hover {
+  background: var(--ink-a09);
+}
+.composer-notice__action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.composer-notice__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
 /* @-file mentions (ADR 0072 §2): the workspace's matching files, floating
    above the composer like the rewind notice — absolute, so the input row
    never reflows. Dressed as the app's other menu (the Settings select): a
@@ -4289,6 +4314,48 @@ button.session-item__badge--dismiss {
   padding-left: 8px;
   font-size: 11px;
   color: var(--muted-faint);
+}
+/* 撤销 (ADR 0074 §4): a quiet text chip on the latest turn's finished card,
+   right of the summary and before the duration — the shape of the reference
+   the owner picked (Claude Desktop's per-turn Undo). The user's alone: it
+   is not in the record. */
+.activity-undo {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink-a05);
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--muted-slate);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) ease,
+    color var(--dur-micro) ease;
+}
+.activity-undo:hover {
+  background: var(--ink-a09);
+  color: var(--ink-2);
+}
+.activity-undo:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.activity-undo:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.activity-undo.is-done {
+  padding: 1px 0;
+  background: transparent;
+  color: var(--muted-faint);
+  cursor: default;
+}
+/* The chip takes the row's auto margin; the duration follows it. */
+.activity-undo + .activity-line__duration {
+  margin-left: 0;
 }
 .activity-line__chevron {
   flex: none;

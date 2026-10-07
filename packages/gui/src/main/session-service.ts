@@ -15,6 +15,8 @@ import {
   type SessionMetadata,
   type SpeechSynthesizer,
   type SteerTextResult,
+  type UndoTarget,
+  type UndoTurnEditsResult,
   type WorkspaceTrustState,
 } from "@herta/app-server";
 import { errorMessage } from "@herta/core";
@@ -188,6 +190,7 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.interrupt,
   CMD.steerText,
   CMD.rewindLastTurn,
+  CMD.undoLastTurnEdits,
   CMD.search,
   CMD.recordSlice,
   CMD.deleteSession,
@@ -397,6 +400,8 @@ export function snapshot(s: Session): SessionSnapshot {
       : {}),
     // The 继续 offer (ADR 0071 §1.4): a reloaded window's strip comes back.
     ...(s.resumable === true ? { resumable: true } : {}),
+    // The 撤销 chip (ADR 0074 §4): a reloaded window's card keeps it.
+    ...(s.undoable === true ? { undoable: true } : {}),
   };
 }
 
@@ -427,6 +432,35 @@ export async function handleSetWorkspace(
   // changes mid-turn rather than corrupting the record cursor.
   if (!r.ok) return { ok: false, message: "a turn is in progress" };
   return { ok: true };
+}
+
+/**
+ * Take a turn's edits back (ADR 0074 §4) — a destructive call, bound to the
+ * session the user clicked in like the rewind (a session switch can land
+ * between the click and the invoke), and to a target the session knows.
+ * Anything else answers that there is nothing to undo. Exported for testing.
+ */
+export async function handleUndoLastTurnEdits(
+  host: {
+    activeSession: {
+      sessionId: string;
+      undoLastTurnEdits?(target: UndoTarget): Promise<UndoTurnEditsResult>;
+    } | null;
+  },
+  sessionId: unknown,
+  target: unknown,
+): Promise<UndoTurnEditsResult> {
+  const nothing = { ok: false as const, reason: "nothing_to_undo" as const };
+  const s = host.activeSession;
+  if (
+    s === null ||
+    typeof sessionId !== "string" ||
+    s.sessionId !== sessionId
+  ) {
+    return nothing;
+  }
+  if (target !== "latest" && target !== "withdrawn") return nothing;
+  return (await s.undoLastTurnEdits?.(target)) ?? nothing;
 }
 
 /** Pipes a session's 8 subscriptions to `send`. Returns a stop fn. Exported for testing. */
@@ -479,6 +513,10 @@ export function startForwarders(session: Session, send: Send): () => void {
   // The 继续 offer (ADR 0071 §1.4); optional on the interface.
   if (session.subscribeResume !== undefined) {
     void pump(session.subscribeResume(), EVT.resume);
+  }
+  // The 撤销 chip (ADR 0074 §4); optional on the interface.
+  if (session.subscribeUndo !== undefined) {
+    void pump(session.subscribeUndo(), EVT.undo);
   }
   return () => {
     live = false;
@@ -791,6 +829,13 @@ export function createSessionService(
         }
       );
     });
+    handle(CMD.undoLastTurnEdits, (_e, sessionId?: unknown, target?: unknown) =>
+      handleUndoLastTurnEdits(
+        { activeSession: host?.activeSession ?? null },
+        sessionId,
+        target,
+      ),
+    );
     handle(CMD.maybePlayEasterEgg, () => {
       // Fire-and-forget GUI flourish: a successful 板砖-card lift may play the
       // easter-egg clip. The session owns the 50% roll + per-session hourly

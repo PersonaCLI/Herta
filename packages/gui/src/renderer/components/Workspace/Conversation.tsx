@@ -34,6 +34,7 @@ import { useSessionEntrance } from "./useSessionEntrance.js";
 import { useSupervisorHold } from "./useSupervisorHold.js";
 import { useTopicJump } from "./useTopicJump.js";
 import { useTurnFollow } from "./useTurnFollow.js";
+import { useUndoTurn } from "./useUndoTurn.js";
 import { useWorkspaceRefs } from "./WorkspaceRefs.js";
 
 // The timing/threshold constants this component used to declare now live
@@ -85,6 +86,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     turnFailedProviderCode,
     topics,
     lang,
+    undoable,
   } = useActiveSession();
   const { bridge, sessionStore } = useHertaBridge();
   const reduced = useReducedMotion();
@@ -138,6 +140,8 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     incomingClone: incoming.incomingClone,
     reduced,
   });
+  // The card's 撤销 (ADR 0074 §4).
+  const { handleUndo, undoBusy } = useUndoTurn(sessionStore);
   const handleRewind = useRewindTurn({
     bridge,
     sessionStore,
@@ -221,6 +225,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     backendActive,
     handleRewind,
     removeAttachmentFactory,
+    undoable,
+    undoBusy,
+    handleUndo,
   });
 
   // ── render ───────────────────────────────────────────────────────────────

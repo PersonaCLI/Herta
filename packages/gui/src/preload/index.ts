@@ -22,6 +22,8 @@ const bridge: HertaBridge = {
   continueInterrupted: () => ipcRenderer.invoke(CMD.continueInterrupted),
   rewindLastTurn: (sessionId) =>
     ipcRenderer.invoke(CMD.rewindLastTurn, sessionId),
+  undoLastTurnEdits: (sessionId, target) =>
+    ipcRenderer.invoke(CMD.undoLastTurnEdits, sessionId, target),
   maybePlayEasterEgg: () => ipcRenderer.invoke(CMD.maybePlayEasterEgg),
   listSessions: () => ipcRenderer.invoke(CMD.list),
   searchSessions: (query) => ipcRenderer.invoke(CMD.search, query),
@@ -146,6 +148,7 @@ const bridge: HertaBridge = {
   onWorkspace: (cb) => subscribe(EVT.workspace, cb),
   onRepo: (cb) => subscribe(EVT.repo, cb),
   onResume: (cb) => subscribe(EVT.resume, cb),
+  onUndo: (cb) => subscribe(EVT.undo, cb),
   onLive: (cb) => subscribe(EVT.live, cb),
   onAttachProgress: (cb) => subscribe(EVT.attachProgress, cb),
   onRecord: (cb) => subscribe(EVT.record, cb),

@@ -90,10 +90,17 @@ export function useRewindTurn(opts: {
         // composer's input alias, ADR 0015 §3). The withdrawn message's
         // pictures ride along: main restaged them (captions already paid
         // for), and the draft-adoption effect puts them back in the strip.
+        // Edits the rewind left on disk are named — and, when main kept what
+        // they replaced, the notice offers them back (撤销改动, ADR 0074 §4).
+        // `undoable` alone also warrants the notice: it knows of the edits
+        // from the undo store, where `editedFiles` reads the record.
         sessionStore.requestComposerDraft(
           dealiasBrickDraft(result.userText, lang),
-          result.editedFiles ? t("workspace.editsNotReverted") : null,
+          result.editedFiles || result.undoable
+            ? t("workspace.editsNotReverted")
+            : null,
           result.images,
+          result.undoable,
         );
       } else {
         // Truncation didn't happen (e.g. a turn started in the gap) — un-fade the

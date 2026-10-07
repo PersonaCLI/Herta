@@ -1766,6 +1766,7 @@ describe("Conversation", () => {
         ok: true,
         userText: "hand @板砖 the bug; 板砖 is idle",
         editedFiles: false,
+        undoable: false,
       },
     });
     const { container } = renderWithLocale(
@@ -1823,6 +1824,7 @@ describe("Conversation", () => {
         userText: "看看这张图",
         editedFiles: false,
         images: [img],
+        undoable: false,
       },
     });
     const { container } = renderWithLocale(

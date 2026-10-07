@@ -11,6 +11,9 @@ import type {
   TerminalRecord,
   TitleEvent,
   TurnLifecycleEvent,
+  UndoEvent,
+  UndoTarget,
+  UndoTurnEditsResult,
   WorkspaceEvent,
 } from "@herta/app-server";
 import { EMPTY_LIVE } from "../../shared/live-tool-feed.js";
@@ -177,6 +180,13 @@ export interface SessionSnapshotView {
    *  the app exited under it, or the user pressed Stop — and main can
    *  continue it. Main's answer, from the reset snapshot and `onResume`. */
   readonly resumable: boolean;
+  /** The latest turn's edits can be taken back (ADR 0074 §4) — its card's
+   *  撤销 chip. Main's answer, from the reset snapshot and `onUndo`. */
+  readonly undoable: boolean;
+  /** The rewind notice's 撤销改动 (ADR 0074 §4): `offer` while the withdrawn
+   *  turn's edits can still be taken back, `busy` while they are. Rides the
+   *  notice: a new notice, or the notice's clearing, takes it away. */
+  readonly rewindUndo: "offer" | "busy" | null;
   /** One-shot transient notice shown by the composer — e.g. the rewind warning
    *  that 板砖's file edits were NOT reverted. Cleared on the next keystroke. */
   readonly composerNotice: string | null;
@@ -255,6 +265,8 @@ const INITIAL: SessionSnapshotView = {
   restagedImages: null,
   held: null,
   resumable: false,
+  undoable: false,
+  rewindUndo: null,
   composerNotice: null,
   needsKeyText: null,
   needsKeyImages: null,
@@ -362,6 +374,10 @@ export class SessionStore {
       ...(bridge.onResume !== undefined
         ? [bridge.onResume((e) => this.onResume(e))]
         : []),
+      // Optional: the 撤销 chip (ADR 0074 §4).
+      ...(bridge.onUndo !== undefined
+        ? [bridge.onUndo((e) => this.onUndo(e))]
+        : []),
       // Optional: the live views of the call in flight (ADR 0073).
       ...(bridge.onLive !== undefined
         ? [bridge.onLive((e) => this.onLive(e))]
@@ -392,6 +408,40 @@ export class SessionStore {
   private onResume(e: ResumeEvent): void {
     if (e.kind !== "offer" || e.resumable === this.snapshot.resumable) return;
     this.emit({ ...this.snapshot, resumable: e.resumable });
+  }
+
+  /** Main's answer on the 撤销 chip changed (ADR 0074 §4). */
+  private onUndo(e: UndoEvent): void {
+    if (e.kind !== "offer" || e.undoable === this.snapshot.undoable) return;
+    this.emit({ ...this.snapshot, undoable: e.undoable });
+  }
+
+  /**
+   * Take a turn's edits back (ADR 0074 §4), bound to the session it was
+   * asked in. Null when there is no bridge or session to ask, or the
+   * session changed while main answered — the answer then belongs to a
+   * record no longer on screen. Never rejects: a failed invoke answers as
+   * nothing to undo.
+   */
+  async undoTurnEdits(target: UndoTarget): Promise<UndoTurnEditsResult | null> {
+    const bridge = this.bridge;
+    const sessionId = this.snapshot.sessionId;
+    if (bridge?.undoLastTurnEdits === undefined || sessionId === null) {
+      return null;
+    }
+    let r: UndoTurnEditsResult;
+    try {
+      r = await bridge.undoLastTurnEdits(sessionId, target);
+    } catch {
+      r = { ok: false, reason: "nothing_to_undo" };
+    }
+    return this.snapshot.sessionId === sessionId ? r : null;
+  }
+
+  /** The rewind notice's 撤销改动 is running (or offered again). */
+  setRewindUndo(state: "offer" | "busy" | null): void {
+    if (this.snapshot.rewindUndo === state) return;
+    this.emit({ ...this.snapshot, rewindUndo: state });
   }
 
   /**
@@ -478,6 +528,9 @@ export class SessionStore {
     text: string | null,
     notice: string | null,
     images?: readonly StagedImageInfo[],
+    /** The rewound turn's edits can still be taken back: the notice offers
+     *  撤销改动 (ADR 0074 §4). */
+    undoOffer = false,
   ): void {
     this.emit({
       ...this.snapshot,
@@ -485,6 +538,7 @@ export class SessionStore {
       composerDraftImages:
         images !== undefined && images.length > 0 ? images : null,
       composerNotice: notice,
+      rewindUndo: undoOffer && notice !== null ? "offer" : null,
     });
   }
 
@@ -541,13 +595,13 @@ export class SessionStore {
    *  is "here is text to put back AND why": passing a null draft through that
    *  path would read as a rewind that lost the message. */
   setComposerNotice(notice: string): void {
-    this.emit({ ...this.snapshot, composerNotice: notice });
+    this.emit({ ...this.snapshot, composerNotice: notice, rewindUndo: null });
   }
 
   /** Dismiss the transient composer notice (e.g. on the next keystroke). */
   clearComposerNotice(): void {
     if (this.snapshot.composerNotice === null) return;
-    this.emit({ ...this.snapshot, composerNotice: null });
+    this.emit({ ...this.snapshot, composerNotice: null, rewindUndo: null });
   }
 
   /** Open the no-key onboarding card, holding the message that couldn't send
@@ -777,6 +831,9 @@ export class SessionStore {
       held: null,
       // The 继续 offer as main has it for this session (ADR 0071 §1.4).
       resumable: e.resumable === true,
+      // The 撤销 chip as main has it for this session (ADR 0074 §4).
+      undoable: e.undoable === true,
+      rewindUndo: null,
       composerNotice: null,
       needsKeyText: null,
       needsKeyImages: null,

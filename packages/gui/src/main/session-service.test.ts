@@ -15,6 +15,7 @@ import {
   countsAsUserActivity,
   findProjectRoot,
   handleSetWorkspace,
+  handleUndoLastTurnEdits,
   isSafeSessionId,
   mainNavigationBlock,
   pickLatest,
@@ -589,6 +590,88 @@ function fakeSession(): Session {
     close: async () => undefined,
   } as Session;
 }
+
+describe("undo in main (ADR 0074 §4)", () => {
+  it("the reset payload carries the chip's state, so a reloaded window keeps it", () => {
+    const base = fakeSession();
+    expect(snapshot({ ...base, undoable: true } as Session)).toMatchObject({
+      undoable: true,
+    });
+    expect(snapshot(base)).not.toHaveProperty("undoable");
+  });
+
+  it("an undo is the user acting outside a turn", () => {
+    expect(countsAsUserActivity(CMD.undoLastTurnEdits)).toBe(true);
+  });
+
+  it("the undo is bound to the session the user clicked in, and to a known target", async () => {
+    const calls: string[] = [];
+    const session = {
+      sessionId: "s",
+      undoLastTurnEdits: async (target: string) => {
+        calls.push(target);
+        return {
+          ok: true as const,
+          files: [],
+          commands: [],
+          commandsUnknown: false,
+          incomplete: false,
+        };
+      },
+    };
+    const host = { activeSession: session };
+    expect(await handleUndoLastTurnEdits(host, "s", "latest")).toMatchObject({
+      ok: true,
+    });
+    expect(await handleUndoLastTurnEdits(host, "s", "withdrawn")).toMatchObject(
+      { ok: true },
+    );
+    const nothing = { ok: false, reason: "nothing_to_undo" };
+    expect(await handleUndoLastTurnEdits(host, "other", "latest")).toEqual(
+      nothing,
+    );
+    expect(await handleUndoLastTurnEdits(host, "s", "everything")).toEqual(
+      nothing,
+    );
+    expect(
+      await handleUndoLastTurnEdits({ activeSession: null }, "s", "latest"),
+    ).toEqual(nothing);
+    expect(
+      await handleUndoLastTurnEdits(
+        { activeSession: { sessionId: "s" } },
+        "s",
+        "latest",
+      ),
+    ).toEqual(nothing);
+    expect(calls).toEqual(["latest", "withdrawn"]);
+  });
+
+  it("forwards the chip's changes on their own channel", async () => {
+    const sent: Array<[string, unknown]> = [];
+    async function* offers() {
+      yield { kind: "offer" as const, undoable: true };
+      await new Promise(() => undefined);
+    }
+    const stop = startForwarders(
+      { ...fakeSession(), subscribeUndo: offers } as Session,
+      (ch, payload) => {
+        sent.push([ch, payload]);
+      },
+    );
+    for (
+      let i = 0;
+      i < 20 && !sent.some(([ch]) => ch === "session:undo");
+      i++
+    ) {
+      await Promise.resolve();
+    }
+    expect(sent).toContainEqual([
+      "session:undo",
+      { kind: "offer", undoable: true },
+    ]);
+    stop();
+  });
+});
 
 describe("handleSetWorkspace", () => {
   it("rejects a forbidden root and does not touch the session", async () => {

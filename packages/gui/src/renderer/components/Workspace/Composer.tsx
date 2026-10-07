@@ -91,6 +91,7 @@ export function Composer(): JSX.Element {
     composerDraft,
     composerDraftImages,
     composerNotice,
+    rewindUndo,
     backendActive,
     held,
     resumable,
@@ -103,6 +104,7 @@ export function Composer(): JSX.Element {
       composerDraft: s.composerDraft,
       composerDraftImages: s.composerDraftImages,
       composerNotice: s.composerNotice,
+      rewindUndo: s.rewindUndo,
       backendActive: s.backendActive,
       held: s.held,
       resumable: s.resumable,
@@ -445,6 +447,38 @@ export function Composer(): JSX.Element {
   // the source; `noticeText` is the locally-held copy that stays mounted through
   // the slide-out (React would otherwise unmount it instantly, skipping the exit).
   const [noticeText, setNoticeText] = useState<string | null>(null);
+  // 撤销改动 pressed (ADR 0074 §4): take the withdrawn turn's edits back and
+  // say what happened in the notice's place. The withdrawn turn is out of
+  // the record, so this notice is the only place a file left alone shows.
+  const undoWithdrawn = async (): Promise<void> => {
+    if (sessionStore.getSnapshot().rewindUndo !== "offer") return;
+    sessionStore.setRewindUndo("busy");
+    const r = await sessionStore.undoTurnEdits("withdrawn");
+    // The session changed under the answer: the notice went with it.
+    if (r === null) return;
+    if (!r.ok) {
+      sessionStore.setComposerNotice(t("workspace.undoFailed"));
+      return;
+    }
+    const left = r.files
+      .filter(
+        (f) =>
+          f.result !== "restored" &&
+          f.result !== "deleted" &&
+          f.result !== "unchanged",
+      )
+      .map((f) => f.path);
+    sessionStore.setComposerNotice(
+      left.length === 0
+        ? t("workspace.editsUndone")
+        : t("workspace.editsUndoneLeftAlone").replace(
+            "{files}",
+            left.length > 3
+              ? `${left.slice(0, 3).join(t("workspace.listJoin"))}${t("workspace.listJoin")}…`
+              : left.join(t("workspace.listJoin")),
+          ),
+    );
+  };
   const [noticeExiting, setNoticeExiting] = useState(false);
   const noticeShown = useRef(false);
   const noticeTimer = useRef<number | null>(null);
@@ -724,6 +758,18 @@ export function Composer(): JSX.Element {
           role="status"
         >
           {noticeText}
+          {/* 撤销改动 (ADR 0074 §4): the rewound turn's edits can still be
+              taken back — until the next send, which clears this notice. */}
+          {rewindUndo !== null && !noticeExiting && (
+            <button
+              type="button"
+              className="composer-notice__action"
+              disabled={rewindUndo === "busy"}
+              onClick={() => void undoWithdrawn()}
+            >
+              {t("workspace.undoEdits")}
+            </button>
+          )}
         </div>
       )}
       {/* The held message (ADR 0063): sent while 板砖 worked, waiting to go

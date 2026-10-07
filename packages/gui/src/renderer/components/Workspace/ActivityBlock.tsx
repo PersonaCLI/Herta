@@ -1,3 +1,4 @@
+import type { UndoFileResult } from "@herta/core";
 import {
   memo,
   useCallback,
@@ -8,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
+import type { MessageKey } from "../../i18n/keys.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
 import {
   useFileViewerOpen,
@@ -92,6 +94,51 @@ export interface ActivityBlockProps {
    * historical group re-render on unrelated store churn.
    */
   readonly onRemoveAttachment?: (path: string) => () => void;
+  /**
+   * The 撤销 chip (ADR 0074 §4) — only on the latest turn's last finished
+   * 板砖 card, and only the user's: nothing of it is in the record. `offer`
+   * takes the turn's edits back on a click; `busy` while that runs; `done`
+   * once the turn holds its undo line.
+   */
+  readonly undo?:
+    | { readonly state: "offer" | "busy"; readonly onUndo: () => void }
+    | { readonly state: "done" };
+}
+
+/** An undo line's per-file results (ADR 0074 §3), in the session language. */
+const UNDO_RESULT_KEY = {
+  restored: "activity.undo.result.restored",
+  deleted: "activity.undo.result.deleted",
+  unchanged: "activity.undo.result.unchanged",
+  changed_since: "activity.undo.result.changed_since",
+  not_kept: "activity.undo.result.not_kept",
+  outside_workspace: "activity.undo.result.outside_workspace",
+  failed: "activity.undo.result.failed",
+} as const satisfies Record<UndoFileResult, MessageKey>;
+
+type UndoDigest = Extract<
+  NonNullable<SystemBlock["digest"]>,
+  { readonly kind: "undo" }
+>;
+
+/** The undo line's header: what came back, and how much was left alone —
+ *  a skipped file and a command's edit alike are still changed. */
+function undoSummary(d: UndoDigest, t: ReturnType<typeof makeT>): string {
+  const count = (pred: (r: UndoFileResult) => boolean): number =>
+    d.files.filter((f) => pred(f.result)).length;
+  const restored = count((r) => r === "restored");
+  const deleted = count((r) => r === "deleted");
+  const left =
+    count((r) => r !== "restored" && r !== "deleted" && r !== "unchanged") +
+    d.commands.length;
+  return [
+    t("activity.undo.summary"),
+    ...(restored > 0
+      ? [t("activity.undo.count.restored", { n: restored })]
+      : []),
+    ...(deleted > 0 ? [t("activity.undo.count.deleted", { n: deleted })] : []),
+    ...(left > 0 ? [t("activity.undo.count.left", { n: left })] : []),
+  ].join(" · ");
 }
 
 /** The row views of a history nobody has opened yet — one shared empty array,
@@ -193,8 +240,18 @@ export const ActivityBlock = memo(function ActivityBlock(
     // Localized header summary composed from the structured marker (or the
     // canonical body verbatim for pre-structured records). D7: the record
     // body is untouched; this is display-only.
+    // An undo line (ADR 0074 §4) is its own group: a header saying what came
+    // back, and a row per file.
+    const undoDigest: UndoDigest | null =
+      blocks.length === 1 && blocks[0]?.digest?.kind === "undo"
+        ? blocks[0].digest
+        : null;
     const headline =
-      done && summary !== null ? composeMarkerSummary(summary, t) : null;
+      undoDigest !== null
+        ? undoSummary(undoDigest, t)
+        : done && summary !== null
+          ? composeMarkerSummary(summary, t)
+          : null;
     // The commit the run landed (ADR 0049 §4) — the headline's `提交 sha`
     // segment becomes the commit tab's opener (ADR 0059).
     const commitSha =
@@ -233,6 +290,7 @@ export const ActivityBlock = memo(function ActivityBlock(
       markerBlock,
       markerDetail,
       latestStep,
+      undoDigest,
     };
   }, [blocks, t]);
   const {
@@ -244,6 +302,7 @@ export const ActivityBlock = memo(function ActivityBlock(
     rows,
     markerBlock,
     markerDetail,
+    undoDigest,
   } = derived;
   const latestStep = derived.latestStep;
   // Expandable only when there are operational rows to reveal. A group that
@@ -269,7 +328,9 @@ export const ActivityBlock = memo(function ActivityBlock(
   const isAttachmentGroup =
     blocks.length > 0 && blocks.every((b) => b.digest?.kind === "attachment");
   // Default-collapsed even while running — the line IS the rendering (F4).
-  const expanded = expandable ? (userToggled ?? isAttachmentGroup) : false;
+  const expanded = expandable
+    ? (userToggled ?? (isAttachmentGroup || undoDigest !== null))
+    : false;
   // The history's rows mount on the FIRST expand and stay mounted — the same
   // lifecycle as a row's own diff and detail panes (ActivityStep), one level
   // up (ADR 0068 §11, 2026-09-22). A session carries every dispatch it ever
@@ -357,6 +418,55 @@ export const ActivityBlock = memo(function ActivityBlock(
       : active && anchor !== null
         ? Date.now() - anchor
         : null);
+  // An undo line's rows (ADR 0074 §4): one per file, saying what happened to
+  // it, then what commands changed — never restored. A file still on disk
+  // opens in the viewer; a deleted or out-of-workspace one has nothing to open.
+  const undoRows =
+    undoDigest === null ? null : (
+      <>
+        {undoDigest.files.map((f) => (
+          <ActivityStep
+            key={`undo:${f.path}`}
+            body={`${f.path} · ${t(UNDO_RESULT_KEY[f.result])}`}
+            t={t}
+            icon={
+              f.result === "restored" || f.result === "deleted"
+                ? "write"
+                : "dot"
+            }
+            active={false}
+            {...(openFile !== null &&
+            f.result !== "deleted" &&
+            f.result !== "outside_workspace"
+              ? {
+                  file: {
+                    path: f.path,
+                    onOpen: () => openFile(f.path, {}),
+                    ariaLabel: `${t("activity.file.openAria")} ${f.path}`,
+                  },
+                }
+              : {})}
+          />
+        ))}
+        {undoDigest.commands.map((path) => (
+          <ActivityStep
+            key={`undo-cmd:${path}`}
+            body={`${path} · ${t("activity.undo.commands")}`}
+            t={t}
+            icon="run"
+            active={false}
+          />
+        ))}
+        {undoDigest.commandsUnknown && undoDigest.commands.length === 0 && (
+          <ActivityStep
+            body={t("activity.undo.commandsUnknown")}
+            t={t}
+            icon="run"
+            active={false}
+          />
+        )}
+      </>
+    );
   const durationText = elapsedMs === null ? null : formatDuration(elapsedMs);
   // One duration per 板砖 run, not per split part. When a beat bubble lands
   // between backend blocks it splits the run into separate activity groups;
@@ -727,6 +837,26 @@ export const ActivityBlock = memo(function ActivityBlock(
         {/* Outside the button: the duration is a fact about the run, not part
           of the toggle's label, and it is what pinned the button to the full
           row width. */}
+        {/* 撤销 (ADR 0074 §4): outside the toggle like the duration — a
+          button cannot sit in a button, and taking edits back is not
+          opening the history. */}
+        {props.undo !== undefined &&
+          !active &&
+          (props.undo.state === "done" ? (
+            <span className="activity-undo is-done">
+              {t("activity.undo.chipDone")}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="activity-undo"
+              title={t("activity.undo.chipTitle")}
+              disabled={props.undo.state === "busy"}
+              onClick={props.undo.onUndo}
+            >
+              {t("activity.undo.chip")}
+            </button>
+          ))}
         {durationLabel !== null && (
           <span className="activity-line__duration">{durationLabel}</span>
         )}
@@ -742,7 +872,9 @@ export const ActivityBlock = memo(function ActivityBlock(
           }}
         >
           <div className="activity-line__history-inner">
+            {rowsMounted && undoDigest !== null && undoRows}
             {rowsMounted &&
+              undoDigest === null &&
               rowViews.map((rv, i) => {
                 // A parallel batch (ADR 0025 slice 5) has several ops in
                 // flight at once — shimmer the last `inFlightCount` op rows

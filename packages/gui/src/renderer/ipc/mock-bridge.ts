@@ -19,6 +19,9 @@ import type {
   TerminalRecord,
   TitleEvent,
   TurnLifecycleEvent,
+  UndoEvent,
+  UndoTarget,
+  UndoTurnEditsResult,
   VoiceCueEvent,
   WorkspaceEvent,
   WorkspaceTrustState,
@@ -59,6 +62,8 @@ export interface MockHertaBridgeOpts {
   /** What `continueInterrupted` answers (ADR 0071 §1.4); default a turn. */
   readonly continueInterruptedResult?: ContinueInterruptedResult;
   readonly rewindLastTurnResult?: RewindResult;
+  /** What `undoLastTurnEdits` answers (ADR 0074); default nothing to undo. */
+  readonly undoLastTurnEditsResult?: UndoTurnEditsResult;
   readonly listSessionsResult?: readonly SessionMetadata[];
   /** Seed for searchSessions (transcript content search). Default []. */
   readonly searchSessionsResult?: readonly SessionSearchHit[];
@@ -211,6 +216,8 @@ export interface MockHertaBridge {
     /** 继续 presses (ADR 0071 §1.4). */
     continueInterrupted: number;
     rewindLastTurn: number;
+    /** Each undo asked for: the session it was bound to, and its target. */
+    undoLastTurnEdits: Array<readonly [string, UndoTarget]>;
     maybePlayEasterEgg: number;
     openSession: string[];
     createSession: CreateSessionOpts[];
@@ -307,6 +314,8 @@ export interface MockHertaBridge {
   emitRepo(e: RepoEvent): void;
   /** The 继续 offer's stream (ADR 0071 §1.4). */
   emitResume(e: ResumeEvent): void;
+  /** The 撤销 chip's stream (ADR 0074 §4). */
+  emitUndo(e: UndoEvent): void;
   /** The live views of the call in flight (ADR 0073). */
   emitLive(e: LiveToolSnapshot): void;
   /** Drive the pending attach row's progress (2026-10-01). */
@@ -339,6 +348,7 @@ export function createMockHertaBridge(
   const workspaceCbs = new Set<(e: WorkspaceEvent) => void>();
   const repoCbs = new Set<(e: RepoEvent) => void>();
   const resumeCbs = new Set<(e: ResumeEvent) => void>();
+  const undoCbs = new Set<(e: UndoEvent) => void>();
   const liveCbs = new Set<(e: LiveToolSnapshot) => void>();
   const attachProgressCbs = new Set<(e: AttachProgressEvent) => void>();
   const voiceCbs = new Set<(e: VoiceCueEvent) => void>();
@@ -352,6 +362,7 @@ export function createMockHertaBridge(
     steerText: [],
     continueInterrupted: 0,
     rewindLastTurn: 0,
+    undoLastTurnEdits: [],
     maybePlayEasterEgg: 0,
     openSession: [],
     createSession: [],
@@ -589,6 +600,13 @@ export function createMockHertaBridge(
       calls.rewindLastTurn += 1;
       return opts.rewindLastTurnResult ?? { ok: false, reason: "no_user_turn" };
     },
+    undoLastTurnEdits: async (sessionId, target) => {
+      calls.undoLastTurnEdits.push([sessionId, target]);
+      return (
+        opts.undoLastTurnEditsResult ?? { ok: false, reason: "nothing_to_undo" }
+      );
+    },
+    onUndo: (cb) => sub(undoCbs, cb),
     maybePlayEasterEgg: async () => {
       calls.maybePlayEasterEgg += 1;
     },
@@ -1048,6 +1066,9 @@ export function createMockHertaBridge(
     },
     emitResume: (e) => {
       for (const cb of resumeCbs) cb(e);
+    },
+    emitUndo: (e) => {
+      for (const cb of undoCbs) cb(e);
     },
     emitLive: (e) => {
       for (const cb of liveCbs) cb(e);

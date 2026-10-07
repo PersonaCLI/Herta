@@ -84,6 +84,17 @@ export function useIncomingMorph(opts: {
     // that now needs it. Zero whenever no scroll is pending, which keeps every
     // other path byte-identical.
     const targetTop = dest.top - ws.top - owedScroll(); // the real flow slot
+    // …and keep aiming there frame by frame (2026-10-07): the conversation's
+    // follow now runs under this flight, so a reply that starts at a full
+    // pane scrolls the slot up line by line as it fills. Same arithmetic as
+    // the measurement above, re-read live.
+    const liveTo = (): { left: number; top: number } | null => {
+      const s = streamingBubbleRef.current;
+      if (s === null) return null;
+      const w = overlay.getBoundingClientRect();
+      const d = s.getBoundingClientRect();
+      return { left: d.left - w.left, top: d.top - w.top - owedScroll() };
+    };
     el.style.left = `${Math.round(left)}px`;
     el.style.top = `${Math.round(startTop)}px`;
     el.classList.add("is-visible");
@@ -107,6 +118,7 @@ export function useIncomingMorph(opts: {
       // runaway cap, or a user takeover — all flip glidingRef, and every
       // cancel path (session switch, rePin, unmount) clears it too.
       holdSettle: () => isGliding(),
+      liveTo,
       // Same early settle on a flow width change as the outgoing flight.
       ...(flowRef.current !== null ? { watchWidthOf: flowRef.current } : {}),
       onSettle: () => {
@@ -114,6 +126,8 @@ export function useIncomingMorph(opts: {
         // Landing hold — see incomingSettleTimer.
         incomingSettleTimer.current = window.setTimeout(() => {
           incomingSettleTimer.current = null;
+          // The clone tracked its slot through the hold; the swap ends that.
+          incomingRise.cancel();
           setHideStreaming(false);
           setIncomingClone(false);
         }, SHADOW_SETTLE_MS);

@@ -2931,6 +2931,55 @@ describe("Conversation turn headroom", () => {
     }
   });
 
+  it("the pinned follow keeps running under the INCOMING flight — a reply that starts at a full pane (owner 2026-10-07)", () => {
+    // Frozen for the whole flight, a reply that began right under the 板砖
+    // row grew below the fold: the clone grew up over the row, and the page
+    // caught up in one jump at the hand-off. The clone now tracks its slot
+    // live, so the follow need not wait for it.
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1); // hold the clone in the air
+    try {
+      const { container, mock } = setup({ overlay: true });
+      const geo = fakeGeometry(container, 3000); // full pane, nothing reserved
+      const pane = container.querySelector(".conversation") as HTMLElement;
+      act(() => {
+        mock.emitTurn({ kind: "started", turnId: "t1" });
+        mock.emitAgent({
+          kind: "agent",
+          event: {
+            type: "assistant.delta",
+            layer: "actor",
+            text: "引擎、页面、测试、说明都齐了。",
+          } as never,
+        });
+      });
+      expect(
+        container.querySelector(".morph-clone.herta-bubble"),
+      ).toBeInTheDocument();
+      // The flow grows under the flying reply, and a follow trigger fires.
+      geo.setContent(3000 + BUBBLE + 300);
+      act(() => {
+        mock.emitRecord({
+          kind: "block",
+          blockId: "op1",
+          block: {
+            kind: "system",
+            label: "差分协处理器",
+            body: "Reading a.ts",
+            digest: { kind: "op", verb: "Reading", arg: "a.ts" },
+          },
+        });
+      });
+      // Still in the air — and the view followed.
+      expect(
+        container.querySelector(".morph-clone.herta-bubble"),
+      ).toBeInTheDocument();
+      expect(pane.scrollTop).toBe(geo.maxScroll());
+      geo.restore();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("a scroll the BROWSER clamped does not spend reserved room", () => {
     // Half of the approval-panel drift (user 2026-07-30, measured live at
     // 399px over two steps). The panel's reserve is bottom padding on the

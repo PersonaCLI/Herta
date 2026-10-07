@@ -17,8 +17,30 @@ export interface RiseOpts {
    *  never descend into the composer — and at t=1 the top lands exactly on
    *  `to.top` (the flow slot), so the settle swap stays seamless. Used by
    *  the incoming Herta-bubble morph, whose text streams (and grows the
-   *  clone) while it flies. */
+   *  clone) while it flies.
+   *
+   *  Upward only as far as the slot (2026-10-07): the top never rises above
+   *  `to.top`. Above the slot is the row before it — a reply that started
+   *  right under the 板砖 row and filled several lines in flight (a held
+   *  backlog drains at up to 180 chars/s) grew straight up over that row.
+   *  Growth past the slot extends the bottom instead, as the real bubble's
+   *  does. */
   readonly anchor?: "top" | "bottom";
+  /** Re-read the landing slot every frame instead of trusting `to` (rAF
+   *  path only; `to` is the first frame's answer and the fallback when this
+   *  returns null). After the flight settles, the clone keeps tracking it
+   *  until `cancel()` — the owner's hand-off hold parks it in place for a
+   *  while, and the slot may move during it.
+   *
+   *  For a flight whose slot moves under it (2026-10-07): the incoming rise
+   *  used to freeze the conversation's follow for the whole flight so its
+   *  once-measured slot held still, and a reply that began at a full pane
+   *  then grew below the fold for 760ms — the page caught up in one jump
+   *  after the hand-off. Tracking lets the follow run. */
+  readonly liveTo?: () => {
+    readonly left: number;
+    readonly top: number;
+  } | null;
   /** Polled when the rAF flight reaches its natural end: while it returns
    *  true, the flight HOLDS at its target instead of settling (deferred-fix
    *  2026-07-31). The incoming rise aims at the POST-climb slot, but its
@@ -141,10 +163,21 @@ export function useRiseAnimation(): RiseAnimation {
       const { el, from, to, durationMs, easing, onSettle } = opts;
       const anchor = opts.anchor ?? "top";
       const startBottom = from.top + el.offsetHeight;
+      /** Where the flight lands: `to`, or the slot as `liveTo` reads it
+       *  this frame (the last good read when it has none). */
+      let aimed: { left: number; top: number } = to;
+      const aim = (): { left: number; top: number } => {
+        const live = opts.liveTo?.();
+        if (live !== undefined && live !== null) aimed = live;
+        return aimed;
+      };
+      /** The base position: the destination as known at start, re-based
+       *  once at the landing when the destination moved (`liveTo`). */
+      const base = { left: to.left, top: to.top };
       /** Absolute position → the transform that puts the element there, given
-       *  its base position is `to`. Rounded, so glyphs land on whole pixels. */
+       *  its base position. Rounded, so glyphs land on whole pixels. */
       const place = (l: number, t: number): void => {
-        el.style.transform = `translate3d(${Math.round(l - to.left)}px, ${Math.round(t - to.top)}px, 0)`;
+        el.style.transform = `translate3d(${Math.round(l - base.left)}px, ${Math.round(t - base.top)}px, 0)`;
       };
       // Base position is the DESTINATION for the whole flight (see the FLIP
       // note above): every frame is a displacement from where it lands.
@@ -182,6 +215,15 @@ export function useRiseAnimation(): RiseAnimation {
         // overrides the write and the clone freezes displaced at `from`.
         cancelWaapi.current?.();
         cancelWaapi.current = null;
+        if (opts.liveTo !== undefined) {
+          // The slot moved under the flight: land where it is NOW — the one
+          // base write of a tracked flight.
+          const at = aim();
+          base.left = at.left;
+          base.top = at.top;
+          el.style.left = `${Math.round(at.left)}px`;
+          el.style.top = `${Math.round(at.top)}px`;
+        }
         el.style.transform = "none";
         el.classList.remove("is-moving");
         el.classList.add("is-settled");
@@ -192,6 +234,17 @@ export function useRiseAnimation(): RiseAnimation {
         // flight (the incoming rise follows the outgoing one): closing after
         // would decrement that new flight's own count.
         closeFlight();
+        // A tracked clone stays on its slot through the hand-off hold, until
+        // cancel(). Scheduled BEFORE onSettle, so a flight that onSettle
+        // starts cancels this loop rather than racing it.
+        if (opts.liveTo !== undefined) {
+          const track = (): void => {
+            const at = aim();
+            place(at.left, at.top);
+            frame.current = requestAnimationFrame(track);
+          };
+          frame.current = requestAnimationFrame(track);
+        }
         onSettle?.();
       };
       // A viewport resize mid-flight reflows the conversation column and
@@ -275,16 +328,17 @@ export function useRiseAnimation(): RiseAnimation {
       const step = (nowTs: number): void => {
         const raw = Math.min(1, (nowTs - started) / durationMs);
         const e = easing(raw);
-        const left = from.left + (to.left - from.left) * e;
+        const dest = aim();
+        const left = from.left + (dest.left - from.left) * e;
         if (anchor === "bottom") {
           const h = el.offsetHeight;
-          const liveTargetBottom = to.top + h;
+          const liveTargetBottom = dest.top + h;
           const clampedBottom = Math.min(
             startBottom + (liveTargetBottom - startBottom) * e,
             lastBottom,
           );
           // Over the final portion of the rise, blend the clamped (anti-lurch)
-          // bottom toward the TRUE resting bottom (to.top + h) so the bubble
+          // bottom toward the TRUE resting bottom (dest.top + h) so the bubble
           // settles onto the slot continuously. Without this, large height
           // growth (> rise distance) freezes the clamped bottom for the whole
           // flight and the final place() snaps the top to the slot — a hard
@@ -300,9 +354,12 @@ export function useRiseAnimation(): RiseAnimation {
           // monotonic tracks the clamp, not the blend, so the anti-lurch
           // guarantee in the pre-blend region is unaffected.
           lastBottom = Math.min(lastBottom, clampedBottom);
-          place(left, bottom - h);
+          // Never above the slot (2026-10-07): what lies above it is the
+          // previous row, and the clamp above would otherwise grow the clone
+          // up over it — see `anchor`.
+          place(left, Math.max(bottom - h, dest.top));
         } else {
-          place(left, from.top + (to.top - from.top) * e);
+          place(left, from.top + (dest.top - from.top) * e);
         }
         if (raw < 1) {
           frame.current = requestAnimationFrame(step);
@@ -314,7 +371,7 @@ export function useRiseAnimation(): RiseAnimation {
           // until the predicate clears. Height growth during the hold
           // extends the clone downward from the slot top — matching the
           // real bubble it will swap for.
-          place(to.left, to.top);
+          place(dest.left, dest.top);
           frame.current = requestAnimationFrame(step);
           return;
         }

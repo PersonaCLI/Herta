@@ -479,7 +479,11 @@ describe("useRiseAnimation anchor: bottom", () => {
     expect(el.classList.contains("is-settled")).toBe(true);
   });
 
-  it("blends to the slot without a settle snap when growth exceeds the rise distance", () => {
+  it("growth past the rise distance extends the bubble DOWN from its slot — never up over the row above it (2026-10-07)", () => {
+    // Owner 2026-10-07: a reply that started right under the 板砖 row filled
+    // several lines in flight, and the bottom-held clone grew straight up over
+    // that row. Above the slot is the previous row; the top stops there, and
+    // the rest of the growth extends the bottom, as the real bubble's does.
     vi.useFakeTimers();
     mockRafWithClock();
     const { result } = renderHook(() => useRiseAnimation());
@@ -503,29 +507,77 @@ describe("useRiseAnimation anchor: bottom", () => {
       });
       const top = Math.round(visualTop(el));
       tops.push(top);
-      const h = el.offsetHeight;
-      const bottom = top + h;
-      // Bottom never drops below BOTH its start and its resting position —
-      // i.e. never exceeds the larger of the two (no composer invasion).
-      expect(bottom).toBeLessThanOrEqual(Math.max(startBottom, toTop + h) + 1);
+      // Never above the slot — the row above it is not the clone's to cover.
+      expect(top).toBeGreaterThanOrEqual(toTop);
+      // Still no composer invasion beyond where the real bubble rests.
+      expect(top + el.offsetHeight).toBeLessThanOrEqual(
+        Math.max(startBottom, toTop + el.offsetHeight) + 1,
+      );
     }
-    // Settled exactly on the slot.
+    // Rising only: no frame moves back down, so nothing snaps at the settle.
+    for (let i = 1; i < tops.length; i++) {
+      expect(tops[i]).toBeLessThanOrEqual(tops[i - 1] ?? Number.NaN);
+    }
     act(() => {
       vi.advanceTimersByTime(400);
     });
-    expect(visualTop(el)).toBe(100);
-    // No settle SNAP: the blend must produce at least one intermediate frame where
-    // top is converging toward the slot (0 <= top < toTop + rise_distance).
-    // Without the blend, the clamped bottom freezes and top jumps directly from
-    // the frozen negative position to toTop in the last frame — no intermediate
-    // values near the slot exist. The blend distributes that convergence across
-    // the last quarter of the rise, so several frames appear in the convergence
-    // window. Threshold: at least 1 frame with top in [0, 80) — well above the
-    // frozen regression value (≈ -129) and well below the slot (100).
-    const convergingFrames = tops.filter((t) => t >= 0 && t < toTop);
-    expect(convergingFrames.length).toBeGreaterThan(0);
-    // The bubble visibly MOVED (not frozen then snapped).
-    expect(new Set(tops).size).toBeGreaterThan(3);
+    expect(visualTop(el)).toBe(toTop);
+  });
+
+  it("liveTo: aims at the slot where it IS, lands there, and stays on it until cancel (2026-10-07)", () => {
+    // The conversation's follow now runs under the incoming flight, so a reply
+    // that starts at a full pane scrolls its slot up line by line. The clone
+    // re-reads the slot every frame — through the hand-off hold too.
+    vi.useFakeTimers();
+    mockRafWithClock();
+    const { result } = renderHook(() => useRiseAnimation());
+    const { el, setHeight } = makeGrowingEl(40);
+    const settled = vi.fn();
+    let slot: number | null = 300;
+    result.current.start({
+      el,
+      from: { left: 0, top: 500 },
+      to: { left: 0, top: 300 },
+      durationMs: 160,
+      easing: easeOutQuart,
+      anchor: "bottom",
+      liveTo: () => (slot === null ? null : { left: 0, top: slot }),
+      onSettle: settled,
+    });
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+    // A line lands and the follow lifts the slot by it.
+    setHeight(66);
+    slot = 274;
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(Math.round(visualTop(el))).toBeGreaterThanOrEqual(274);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(visualTop(el)).toBe(274); // landed where the slot is, not at `to`
+    // The hold: another line, another lift — the parked clone follows.
+    slot = 248;
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(visualTop(el)).toBe(248);
+    // The slot unmounting (null) keeps the last good answer.
+    slot = null;
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+    expect(visualTop(el)).toBe(248);
+    // The hand-off cancels; nothing moves the clone after it.
+    act(() => result.current.cancel());
+    slot = 100;
+    act(() => {
+      vi.advanceTimersByTime(64);
+    });
+    expect(visualTop(el)).toBe(248);
   });
 
   it("default anchor (top) behavior is unchanged", () => {

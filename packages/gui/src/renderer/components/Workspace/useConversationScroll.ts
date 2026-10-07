@@ -110,12 +110,19 @@ export function useConversationScroll(opts: {
   /** Handle for the topic-jump's anchor poll, so a session change can cancel
    *  a still-pending tick (audit 2026-07-24, M4). */
   const jumpPollRef = useRef<number | null>(null);
-  // Frozen while a morph clone is in flight: both rises measure their landing
-  // slot ONCE at flight start, so scrolling the container mid-flight (e.g. the
-  // first streaming tokens growing the hidden slot) moves the slot out from
-  // under the clone — a visible jump at hand-off. The settle effect below
-  // catches the scroll up once the clone lands.
+  // True while a morph clone is in flight. The outgoing rise measures its
+  // landing slot ONCE at flight start, so scrolling the container mid-flight
+  // moves the slot out from under the clone — a visible jump at hand-off. The
+  // settle effect below catches the scroll up once the clone lands.
   const morphInFlightRef = useRef(false);
+  /** The part of that freeze the FOLLOW honours: the outgoing clone only
+   *  (2026-10-07). The incoming clone tracks its slot live (useIncomingMorph's
+   *  `liveTo`), so the follow keeps running under it. Frozen there too, a
+   *  reply that started at a full pane grew below the fold for the whole
+   *  flight: the clone, its bottom held, grew up over the 板砖 row above it,
+   *  and the page caught up in one jump at the hand-off. The record-window
+   *  trims still stand down for both clones — they move slots wholesale. */
+  const followFrozenRef = useRef(false);
   /** True while the SEND glide is carrying the view to the newly reserved
    *  bottom (turn headroom). Every frame of it fires a scroll event that
    *  geometry reads, correctly, as "away from the bottom" — and unpinning
@@ -454,15 +461,16 @@ export function useConversationScroll(opts: {
     // value the unpinned branch never used. The guard covers exactly the
     // scroll and its read; the sync below stays unconditional.
     //
-    // Suppressing the scroll mid-morph: a clone measured its landing slot at
-    // flight start, and scrolling moves that slot; the settle re-runs this.
+    // Suppressing the scroll mid-morph: the outgoing clone measured its
+    // landing slot at flight start, and scrolling moves that slot; the settle
+    // re-runs this. (Not the incoming clone — see followFrozenRef.)
     // Mid-glide: the climb IS the follow, re-deriving the live bottom every
     // frame, and an instant snap here would cut its damped tail short (the
     // incoming clone's settle lands exactly in this window).
     const canScroll =
       el !== null &&
       pinnedRef.current &&
-      !morphInFlightRef.current &&
+      !followFrozenRef.current &&
       !glidingRef.current;
     // One forced layout per scrolling call (perf review 2026-07-31): while a
     // reply is eating the reservation, every reveal frame used to run read →
@@ -720,6 +728,7 @@ export function useConversationScroll(opts: {
     return () => ro.disconnect();
   }, [scrollToEndIfPinned, rederivePin]);
   morphInFlightRef.current = outgoingClone !== null || incomingClone;
+  followFrozenRef.current = outgoingClone !== null;
   // Settle catch-up: growth frozen during the flight scrolls into view the
   // moment the last clone lands — or, when the send deferred its climb into the
   // reserved room, the OUTGOING landing is where that climb starts

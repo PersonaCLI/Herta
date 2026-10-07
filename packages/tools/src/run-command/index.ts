@@ -24,7 +24,7 @@ import { runCommandWriteGuard } from "./rule.js";
 import { runCommand } from "./runner.js";
 import { runCommandInputSchema, runCommandJsonSchema } from "./schema.js";
 import { resolveWindowsShim } from "./shim-wrapper.js";
-import { detectTestRun } from "./test-detector.js";
+import { detectTestRun, isTestCommand } from "./test-detector.js";
 
 export { commandOutputTool, commandStopTool } from "./background-tools.js";
 export { makeRunCommandRule, registerRunCommandRule } from "./rule.js";
@@ -68,6 +68,19 @@ export function runCommandTool(): HertaTool {
           "Execute an argv-style command (no shell interpretation). Allow-list covers test runners, lint, git read-only, and read-only utilities. Other commands ASK for permission. Catastrophic commands are blocked. Output is captured (up to 1MB per stream), truncated for return, and persisted to .herta/logs/ (the log notes when a stream exceeded the 1MB capture cap).",
         inputSchema: runCommandJsonSchema,
       };
+    },
+    // The argv the result's test row is detected on (the model's own, only
+    // redacted), read at dispatch (ADR 0073 amendment 2026-10-08).
+    runsTests(input: unknown): boolean {
+      const argv =
+        typeof input === "object" && input !== null
+          ? (input as { argv?: unknown }).argv
+          : undefined;
+      return (
+        Array.isArray(argv) &&
+        argv.every((a): a is string => typeof a === "string") &&
+        isTestCommand(argv)
+      );
     },
     async run(
       call: ToolCallRequest,

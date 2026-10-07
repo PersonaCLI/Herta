@@ -349,3 +349,17 @@ describe("runCommandTool — timeout output capture", () => {
     expect(log).toContain("partial-marker");
   }, 20_000);
 });
+
+describe("runCommandTool runsTests (ADR 0073 amendment 2026-10-08)", () => {
+  it("reads the argv its result's test row is detected on", () => {
+    const tool = runCommandTool();
+    expect(tool.runsTests?.({ argv: ["npm", "test"] })).toBe(true);
+    expect(tool.runsTests?.({ argv: ["python", "-m", "pytest", "-q"] })).toBe(
+      true,
+    );
+    expect(tool.runsTests?.({ argv: ["ls", "-la"] })).toBe(false);
+    expect(tool.runsTests?.({ argv: "npm test" })).toBe(false);
+    expect(tool.runsTests?.({ argv: ["npm", 1] })).toBe(false);
+    expect(tool.runsTests?.({})).toBe(false);
+  });
+});

@@ -52,6 +52,9 @@ export type AgentEvent =
       id: string;
       tool: string;
       inputSummary: string;
+      /** The tool recognised the call as a test run (`HertaTool.runsTests`,
+       *  ADR 0073 amendment 2026-10-08). Absent otherwise. */
+      runsTests?: true;
     }
   | {
       type: "tool.call.progress";

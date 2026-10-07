@@ -48,6 +48,24 @@ function harness(opts: { readonly midRun?: boolean } = {}) {
 }
 
 describe("createLiveToolFeed (ADR 0073)", () => {
+  it("a call dispatched as a test run says so on its view (ADR 0073 amendment 2026-10-08)", () => {
+    const h = harness();
+    h.feed.push(
+      ev({
+        type: "tool.call.started",
+        layer: "backend",
+        id: "c1",
+        tool: "bash",
+        inputSummary: "mkdir -p x && cd x && …",
+        runsTests: true,
+      }),
+    );
+    h.feed.push(started("c2", "bash", "ls"));
+    const snap = h.tick();
+    expect(snap?.views.find((v) => v.id === "c1")?.runsTests).toBe(true);
+    expect(snap?.views.find((v) => v.id === "c2")?.runsTests).toBeUndefined();
+  });
+
   it("started mid-run, or after events were lost, it numbers no call until the next run starts (review 2026-09-30)", () => {
     const h = harness({ midRun: true });
     h.feed.push(started("c1", "bash", "pwd"));

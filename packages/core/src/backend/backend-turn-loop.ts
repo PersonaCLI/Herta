@@ -661,6 +661,7 @@ export async function* runBackendTurnLoop(
               id: call.id,
               tool: call.tool,
               inputSummary: headerFor(deps, call),
+              ...runsTestsFor(deps, call),
             });
           }
           // A read-only batch: recorded as dispatched, not synced — a read
@@ -756,6 +757,7 @@ export async function* runBackendTurnLoop(
           id: call.id,
           tool: call.tool,
           inputSummary: headerFor(deps, call),
+          ...runsTestsFor(deps, call),
         });
 
         // Recorded as dispatched BEFORE it runs (ADR 0071 §1.1): durably for
@@ -1009,6 +1011,22 @@ const SUMMARY_CAP = 80;
  * `summarizeInput`. Same single-line cap either way; a hook that throws or
  * returns nothing is simply not consulted for that call.
  */
+/** The tool's own test-run recognition, spread into `tool.call.started`
+ *  (ADR 0073 amendment 2026-10-08): `runsTests: true`, or nothing — an absent
+ *  hook, a "no" and a throw alike. */
+function runsTestsFor(
+  deps: BackendTurnDeps,
+  call: ToolCallRequest,
+): { runsTests?: true } {
+  const tool = deps.tools.get(call.tool);
+  if (tool?.runsTests === undefined) return {};
+  try {
+    return tool.runsTests(call.input) ? { runsTests: true } : {};
+  } catch {
+    return {};
+  }
+}
+
 function headerFor(deps: BackendTurnDeps, call: ToolCallRequest): string {
   const tool = deps.tools.get(call.tool);
   if (tool?.summarize !== undefined) {

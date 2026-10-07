@@ -427,3 +427,26 @@ d("bash tool (real bash)", () => {
     expect(ctx.bg.getInternal(SHELL_BG_ID)).toBeUndefined();
   });
 });
+
+describe("bash runsTests (ADR 0073 amendment 2026-10-08)", () => {
+  // No shell: the hook reads the input, never runs it.
+  const tool = bashTool({ bashPath: "bash" });
+
+  it("recognises a test run anywhere in the line — past the 80-char record header too", () => {
+    // The live lab's line: the test run sat beyond the header's cap, so the
+    // trace card read it as 修改 until its test row landed.
+    const long =
+      "mkdir -p /tmp/negcheck && cp test_hello.py /tmp/negcheck/ && cd /tmp/negcheck && sed -i 's/hello/bye/' hello.py && python -m unittest test_hello";
+    expect(long.length).toBeGreaterThan(80);
+    expect(tool.runsTests?.({ command: long })).toBe(true);
+    expect(tool.runsTests?.({ command: "cd sub && npm test" })).toBe(true);
+  });
+
+  it("says no to what the result's test row would not name", () => {
+    expect(tool.runsTests?.({ command: "ls -la && cat a.txt" })).toBe(false);
+    // Structural only: a script named like a test is just a script.
+    expect(tool.runsTests?.({ command: "node test-server.mjs" })).toBe(false);
+    expect(tool.runsTests?.({ nope: 1 })).toBe(false);
+    expect(tool.runsTests?.(null)).toBe(false);
+  });
+});

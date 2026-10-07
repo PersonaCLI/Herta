@@ -178,6 +178,16 @@ export interface HertaTool {
     input: unknown,
     ctx: { workspaceRoot: string },
   ): string | undefined;
+  /**
+   * Whether the call runs tests, read from its input at dispatch by the same
+   * detector that later turns its result into a test row (ADR 0073
+   * amendment 2026-10-08). The trace card reads a recognised test run as 验证
+   * whatever its command looks like, and must know it from the op row on: the
+   * result row lands seconds later behind Herta's beats, and the card used to
+   * re-sort its nodes when it did. A fact about the command, not a claim
+   * about the run: nothing is decided by it (D4). Optional; a throw is false.
+   */
+  runsTests?(input: unknown): boolean;
   run(
     call: ToolCallRequest,
     ctx: ToolContext,

@@ -3641,3 +3641,31 @@ describe("task context — attachments reach 板砖 (ADR 0033)", () => {
     expect(scan).toContain("do not look for it");
   });
 });
+
+describe("projectBackendEvent — runsTests on the op row (ADR 0073 amendment 2026-10-08)", () => {
+  it("the op digest carries the flag the started event had, and the body is unchanged", () => {
+    const marked = projectBackendEvent({
+      type: "tool.call.started",
+      layer: "backend",
+      id: "c1",
+      tool: "bash",
+      inputSummary: "mkdir -p x && cp a x/ && cd x && …",
+      runsTests: true,
+    });
+    expect(marked?.digest).toEqual({
+      kind: "op",
+      verb: "Running",
+      arg: "mkdir -p x && cp a x/ && cd x && …",
+      runsTests: true,
+    });
+    expect(marked?.body).toBe("Running mkdir -p x && cp a x/ && cd x && …");
+    const plain = projectBackendEvent({
+      type: "tool.call.started",
+      layer: "backend",
+      id: "c2",
+      tool: "bash",
+      inputSummary: "ls",
+    });
+    expect(plain?.digest).toEqual({ kind: "op", verb: "Running", arg: "ls" });
+  });
+});

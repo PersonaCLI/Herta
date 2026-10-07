@@ -30,6 +30,9 @@ export interface LiveToolView {
   /** The call's summary as the record's op row carries it (its
    *  `tool.call.started` input summary) — once dispatched. */
   readonly summary?: string;
+  /** The tool recognised a test run at dispatch, as the record's op row
+   *  says (`runsTests`, ADR 0073 amendment 2026-10-08). */
+  readonly runsTests?: true;
   /** The call produces a stream worth a ticker: an editor writing (not
    *  viewing), a shell line, a command's output. A read does not. */
   readonly streams: boolean;
@@ -103,6 +106,7 @@ interface CallState {
   ok: boolean | undefined;
   commandLine: string | undefined;
   summary: string | undefined;
+  runsTests: boolean;
   seq: number;
   /** The arguments' string values, as of `fieldsLen` characters. */
   fields: JsonStringField[];
@@ -266,6 +270,7 @@ export function createLiveToolFeed(
         }
         c.started = true;
         c.summary = ev.inputSummary;
+        c.runsTests = ev.runsTests === true;
         if (OUTPUT_TOOLS.has(ev.tool)) {
           c.stage = "running";
           if (ev.inputSummary.length > 0) c.commandLine = ev.inputSummary;
@@ -334,6 +339,7 @@ function newCall(id: string, tool: string, order: number): CallState {
     ok: undefined,
     commandLine: undefined,
     summary: undefined,
+    runsTests: false,
     seq: 0,
     fields: [],
     fieldsLen: 0,
@@ -384,6 +390,7 @@ function viewOf(c: CallState, focused: boolean): LiveToolView {
     done: c.done,
     ...(c.ok !== undefined ? { ok: c.ok } : {}),
     ...(c.summary !== undefined ? { summary: c.summary } : {}),
+    ...(c.runsTests ? { runsTests: true as const } : {}),
     streams,
     ...(path !== undefined && path.length > 0 ? { path } : {}),
     ...(commandLine !== undefined ? { commandLine } : {}),

@@ -165,6 +165,29 @@ describe("traceScope", () => {
   });
 });
 
+describe("traceScope — a test run recognised at dispatch (ADR 0073 amendment 2026-10-08)", () => {
+  it("is a check from its op row on, before its test row lands — even when the 80-char header shows only the setup", () => {
+    const flagged = sys({
+      kind: "op",
+      verb: "Running",
+      arg: "mkdir -p /tmp/negcheck && cp test_hello.py /tmp/negcheck/ && cd …",
+      runsTests: true,
+    });
+    const [ran] = opsOf([user(), flagged]);
+    expect(ran?.phase).toBe("verify");
+    // Rows written before the flag still read the header, until their test
+    // row says otherwise.
+    const [old] = opsOf([
+      user(),
+      op(
+        "Running",
+        "mkdir -p /tmp/negcheck && cp test_hello.py /tmp/negcheck/",
+      ),
+    ]);
+    expect(old?.phase).toBe("modify");
+  });
+});
+
 describe("buildTrace — phase segments (ADR 0073)", () => {
   const story = opsOf([
     user(),

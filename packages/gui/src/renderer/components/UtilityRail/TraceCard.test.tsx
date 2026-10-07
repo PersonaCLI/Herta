@@ -333,6 +333,47 @@ describe("TraceCard — the ticker (ADR 0073)", () => {
     expect(ticker()).toBeNull();
   });
 
+  it("a test run whose header shows only its setup stays in the 验证 node from the live view through the record's catch-up (ADR 0073 amendment 2026-10-08)", () => {
+    // Live lab 2026-10-08: the 80-char header of `mkdir … && cp … && cd … &&
+    // python -m unittest` showed only the setup, so the live step opened a
+    // 修改 node — and when the record caught up with its test row, the node
+    // folded into 验证 and the card re-sorted.
+    vi.useFakeTimers();
+    const h = renderWithSession(<TraceCard />);
+    h.startBackend();
+    push(h, user(), op("Running", "npm test"), exit(0, 1));
+    const header =
+      "mkdir -p /tmp/negcheck && cp test_hello.py /tmp/negcheck/ && cd …";
+    live(h, [
+      view({
+        id: "c2",
+        tool: "bash",
+        stage: "running",
+        started: true,
+        ordinal: 1,
+        summary: header,
+        commandLine: header,
+        runsTests: true,
+      }),
+    ]);
+    const phases = () =>
+      nodes().map((n) =>
+        n.className.includes("is-verify")
+          ? "verify"
+          : n.className.includes("is-modify")
+            ? "modify"
+            : "explore",
+      );
+    expect(phases()).toEqual(["verify"]);
+    // The record catches up: its op row (flagged) and its test row.
+    push(
+      h,
+      sys({ kind: "op", verb: "Running", arg: header, runsTests: true }),
+      sys({ kind: "tests", status: "passed", summary: "exit 0, 0.32s" }),
+    );
+    expect(phases()).toEqual(["verify"]);
+  });
+
   it("an edit's lines carry their sign as a tint, not a character", () => {
     vi.useFakeTimers();
     const h = renderWithSession(<TraceCard />);

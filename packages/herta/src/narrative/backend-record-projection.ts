@@ -336,8 +336,15 @@ export function projectBackendEventUnsanitized(
         label: "差分协处理器",
         body,
         // Structured digest (M-projection-3): compaction digests from THIS,
-        // not by regex-parsing the rendered body back apart.
-        digest: { kind: "op", verb: label, arg },
+        // not by regex-parsing the rendered body back apart. `runsTests`
+        // rides along when the tool recognised a test run at dispatch (ADR
+        // 0073 amendment 2026-10-08) — the body is unchanged.
+        digest: {
+          kind: "op",
+          verb: label,
+          arg,
+          ...(event.runsTests === true ? { runsTests: true as const } : {}),
+        },
       };
     }
 

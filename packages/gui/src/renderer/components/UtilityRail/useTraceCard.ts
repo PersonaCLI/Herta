@@ -90,7 +90,15 @@ export function stepOf(
   return {
     verb,
     arg,
-    phase: verb === "Running" ? commandPhase(arg) : opPhase(verb, arg),
+    // A recognised test run is 验证 whatever its command — known at
+    // dispatch, as the record's op row knows it (ADR 0073 amendment
+    // 2026-10-08), so the step does not change node when its row lands.
+    phase:
+      view.runsTests === true
+        ? "verify"
+        : verb === "Running"
+          ? commandPhase(arg)
+          : opPhase(verb, arg),
     status,
     ...(verb === "Running" && arg.length === 0
       ? { tentative: true as const }

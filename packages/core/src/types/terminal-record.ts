@@ -234,6 +234,11 @@ export type SystemBlockDigest =
          *  word because it spends model tokens. */
         | "Digesting";
       readonly arg: string;
+      /** The command runs tests — recognised at dispatch from the WHOLE
+       *  input (`arg` is the 80-char header, which can cut the test run off),
+       *  by the detector that later writes its test row (ADR 0073 amendment
+       *  2026-10-08). Absent on rows written before it. */
+      readonly runsTests?: true;
     }
   | {
       /** A `digest_document` result (ADR 0043). The overview rides

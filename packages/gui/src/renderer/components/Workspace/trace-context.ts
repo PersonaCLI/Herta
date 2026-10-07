@@ -219,7 +219,12 @@ function collectOps(collectedNewestFirst: readonly SystemBlock[]): TraceOp[] {
           verb: d.verb,
           arg: d.arg,
           status: "running",
-          phase: opPhase(d.verb, d.arg),
+          // A test run recognised at dispatch is a check from its op row on
+          // (ADR 0073 amendment 2026-10-08): `arg` is the 80-char header,
+          // which can cut the test run off, and waiting for the test row
+          // re-sorted the card when it landed. Rows written before the flag
+          // still wait for that row (below).
+          phase: d.runsTests === true ? "verify" : opPhase(d.verb, d.arg),
         });
         break;
       }

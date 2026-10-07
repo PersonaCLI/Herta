@@ -1162,9 +1162,15 @@ button,
    content-visibility, off-screen rows skip layout and paint entirely, so
    each animation frame costs only the ~dozen visible rows regardless of
    session length. `auto` intrinsic sizing remembers a row's REAL height
-   after its first layout — scroll geometry stays honest; 72px is only the
-   pre-first-layout estimate for rows that have never been on screen.
+   after its first layout — scroll geometry stays honest; the size below is
+   only the pre-first-layout estimate for rows that have never been on screen.
    Chromium-only app, fully supported.
+
+   The estimate is one collapsed group line, 23px (2026-10-08). It was 72px,
+   a message row's height kept when the rule narrowed to activity groups, and
+   every NEW group — mounting at the bottom of a live turn — laid out 49px
+   too tall for one frame, then shrank to its line: under held turn room the
+   conversation dipped 49px (the scroll engine now also re-syncs on shrink).
 
    ACTIVITY GROUPS ONLY — not .message-row: content-visibility imposes
    paint containment, which clips descendants to the row's padding box,
@@ -1177,7 +1183,7 @@ button,
    subtrees and have no overflowing hover UI, so they stay skipped. */
 .activity-line-group {
   content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
+  contain-intrinsic-size: auto 23px;
 }
 .user-row {
   justify-content: flex-end;

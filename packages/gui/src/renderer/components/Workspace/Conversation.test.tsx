@@ -3051,6 +3051,54 @@ describe("Conversation turn headroom", () => {
     }
   });
 
+  it("a pinned flow that SHRINKS under held room keeps its place — the spacer re-syncs in the observer, before paint (2026-10-08)", () => {
+    // A new 板砖 row laid out at its size estimate and settled 49px shorter a
+    // frame later: the browser clamped the scroller to the shorter flow, and
+    // with room held nothing re-synced it until the next follow trigger —
+    // the conversation dropped 49px and came back ~350ms on (measured).
+    vi.useFakeTimers();
+    const roCallbacks: Array<(entries?: unknown) => void> = [];
+    class FakeRO {
+      constructor(cb: (entries?: unknown) => void) {
+        roCallbacks.push(cb);
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    try {
+      const { container, spacer, send } = setup();
+      const geo = fakeGeometry(container, 3000);
+      const pane = container.querySelector(".conversation") as HTMLElement;
+      const flow = container.querySelector(".conversation-flow") as HTMLElement;
+      send();
+      settleGlide();
+      expect(spacer.dataset.armed).toBe("true");
+      const at = pane.scrollTop;
+      expect(at).toBe(geo.maxScroll());
+      const room = Number.parseInt(spacer.style.height, 10);
+      const deliver = (height: number): void => {
+        act(() => {
+          for (const cb of roCallbacks) {
+            cb([{ target: flow, contentRect: { height } }]);
+          }
+        });
+      };
+      deliver(1000); // the observer's baseline for the flow
+      // The flow settles 49px shorter; the browser clamps the scroller.
+      geo.setContent(3000 + BUBBLE - 49);
+      if (pane.scrollTop > geo.maxScroll()) geo.scrollTo(geo.maxScroll());
+      deliver(951);
+      // The room took the 49px back, and the view did not move.
+      expect(Number.parseInt(spacer.style.height, 10)).toBe(room + 49);
+      expect(pane.scrollTop).toBe(at);
+      geo.restore();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
   it("a scroll the BROWSER clamped does not spend reserved room", () => {
     // Half of the approval-panel drift (user 2026-07-30, measured live at
     // 399px over two steps). The panel's reserve is bottom padding on the

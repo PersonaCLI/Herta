@@ -776,7 +776,17 @@ export function useConversationScroll(opts: {
       // Before the follow, so a resize that lands an unpinned reader at the
       // bottom is followed in the same frame.
       if (scroller || shrank) rederivePin();
-      if (!scroller) return;
+      if (!scroller) {
+        // A flow that SHRANK under a pinned reader (2026-10-08) re-syncs now,
+        // after layout and before paint. With room held, nothing else would:
+        // the browser clamps scrollTop to the shorter flow, and the spacer
+        // only re-grew at the next follow trigger — a new 板砖 row mounting
+        // at its 72px placeholder and settling to its 23px line a frame later
+        // dropped the whole conversation 49px and back ~350ms on (measured).
+        // The sync keeps the held extent, so the pinned view does not move.
+        if (shrank) scrollToEndIfPinned();
+        return;
+      }
       // Viewport-delta re-derive (deferred-fix 2026-07-31): an armed extent
       // baked in the send-time viewport — `anchorTop − GAP + viewport` — so
       // a maximize mid-hold left the anchored message viewport-delta below

@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { OVERLAY_Z, useModalOverlay } from "../../lib/overlay-stack.js";
+import { hoverTipProps } from "../common/hover-tip.js";
 
 /** Only the device card remains — the voice card was retired when the tide
  *  wave moved above the composer (glass-wave merge, 2026-07-05). */
@@ -213,10 +214,9 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
                     ? t("card.workspaceDefault")
                     : t("card.workspace")}
                 </span>
-                <span
-                  className="card-menu-path"
-                  title={props.activeWorkspace ?? undefined}
-                >
+                {/* No tip: the path wraps at its separators and is always
+                    shown whole (owner 2026-10-08: no OS tooltips). */}
+                <span className="card-menu-path">
                   {props.activeWorkspace !== undefined
                     ? breakablePath(props.activeWorkspace)
                     : "—"}
@@ -291,7 +291,12 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
                       <ul className="card-menu-rules-list">
                         {rules.map((r) => (
                           <li className="card-menu-rule" key={r}>
-                            <code className="card-menu-rule-text" title={r}>
+                            <code
+                              className="card-menu-rule-text"
+                              // The app's tip, only for a rule the row cut
+                              // off (owner 2026-10-08).
+                              {...hoverTipProps(r, { whenClipped: true })}
+                            >
                               {r}
                             </code>
                             <button

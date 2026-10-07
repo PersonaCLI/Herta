@@ -1,10 +1,12 @@
 import {
+  act,
   fireEvent,
   screen,
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "../../i18n/test-util.js";
+import { getHoverTip, hideHoverTip } from "../common/hover-tip.js";
 import { CardMenu } from "./CardMenu.js";
 
 describe("CardMenu", () => {
@@ -179,6 +181,33 @@ describe("CardMenu", () => {
     fireEvent.click(screen.getByLabelText("device card info"));
     expect(screen.getByText("Remembered commands")).toBeInTheDocument();
     expect(screen.getByText("node src/index.mjs:*")).toBeInTheDocument();
+  });
+
+  it("its tips are the app's own: none on the wrapping path, and a rule's only while it is cut off (owner 2026-10-08)", () => {
+    renderWithLocale(
+      <CardMenu {...rulesProps} rules={["node src/index.mjs:*"]} />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    // No OS tooltip anywhere in the menu (a portal at the body).
+    expect(
+      document.querySelectorAll(".card-menu-tooltip [title]"),
+    ).toHaveLength(0);
+    const rule = screen.getByText("node src/index.mjs:*");
+    const tip = (): string | undefined => {
+      act(() => {
+        fireEvent.focusIn(rule);
+      });
+      const text = getHoverTip()?.text;
+      act(() => {
+        hideHoverTip();
+      });
+      return text;
+    };
+    // Seen whole (jsdom lays out nothing): no tip.
+    expect(tip()).toBeUndefined();
+    Object.defineProperty(rule, "scrollWidth", { value: 300 });
+    Object.defineProperty(rule, "clientWidth", { value: 120 });
+    expect(tip()).toBe("node src/index.mjs:*");
   });
 
   it("shows the empty note for an empty rule list", () => {

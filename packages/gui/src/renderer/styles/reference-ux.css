@@ -7541,7 +7541,10 @@ button.commit-view__path:hover {
    The settings "?" tip's face, floating. */
 .hover-tip {
   position: fixed;
-  z-index: 60;
+  /* With the app's other portal tooltips (.tooltip--portal), above every
+     popover a tipped element can sit in — the card menu floats at 70
+     (2026-10-08: its rule rows took this tip). */
+  z-index: 1000;
   /* Fits its text, up to the layer's max-width (HoverTipLayer). */
   width: max-content;
   padding: 7px 10px;

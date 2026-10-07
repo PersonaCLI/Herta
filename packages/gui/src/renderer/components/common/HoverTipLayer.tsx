@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { getHoverTip, subscribeHoverTip } from "./hover-tip.js";
 
 /** Room between the anchor and the tip, and from the viewport's edges. */
@@ -26,6 +27,11 @@ export function tipLeft(
  * (已修改) and the ↑↓ counts' wording took the app's tip instead of the OS's,
  * three characters sat in a 360px box reaching over the conversation. The
  * box's real width is read before paint and the box re-centred on it.
+ *
+ * Portalled to the body (2026-10-08), where the popovers it must clear live:
+ * inside the app's root it shared that root's stacking context, so even at
+ * z-index 1000 it drew UNDER the card menu (a body portal at 70) — a rule's
+ * tip showed through the menu's glass.
  */
 export function HoverTipLayer(): JSX.Element | null {
   const tip = useSyncExternalStore(subscribeHoverTip, getHoverTip, () => null);
@@ -50,7 +56,7 @@ export function HoverTipLayer(): JSX.Element | null {
   const style: React.CSSProperties = below
     ? { left, top: anchor.top + anchor.height + GAP, maxWidth }
     : { left, bottom: window.innerHeight - anchor.top + GAP, maxWidth };
-  return (
+  return createPortal(
     <div
       ref={ref}
       className={`hover-tip${below ? " is-below" : ""}`}
@@ -58,6 +64,7 @@ export function HoverTipLayer(): JSX.Element | null {
       style={style}
     >
       {tip.text}
-    </div>
+    </div>,
+    document.body,
   );
 }

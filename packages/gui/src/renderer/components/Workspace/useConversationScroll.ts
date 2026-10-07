@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GLIDE_WINDOW_MS, OUTGOING_FLIGHT_MS } from "./conversation-timing.js";
-import { type ScrollGlideHandle, startScrollGlide } from "./scroll-glide.js";
+import {
+  SCROLL_GLIDE_SNAP_PX,
+  type ScrollGlideHandle,
+  startScrollGlide,
+} from "./scroll-glide.js";
 import {
   headroomFor,
   needsRoom,
@@ -143,11 +147,22 @@ export function useConversationScroll(opts: {
    *  switch or a newer glide must stop the rAF loop, not just flip flags —
    *  a loop left running writes scrollTop against whatever is on screen. */
   const scrollGlideRef = useRef<ScrollGlideHandle | null>(null);
+  /** The streaming follow's glide (2026-10-08) — see `followGrowth`. Not a
+   *  climb: it never sets `glidingRef`, so nothing aims past it (owedScroll)
+   *  or waits for it (the incoming rise's holdSettle) — the reply's clone
+   *  tracks the slot where it is. */
+  const followGlideRef = useRef<ScrollGlideHandle | null>(null);
+  const stopFollowGlide = useCallback((): void => {
+    followGlideRef.current?.cancel();
+    followGlideRef.current = null;
+  }, []);
   // Unmount mid-climb: the loop holds `el` alive and keeps scrolling it.
   useEffect(
     () => () => {
       scrollGlideRef.current?.cancel();
       scrollGlideRef.current = null;
+      followGlideRef.current?.cancel();
+      followGlideRef.current = null;
     },
     [],
   );
@@ -159,6 +174,13 @@ export function useConversationScroll(opts: {
     const el = scrollRef.current;
     if (el === null) return;
     const onScroll = (): void => {
+      // The streaming follow's own writes. It trails the growing bottom by
+      // up to a line or so — read as geometry, a big block could put that
+      // past the pin threshold and unpin a reader who never moved. A reader
+      // who does move ends the glide itself (wheel/touch, or any scrollTop
+      // it did not write), and their next scroll event lands here with the
+      // glide gone.
+      if (followGlideRef.current !== null) return;
       // Our own glide, not the reader's hand — leave every flag alone and
       // let the settle catch-up finish the job.
       if (glidingRef.current) {
@@ -220,7 +242,8 @@ export function useConversationScroll(opts: {
     glidingRef.current = false;
     scrollGlideRef.current?.cancel();
     scrollGlideRef.current = null;
-  }, []);
+    stopFollowGlide();
+  }, [stopFollowGlide]);
   // Expanding collapsed row content (a diff disclosure, an activity history)
   // unpins via context: the growth lands BELOW the toggle without any scroll
   // event, so `pinnedRef` would stay stale-true and the next follow trigger
@@ -239,7 +262,9 @@ export function useConversationScroll(opts: {
     // Disclosure unpin, not a user scroll — suppress the jump chip until a
     // real scroll event hands control back to geometry (see syntheticUnpinRef).
     syntheticUnpinRef.current = true;
-  }, []);
+    // …and the follow stops where it is, short of the end it was chasing.
+    stopFollowGlide();
+  }, [stopFollowGlide]);
   /** User navigation away from the bottom (load-earlier, a topic jump):
    *  drops the pin so the append-follow cannot yank the view when the
    *  prepend lands, and — unlike the disclosure `unpin` — leaves
@@ -248,7 +273,8 @@ export function useConversationScroll(opts: {
   const releasePin = useCallback((): void => {
     pinnedRef.current = false;
     setPinnedState(false);
-  }, []);
+    stopFollowGlide();
+  }, [stopFollowGlide]);
   /** Re-derive the pin from GEOMETRY after a layout change that fires no
    *  scroll event. The scroll handler was the only place `pinned` was ever
    *  recomputed, so a change that put an unpinned reader at the bottom
@@ -466,12 +492,15 @@ export function useConversationScroll(opts: {
     // re-runs this. (Not the incoming clone — see followFrozenRef.)
     // Mid-glide: the climb IS the follow, re-deriving the live bottom every
     // frame, and an instant snap here would cut its damped tail short (the
-    // incoming clone's settle lands exactly in this window).
+    // incoming clone's settle lands exactly in this window). The same for
+    // the streaming follow's glide: it retargets every frame, so a block
+    // landing under it is followed smoothly instead of snapped.
     const canScroll =
       el !== null &&
       pinnedRef.current &&
       !followFrozenRef.current &&
-      !glidingRef.current;
+      !glidingRef.current &&
+      followGlideRef.current === null;
     // One forced layout per scrolling call (perf review 2026-07-31): while a
     // reply is eating the reservation, every reveal frame used to run read →
     // spacer write → scrollHeight RE-read, and the post-write re-read forced
@@ -499,6 +528,47 @@ export function useConversationScroll(opts: {
     if (!canScroll) return;
     el.scrollTop = Math.max(0, preBottom + delta);
   }, [syncHeadroom]);
+  /**
+   * Follow a streaming reply's growth by GLIDING to the bottom (owner
+   * 2026-10-08) rather than snapping there per frame. At a full pane every
+   * line the reply adds used to move the whole conversation up by a line
+   * height in one frame — the page climbed in 26px steps. The glide is the
+   * send climb's damped approach (scroll-glide.ts) without its cap: it
+   * retargets the growing bottom every frame and ends when the reply stops
+   * growing. While a reservation holds, growth eats spacer, the bottom does
+   * not move, and nothing glides at all.
+   *
+   * Same stand-downs as `scrollToEndIfPinned`, whose sync it runs. Reduced
+   * motion keeps the snap.
+   */
+  const followGrowth = useCallback((): void => {
+    const el = scrollRef.current;
+    if (reduced || el === null) {
+      scrollToEndIfPinned();
+      return;
+    }
+    const canScroll =
+      pinnedRef.current &&
+      !followFrozenRef.current &&
+      !glidingRef.current &&
+      followGlideRef.current === null;
+    // Read before the sync, for the reason scrollToEndIfPinned does.
+    const preBottom = canScroll ? el.scrollHeight - el.clientHeight : 0;
+    const delta = syncHeadroom();
+    if (!canScroll) return;
+    if (preBottom + delta - el.scrollTop <= SCROLL_GLIDE_SNAP_PX) return;
+    followGlideRef.current = startScrollGlide(el, {
+      maxMs: Number.POSITIVE_INFINITY,
+      onDone: () => {
+        followGlideRef.current = null;
+      },
+      // The reader took the scroller: their next scroll event runs the pin
+      // test, so a reader who scrolled away stops being followed.
+      onUserTakeover: () => {
+        followGlideRef.current = null;
+      },
+    });
+  }, [reduced, scrollToEndIfPinned, syncHeadroom]);
   /** Take the scroller for a DAMPED climb to the bottom (scroll-glide.ts;
    *  user 2026-07-30 — the native smooth scroll spends a pane-sized move at
    *  constant speed and reads mechanical). The handler stands down
@@ -510,6 +580,8 @@ export function useConversationScroll(opts: {
     const el = scrollRef.current;
     if (el === null) return;
     scrollGlideRef.current?.cancel();
+    // The climb takes over the scroller — it chases the live bottom too.
+    stopFollowGlide();
     glidingRef.current = true;
     jumpingRef.current = true;
     if (jumpTimerRef.current !== null) {
@@ -530,7 +602,7 @@ export function useConversationScroll(opts: {
       // — their very next scroll event runs the ratchet and the pin test.
       onUserTakeover: () => release(false),
     });
-  }, [scrollToEndIfPinned]);
+  }, [scrollToEndIfPinned, stopFollowGlide]);
   /** The climb a send deferred until its bubble had landed (2026-07-30).
    *  Returns whether it took over, so the settle's catch-up can leave the
    *  scroller alone when it did. */
@@ -852,8 +924,9 @@ export function useConversationScroll(opts: {
     pendingGlideRef.current = false;
     scrollGlideRef.current?.cancel();
     scrollGlideRef.current = null;
+    stopFollowGlide();
     syncHeadroom();
-  }, [syncHeadroom]);
+  }, [syncHeadroom, stopFollowGlide]);
 
   return {
     // DOM anchors for the JSX, and the fog edges.
@@ -867,6 +940,7 @@ export function useConversationScroll(opts: {
     // Intents.
     scrollToBottom,
     scrollToEndIfPinned,
+    followGrowth,
     rePin,
     unpin,
     releasePin,

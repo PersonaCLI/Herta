@@ -53,16 +53,17 @@ export function useSupervisorHold(opts: {
     return () => window.clearInterval(id);
   }, [supervisorChecking]);
   // The reveal's growth signal: stamps the stall clock, lights the jump chip
-  // for an unpinned reader, then follows the pinned autoscroll (the original
-  // onGrow behavior).
-  // Both engine intents are stable callbacks, so the handler keeps its
-  // identity for the life of the session.
-  const { noteNewBelow, scrollToEndIfPinned } = scroll;
+  // for an unpinned reader, then follows the pinned autoscroll — gliding,
+  // not snapping a line at a time (owner 2026-10-08; followGrowth).
+  // Both engine intents are stable callbacks (followGrowth changes only with
+  // the reduced-motion preference), so the handler keeps its identity for
+  // the life of the session.
+  const { noteNewBelow, followGrowth } = scroll;
   const onRevealGrow = useCallback((): void => {
     lastGrowRef.current = Date.now();
     noteNewBelow();
-    scrollToEndIfPinned();
-  }, [noteNewBelow, scrollToEndIfPinned]);
+    followGrowth();
+  }, [noteNewBelow, followGrowth]);
 
   return { showSupervisorHold, onRevealGrow };
 }

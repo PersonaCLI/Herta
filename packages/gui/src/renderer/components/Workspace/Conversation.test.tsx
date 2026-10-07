@@ -21,6 +21,7 @@ import {
   UNPINNED_TRIM_AT,
   UNPINNED_TRIM_KEEP_TAIL,
 } from "./Conversation.js";
+import { SHADOW_SETTLE_MS } from "./conversation-timing.js";
 import { SCROLL_GLIDE_MAX_MS } from "./scroll-glide.js";
 import { HEADROOM_GAP_PX } from "./turn-headroom.js";
 import { RETRACT_HOLD_MS, shrinkDelayMs } from "./useRetractMorph.js";
@@ -2920,6 +2921,13 @@ describe("Conversation turn headroom", () => {
       act(() => {
         flight.finish(); // the OUTGOING lands; the incoming keeps flying
       });
+      // Its landing hold, in an act of its own: React commits the swap only
+      // when the act ends, and one long advance ran the park's fallback timer
+      // first — the climb never started, and an instant follow snap was what
+      // reached the bottom (found 2026-10-08, when the follow began to glide).
+      act(() => {
+        vi.advanceTimersByTime(SHADOW_SETTLE_MS);
+      });
       settleGlide();
       // The climb ran — it did not wait for the incoming clone to land.
       expect(pane.scrollTop).toBe(geo.maxScroll());
@@ -2936,11 +2944,12 @@ describe("Conversation turn headroom", () => {
     // row grew below the fold: the clone grew up over the row, and the page
     // caught up in one jump at the hand-off. The clone now tracks its slot
     // live, so the follow need not wait for it.
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1); // hold the clone in the air
+    vi.useFakeTimers();
     try {
       const { container, mock } = setup({ overlay: true });
       const geo = fakeGeometry(container, 3000); // full pane, nothing reserved
       const pane = container.querySelector(".conversation") as HTMLElement;
+      geo.scrollTo(geo.maxScroll()); // the reader sits at the bottom
       act(() => {
         mock.emitTurn({ kind: "started", turnId: "t1" });
         mock.emitAgent({
@@ -2969,6 +2978,9 @@ describe("Conversation turn headroom", () => {
           },
         });
       });
+      act(() => {
+        vi.advanceTimersByTime(500); // well inside the 760ms flight
+      });
       // Still in the air — and the view followed.
       expect(
         container.querySelector(".morph-clone.herta-bubble"),
@@ -2976,7 +2988,66 @@ describe("Conversation turn headroom", () => {
       expect(pane.scrollTop).toBe(geo.maxScroll());
       geo.restore();
     } finally {
-      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a streaming reply's growth GLIDES the page up — no line-height step (owner 2026-10-08)", () => {
+    // At a full pane every line the reply added moved the whole conversation
+    // up by a line height in one frame.
+    vi.useFakeTimers();
+    try {
+      const { container, mock } = setup({ overlay: true });
+      const geo = fakeGeometry(container, 3000);
+      const pane = container.querySelector(".conversation") as HTMLElement;
+      geo.scrollTo(geo.maxScroll());
+      act(() => {
+        mock.emitTurn({ kind: "started", turnId: "t1" });
+        mock.emitAgent({
+          kind: "agent",
+          event: {
+            type: "assistant.delta",
+            layer: "actor",
+            text: "嗯",
+          } as never,
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(2000); // the reply lands, its follow settles
+      });
+      const from = pane.scrollTop;
+      expect(from).toBe(geo.maxScroll());
+      // A line arrives: the reveal grows the bubble, which grows the flow.
+      geo.setContent(3000 + BUBBLE + 26);
+      act(() => {
+        mock.emitAgent({
+          kind: "agent",
+          event: {
+            type: "assistant.delta",
+            layer: "actor",
+            text: "引擎、页面",
+          } as never,
+        });
+      });
+      // Two acts: React commits the reveal's growth (which starts the glide)
+      // only when an act ends.
+      act(() => {
+        vi.advanceTimersByTime(48); // the reveal's frames
+      });
+      act(() => {
+        vi.advanceTimersByTime(48); // the glide's first frames
+      });
+      // Under way, not there in one frame…
+      expect(pane.scrollTop).toBeGreaterThan(from);
+      expect(pane.scrollTop).toBeLessThan(geo.maxScroll());
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      // …and landed.
+      expect(pane.scrollTop).toBe(geo.maxScroll());
+      geo.restore();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

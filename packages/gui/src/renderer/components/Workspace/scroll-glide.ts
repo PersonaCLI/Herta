@@ -69,8 +69,15 @@ export function startScrollGlide(
      *  didn't write — scrollbar drag, keyboard) — the glide stops where it
      *  is and does NOT re-assert anything. */
     readonly onUserTakeover: () => void;
+    /** The runaway cap, default {@link SCROLL_GLIDE_MAX_MS}. The streaming
+     *  follow passes Infinity (2026-10-08): it chases a reply that grows a
+     *  line at a time for as long as the reply streams, and a cap there
+     *  would snap whatever lag it had left, mid-stream. It still ends —
+     *  the moment the reply stops growing, it converges. */
+    readonly maxMs?: number;
   },
 ): ScrollGlideHandle {
+  const maxMs = hooks.maxMs ?? SCROLL_GLIDE_MAX_MS;
   let raf: number | null = null;
   let last = performance.now();
   const started = last;
@@ -111,7 +118,7 @@ export function startScrollGlide(
     }
     const target = el.scrollHeight - el.clientHeight; // live — see retargeting
     const remaining = target - el.scrollTop;
-    const capped = now - started >= SCROLL_GLIDE_MAX_MS;
+    const capped = now - started >= maxMs;
     if (Math.abs(remaining) <= SCROLL_GLIDE_SNAP_PX || capped) {
       el.scrollTop = target;
       detach();

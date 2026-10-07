@@ -158,6 +158,36 @@ describe("startScrollGlide", () => {
     );
   });
 
+  it("maxMs Infinity never concedes mid-chase — it ends when the growth does (the streaming follow, 2026-10-08)", () => {
+    // A cap there would snap whatever lag was left, mid-reply: the step
+    // the follow's glide exists to remove.
+    mockClock();
+    const s = makeScroller(3000);
+    s.el.scrollTop = s.bottom();
+    const done = vi.fn();
+    startScrollGlide(s.el, {
+      onDone: done,
+      onUserTakeover: vi.fn(),
+      maxMs: Number.POSITIVE_INFINITY,
+    });
+    const steps: number[] = [];
+    // A line every ~150ms for three caps' worth of clock.
+    const frames = Math.ceil((3 * SCROLL_GLIDE_MAX_MS) / 16);
+    for (let i = 0; i < frames; i++) {
+      if (i % 9 === 0) s.grow(26);
+      const before = s.top();
+      pump(16);
+      steps.push(s.top() - before);
+    }
+    expect(done).not.toHaveBeenCalled();
+    // Never a line-sized jump: the largest step is a fraction of a line.
+    expect(Math.max(...steps)).toBeLessThan(13);
+    // Growth stops — the glide lands on the bottom and ends.
+    pumpUntilDone(done, s.top);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(s.top()).toBe(s.bottom());
+  });
+
   it("a wheel hands the scroller back: stops where it is, no onDone, no re-assert", () => {
     mockClock();
     const s = makeScroller(3000);

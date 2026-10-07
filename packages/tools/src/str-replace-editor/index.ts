@@ -368,11 +368,12 @@ export function strReplaceEditorTool(
       // WRITTEN, or the next freshness check fails against our own write.
       const out = reattachBom(plan.after, decoded.bom);
       // In the run's journal first (ADR 0071): a crash from here on is
-      // decided by the file's hash.
+      // decided by the file's hash. The bytes it replaces go to the undo
+      // store (ADR 0074) — exactly as read, BOM and all.
       const refusedEdit = await journalWrite<StrReplaceEditorData>(
         ctx,
         target.resolved,
-        createHash("sha256").update(buf).digest("hex"),
+        buf,
         out,
       );
       if (refusedEdit !== null) return withModelText(refusedEdit);

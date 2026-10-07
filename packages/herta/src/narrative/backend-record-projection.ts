@@ -112,6 +112,14 @@ export function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
         source: cleanBody(digest.source),
         path: cleanBody(digest.path),
       };
+    case "undo":
+      // Paths 板砖 wrote, or its commands touched (ADR 0074): backend-derived
+      // like every path here. The results and flags are harness-made.
+      return {
+        ...digest,
+        files: digest.files.map((f) => ({ ...f, path: cleanBody(f.path) })),
+        commands: digest.commands.map(cleanBody),
+      };
     case "skip":
       return digest;
   }

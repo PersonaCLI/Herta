@@ -12,6 +12,7 @@ import type { AgentEvent, TurnSummary } from "../types/events.js";
 import type { ProviderAdapter } from "../types/provider.js";
 import type {
   ToolCallRequest,
+  ToolCallUndo,
   ToolContext,
   ToolResult,
 } from "../types/tool.js";
@@ -84,6 +85,12 @@ export interface BackendTurnDeps {
    * (the CLI, tests): nothing is recorded.
    */
   journal?: DispatchJournal;
+  /**
+   * This segment's view of the undo store (ADR 0074 §1): every tool gets it,
+   * and the editors leave what they replace there. Absent (the CLI, tests):
+   * nothing is kept.
+   */
+  undo?: ToolCallUndo;
   /**
    * The working state the harness keeps (working-state.ts), read when old
    * iterations have been dropped from the transcript. Absent (tests, the
@@ -541,6 +548,7 @@ export async function* runBackendTurnLoop(
         bus: deps.bus,
         memory: deps.memory,
         ...(deps.findings !== undefined ? { findings: deps.findings } : {}),
+        ...(deps.undo !== undefined ? { undo: deps.undo } : {}),
       };
       // Each call records through its own view of the journal (ADR 0071
       // §1.1): a writer's `write`, a command's `spawn`, stamped with the call.

@@ -196,11 +196,12 @@ export function editFileTool(): HertaTool {
       const diff = computeUnifiedDiff(before, after, safe.relative);
 
       // In the run's journal first (ADR 0071): a crash from here on is
-      // decided by the file's hash.
+      // decided by the file's hash. The bytes it replaces go to the undo
+      // store (ADR 0074) — exactly as read, BOM and all.
       const refused = await journalWrite<EditFileData>(
         ctx,
         safe.resolved,
-        oldSha256,
+        buf,
         afterBuf,
       );
       if (refused !== null) return refused;

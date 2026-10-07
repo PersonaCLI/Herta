@@ -1319,7 +1319,12 @@ describe("Session — rewindLastTurn", () => {
     await session.submitText("在吗");
     expect(session.record).toHaveLength(3); // user + thought + speech
     const result = await session.rewindLastTurn();
-    expect(result).toEqual({ ok: true, userText: "在吗", editedFiles: false });
+    expect(result).toEqual({
+      ok: true,
+      userText: "在吗",
+      editedFiles: false,
+      undoable: false,
+    });
     expect(session.record).toEqual([]);
     await cleanup();
   });
@@ -1381,7 +1386,12 @@ describe("Session — rewindLastTurn", () => {
       { kind: "herta", surface: "speech", text: "h2" },
     ]);
     const result = await session.rewindLastTurn();
-    expect(result).toEqual({ ok: true, userText: "u2", editedFiles: false });
+    expect(result).toEqual({
+      ok: true,
+      userText: "u2",
+      editedFiles: false,
+      undoable: false,
+    });
     expect(session.record).toEqual([
       { kind: "user", text: "u1" },
       { kind: "herta", surface: "speech", text: "h1" },

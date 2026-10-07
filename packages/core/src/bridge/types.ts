@@ -77,6 +77,13 @@ export interface RunCommandData {
    */
   backgroundId?: string;
   running?: boolean;
+  /**
+   * The command classified `allow` — a class that changes nothing a user
+   * would take back: a read, a test, a version query, `git status`. Set by
+   * the tool from the same classifier its permission rule ran. Undo (ADR
+   * 0074 §2) leaves such a command out of what it names as not restored.
+   */
+  readOnly?: boolean;
 }
 
 /**

@@ -195,6 +195,23 @@ export interface CutoffStep {
  * Same stance as `markerSummary`: the canonical `body` stays the single
  * shared-record text; this is derived data for downstream projections.
  */
+/** What taking a turn's edits back did to one file (ADR 0074 §3). */
+export type UndoFileResult =
+  /** Its first bytes are back. */
+  | "restored"
+  /** The turn created it; it is gone again. */
+  | "deleted"
+  /** Already as it was. */
+  | "unchanged"
+  /** Changed since 板砖 wrote it: left alone, never overwritten. */
+  | "changed_since"
+  /** Its bytes were not kept (the bound, or a failed capture): left alone. */
+  | "not_kept"
+  /** No longer inside the workspace: refused. */
+  | "outside_workspace"
+  /** It should have been restored and the write failed: left as it was. */
+  | "failed";
+
 export type SystemBlockDigest =
   | {
       /** A workflow step ("Reading foo.ts") — verb from workflowLabel,
@@ -452,6 +469,23 @@ export type SystemBlockDigest =
       readonly kind: "finding";
       readonly claim: string;
       readonly cites: readonly string[];
+    }
+  | {
+      /** The 开拓者 took the latest turn's edits back (ADR 0074 §4): what
+       *  happened to each file, and what commands changed (never restored).
+       *  Display-only, like every digest — Herta reads the body, which
+       *  names the same results; this lets the turn's card show them per
+       *  file without parsing it. Paths are workspace-relative. */
+      readonly kind: "undo";
+      readonly files: readonly {
+        readonly path: string;
+        readonly result: UndoFileResult;
+      }[];
+      readonly commands: readonly string[];
+      /** Commands ran, and what they changed could not be read. */
+      readonly commandsUnknown: boolean;
+      /** Some of the turn's bytes were never kept. */
+      readonly incomplete: boolean;
     }
   | {
       /** No richer structure — digest to the text's first line, truncated. */

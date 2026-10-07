@@ -274,6 +274,9 @@ export interface BackendStackOpts {
   /** Where this session keeps its run journal (ADR 0071; see
    *  `dispatchJournalPath`). Absent (the CLI): no journal is kept. */
   readonly journalPath?: string;
+  /** Where this session keeps what 板砖's editors replace, for undo (ADR
+   *  0074; see `undoStoreDir`). Absent (the CLI): nothing is kept. */
+  readonly undoDir?: string;
   /** Whether the session already holds an attached document (a reopened
    *  record with attachment rows). Mounts `digest_document` at build; a
    *  session without one gets it from `mountDigestTool` when the first
@@ -490,6 +493,8 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       ...(opts.journalPath !== undefined
         ? { journalPath: opts.journalPath }
         : {}),
+      // The undo store (ADR 0074): what the editors replace, per segment.
+      ...(opts.undoDir !== undefined ? { undoDir: opts.undoDir } : {}),
       contract,
     });
 

@@ -28,9 +28,10 @@
  *   - Each block is emitted exactly once — no double-emission window.
  */
 
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readUndoIndex, undoSegments, undoStoreDir } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { SessionImpl } from "./session.js";
 import {
@@ -330,6 +331,254 @@ describe("failed turn — record re-alignment (audit 2026-07-24, H1)", () => {
         expect(session.record.filter((b) => b.kind === "user")).toHaveLength(0);
       } finally {
         await session.close();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+});
+
+describe("@herta/app-server — the dispatch's writes reach the session's undo store (ADR 0074 §1)", () => {
+  it(
+    "the scripted write_new_file is kept under a segment named by the record length at dispatch",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        const overlayConsumer = (async () => {
+          for await (const ev of session.subscribeOverlay()) {
+            if (ev.kind === "pending") {
+              const overlay = ev.overlay as { requestId: string };
+              session
+                .resolveApproval({
+                  requestId: overlay.requestId,
+                  decision: "allow",
+                })
+                .catch(() => undefined);
+            }
+            if (ev.kind === "resolved") break;
+          }
+        })();
+        const turnConsumer = (async () => {
+          for await (const ev of session.subscribeTurnLifecycle()) {
+            if (ev.kind === "finished" || ev.kind === "failed") break;
+          }
+        })();
+        await session.submitText("写一行到 a.ts");
+        await Promise.all([overlayConsumer, turnConsumer]);
+
+        const [segment] = undoSegments(
+          await readUndoIndex(
+            undoStoreDir(cfg.transcriptDir, session.sessionId),
+          ),
+        );
+        expect(segment).toBeDefined();
+        // The dispatch began after the user's block: its key is past it.
+        const userAt = session.record.findIndex((b) => b.kind === "user");
+        expect(segment?.at).toBeGreaterThan(userAt);
+        expect(segment?.writes).toEqual([
+          {
+            path: expect.stringMatching(/a\.ts$/),
+            before: null,
+            after: expect.any(String),
+          },
+        ]);
+      } finally {
+        await cleanup();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+});
+
+/** Run the scripted turn to its end, approving its write. `whilePending`
+ *  runs while the turn waits on that approval — inside the turn. */
+async function runScriptedTurn(
+  session: SessionImpl,
+  whilePending?: () => Promise<void>,
+): Promise<void> {
+  const overlayConsumer = (async () => {
+    for await (const ev of session.subscribeOverlay()) {
+      if (ev.kind === "pending") {
+        await whilePending?.();
+        const overlay = ev.overlay as { requestId: string };
+        session
+          .resolveApproval({ requestId: overlay.requestId, decision: "allow" })
+          .catch(() => undefined);
+      }
+      if (ev.kind === "resolved") break;
+    }
+  })();
+  const turnConsumer = (async () => {
+    for await (const ev of session.subscribeTurnLifecycle()) {
+      if (ev.kind === "finished" || ev.kind === "failed") break;
+    }
+  })();
+  await session.submitText("写一行到 a.ts");
+  await Promise.all([overlayConsumer, turnConsumer]);
+}
+
+describe("@herta/app-server — taking the latest turn's edits back (ADR 0074 §3–§4)", () => {
+  it(
+    "undo from the card: the created file goes, one 系统 line says so, and the offer goes with it",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        const offers: boolean[] = [];
+        let offered!: () => void;
+        const firstOffer = new Promise<void>((r) => {
+          offered = r;
+        });
+        const offerConsumer = (async () => {
+          for await (const ev of session.subscribeUndo()) {
+            offers.push(ev.undoable);
+            offered();
+            if (offers.length === 2) break;
+          }
+        })();
+        await runScriptedTurn(session);
+        const file = join(cfg.workspaceRoot, "a.ts");
+        expect(existsSync(file)).toBe(true);
+        // The offer is worked out as the turn lets go of the session, like
+        // the 继续 offer: the event, not the moment the turn ends, says so.
+        await firstOffer;
+        expect(session.undoable).toBe(true);
+        const before = session.record.length;
+
+        const r = await session.undoLastTurnEdits("latest");
+        expect(r).toMatchObject({
+          ok: true,
+          files: [{ path: "a.ts", result: "deleted" }],
+        });
+        expect(existsSync(file)).toBe(false);
+        expect(session.record).toHaveLength(before + 1);
+        const line = session.record.at(-1);
+        expect(line).toMatchObject({
+          kind: "system",
+          label: "系统",
+          digest: {
+            kind: "undo",
+            files: [{ path: "a.ts", result: "deleted" }],
+          },
+        });
+        expect((line as { body: string }).body).toContain("撤销");
+        expect((line as { body: string }).body).toContain("a.ts");
+        expect(session.undoable).toBe(false);
+        await offerConsumer;
+        expect(offers).toEqual([true, false]);
+
+        // Done once: nothing left to take back.
+        expect(await session.undoLastTurnEdits("latest")).toEqual({
+          ok: false,
+          reason: "nothing_to_undo",
+        });
+      } finally {
+        await cleanup();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "a file changed since 板砖 wrote it is left alone, and the line names it",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        await runScriptedTurn(session);
+        const file = join(cfg.workspaceRoot, "a.ts");
+        writeFileSync(file, "the 开拓者's own line\n");
+        const r = await session.undoLastTurnEdits("latest");
+        expect(r).toMatchObject({
+          ok: true,
+          files: [{ path: "a.ts", result: "changed_since" }],
+        });
+        expect(readFileSync(file, "utf8")).toBe("the 开拓者's own line\n");
+        const body = (session.record.at(-1) as { body: string }).body;
+        expect(body).toContain("a.ts");
+        expect(body).toContain("此后已修改");
+      } finally {
+        await cleanup();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "not while a turn runs",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        let during: unknown;
+        await runScriptedTurn(session, async () => {
+          during = await session.undoLastTurnEdits("latest");
+        });
+        expect(during).toEqual({ ok: false, reason: "turn_in_progress" });
+      } finally {
+        await cleanup();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "⟲ keeps the withdrawn turn's edits undoable from its notice, writing no line; the card offer is for the record's own latest turn",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        await runScriptedTurn(session);
+        const rewound = await session.rewindLastTurn();
+        expect(rewound).toMatchObject({ ok: true, undoable: true });
+        expect(existsSync(join(cfg.workspaceRoot, "a.ts"))).toBe(true);
+        // The record has no turn left: no card, no card offer.
+        expect(session.undoable).toBe(false);
+        expect(await session.undoLastTurnEdits("latest")).toEqual({
+          ok: false,
+          reason: "nothing_to_undo",
+        });
+
+        const length = session.record.length;
+        const r = await session.undoLastTurnEdits("withdrawn");
+        expect(r).toMatchObject({
+          ok: true,
+          files: [{ path: "a.ts", result: "deleted" }],
+        });
+        expect(existsSync(join(cfg.workspaceRoot, "a.ts"))).toBe(false);
+        // The turn is out of the record already: nothing to say there.
+        expect(session.record).toHaveLength(length);
+      } finally {
+        await cleanup();
+      }
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "the next send lets a withdrawn turn's edits go",
+    async () => {
+      const cfg = mkConfig();
+      const { session, cleanup } = await mkE2eSession(cfg);
+      try {
+        await runScriptedTurn(session);
+        await session.rewindLastTurn();
+        // The script has nothing more to say; the turn may fail — the send
+        // happened all the same.
+        await session.submitText("换个说法").catch(() => undefined);
+        expect(await session.undoLastTurnEdits("withdrawn")).toEqual({
+          ok: false,
+          reason: "nothing_to_undo",
+        });
+        const views = undoSegments(
+          await readUndoIndex(
+            undoStoreDir(cfg.transcriptDir, session.sessionId),
+          ),
+        );
+        expect(views[0]).toMatchObject({ withdrawn: true, dropped: true });
+        expect(existsSync(join(cfg.workspaceRoot, "a.ts"))).toBe(true);
+      } finally {
+        await cleanup();
       }
     },
     SESSION_TEST_TIMEOUT_MS,

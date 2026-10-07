@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { dispatchJournalPath } from "../backend/dispatch-journal.js";
+import { undoStoreDir } from "../backend/undo-store.js";
 import { isPathInside } from "../path-containment.js";
 
 /**
@@ -17,8 +18,9 @@ export function recapCachePath(
 
 /**
  * Remove every per-session file for `sessionId` from `transcriptDir`:
- * the transcript `<id>.jsonl`, the title sidecar `<id>.title.json`, and the
- * run journal `journal/<id>.jsonl` (ADR 0071).
+ * the transcript `<id>.jsonl`, the title sidecar `<id>.title.json`, the
+ * run journal `journal/<id>.jsonl` (ADR 0071), and the undo store
+ * `undo/<id>/` (ADR 0074).
  *
  * If `workspacesBaseDir` is given, also remove the managed backend workspace
  * directory at `<workspacesBaseDir>/<sessionId>`, if it exists.  The target
@@ -60,6 +62,13 @@ export async function deleteSessionFiles(
   for (const f of files) {
     if (!isPathInside(dir, f, { strict: true })) continue;
     await rm(f, { force: true });
+  }
+  // The undo store (ADR 0074 §2): a folder of kept edits per session, in
+  // the `undo/` folder beside them. Contained like the files above.
+  const undoBase = resolve(dir, "undo");
+  const undoDir = resolve(undoStoreDir(dir, sessionId));
+  if (isPathInside(undoBase, undoDir, { strict: true })) {
+    await rm(undoDir, { recursive: true, force: true });
   }
 
   if (workspaceRoot !== undefined) {

@@ -222,6 +222,33 @@ function renderStructuredDigest(
       // keep its path so a later turn sends 板砖 to `cat` it rather than
       // re-digest (ADR 0043).
       return `Digest ${d.source} → ${d.path} · ${d.chunks} chunks · ${COMPACTION_TEXT[lang].excerptElided}`;
+    case "undo": {
+      // The 开拓者 took a turn's edits back (ADR 0074). What a later turn
+      // must keep is what is STILL changed — a file skipped or a command's
+      // edit is on disk, and "the edits were undone" alone would let her
+      // assume a clean tree.
+      const back = d.files
+        .filter((f) => f.result === "restored" || f.result === "deleted")
+        .map((f) => f.path);
+      const kept = d.files
+        .filter(
+          (f) =>
+            f.result !== "restored" &&
+            f.result !== "deleted" &&
+            f.result !== "unchanged",
+        )
+        .map((f) => `${f.path} (${f.result.replace("_", " ")})`);
+      const parts = [
+        `Undid the turn's edits: ${back.length > 0 ? back.join(", ") : "nothing to restore"}`,
+        ...(kept.length > 0 ? [`still changed: ${kept.join(", ")}`] : []),
+        ...(d.commands.length > 0
+          ? [`changed by commands, not undone: ${d.commands.join(", ")}`]
+          : d.commandsUnknown
+            ? ["commands ran; their changes, if any, not undone"]
+            : []),
+      ];
+      return parts.join(" · ");
+    }
     case "text":
       return fallbackDigest(d.text);
   }

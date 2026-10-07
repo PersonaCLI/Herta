@@ -13,7 +13,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   type AgentEvent,
   type ApprovalOverlayState,
@@ -26,12 +26,19 @@ import {
   type ProviderAdapter,
   type RepoContextSnapshot,
   readDispatchJournal,
+  readUndoIndex,
+  restoreUndo,
   resumableRun,
   ruleDisplay,
   type SessionTopic,
   type SystemBlock,
   type TerminalRecord,
   type TerminalRecordBlock,
+  type UndoMark,
+  type UndoSegmentView,
+  UndoStore,
+  undoSegments,
+  undoStoreDir,
   type V2RecordPersister,
   type WorkspaceTrust,
 } from "@herta/core";
@@ -40,6 +47,7 @@ import {
   type OpeningChoice,
   type PromptLang,
   type StaticHertaPrefix,
+  sanitizeSystemBlock,
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
@@ -107,11 +115,15 @@ import type {
   SteerTextResult,
   TitleEvent,
   TurnLifecycleEvent,
+  UndoEvent,
+  UndoTarget,
+  UndoTurnEditsResult,
   VoiceCueEvent,
   WorkspaceEvent,
   WorkspaceSetResult,
   WorkspaceTrustState,
 } from "./types.js";
+import { undoNoteBody } from "./undo-note.js";
 
 /**
  * True when a withdrawn span includes a backend (板砖) done-marker that reports
@@ -453,6 +465,11 @@ export class SessionImpl implements Session {
   private readonly contract: string;
   /** Whether a 继续 is on offer (ADR 0071 §1.4); see `refreshResumable`. */
   private _resumable = false;
+  /** Whether the latest turn can be undone (ADR 0074); see
+   *  `refreshUndoable`. */
+  private _undoable = false;
+  /** An undo is running: a second one waits its turn by refusing. */
+  private undoing = false;
 
   /** The session title and its topic history — generation after a user
    *  turn, the rewind fence, the sidecar (session-titler.ts). */
@@ -704,6 +721,8 @@ export class SessionImpl implements Session {
       // A dispatch, a Stop or a 继续 may have changed what can be continued
       // (ADR 0071 §1.4).
       void this.refreshResumable();
+      // And whether its edits can be taken back (ADR 0074).
+      void this.refreshUndoable();
     }
     return turnId;
   }
@@ -847,6 +866,146 @@ export class SessionImpl implements Session {
     this.projector.emitResume({ kind: "offer", resumable: value });
   }
 
+  // ───── Undo (ADR 0074) ─────────────────────────────────────────────────
+
+  /** Whether the record's latest turn can be undone — the 撤销 chip. */
+  get undoable(): boolean {
+    return this._undoable;
+  }
+
+  subscribeUndo(): AsyncIterable<UndoEvent> {
+    return this.projector.subscribeUndo();
+  }
+
+  /** Work out whether the latest turn can be undone, and say so when it
+   *  changes. The user's alone: nothing of it enters the record. */
+  async refreshUndoable(): Promise<void> {
+    const value =
+      this.currentTurn === null &&
+      this.latestTurnSegments(await this.undoViews()).some(
+        (v) => v.writes.length > 0,
+      );
+    if (value === this._undoable) return;
+    this._undoable = value;
+    this.projector.emitUndo({ kind: "offer", undoable: value });
+  }
+
+  private get undoDir(): string {
+    return undoStoreDir(this.transcriptDir, this.sessionId);
+  }
+
+  private async undoViews(): Promise<UndoSegmentView[]> {
+    return undoSegments(await readUndoIndex(this.undoDir));
+  }
+
+  /** Where the latest turn starts: its user block, never a steer (ADR 0063
+   *  §1.10) — the cut a rewind makes. -1 with no turn. */
+  private latestTurnStart(): number {
+    const record = this.driver.getRecord();
+    for (let i = record.length - 1; i >= 0; i -= 1) {
+      const b = record[i];
+      if (b?.kind === "user" && b.steer !== true) return i;
+    }
+    return -1;
+  }
+
+  /** The latest turn's segments still to be undone: begun after its user
+   *  block, and neither withdrawn, undone nor dropped. */
+  private latestTurnSegments(
+    views: readonly UndoSegmentView[],
+  ): UndoSegmentView[] {
+    const start = this.latestTurnStart();
+    if (start === -1) return [];
+    return views.filter(
+      (v) => v.at > start && !v.withdrawn && !v.undone && !v.dropped,
+    );
+  }
+
+  /** Segments ⟲ took out since the last send, not yet undone. */
+  private static pendingWithdrawn(
+    views: readonly UndoSegmentView[],
+  ): UndoSegmentView[] {
+    return views.filter((v) => v.withdrawn && !v.undone && !v.dropped);
+  }
+
+  private async markUndo(
+    kind: UndoMark,
+    views: readonly UndoSegmentView[],
+  ): Promise<void> {
+    if (views.length === 0) return;
+    const store = await UndoStore.open(this.undoDir);
+    await store.mark(
+      kind,
+      views.map((v) => v.seg),
+    );
+    await store.close();
+  }
+
+  /** A withdrawn turn's edits stay undoable until the next send (the
+   *  rewind notice lasts that long); then they go. Called inside the next
+   *  turn, so no undo can race it. */
+  private async dropWithdrawnEdits(): Promise<void> {
+    await this.markUndo(
+      "dropped",
+      SessionImpl.pendingWithdrawn(await this.undoViews()),
+    );
+  }
+
+  /**
+   * Take a turn's edits back (ADR 0074 §3–§4): harness code, three ways per
+   * file — never overwriting one changed since. `latest`: the record's
+   * latest turn, from its card; the turn stays in the record, so a `→ 系统`
+   * line says what came back and what is still changed — Herta must not
+   * believe edits that are gone. `withdrawn`: what ⟲ took out since the
+   * last send, from its notice; that turn is no longer in the record, so
+   * nothing is written there. Idle-only.
+   */
+  async undoLastTurnEdits(target: UndoTarget): Promise<UndoTurnEditsResult> {
+    if (this.currentTurn !== null || this.undoing) {
+      return { ok: false, reason: "turn_in_progress" };
+    }
+    this.undoing = true;
+    try {
+      const views = await this.undoViews();
+      const segs =
+        target === "latest"
+          ? this.latestTurnSegments(views)
+          : SessionImpl.pendingWithdrawn(views);
+      if (!segs.some((v) => v.writes.length > 0)) {
+        return { ok: false, reason: "nothing_to_undo" };
+      }
+      const root = this.backendWorkspace;
+      const outcome = await restoreUndo(this.undoDir, segs, root);
+      await this.markUndo("undone", segs);
+      const result = {
+        files: outcome.files.map((f) => ({
+          path: relative(root, f.path).replaceAll("\\", "/"),
+          result: f.result,
+        })),
+        commands: outcome.commands.paths,
+        commandsUnknown: outcome.commands.unknown,
+        incomplete: outcome.incomplete,
+      };
+      if (target === "latest") {
+        // The paths came from 板砖's writes: sanitized at construction, the
+        // one gate on a system block (the serializer does not clean bodies).
+        this.driver.appendSystemBlock(
+          sanitizeSystemBlock({
+            kind: "system",
+            label: "系统",
+            body: undoNoteBody(result, this.lang),
+            digest: { kind: "undo", ...result },
+          }),
+        );
+        this._record = this.driver.getRecord();
+      }
+      return { ok: true, ...result };
+    } finally {
+      this.undoing = false;
+      await this.refreshUndoable();
+    }
+  }
+
   /**
    * 继续 (ADR 0071 §1.4): continue the interrupted 板砖 run. The turn's user
    * block is `继续` (`Continue`) marked `resume`; the run continues from its
@@ -865,7 +1024,11 @@ export class SessionImpl implements Session {
     this.setResumable(false);
     const text = this.lang === "en" ? "Continue" : "继续";
     const turnId = await this.runAsTurn(
-      (signal) => this.driver.runTurn(text, signal, true, [], { resume: true }),
+      async (signal) => {
+        // A send: a withdrawn turn's edits are past undoing now (ADR 0074).
+        await this.dropWithdrawnEdits();
+        return this.driver.runTurn(text, signal, true, [], { resume: true });
+      },
       {
         onFinished: () => this.recordTurnEnd("completed"),
         onFailed: (err) => {
@@ -910,6 +1073,10 @@ export class SessionImpl implements Session {
     this.flushContractNote();
     const turnId = await this.runAsTurn(
       async (signal) => {
+        // A send: a withdrawn turn's edits are past undoing now — the rewind
+        // notice that offered them is gone (ADR 0074 §4). Inside the turn,
+        // so no undo can race it.
+        await this.dropWithdrawnEdits();
         // Take the staged pictures BEFORE the driver runs (ADR 0048 §4):
         // their blocks go in right after the user block, so Herta reads the
         // message and what came with it as one thing. `commit` awaits the
@@ -1157,13 +1324,23 @@ export class SessionImpl implements Session {
     // D-Idle-only: never rewind across an in-flight turn (mirrors submitText's
     // single-turn invariant). The button is also hidden client-side while busy,
     // but enforce it here so an IPC race can't truncate mid-stream.
-    if (this.currentTurn !== null) {
+    if (this.currentTurn !== null || this.undoing) {
       return { ok: false, reason: "turn_in_progress" };
     }
+    // The turn's edits, read before the cut moves the turn's start (ADR
+    // 0074 §4): they leave the record with it, and stay undoable from the
+    // rewind notice until the next send.
+    const views = await this.undoViews();
+    const turnSegments = this.latestTurnSegments(views);
     const result = this.driver.rewindLastUserTurn();
     if (result === null) {
       return { ok: false, reason: "no_user_turn" };
     }
+    await this.markUndo("withdrawn", turnSegments);
+    const undoable = [
+      ...SessionImpl.pendingWithdrawn(views),
+      ...turnSegments,
+    ].some((v) => v.writes.length > 0);
     this._record = this.driver.getRecord();
     // Reset the sink's canonical-diff cursor to the new (shorter) length: the
     // record just shrank, so the next turn's flushBlocks must emit from there,
@@ -1211,11 +1388,14 @@ export class SessionImpl implements Session {
     // Rewinding past a 中断 marker takes the offer away; rewinding a 继续
     // turn can bring it back.
     await this.refreshResumable();
+    // The turn now latest may have edits of its own to offer (ADR 0074).
+    await this.refreshUndoable();
     return {
       ok: true,
       userText: result.userText,
       editedFiles: spanEditedFiles(result.withdrawn),
       ...(images.length > 0 ? { images } : {}),
+      undoable,
     };
   }
 
@@ -1794,6 +1974,8 @@ export class SessionImpl implements Session {
       pendingUserInput: () => steer.drain(),
       // The run journal beside the session's record (ADR 0071).
       journalPath: dispatchJournalPath(config.transcriptDir, sessionId),
+      // And what 板砖's editors replace, for undo (ADR 0074).
+      undoDir: undoStoreDir(config.transcriptDir, sessionId),
       // The contract the setting asks for (ADR 0040). `minimal` needs a bash
       // on this machine; without one the session runs `standard`. The
       // Settings row shows the detection result (the GUI's getBackendContract
@@ -2147,6 +2329,11 @@ export class SessionImpl implements Session {
     // card: the open's snapshot is what a reload re-syncs from, and the
     // answer is one small file read.
     await session.refreshResumable();
+    // A withdrawn turn's edits were undoable from a rewind notice, which did
+    // not survive the restart; the latest turn's chip state is read fresh
+    // (ADR 0074).
+    await session.dropWithdrawnEdits();
+    await session.refreshUndoable();
     return session;
   }
 }

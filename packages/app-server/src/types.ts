@@ -5,6 +5,7 @@ import type {
   SessionTopic,
   TerminalRecord,
   TerminalRecordBlock,
+  UndoFileResult,
   WorkspaceTrust,
 } from "@herta/core";
 import type {
@@ -268,11 +269,47 @@ export type RewindResult =
        *  draft. Absent when the turn carried none (or the strip was full and
        *  the GC took them). */
       readonly images?: readonly StagedImageInfo[];
+      /** The withdrawn turn's edits can still be taken back (ADR 0074 §4):
+       *  the notice offers 撤销改动 — `undoLastTurnEdits("withdrawn")` — until
+       *  the next send. */
+      readonly undoable: boolean;
     }
   | {
       readonly ok: false;
       readonly reason: "turn_in_progress" | "no_user_turn";
     };
+
+/**
+ * Which turn's edits `undoLastTurnEdits` takes back (ADR 0074 §4):
+ * `latest` — the record's latest turn, from its card; `withdrawn` — the
+ * turn(s) ⟲ took out since the last send, from the rewind notice.
+ */
+export type UndoTarget = "latest" | "withdrawn";
+
+/** What `undoLastTurnEdits` answers. Per file (workspace-relative, `/`):
+ *  what happened to it. `commands`: paths commands changed — never
+ *  restored; `commandsUnknown`: commands ran and what they changed could
+ *  not be read; `incomplete`: some bytes were never kept. */
+export type UndoTurnEditsResult =
+  | {
+      readonly ok: true;
+      readonly files: readonly {
+        readonly path: string;
+        readonly result: UndoFileResult;
+      }[];
+      readonly commands: readonly string[];
+      readonly commandsUnknown: boolean;
+      readonly incomplete: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "turn_in_progress" | "nothing_to_undo";
+    };
+
+/** Whether the record's latest turn has edits that can be taken back
+ *  changed (ADR 0074 §4). The 撤销 chip's state — the user's alone: it never
+ *  enters the record. */
+export type UndoEvent = { readonly kind: "offer"; readonly undoable: boolean };
 
 /** Result of setWorkspace/resetWorkspace. Idle-only ops (audit 2026-07-10,
  *  finding 13): a mid-turn call is refused rather than dropping the → 系统
@@ -712,6 +749,18 @@ export interface Session {
    * SessionImpl implements it. See the 2026-06-21-rewind-last-turn spec.
    */
   rewindLastTurn?(): Promise<RewindResult>;
+  /**
+   * Take a turn's edits back (ADR 0074): what 板砖's editors wrote returns to
+   * what it was; a file changed since is left alone and named; command
+   * effects are never reverted. `latest` also appends a `→ 系统` line saying
+   * so — the turn stays in the record, and Herta must not believe edits that
+   * are gone. Idle-only. Optional: only the GUI SessionImpl implements it.
+   */
+  undoLastTurnEdits?(target: UndoTarget): Promise<UndoTurnEditsResult>;
+  /** Whether the record's latest turn can be undone (see `UndoEvent`). */
+  readonly undoable?: boolean;
+  /** Its changes. Optional with the above. */
+  subscribeUndo?(): AsyncIterable<UndoEvent>;
   /** GUI easter egg: a successful 板砖-card lift may play a voice clip. Rolls a
    *  50% chance, throttled to ≤1 play per session per hour, then emits a
    *  `voice` cue. No-op without easter-egg clips. Optional: only the GUI

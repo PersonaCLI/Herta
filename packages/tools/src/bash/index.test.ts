@@ -122,6 +122,22 @@ d("bash tool (real bash)", () => {
     await ctx.bg.stopAll();
   });
 
+  it("says whether the command was of a class that changes nothing — what undo leaves out of its note (ADR 0074 §2)", async () => {
+    ws = await mkTmpWorkspace({ "a.txt": "x\n" });
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+    const readOnly = async (command: string, id: string) =>
+      (
+        (await tool.run(call(command, id), ctx, noopProgress)).data as
+          | RunCommandData
+          | undefined
+      )?.readOnly;
+    expect(await readOnly("cat a.txt", "c1")).toBe(true);
+    expect(await readOnly("git status", "c2")).toBe(true);
+    expect(await readOnly("mkdir made-here", "c3")).toBe(false);
+    await ctx.bg.stopAll();
+  });
+
   it("non-zero exit is appended the trained way; state persists across calls in one brief", async () => {
     ws = await mkTmpWorkspace({});
     const ctx = ctxFor(ws.root);

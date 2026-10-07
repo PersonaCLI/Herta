@@ -110,6 +110,23 @@ export {
   type PersistOutcome,
   persistOversizedResult,
 } from "./backend/tool-result-persistence.js";
+export {
+  restoreUndo,
+  type UndoOutcome,
+  undoSpan,
+} from "./backend/undo-restore.js";
+export {
+  readUndoIndex,
+  UNDO_SESSION_MAX_BYTES,
+  type UndoIndexEntry,
+  type UndoMark,
+  type UndoSegment,
+  type UndoSegmentView,
+  UndoStore,
+  undoBlobPath,
+  undoSegments,
+  undoStoreDir,
+} from "./backend/undo-store.js";
 export { ExecutionReportBuilder } from "./bridge/report-builder.js";
 export type * from "./bridge/types.js";
 export { abortError, errorMessage, isAbortError } from "./errors.js";
@@ -253,6 +270,7 @@ export {
   type SystemBlockLabel,
   type TerminalRecord,
   type TerminalRecordBlock,
+  type UndoFileResult,
   type UserBlock,
 } from "./types/terminal-record.js";
 export type * from "./types/tool.js";

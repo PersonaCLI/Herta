@@ -1288,7 +1288,8 @@ export function createDemoBridge(
       if (sessionId === activeId) {
         record.emit({ kind: "reset", record: [...s.record] });
       }
-      return { ok: true, userText, editedFiles: false };
+      // The demo keeps no undo store (ADR 0074): nothing to take back.
+      return { ok: true, userText, editedFiles: false, undoable: false };
     },
 
     maybePlayEasterEgg: async () => {},

@@ -68,6 +68,21 @@ describe("runCommandTool — the live view (ADR 0073)", () => {
 });
 
 describe.skipIf(!POSIX)("runCommandTool", () => {
+  it("says whether the command was of a class that changes nothing — what undo leaves out of its note (ADR 0074 §2)", async () => {
+    ws = await mkTmpWorkspace({});
+    const tool = runCommandTool();
+    const run = async (argv: string[]) => {
+      const r = await tool.run(
+        { id: "c", tool: "run_command", input: { argv } },
+        ctxFor(ws.root),
+        noopProgress,
+      );
+      return (r.data as { readOnly?: boolean } | undefined)?.readOnly;
+    };
+    expect(await run(["node", "-v"])).toBe(true);
+    expect(await run(["mkdir", "made-here"])).toBe(false);
+  });
+
   it("happy path: runs echo, returns stdout, writes log file", async () => {
     ws = await mkTmpWorkspace({});
     const tool = runCommandTool();

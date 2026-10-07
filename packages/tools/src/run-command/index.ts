@@ -383,6 +383,7 @@ export function runCommandTool(): HertaTool {
         stderrBytes: raw.stderrBytes,
         logPath,
         timedOut: raw.timedOut,
+        readOnly: verdict.kind === "allow",
       };
 
       const testRun = detectTestRun(data);

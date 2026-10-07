@@ -18,7 +18,11 @@ import { redactSecrets } from "../run-command/redactor.js";
 import { detectTestRun } from "../run-command/test-detector.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
 import { bashInputSchema, bashJsonSchema } from "./schema.js";
-import { peelReaderHead, tokenize } from "./shell-classifier.js";
+import {
+  classifyShellCommandDetailed,
+  peelReaderHead,
+  tokenize,
+} from "./shell-classifier.js";
 import { shellPathsFor } from "./shell-paths.js";
 
 export { findBash } from "./find-bash.js";
@@ -188,6 +192,16 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         ctx.bg.register(shell);
       }
       const sh = shell as PersistentShell;
+      // The rule's own verdict, taken again before the line runs (its `cd`
+      // would move the cwd the rule read): `allow` is a class that changes
+      // nothing a user would take back, and undo leaves it out of what it
+      // names (ADR 0074 §2).
+      const readOnly =
+        classifyShellCommandDetailed(command, {
+          workspaceRoot: ctx.workspaceRoot,
+          paths: shellPathsFor(opts.bashPath),
+          cwd: sh.cwd,
+        }).verdict.kind === "allow";
 
       // Execution-time reader realpath backstop (TOCTOU, mirrors run_command).
       // Peeled exactly as the RULE peels (`rule.ts`): the rule learned on
@@ -303,6 +317,7 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         stderrBytes: 0,
         logPath,
         timedOut: r.timedOut,
+        readOnly,
       };
       // Test evidence: the first segment that IS a test runner names the run
       // (`cd x && npm test` → npm test); the shell's exit is the pipeline's.

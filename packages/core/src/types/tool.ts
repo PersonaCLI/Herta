@@ -97,6 +97,25 @@ export interface ToolContext {
   /** This call's view of the run's journal (ADR 0071 §1.1). Absent when the
    *  run keeps none (the CLI, tests). */
   journal?: ToolCallJournal;
+  /** Where a writer leaves what it replaces, so the user can take the turn's
+   *  edits back (ADR 0074). Absent when the run keeps no undo store. */
+  undo?: ToolCallUndo;
+}
+
+/**
+ * What a writer hands the undo store (ADR 0074 §1) right before a file is
+ * replaced: its absolute path, its bytes now (null for a file being
+ * created) and the sha256 it will have.
+ */
+export interface ToolCallUndo {
+  /** Best effort: NEVER rejects. A capture that fails marks the turn
+   *  incomplete and the write goes ahead — undo is a convenience, and 板砖's
+   *  work does not wait on it. */
+  captureWrite(w: {
+    path: string;
+    before: Buffer | null;
+    after: string;
+  }): Promise<void>;
 }
 
 /**

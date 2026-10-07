@@ -8,6 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { undoStoreDir } from "../backend/undo-store.js";
 import {
   deleteSessionFiles,
   recapCachePath,
@@ -64,6 +65,30 @@ describe("deleteSessionFiles", () => {
     await deleteSessionFiles(dir, "a");
     expect(existsSync(join(dir, "a.jsonl"))).toBe(false);
     expect(existsSync(join(dir, "a.title.json"))).toBe(false);
+  });
+
+  it("removes the session's undo store, and only its own (ADR 0074 §2)", async () => {
+    const dir = tmp();
+    const mine = undoStoreDir(dir, "a");
+    const theirs = undoStoreDir(dir, "b");
+    for (const d of [mine, theirs]) {
+      mkdirSync(join(d, "blobs"), { recursive: true });
+      writeFileSync(join(d, "index.jsonl"), "{}\n");
+      writeFileSync(join(d, "blobs", "0".repeat(64)), "old bytes");
+    }
+    await deleteSessionFiles(dir, "a");
+    expect(existsSync(mine)).toBe(false);
+    expect(existsSync(join(theirs, "index.jsonl"))).toBe(true);
+  });
+
+  it("a traversal id cannot reach a folder outside the undo dir", async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, "undo"), { recursive: true });
+    const victim = join(dir, "victim");
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, "keep.txt"), "x");
+    await deleteSessionFiles(dir, "../victim");
+    expect(existsSync(join(victim, "keep.txt"))).toBe(true);
   });
 
   it("is idempotent when files are already missing", async () => {

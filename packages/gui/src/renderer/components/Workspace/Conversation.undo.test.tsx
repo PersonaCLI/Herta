@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { getHoverTip, hideHoverTip } from "../common/hover-tip.js";
 import { Composer } from "./Composer.js";
 import { Conversation } from "./Conversation.js";
 import { WorkspaceRefsProvider } from "./WorkspaceRefs.js";
@@ -98,9 +99,17 @@ describe("the 撤销 chip on the latest turn's card (ADR 0074 §4)", () => {
     expect(blocks).toHaveLength(2);
     expect(blocks[0]?.querySelector(".activity-undo")).toBeNull();
     expect(blocks[1]?.contains(chip())).toBe(true);
-    expect(chip()?.getAttribute("title")).toBe(
+    // The app's own tip, not the OS's (owner 2026-10-08).
+    expect(chip()?.hasAttribute("title")).toBe(false);
+    act(() => {
+      fireEvent.focusIn(chip() as HTMLElement);
+    });
+    expect(getHoverTip()?.text).toBe(
       "Undo Brick's file changes from this turn",
     );
+    act(() => {
+      hideHoverTip();
+    });
     await act(async () => {
       fireEvent.click(chip() as HTMLElement);
     });

@@ -91,6 +91,17 @@ describe("findHeredocWrites (pure)", () => {
     expect(
       findHeredocWrites("cat > a.txt <<'X'\nline without end", opts("/repo")),
     ).toHaveLength(0);
+    // A program that reads the heredoc and redirects its OWN output: the
+    // file gets what the script prints, not the script (2026-10-08).
+    expect(
+      findHeredocWrites(
+        "python3 - > out.txt <<'PY'\nprint(1)\nPY",
+        opts("/repo"),
+      ),
+    ).toHaveLength(0);
+    expect(
+      findHeredocWrites("cat in.txt > out.txt <<'X'\nline\nX", opts("/repo")),
+    ).toHaveLength(0);
   });
 
   it("two heredocs on one command are both found, in order, with the right spans", () => {

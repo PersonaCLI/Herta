@@ -86,18 +86,32 @@ function runtimeWith(
     },
   });
   // A command: changes nothing the run can see by itself. Its input says
-  // whether the classifier took it for a read (`readOnly`).
+  // whether the classifier took it for a read (`readOnly`), and what its
+  // redirections wrote (`redirectWrites`, `writesAccounted`).
   tools.register({
     name: "bash",
     schema: schema("bash"),
-    run: async (call: { input: unknown }): Promise<ToolResult> => ({
-      ok: true,
-      summary: "ran",
-      data: {
-        exitCode: 0,
-        readOnly: (call.input as { readOnly?: boolean }).readOnly === true,
-      },
-    }),
+    run: async (call: { input: unknown }): Promise<ToolResult> => {
+      const input = call.input as {
+        readOnly?: boolean;
+        redirectWrites?: unknown;
+        writesAccounted?: boolean;
+      };
+      return {
+        ok: true,
+        summary: "ran",
+        data: {
+          exitCode: 0,
+          readOnly: input.readOnly === true,
+          ...(input.redirectWrites !== undefined
+            ? { redirectWrites: input.redirectWrites }
+            : {}),
+          ...(input.writesAccounted !== undefined
+            ? { writesAccounted: input.writesAccounted }
+            : {}),
+        },
+      };
+    },
   });
   // A step that runs until the run is stopped (a run to continue).
   tools.register({
@@ -263,6 +277,83 @@ describe("a run notes what its commands changed (ADR 0074 §2)", () => {
       { userMessages: [{ text: "edit it" }], recordLength: 12 },
     );
     expect((await views())[0]?.commands).toEqual({ paths: [], unknown: false });
+  });
+
+  it("a command's redirected writes are the run's written files: listed in the report, never credited to commands (ADR 0074 amendment, 2026-10-08)", async () => {
+    const snapshots = [
+      { head: "h1", dirty: [] },
+      { head: "h1", dirty: ["src/x.mjs", "package-lock.json"] },
+    ];
+    let call = 0;
+    const { runtime } = runtimeWith(
+      calling([
+        "bash",
+        {
+          redirectWrites: [
+            { relPath: "src/x.mjs", created: true, added: 3, removed: 0 },
+          ],
+          writesAccounted: false,
+        },
+      ]),
+      {
+        undoDir: undoDirFor(),
+        repoProbe: async () => snapshots[call++] ?? null,
+      },
+    );
+    const report = await runtime.runBrief(
+      { taskId: "task-1" },
+      { userMessages: [{ text: "write it" }], recordLength: 12 },
+    );
+    expect(report.changedFiles).toContainEqual({
+      path: "src/x.mjs",
+      kind: "created",
+      diffSummary: "+3 -0",
+    });
+    expect((await views())[0]?.commands).toEqual({
+      paths: ["package-lock.json"],
+      unknown: false,
+    });
+  });
+
+  it("with no repository, a command whose writes are all accounted for notes no unknown change; one that did more still does", async () => {
+    const only = runtimeWith(
+      calling([
+        "bash",
+        {
+          redirectWrites: [
+            { relPath: "a.txt", created: false, added: 1, removed: 1 },
+          ],
+          writesAccounted: true,
+        },
+      ]),
+      { undoDir: undoDirFor() },
+    );
+    const report = await only.runtime.runBrief(
+      { taskId: "task-1" },
+      { userMessages: [{ text: "write it" }], recordLength: 12 },
+    );
+    expect(report.changedFiles.map((f) => [f.path, f.kind])).toEqual([
+      ["a.txt", "modified"],
+    ]);
+    expect((await views())[0]?.commands).toEqual({ paths: [], unknown: false });
+
+    const more = runtimeWith(
+      calling([
+        "bash",
+        {
+          redirectWrites: [
+            { relPath: "a.txt", created: false, added: 1, removed: 1 },
+          ],
+          writesAccounted: false,
+        },
+      ]),
+      { undoDir: undoDirFor() },
+    );
+    await more.runtime.runBrief(
+      { taskId: "task-2" },
+      { userMessages: [{ text: "write and more" }], recordLength: 20 },
+    );
+    expect((await views())[1]?.commands).toEqual({ paths: [], unknown: true });
   });
 
   it("a run that ran no command notes nothing", async () => {

@@ -535,14 +535,30 @@ export class CodingAgentRuntime {
             }
             // A command that ran and could write — not a read, a test, a
             // version query (ADR 0074 §2; `git status` in a folder with no
-            // repository was reported as an unknown change, live 2026-10-07).
+            // repository was reported as an unknown change, live 2026-10-07),
+            // nor one whose only writes went to files undo holds.
+            const commandData = COMMAND_TOOLS.has(event.tool)
+              ? (event.result.data as unknown as RunCommandData | undefined)
+              : undefined;
             if (
               COMMAND_TOOLS.has(event.tool) &&
               event.result.ok &&
-              (event.result.data as unknown as RunCommandData | undefined)
-                ?.readOnly !== true
+              commandData?.readOnly !== true &&
+              commandData?.writesAccounted !== true
             ) {
               commandRan = true;
+            }
+            // The files its redirections wrote are written files, as an
+            // editor's are (ADR 0074 amendment, 2026-10-08): the report lists
+            // them, and the git attribution below no longer credits them to
+            // commands — undo restores them. Whatever the command's exit:
+            // they are on disk either way.
+            for (const w of commandData?.redirectWrites ?? []) {
+              changedByPath.set(w.relPath, {
+                path: w.relPath,
+                kind: w.created ? "created" : "modified",
+                diffSummary: `+${w.added} -${w.removed}`,
+              });
             }
             if (COMMAND_TOOLS.has(event.tool) && event.result.ok) {
               const data = event.result.data as unknown as

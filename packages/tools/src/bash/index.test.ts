@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -135,6 +138,81 @@ d("bash tool (real bash)", () => {
     expect(await readOnly("cat a.txt", "c1")).toBe(true);
     expect(await readOnly("git status", "c2")).toBe(true);
     expect(await readOnly("mkdir made-here", "c3")).toBe(false);
+    await ctx.bg.stopAll();
+  });
+
+  it("a redirected write is captured for undo, named in the result, and a command that is nothing else says so (ADR 0074 amendment, 2026-10-08)", async () => {
+    // 板砖 on this contract writes files with `cat > f <<'EOF'` and
+    // `printf … > f`, never through an editor: undo saw none of it, so the
+    // 撤销 chip never came.
+    ws = await mkTmpWorkspace({ "notes.md": "one\n" });
+    const captured: { path: string; before: Buffer | null; after: string }[] =
+      [];
+    const ctx = {
+      ...ctxFor(ws.root),
+      undo: {
+        captureWrite: async (w: {
+          path: string;
+          before: Buffer | null;
+          after: string;
+        }) => {
+          captured.push(w);
+        },
+      },
+    };
+    const tool = bashTool({ bashPath: BASH as string });
+    const run = async (command: string, id: string) =>
+      (await tool.run(call(command, id), ctx, noopProgress))
+        .data as RunCommandData;
+    const sha = (t: string) => createHash("sha256").update(t).digest("hex");
+
+    const over = await run("cat > notes.md <<'EOF'\nONE\nEOF", "c1");
+    expect(over.redirectWrites).toEqual([
+      { relPath: "notes.md", created: false, added: 1, removed: 1 },
+    ]);
+    expect(over.writesAccounted).toBe(true);
+    expect(captured).toEqual([
+      {
+        path: realpathSync(join(ws.root, "notes.md")),
+        before: Buffer.from("one\n"),
+        after: sha("ONE\n"),
+      },
+    ]);
+
+    const made = await run(
+      "mkdir -p src && cat > src/new.mjs <<'EOF'\nexport const n = 1;\nEOF",
+      "c2",
+    );
+    expect(made.redirectWrites).toEqual([
+      { relPath: "src/new.mjs", created: true, added: 1, removed: 0 },
+    ]);
+    expect(made.writesAccounted).toBe(true);
+    expect(captured[1]?.before).toBeNull();
+    expect(readFileSync(join(ws.root, "src", "new.mjs"), "utf8")).toBe(
+      "export const n = 1;\n",
+    );
+
+    // Something else that writes rides along: the write is still captured,
+    // but the command is not only that.
+    const mixed = await run("cat > a.txt <<'EOF'\nx\nEOF\ntouch b.txt", "c3");
+    expect(mixed.redirectWrites?.map((w) => w.relPath)).toEqual(["a.txt"]);
+    expect(mixed.writesAccounted).toBe(false);
+
+    // A write that never happened is no write.
+    const none = await run("false && cat > c.txt <<'EOF'\nx\nEOF", "c4");
+    expect(none.redirectWrites).toBeUndefined();
+    expect(captured).toHaveLength(3);
+
+    // The live check's line (2026-10-08): no heredoc at all.
+    const printed = await run("printf 'alpha\\nbeta\\n' > notes.md", "c5");
+    expect(printed.redirectWrites).toEqual([
+      { relPath: "notes.md", created: false, added: 2, removed: 1 },
+    ]);
+    expect(printed.writesAccounted).toBe(true);
+    expect(captured[3]?.before?.toString()).toBe("ONE\n");
+    expect(readFileSync(join(ws.root, "notes.md"), "utf8")).toBe(
+      "alpha\nbeta\n",
+    );
     await ctx.bg.stopAll();
   });
 

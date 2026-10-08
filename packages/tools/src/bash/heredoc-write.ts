@@ -53,6 +53,23 @@ export interface HeredocWrite {
 const HEREDOC_OPEN =
   /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|\\([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*))/;
 
+/** A segment with its heredoc operators (`<<'EOF'`) blanked, so the
+ *  tokenizer reads its redirects and words alone. */
+export function withoutHeredocOpeners(segment: string): string {
+  return segment.replace(new RegExp(HEREDOC_OPEN.source, "g"), " ");
+}
+
+/** Every heredoc of the command is closed and lands as written — a quoted
+ *  terminator, or a body with nothing for the shell to expand — so no
+ *  body runs a command (`<<EOF` … `$(rm x)` … would). */
+export function heredocBodiesInert(
+  command: string,
+  opts: ShellClassifyOpts,
+): boolean {
+  const scanned = scanHeredocs(command, opts);
+  return scanned.complete !== false && scanned.every((h) => h.literal);
+}
+
 /** Text the shell would expand in an UNQUOTED heredoc body. */
 const EXPANDS = /[$`\\]/;
 
@@ -64,8 +81,43 @@ export function findHeredocWrites(
   command: string,
   opts: ShellClassifyOpts,
 ): HeredocWrite[] {
+  return scanHeredocs(command, opts).flatMap((h) =>
+    h.target !== null && h.literal
+      ? [
+          {
+            relative: h.target.relative,
+            native: h.target.native,
+            mode: h.target.mode,
+            body: h.body,
+            bodyLines: h.bodyLines,
+          },
+        ]
+      : [],
+  );
+}
+
+/** One heredoc of a command, as the scan read it. */
+interface ScannedHeredoc {
+  /** The file its segment writes, or null when that is not knowable. */
+  readonly target: {
+    readonly native: string;
+    readonly relative: string;
+    readonly mode: "overwrite" | "append";
+  } | null;
+  /** The body is what lands: a quoted terminator, or nothing to expand. */
+  readonly literal: boolean;
+  readonly body: string;
+  readonly bodyLines: { readonly start: number; readonly end: number };
+}
+
+/** Every heredoc of a command, in order, up to an unterminated one (which
+ *  `complete` says). Pure. */
+function scanHeredocs(
+  command: string,
+  opts: ShellClassifyOpts,
+): ScannedHeredoc[] & { complete?: false } {
   const lines = command.split("\n");
-  const out: HeredocWrite[] = [];
+  const out: ScannedHeredoc[] & { complete?: false } = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] as string;
     const m = HEREDOC_OPEN.exec(line);
@@ -87,18 +139,17 @@ export function findHeredocWrites(
       }
       bodyLines.push(probe);
     }
-    if (!closed) break; // unterminated: nothing after it is a command line
-    const target = writeTargetOf(line, m.index, opts);
-    const literal = quoted || !EXPANDS.test(bodyLines.join("\n"));
-    if (target !== null && literal) {
-      out.push({
-        relative: target.relative,
-        native: target.native,
-        mode: target.mode,
-        body: bodyLines.length === 0 ? "" : `${bodyLines.join("\n")}\n`,
-        bodyLines: { start: i + 1, end: j },
-      });
+    if (!closed) {
+      // Unterminated: nothing after it is a command line.
+      out.complete = false;
+      break;
     }
+    out.push({
+      target: writeTargetOf(line, m.index, opts),
+      literal: quoted || !EXPANDS.test(bodyLines.join("\n")),
+      body: bodyLines.length === 0 ? "" : `${bodyLines.join("\n")}\n`,
+      bodyLines: { start: i + 1, end: j },
+    });
     i = j; // resume after the terminator
   }
   return out;
@@ -107,10 +158,12 @@ export function findHeredocWrites(
 /**
  * Where the heredoc's line sends its stdout: the LAST segment of the line
  * (the heredoc feeds the command it is attached to; `a && cat > f <<EOF`
- * → the `cat > f` segment). A `> path` / `>> path` redirect on that
- * segment, or `tee [-a] path` as its program, names a file; anything else
+ * → the `cat > f` segment). A `> path` / `>> path` redirect on a bare
+ * `cat`, or `tee [-a] path` as its program, names a file; anything else
  * (a heredoc consumed by `python3 -`, `bash`, `psql`, or one whose target
- * carries a variable) is not a knowable file write.
+ * carries a variable) is not a knowable file write. The program counts
+ * (2026-10-08): `python3 - > out.txt <<'PY'` sends the script's OUTPUT to
+ * the file, and was previewed as writing the script there.
  */
 function writeTargetOf(
   line: string,
@@ -124,7 +177,10 @@ function writeTargetOf(
   const cleaned = seg.replace(HEREDOC_OPEN, " ").trim();
   const { words, redirects } = tokenize(cleaned);
   const outs = redirects.filter((r) => r.kind === "out");
+  const prog = words[0]?.split(/[\\/]/).pop();
   if (outs.length === 1) {
+    // `cat` alone (or `cat -`): what it reads is the heredoc.
+    if (prog !== "cat" || words.slice(1).some((w) => w !== "-")) return null;
     const r = outs[0] as { target: string };
     const rawOp = appendOperator(seg, r.target);
     const resolved = resolveWorkspacePath(r.target, opts);
@@ -133,7 +189,6 @@ function writeTargetOf(
   }
   if (outs.length > 1) return null;
   // tee [-a] path
-  const prog = words[0]?.split(/[\\/]/).pop();
   if (prog === "tee") {
     const args = words.slice(1);
     const append = args.some((a) => a === "-a" || a === "--append");

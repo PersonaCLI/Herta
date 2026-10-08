@@ -142,6 +142,17 @@ describe("computeUnifiedDiff", () => {
     expect(d).toContain("+++ b/x.txt");
   });
 
+  it("a created file only adds, and an emptied one only deletes — no stray empty line (2026-10-08)", () => {
+    // `"".split("\n")` is one empty line: every create ended in a `-`,
+    // and the file's stat read −1.
+    expect(computeUnifiedDiff("", "a\nb\n", "x.txt")).toBe(
+      "--- /dev/null\n+++ b/x.txt\n+a\n+b",
+    );
+    expect(computeUnifiedDiff("a\n", "", "x.txt")).toBe(
+      "--- a/x.txt\n+++ b/x.txt\n-a",
+    );
+  });
+
   it("marks deletions with - and additions with +", () => {
     const d = computeUnifiedDiff("alpha\n", "beta\n", "x.txt");
     expect(d).toContain("-alpha");

@@ -84,6 +84,33 @@ export interface RunCommandData {
    * 0074 §2) leaves such a command out of what it names as not restored.
    */
   readOnly?: boolean;
+  /**
+   * The files the command wrote through its own redirections — `cat > f
+   * <<'EOF' … EOF`, `printf … > f`, `tee f`: the `bash` contract's way of
+   * writing a file — as found on disk before and after the run. What each
+   * replaced went to the undo store (ADR 0074 amendment, 2026-10-08), so the
+   * run counts them as written files, not as changes its commands made.
+   * Absent when no redirection changed a file.
+   */
+  redirectWrites?: readonly RedirectWriteSummary[];
+  /**
+   * Those files are all the command can change: its writing parts only
+   * print (`cat`, `printf`, `echo`, `tee`) and its other parts are
+   * `allow`-class (a read, a test) or `mkdir -p` inside the workspace. Undo
+   * then names no unknown command change for it.
+   */
+  writesAccounted?: boolean;
+}
+
+/** One file a command's redirection wrote — `RunCommandData.redirectWrites`. */
+export interface RedirectWriteSummary {
+  /** Workspace-relative, as the editors report a path. */
+  readonly relPath: string;
+  /** It did not exist before the command. */
+  readonly created: boolean;
+  /** The diff's line counts. */
+  readonly added: number;
+  readonly removed: number;
 }
 
 /**

@@ -17,6 +17,11 @@ import { checkReaderArgvPaths } from "../run-command/reader-guard.js";
 import { redactSecrets } from "../run-command/redactor.js";
 import { detectTestRun, isTestCommand } from "../run-command/test-detector.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
+import {
+  readRedirectTargets,
+  settleRedirectTargets,
+  writesAccounted,
+} from "./redirect-writes.js";
 import { bashInputSchema, bashJsonSchema } from "./schema.js";
 import {
   classifyShellCommandDetailed,
@@ -214,12 +219,21 @@ export function bashTool(opts: BashToolOpts): HertaTool {
       // would move the cwd the rule read): `allow` is a class that changes
       // nothing a user would take back, and undo leaves it out of what it
       // names (ADR 0074 §2).
+      const classifyOpts = {
+        workspaceRoot: ctx.workspaceRoot,
+        paths: shellPathsFor(opts.bashPath),
+        cwd: sh.cwd,
+      };
       const readOnly =
-        classifyShellCommandDetailed(command, {
-          workspaceRoot: ctx.workspaceRoot,
-          paths: shellPathsFor(opts.bashPath),
-          cwd: sh.cwd,
-        }).verdict.kind === "allow";
+        classifyShellCommandDetailed(command, classifyOpts).verdict.kind ===
+        "allow";
+      // What the line's redirections are about to overwrite, read while it
+      // is still there (ADR 0074 amendment, 2026-10-08): this contract
+      // writes its files with `cat > f <<'EOF'` and `printf … > f`, and undo
+      // saw none of them.
+      const redirectTargets = readOnly
+        ? []
+        : await readRedirectTargets(command, classifyOpts);
 
       // Execution-time reader realpath backstop (TOCTOU, mirrors run_command).
       // Peeled exactly as the RULE peels (`rule.ts`): the rule learned on
@@ -260,6 +274,12 @@ export function bashTool(opts: BashToolOpts): HertaTool {
           : {}),
       });
       live?.flush();
+      // What they became — before an abort is answered too: a write that
+      // landed is on disk whether or not the run goes on.
+      const redirectWrites = await settleRedirectTargets(
+        redirectTargets,
+        ctx.undo,
+      );
       if (ctx.signal.aborted) {
         const err = new Error("aborted");
         (err as Error & { name: string }).name = "AbortError";
@@ -336,6 +356,16 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         logPath,
         timedOut: r.timedOut,
         readOnly,
+        ...(redirectWrites.length > 0
+          ? {
+              redirectWrites,
+              writesAccounted: writesAccounted(
+                command,
+                classifyOpts,
+                redirectTargets,
+              ),
+            }
+          : {}),
       };
       // Test evidence: the first segment that IS a test runner names the run
       // (`cd x && npm test` → npm test); the shell's exit is the pipeline's.

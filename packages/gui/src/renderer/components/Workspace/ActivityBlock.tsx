@@ -11,6 +11,7 @@ import {
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
+import { hoverTipProps } from "../common/hover-tip.js";
 import {
   useFileViewerOpen,
   type ViewerAnchor,
@@ -850,7 +851,8 @@ export const ActivityBlock = memo(function ActivityBlock(
             <button
               type="button"
               className="activity-undo"
-              title={t("activity.undo.chipTitle")}
+              // The app's tip, not the OS's (owner 2026-10-08).
+              {...hoverTipProps(t("activity.undo.chipTitle"))}
               disabled={props.undo.state === "busy"}
               onClick={props.undo.onUndo}
             >

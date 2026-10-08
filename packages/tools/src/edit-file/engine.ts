@@ -164,22 +164,25 @@ export function computeUnifiedDiff(
   label: string,
 ): string {
   if (before === after) return "";
-  const beforeLines = before.split("\n");
-  const afterLines = after.split("\n");
-  const beforeNoTrail = before.endsWith("\n")
-    ? beforeLines.slice(0, -1)
-    : beforeLines;
-  const afterNoTrail = after.endsWith("\n")
-    ? afterLines.slice(0, -1)
-    : afterLines;
+  // An empty side has no lines (2026-10-08): `"".split("\n")` is one empty
+  // line, so every created file's diff ended by deleting it — a stray `-`
+  // that counted as −1 on the file's stat.
+  const lines = (text: string): string[] => {
+    if (text.length === 0) return [];
+    const all = text.split("\n");
+    return text.endsWith("\n") ? all.slice(0, -1) : all;
+  };
+  const beforeNoTrail = lines(before);
+  const afterNoTrail = lines(after);
   const body = diffBody(beforeNoTrail, afterNoTrail);
   const noNewlineBefore =
     before.length === 0 || before.endsWith("\n")
       ? ""
       : "\n\\ No newline at end of file";
-  const noNewlineAfter = after.endsWith("\n")
-    ? ""
-    : "\n\\ No newline at end of file";
+  const noNewlineAfter =
+    after.length === 0 || after.endsWith("\n")
+      ? ""
+      : "\n\\ No newline at end of file";
   const sourceHeader = before.length === 0 ? "--- /dev/null" : `--- a/${label}`;
   return [
     sourceHeader,

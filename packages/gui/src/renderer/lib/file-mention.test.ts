@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   brickAhead,
+  brickComplete,
   findMentionQuery,
+  insertBrick,
   insertMention,
+  mentionItems,
+  openingPaths,
   rankPaths,
 } from "./file-mention.js";
 
@@ -25,7 +29,7 @@ describe("@-file mentions (ADR 0072 §2)", () => {
     expect(findMentionQuery("", 0)).toBeNull();
   });
 
-  it("leaves the query to @板砖 completion while it can still become the token", () => {
+  it("offers @板砖 while the query can still become the token", () => {
     expect(brickAhead("", "zh")).toBe(true);
     expect(brickAhead("板", "zh")).toBe(true);
     expect(brickAhead("板砖", "zh")).toBe(true);
@@ -87,6 +91,69 @@ describe("@-file mentions (ADR 0072 §2)", () => {
     expect(insertMention("看看 @des", 3, 7, "docs/design notes.md")).toEqual({
       text: "看看 `docs/design notes.md` ",
       caret: 26,
+    });
+  });
+});
+
+describe("what a bare @ and a query offer (owner 2026-10-08)", () => {
+  const FILES = ["README.md", "build.ts", "src/parser.ts", "docs/parsers.md"];
+
+  it("a bare @ offers @板砖 first, then files — not the token alone", () => {
+    expect(mentionItems("", "zh", FILES)).toEqual([
+      { kind: "brick" },
+      { kind: "file", path: "README.md" },
+      { kind: "file", path: "build.ts" },
+      { kind: "file", path: "src/parser.ts" },
+      { kind: "file", path: "docs/parsers.md" },
+    ]);
+  });
+
+  it("the files being worked on come first; one no longer listed is not offered", () => {
+    expect(
+      mentionItems("", "zh", FILES, ["docs/parsers.md", "gone.ts"]).slice(1, 3),
+    ).toEqual([
+      { kind: "file", path: "docs/parsers.md" },
+      { kind: "file", path: "README.md" },
+    ]);
+    expect(openingPaths(FILES, ["build.ts", "build.ts"], 2)).toEqual([
+      "build.ts",
+      "README.md",
+    ]);
+  });
+
+  it("a query that can still be the token offers it AND its matching files", () => {
+    expect(mentionItems("b", "en", FILES)).toEqual([
+      { kind: "brick" },
+      { kind: "file", path: "build.ts" },
+    ]);
+    // zh has no "brick": files only.
+    expect(mentionItems("b", "zh", FILES)).toEqual([
+      { kind: "file", path: "build.ts" },
+    ]);
+    expect(mentionItems("pars", "zh", FILES)[0]).toEqual({
+      kind: "file",
+      path: "src/parser.ts",
+    });
+  });
+
+  it("the token typed out offers nothing, and with no listing the token is offered alone", () => {
+    expect(brickComplete("板砖", "zh")).toBe(true);
+    expect(brickComplete("Brick", "en")).toBe(true);
+    expect(brickComplete("brick", "zh")).toBe(false);
+    expect(mentionItems("板砖", "zh", FILES)).toEqual([]);
+    expect(mentionItems("brick", "en", ["brick.ts"])).toEqual([]);
+    expect(mentionItems("", "zh", null)).toEqual([{ kind: "brick" }]);
+    expect(mentionItems("src", "zh", null)).toEqual([]);
+  });
+
+  it("completing the token replaces @query with @板砖, no space after", () => {
+    expect(insertBrick("整理 @板", 3, 5, "板砖")).toEqual({
+      text: "整理 @板砖",
+      caret: 6,
+    });
+    expect(insertBrick("@b fix", 0, 2, "brick")).toEqual({
+      text: "@brick fix",
+      caret: 6,
     });
   });
 });

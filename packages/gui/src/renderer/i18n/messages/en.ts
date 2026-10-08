@@ -371,8 +371,11 @@ export const en = {
   "composer.hold.discard": "Withdraw",
   // 继续 (ADR 0071 §1.4): Brick's last run was interrupted — the app exited
   // under it, or the user pressed Stop — and can be continued where it stood.
-  // @-file mentions (ADR 0072 §2): the matching workspace files.
-  "composer.mentions.aria": "Workspace files",
+  // @ mentions (ADR 0072 §2): @brick first while the query can still become
+  // it, then the matching workspace files.
+  "composer.mentions.aria": "Mentions",
+  "composer.mentions.brick": "Delegate to the coprocessor",
+  "composer.mentions.files": "Workspace files",
   "composer.resume.text": "Brick's last run was interrupted.",
   "composer.resume.action": "Continue",
   "composer.resume.aria": "Continue the interrupted run",
@@ -674,6 +677,11 @@ export const en = {
   "card.setWorkspace": "Set workspace…",
   "card.resetDefault": "Reset to default",
   "card.workspaceSetError": "could not set workspace",
+  "card.openFolder": "Open the workspace folder",
+  "card.openFolderError": "could not open the workspace folder",
+  "card.copyPath": "Copy path",
+  "card.pathCopied": "Copied",
+  "card.copyFailed": "Copy failed",
   "card.rules": "Remembered commands",
   "card.rulesEmpty": "No commands remembered",
   "card.rulesRemove": "Remove rule {rule}",

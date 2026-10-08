@@ -1457,6 +1457,22 @@ export function createDemoBridge(
     // REAL panel and its renderers. Text only: nothing the record names is
     // a picture or an Office file (the two screenshots ride the lightbox),
     // so the bytes read has nothing to serve and says so.
+    // The composer's @ list (ADR 0072 §2): the same files, in main's order
+    // — shallowest first, then by name — and, as main never offers it,
+    // nothing under Herta's own `.herta`.
+    listWorkspaceFiles: async (sessionId) =>
+      sessionId === SHOWCASE_ID
+        ? {
+            files: Object.keys(files)
+              .filter((p) => !p.startsWith(".herta/"))
+              .sort(
+                (a, b) =>
+                  a.split("/").length - b.split("/").length ||
+                  a.localeCompare(b),
+              ),
+            truncated: false,
+          }
+        : null,
     readWorkspaceFile: async (sessionId, path) => {
       const content = sessionId === SHOWCASE_ID ? files[path] : undefined;
       if (content === undefined) return { ok: false, reason: "not_found" };

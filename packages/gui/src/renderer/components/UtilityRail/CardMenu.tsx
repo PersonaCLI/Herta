@@ -12,7 +12,12 @@ import {
 import { createPortal } from "react-dom";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { OVERLAY_Z, useModalOverlay } from "../../lib/overlay-stack.js";
-import { hoverTipProps } from "../common/hover-tip.js";
+import {
+  getHoverTip,
+  hideHoverTip,
+  hoverTipProps,
+  showHoverTip,
+} from "../common/hover-tip.js";
 
 /** Only the device card remains — the voice card was retired when the tide
  *  wave moved above the composer (glass-wave merge, 2026-07-05). */
@@ -32,6 +37,80 @@ function breakablePath(path: string): JSX.Element[] {
   ));
 }
 
+/** How long the copy icon reads "copied" (or "failed") before it resets. */
+const COPIED_MS = 1500;
+
+/** Copy the workspace path (owner 2026-10-08). Its tip says what happened
+ *  — re-shown over the icon with the outcome, the icon turning to a check
+ *  — and a write the platform refuses is said, not swallowed. */
+function CopyPathButton(props: { readonly path: string }): JSX.Element {
+  const t = useT();
+  const [outcome, setOutcome] = useState<"idle" | "copied" | "failed">("idle");
+  const label = t(
+    outcome === "copied"
+      ? "card.pathCopied"
+      : outcome === "failed"
+        ? "card.copyFailed"
+        : "card.copyPath",
+  );
+  useEffect(() => {
+    if (outcome === "idle") return;
+    const id = window.setTimeout(() => {
+      setOutcome("idle");
+      // The outcome's tip goes with it; a tip some other element raised
+      // meanwhile stays.
+      if (getHoverTip()?.text === label) hideHoverTip();
+    }, COPIED_MS);
+    return () => window.clearTimeout(id);
+  }, [outcome, label]);
+  const say = (button: Element, next: "copied" | "failed"): void => {
+    setOutcome(next);
+    showHoverTip(
+      button,
+      t(next === "copied" ? "card.pathCopied" : "card.copyFailed"),
+    );
+  };
+  return (
+    <button
+      type="button"
+      className={`card-menu-copy${outcome === "copied" ? " is-copied" : ""}`}
+      aria-label={label}
+      {...hoverTipProps(label)}
+      onClick={(e) => {
+        const button = e.currentTarget;
+        const write = navigator.clipboard?.writeText(props.path);
+        if (write === undefined) {
+          say(button, "failed");
+          return;
+        }
+        void write.then(
+          () => say(button, "copied"),
+          () => say(button, "failed"),
+        );
+      }}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+      >
+        {outcome === "copied" ? (
+          <path d="m5 12.5 4.5 4.5L19 7.5" />
+        ) : (
+          <>
+            <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
+            <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
+          </>
+        )}
+      </svg>
+    </button>
+  );
+}
+
 /** Leave-animation duration; keep in sync with the `cardMenuOut` keyframe in
  *  reference-ux.css. The menu stays mounted this long after closing so the exit
  *  animation can play, then unmounts. */
@@ -43,6 +122,9 @@ export interface CardMenuProps {
   readonly isDefault?: boolean;
   readonly onSetWorkspace?: () => void;
   readonly onResetWorkspace?: () => void;
+  /** Open the workspace folder in the OS file manager. `undefined` leaves
+   *  the path as plain text (the bridge cannot open it — the demo). */
+  readonly onOpenWorkspace?: () => void;
   readonly errorText?: string;
   /** Project command allow rules (ADR 0030) as display strings. PRESENTATIONAL,
    *  like everything else here: DeviceCard owns the bridge and passes these
@@ -153,10 +235,13 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
   // first action takes focus on open, the arrows walk the enabled buttons,
   // and a keyboard close (Escape above, Tab below) hands focus back to ⋯ —
   // as the sidebar's SessionMenu does (UX review 2026-09-22, item 25).
+  // The first ITEM, not the first button: the path and its copy icon sit
+  // above the items, and a focus landing on them would raise their tip the
+  // moment the menu opened (the arrows still reach them).
   useEffect(() => {
     if (!open || !mounted) return;
     menuRef.current
-      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.querySelector<HTMLButtonElement>(".card-menu-item:not(:disabled)")
       ?.focus({ preventScroll: true });
   }, [open, mounted]);
   const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -214,13 +299,32 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
                     ? t("card.workspaceDefault")
                     : t("card.workspace")}
                 </span>
-                {/* No tip: the path wraps at its separators and is always
-                    shown whole (owner 2026-10-08: no OS tooltips). */}
-                <span className="card-menu-path">
-                  {props.activeWorkspace !== undefined
-                    ? breakablePath(props.activeWorkspace)
-                    : "—"}
-                </span>
+                {/* The path opens the folder, and the icon beside it copies
+                    it (owner 2026-10-08: it could be neither clicked nor
+                    copied). It wraps at its separators and is always shown
+                    whole, so its tip names the action, not the path. */}
+                {props.activeWorkspace !== undefined &&
+                props.onOpenWorkspace !== undefined ? (
+                  <button
+                    type="button"
+                    className="card-menu-path is-action"
+                    {...hoverTipProps(t("card.openFolder"))}
+                    // The menu stays: the folder opens in another window,
+                    // and a refusal is said here, in the error row.
+                    onClick={() => props.onOpenWorkspace?.()}
+                  >
+                    {breakablePath(props.activeWorkspace)}
+                  </button>
+                ) : (
+                  <span className="card-menu-path">
+                    {props.activeWorkspace !== undefined
+                      ? breakablePath(props.activeWorkspace)
+                      : "—"}
+                  </span>
+                )}
+                {props.activeWorkspace !== undefined && (
+                  <CopyPathButton path={props.activeWorkspace} />
+                )}
               </div>
               <div className="card-menu-divider" />
               <button

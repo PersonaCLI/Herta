@@ -366,6 +366,25 @@
   color: #63d68e;
 }
 *{box-sizing:border-box}
+/* The house scrollbar is the default for EVERY scroller (owner 2026-10-08:
+   a Markdown code block in the viewer still showed the OS bar, arrows and
+   all). Each surface used to opt in by name, and every new scroller —
+   a rendered document's <pre>, its tables — started on the system's grey
+   bar until someone noticed. The named rules below keep their own sizes;
+   these lose to any of them on specificity. */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:var(--ink-a13);
+  border-radius:999px;
+  border:3px solid transparent;
+  background-clip:padding-box;
+}
+::-webkit-scrollbar-thumb:hover{
+  background:var(--ink-a22);
+  background-clip:padding-box;
+}
 body{
   margin:0;
   min-height:100vh;
@@ -2194,6 +2213,7 @@ button.agent-preview {
   padding: 4px 0;
 }
 .card-menu-current {
+  position: relative;
   padding: 8px 12px;
 }
 .card-menu-label {
@@ -2203,6 +2223,8 @@ button.agent-preview {
 }
 .card-menu-path {
   display: block;
+  /* Clears the copy icon pinned in the block's top-right corner. */
+  width: calc(100% - 22px);
   margin-top: 2px;
   font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Code",
     "Source Code Pro", Consolas, "DejaVu Sans Mono", monospace;
@@ -2212,6 +2234,61 @@ button.agent-preview {
   /* Wrap at the <wbr> separators emitted by breakablePath; fall back to
      breaking an over-long single segment rather than overflowing. */
   overflow-wrap: anywhere;
+}
+/* The path that opens its folder (owner 2026-10-08): underlined faintly at
+   rest, as the viewer's document links are, so it reads as something to
+   click; the house accent on hover. */
+.card-menu-path.is-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+  text-decoration: underline;
+  text-decoration-color: var(--ink-a22);
+  text-underline-offset: 2px;
+  transition: color 130ms ease, text-decoration-color 130ms ease;
+}
+.card-menu-path.is-action:hover {
+  color: var(--accent-blue);
+  text-decoration-color: currentColor;
+}
+.card-menu-path.is-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.card-menu-copy {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-3);
+  cursor: pointer;
+  transition: background 130ms ease, color 130ms ease;
+}
+.card-menu-copy:hover {
+  background: var(--ink-a06);
+  color: var(--ink-2);
+}
+.card-menu-copy:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.card-menu-copy.is-copied {
+  color: var(--accent);
+}
+.card-menu-copy svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
 }
 .card-menu-divider {
   height: 1px;
@@ -3148,6 +3225,25 @@ button.agent-preview {
   text-align: left;
   color: var(--muted-slate);
   font-size: 12px;
+}
+/* The delegation token's row (owner 2026-10-08): first while the query can
+   still become it, in the chip's ink, with what it does beside it. */
+.composer-mentions__item.is-brick .composer-mentions__name {
+  color: var(--mention-ink);
+}
+.composer-mentions__desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-slate);
+  font-size: 12px;
+}
+/* What the rows below it are: the list names its files. */
+.composer-mentions__section {
+  padding: 7px 10px 3px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted-3);
 }
 @keyframes mentions-in {
   from {

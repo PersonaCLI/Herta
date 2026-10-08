@@ -353,8 +353,11 @@ export const zh = {
   "composer.hold.discard": "撤回",
   // 继续 (ADR 0071 §1.4): 板砖's last run was interrupted — the app exited
   // under it, or the user pressed Stop — and can be continued where it stood.
-  // @-file mentions (ADR 0072 §2): the matching workspace files.
-  "composer.mentions.aria": "工作区文件",
+  // @ mentions (ADR 0072 §2): @板砖 first while the query can still become
+  // it, then the matching workspace files.
+  "composer.mentions.aria": "提及",
+  "composer.mentions.brick": "委派给差分协处理器",
+  "composer.mentions.files": "工作区文件",
   "composer.resume.text": "板砖的上一次运行已中断。",
   "composer.resume.action": "继续",
   "composer.resume.aria": "继续被中断的运行",
@@ -666,6 +669,13 @@ export const zh = {
   "card.setWorkspace": "设置工作区…",
   "card.resetDefault": "恢复默认",
   "card.workspaceSetError": "无法设置工作区",
+  // The menu's path (owner 2026-10-08): it opens the folder, and the icon
+  // beside it copies the path.
+  "card.openFolder": "打开工作区文件夹",
+  "card.openFolderError": "无法打开工作区文件夹",
+  "card.copyPath": "复制路径",
+  "card.pathCopied": "已复制",
+  "card.copyFailed": "复制失败",
   "card.rules": "已记住的命令",
   "card.rulesEmpty": "暂无已记住的命令",
   "card.rulesRemove": "删除规则 {rule}",

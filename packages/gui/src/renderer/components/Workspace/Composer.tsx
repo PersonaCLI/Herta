@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { workspaceRelativeRepoPath } from "@herta/core/repo-path";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionLang } from "../../hooks/useActiveSession.js";
@@ -10,10 +18,12 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import {
-  brickAhead,
+  brickComplete,
   findMentionQuery,
+  insertBrick,
   insertMention,
-  rankPaths,
+  type MentionItem,
+  mentionItems,
 } from "../../lib/file-mention.js";
 import { recallLastMessage } from "../../lib/recall-last-message.js";
 import { submitMessage } from "../../lib/submit-message.js";
@@ -498,19 +508,20 @@ export function Composer(): JSX.Element {
     mentionDismissed.current = -1;
   }, [sessionId]);
 
-  // The mention list for the caret's `@query`: only where the bridge can
-  // list files, only past what could still become `@板砖` (its ghost keeps
-  // precedence), and not for a mention the user dismissed. The files are
-  // fetched once and kept for a few seconds, so typing does not re-list.
+  // The mention list for the caret's `@query`, from the bare `@` on (owner
+  // 2026-10-08: it waited for a query past what could still be `@板砖`, so a
+  // bare `@` showed the ghost alone and the files went unnoticed). Not for
+  // the token already typed out, nor for a mention the user dismissed. The
+  // files are fetched once and kept for a few seconds, so typing does not
+  // re-list; where the bridge cannot list them, the list offers `@板砖`
+  // alone.
   const updateMention = (value: string, caret: number | null): void => {
     const mq = findMentionQuery(value, caret);
     if (mq === null) mentionDismissed.current = -1;
     if (
       mq === null ||
       mq.start === mentionDismissed.current ||
-      brickAhead(mq.query, lang) ||
-      bridge.listWorkspaceFiles === undefined ||
-      sessionId === null
+      brickComplete(mq.query, lang)
     ) {
       mentionKey.current = "";
       setMention(null);
@@ -525,6 +536,7 @@ export function Composer(): JSX.Element {
       setMentionIndex(0);
     }
     setMention(mq);
+    if (bridge.listWorkspaceFiles === undefined || sessionId === null) return;
     const cached = mentionCache.current;
     if (
       cached === null ||
@@ -542,21 +554,38 @@ export function Composer(): JSX.Element {
       );
     }
   };
-  const mentionMatches = useMemo(
-    () =>
-      mention !== null && mentionFiles !== null
-        ? rankPaths(mentionFiles, mention.query)
-        : [],
-    [mention, mentionFiles],
-  );
+  // A bare `@` offers the files being worked on first: the repository's
+  // uncommitted paths, read from the store when the list is built (the
+  // composer does not re-render on every repository probe).
+  const mentionMatches = useMemo((): MentionItem[] => {
+    if (mention === null) return [];
+    const repo = sessionStore.getSnapshot().repo;
+    const changed =
+      repo === null
+        ? []
+        : repo.dirty.map((d) => workspaceRelativeRepoPath(d.path, repo.prefix));
+    return mentionItems(mention.query, lang, mentionFiles, changed);
+  }, [mention, mentionFiles, lang, sessionStore]);
   const mentionOpen = mention !== null && mentionMatches.length > 0;
-  const pickMention = (path: string): void => {
+  const mentionActive = mentionOpen
+    ? mentionMatches[mentionIndex % mentionMatches.length]
+    : undefined;
+  const pickMention = (item: MentionItem): void => {
     if (mention === null) return;
     const caret = taRef.current?.selectionStart ?? text.length;
-    const next = insertMention(text, mention.start, caret, path);
+    const next =
+      item.kind === "brick"
+        ? insertBrick(
+            text,
+            mention.start,
+            caret,
+            lang === "en" ? "brick" : "板砖",
+          )
+        : insertMention(text, mention.start, caret, item.path);
     pendingCaret.current = next.caret;
     setText(next.text);
     setMention(null);
+    setHintActive(false);
     taRef.current?.focus({ preventScroll: true });
   };
 
@@ -1041,14 +1070,13 @@ export function Composer(): JSX.Element {
             role="listbox"
             aria-label={t("composer.mentions.aria")}
           >
-            {mentionMatches.map((path, i) => {
-              const cut = path.lastIndexOf("/");
-              const name = path.slice(cut + 1);
-              const dir = cut >= 0 ? path.slice(0, cut) : "";
-              const active = i === mentionIndex % mentionMatches.length;
-              return (
+            {mentionMatches.map((item, i) => {
+              const active = item === mentionActive;
+              const firstFile =
+                item.kind === "file" && mentionMatches[i - 1]?.kind !== "file";
+              const option = (children: JSX.Element): JSX.Element => (
                 <button
-                  key={path}
+                  key={item.kind === "brick" ? "@brick" : item.path}
                   id={`composer-mention-${i}`}
                   type="button"
                   role="option"
@@ -1056,19 +1084,52 @@ export function Composer(): JSX.Element {
                   // the highlight, so an option is never tabbed to.
                   tabIndex={-1}
                   aria-selected={active}
-                  className={`composer-mentions__item${active ? " is-active" : ""}`}
+                  className={`composer-mentions__item${item.kind === "brick" ? " is-brick" : ""}${active ? " is-active" : ""}`}
                   // mousedown, not click: the textarea keeps the caret.
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    pickMention(path);
+                    pickMention(item);
                   }}
                   onMouseEnter={() => setMentionIndex(i)}
                 >
-                  <span className="composer-mentions__name">{name}</span>
-                  {dir.length > 0 && (
-                    <span className="composer-mentions__dir">{dir}</span>
-                  )}
+                  {children}
                 </button>
+              );
+              if (item.kind === "brick") {
+                return option(
+                  <>
+                    <span className="composer-mentions__name">
+                      {lang === "en" ? "@brick" : "@板砖"}
+                    </span>
+                    <span className="composer-mentions__desc">
+                      {t("composer.mentions.brick")}
+                    </span>
+                  </>,
+                );
+              }
+              const cut = item.path.lastIndexOf("/");
+              const name = item.path.slice(cut + 1);
+              const dir = cut >= 0 ? item.path.slice(0, cut) : "";
+              return (
+                <Fragment key={item.path}>
+                  {firstFile && (
+                    // What the rows below are — the list says so itself.
+                    <div
+                      className="composer-mentions__section"
+                      aria-hidden="true"
+                    >
+                      {t("composer.mentions.files")}
+                    </div>
+                  )}
+                  {option(
+                    <>
+                      <span className="composer-mentions__name">{name}</span>
+                      {dir.length > 0 && (
+                        <span className="composer-mentions__dir">{dir}</span>
+                      )}
+                    </>,
+                  )}
+                </Fragment>
               );
             })}
           </div>
@@ -1076,7 +1137,9 @@ export function Composer(): JSX.Element {
         <div className="composer-input-wrap">
           <div className="composer-highlight" aria-hidden="true">
             {renderBanzhuanText(text, "composer", lang)}
-            {hintActive && (
+            {/* The ghost previews the token while its row is the one Tab
+                or Enter would take — not once the highlight is on a file. */}
+            {hintActive && (mentionActive?.kind ?? "brick") === "brick" && (
               <span className="composer-ghost">
                 {lang === "en" ? "brick" : "板砖"}
               </span>
@@ -1091,7 +1154,7 @@ export function Composer(): JSX.Element {
             aria-autocomplete="list"
             aria-controls={mentionOpen ? "composer-mentions" : undefined}
             aria-activedescendant={
-              mentionOpen && mentionMatches.length > 0
+              mentionOpen
                 ? `composer-mention-${mentionIndex % mentionMatches.length}`
                 : undefined
             }
@@ -1126,8 +1189,14 @@ export function Composer(): JSX.Element {
             onBlur={() => setMention(null)}
             onKeyDown={(e) => {
               // The @-mention list, while it is open (ADR 0072 §2): arrows
-              // move, Enter or Tab inserts the path, Esc dismisses it.
-              if (mentionOpen && mention !== null) {
+              // move, Enter or Tab inserts the row, Esc dismisses it — and
+              // the ghost with it. An IME's pre-edit keeps every key: its
+              // arrows walk the candidates, its Enter confirms one.
+              if (
+                mentionOpen &&
+                mention !== null &&
+                !(e.nativeEvent.isComposing || e.keyCode === 229)
+              ) {
                 const n = mentionMatches.length;
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                   e.preventDefault();
@@ -1137,15 +1206,15 @@ export function Composer(): JSX.Element {
                   return;
                 }
                 if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
-                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                   e.preventDefault();
-                  const pick = mentionMatches[mentionIndex % n];
-                  if (pick !== undefined) pickMention(pick);
+                  if (mentionActive !== undefined) pickMention(mentionActive);
                   return;
                 }
                 if (e.key === "Escape") {
                   e.preventDefault();
                   mentionDismissed.current = mention.start;
+                  escDismissed.current = mention.start;
+                  setHintActive(false);
                   setMention(null);
                   return;
                 }

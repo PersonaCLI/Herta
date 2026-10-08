@@ -104,6 +104,13 @@ describe("readWorkspaceFileBounded (ADR 0050 §2)", () => {
     const r = await resolveInsideWorkspace(ws, join("a", "b", "c.txt"));
     expect(r.kind === "ok" ? r.relative : r.kind).toBe("a/b/c.txt");
   });
+
+  it("`.` is the workspace itself — what the device card's path opens", async () => {
+    const ws = await mkRoot();
+    const r = await resolveInsideWorkspace(ws, ".");
+    expect(r.kind).toBe("ok");
+    expect(r.kind === "ok" ? r.relative : null).toBe("");
+  });
 });
 
 describe("readWorkspaceBytesBounded (ADR 0054 §2)", () => {

@@ -210,6 +210,86 @@ describe("CardMenu", () => {
     expect(tip()).toBe("node src/index.mjs:*");
   });
 
+  it("the path opens the workspace folder, and stays text when it cannot (owner 2026-10-08)", () => {
+    const onOpen = vi.fn();
+    const { unmount } = renderWithLocale(
+      <CardMenu
+        cardKind="device"
+        activeWorkspace={"C:\\Users\\u\\.herta\\workspaces\\a335"}
+        isDefault={true}
+        onSetWorkspace={vi.fn()}
+        onResetWorkspace={vi.fn()}
+        onOpenWorkspace={onOpen}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    const path = document.querySelector(".card-menu-path");
+    expect(path?.tagName).toBe("BUTTON");
+    expect(path?.textContent).toBe("C:\\Users\\u\\.herta\\workspaces\\a335");
+    // Its tip names the action — the path itself is already whole.
+    act(() => {
+      fireEvent.focusIn(path as Element);
+    });
+    expect(getHoverTip()?.text).toBe("Open the workspace folder");
+    act(() => {
+      hideHoverTip();
+    });
+    fireEvent.click(path as Element);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // The menu stays, so a refusal can be said in its error row.
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    unmount();
+
+    renderWithLocale(
+      <CardMenu
+        cardKind="device"
+        activeWorkspace="/p"
+        onSetWorkspace={vi.fn()}
+        onResetWorkspace={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    expect(document.querySelector(".card-menu-path")?.tagName).toBe("SPAN");
+  });
+
+  it("the copy icon copies the path and says so — and says a refusal too", async () => {
+    const writeText = vi.fn(async (_: string) => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    try {
+      renderWithLocale(
+        <CardMenu
+          cardKind="device"
+          activeWorkspace="/home/u/project"
+          onSetWorkspace={vi.fn()}
+          onResetWorkspace={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText("device card info"));
+      const copy = screen.getByRole("button", { name: "Copy path" });
+      await act(async () => {
+        fireEvent.click(copy);
+      });
+      expect(writeText).toHaveBeenCalledWith("/home/u/project");
+      expect(copy).toHaveAccessibleName("Copied");
+      expect(getHoverTip()?.text).toBe("Copied");
+
+      writeText.mockRejectedValueOnce(new Error("denied"));
+      await act(async () => {
+        fireEvent.click(copy);
+      });
+      expect(copy).toHaveAccessibleName("Copy failed");
+      expect(getHoverTip()?.text).toBe("Copy failed");
+    } finally {
+      act(() => {
+        hideHoverTip();
+      });
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("shows the empty note for an empty rule list", () => {
     renderWithLocale(<CardMenu {...rulesProps} rules={[]} />);
     fireEvent.click(screen.getByLabelText("device card info"));
@@ -296,13 +376,19 @@ describe("CardMenu", () => {
           key: "ArrowDown",
         });
       };
+      const copy = screen.getByRole("button", { name: "Copy path" });
       down();
       expect(document.activeElement).toBe(trust); // Reset (disabled) skipped
       down();
       expect(document.activeElement).toBe(remove);
       down();
-      expect(document.activeElement).toBe(set); // wraps to the top
+      // Wraps to the top: the path's copy icon, above the items.
+      expect(document.activeElement).toBe(copy);
+      down();
+      expect(document.activeElement).toBe(set);
       fireEvent.keyDown(set, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(copy);
+      fireEvent.keyDown(copy, { key: "ArrowUp" });
       expect(document.activeElement).toBe(remove); // and to the bottom
     });
 

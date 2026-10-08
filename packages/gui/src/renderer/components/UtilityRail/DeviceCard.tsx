@@ -277,6 +277,17 @@ export function DeviceCard(): JSX.Element {
       },
     );
   };
+  // The menu's path opens the folder in the OS file manager (owner
+  // 2026-10-08) — through the viewer's own jailed open, where `.` is the
+  // workspace itself. Without that surface (the demo) the path stays text.
+  const openSupported = bridge.openWorkspaceFile !== undefined;
+  const handleOpenFolder = (): void => {
+    if (snap.sessionId === null) return;
+    const fail = (): void => setWsError(t("card.openFolderError"));
+    void bridge.openWorkspaceFile?.(snap.sessionId, ".").then((ok) => {
+      if (!ok) fail();
+    }, fail);
+  };
   const refreshMenu = (): void => {
     refreshRules();
     refreshTrust();
@@ -333,6 +344,11 @@ export function DeviceCard(): JSX.Element {
         isDefault={snap.backendWorkspaceIsDefault}
         onSetWorkspace={() => void handleSet()}
         onResetWorkspace={handleReset}
+        onOpenWorkspace={
+          openSupported && snap.sessionId !== null
+            ? handleOpenFolder
+            : undefined
+        }
         errorText={wsError ?? undefined}
         rules={rulesSupported ? rules : undefined}
         onRemoveRule={handleRemoveRule}

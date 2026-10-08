@@ -24,16 +24,76 @@ export function findMentionQuery(
   return { start: i, query: value.slice(i + 1, caret) };
 }
 
-/** Whether the query can still become the `@板砖` delegation token — its
- *  completion (the inline ghost) keeps precedence until it cannot. */
+/** Whether the query can still become the `@板砖` delegation token — the
+ *  list then offers it first, and the inline ghost previews it. */
 export function brickAhead(query: string, lang: "zh" | "en"): boolean {
   if (query.length === 0) return true;
   if ("板砖".startsWith(query)) return true;
   return lang === "en" && "brick".startsWith(query.toLowerCase());
 }
 
+/** The query already IS the token, typed out or completed: nothing is left
+ *  to offer — no file is meant by `@板砖`. */
+export function brickComplete(query: string, lang: "zh" | "en"): boolean {
+  return query === "板砖" || (lang === "en" && query.toLowerCase() === "brick");
+}
+
 /** How many matches the list shows. */
 export const MENTION_LIMIT = 8;
+
+/** One row of the list: the delegation token, or a workspace file. */
+export type MentionItem =
+  | { readonly kind: "brick" }
+  | { readonly kind: "file"; readonly path: string };
+
+/**
+ * What the list offers for the `@query` (owner 2026-10-08: the list
+ * appeared only once a query was typed past what could be `@板砖`, so a
+ * bare `@` showed the ghost alone and nobody learned the files were
+ * there). `@板砖` first while the query can still become it — its place is
+ * kept, now as the first row, highlighted — then the files: for a bare
+ * `@`, the ones being worked on (`changed`, workspace-relative) and then
+ * the listing's own order, shallowest first; for a query, the ranked
+ * matches. `files` null: not listed (yet, or no surface) — the token alone.
+ */
+export function mentionItems(
+  query: string,
+  lang: "zh" | "en",
+  files: readonly string[] | null,
+  changed: readonly string[] = [],
+): MentionItem[] {
+  if (brickComplete(query, lang)) return [];
+  const items: MentionItem[] = [];
+  if (brickAhead(query, lang)) items.push({ kind: "brick" });
+  if (files !== null) {
+    const paths =
+      query.length === 0
+        ? openingPaths(files, changed)
+        : rankPaths(files, query);
+    for (const path of paths) items.push({ kind: "file", path });
+  }
+  return items;
+}
+
+/** A bare `@`'s files: `first` (in its order, only those listed — a deleted
+ *  file is not offered), then the rest of `paths` in theirs. */
+export function openingPaths(
+  paths: readonly string[],
+  first: readonly string[],
+  limit = MENTION_LIMIT,
+): string[] {
+  const listed = new Set(paths);
+  const out = new Set<string>();
+  for (const p of first) {
+    if (out.size >= limit) break;
+    if (listed.has(p)) out.add(p);
+  }
+  for (const p of paths) {
+    if (out.size >= limit) break;
+    out.add(p);
+  }
+  return [...out];
+}
 
 /**
  * The workspace paths that match `query`, best first. Case-insensitive; a
@@ -80,6 +140,22 @@ function inOrder(text: string, q: string): boolean {
     if (text[i] === q[j]) j += 1;
   }
   return j === q.length;
+}
+
+/** The text with `@query` completed to `@<token>` — exactly what the
+ *  ghost's Tab inserts, no space after it (a zh message runs on from
+ *  `@板砖` without one). */
+export function insertBrick(
+  value: string,
+  start: number,
+  caret: number,
+  token: string,
+): { readonly text: string; readonly caret: number } {
+  const at = start + 1;
+  return {
+    text: `${value.slice(0, at)}${token}${value.slice(caret)}`,
+    caret: at + token.length,
+  };
 }
 
 /** The text with `@query` (from `start` to the caret) replaced by the path

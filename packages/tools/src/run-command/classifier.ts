@@ -645,7 +645,11 @@ function extractShellReentry(argv: readonly string[]): Reentry | null {
   if (name === "cmd") {
     for (let i = 1; i < argv.length; i++) {
       const a = argv[i] as string;
-      if (/^[/-][ckCK]$/.test(a)) {
+      // `//c` is how a bash on Windows passes `/c` past its path conversion
+      // — and how 板砖 spells it. Matching `/c` alone left the body unread,
+      // so `cmd //c "rd /s /q C:\"` asked where `cmd /c` blocked (ADR 0075
+      // step 1, 2026-10-09).
+      if (/^(?:\/\/?|-)[ckCK]$/.test(a)) {
         return {
           kind: "body",
           via: "cmd /c",
@@ -659,8 +663,10 @@ function extractShellReentry(argv: readonly string[]): Reentry | null {
   if (POWERSHELL_FAMILY.has(name)) {
     for (let i = 1; i < argv.length; i++) {
       const raw = argv[i] as string;
-      if (!/^[-/][A-Za-z]+$/.test(raw)) continue;
-      const flag = raw.slice(1).toLowerCase();
+      // `-Command`, `/Command`, and the MSYS spelling `//Command`.
+      const m = /^(?:-|\/\/?)([A-Za-z]+)$/.exec(raw);
+      if (m === null) continue;
+      const flag = (m[1] as string).toLowerCase();
       // PowerShell accepts any unambiguous parameter PREFIX (`-c`, `-com`,
       // `-enc`, …) — match by prefix, not by exact spelling.
       if ("encodedcommand".startsWith(flag)) {
@@ -1287,9 +1293,411 @@ function systemAlteringShape(
         ? null
         : `security ${args[at] ?? ""} changes the keychain or trust settings`.trim();
     }
+    // Windows (ADR 0075 step 1): its flags are `/x`, which a bash spells
+    // `//x`; `winFlag` reads both.
+    case "setx":
+      return "setx changes environment variables for every later session";
+    case "schtasks": {
+      const v = args.map(winFlag).find((a) => a.startsWith("/"));
+      return v === undefined || v === "/query"
+        ? null
+        : `schtasks ${v} changes scheduled tasks`;
+    }
+    case "reg": {
+      const v = (args[0] ?? "").toLowerCase();
+      return v === "" || REG_READ.has(v)
+        ? null
+        : `reg ${v} changes the registry`;
+    }
+    case "sc": {
+      const v = (args.find((a) => !a.startsWith("\\\\")) ?? "").toLowerCase();
+      return v === "" || SC_READ.has(v) ? null : `sc ${v} changes a service`;
+    }
+    case "netsh":
+      return args.some((a) => a.toLowerCase() === "show")
+        ? null
+        : `netsh ${args.join(" ")} changes network settings`;
+    case "wmic":
+      return args.some((a) =>
+        ["call", "create", "delete", "set"].includes(a.toLowerCase()),
+      )
+        ? `wmic ${args.join(" ")} changes the system`
+        : null;
+    case "bcdedit":
+      return args.length === 0 || args.map(winFlag).every((a) => a === "/enum")
+        ? null
+        : "bcdedit changes the boot configuration";
+    case "set-executionpolicy":
+      return "Set-ExecutionPolicy changes which scripts PowerShell will run";
+    case "register-scheduledtask":
+    case "new-service":
+    case "set-service":
+      return `${argv[0]} changes scheduled tasks or services`;
+    case "new-itemproperty":
+    case "set-itemproperty":
+      return args.some((a) => /^(hk(cu|lm|cr|u|cc):|registry::)/i.test(a))
+        ? `${argv[0]} changes the registry`
+        : null;
     default:
       return null;
   }
+}
+
+/** A Windows flag as the program reads it: `//x` (a bash's spelling, past
+ *  its path conversion) is `/x`; case does not matter. */
+function winFlag(a: string): string {
+  return a.replace(/^\/\//, "/").toLowerCase();
+}
+
+/** `reg` verbs that only read (`export` writes a .reg FILE, not the registry). */
+const REG_READ: ReadonlySet<string> = new Set(["query", "export", "compare"]);
+/** `sc` verbs that only read. */
+const SC_READ: ReadonlySet<string> = new Set([
+  "query",
+  "queryex",
+  "qc",
+  "qdescription",
+  "qfailure",
+  "qprivs",
+  "qsidtype",
+  "getdisplayname",
+  "getkeyname",
+  "enumdepend",
+  "sdshow",
+]);
+
+/** Running as another, higher user. The command itself is classified too
+ *  (`innerEscalation`); this is the class when it says nothing worse. */
+const PRIVILEGE_WRAPPERS: ReadonlySet<string> = new Set([
+  "sudo",
+  "doas",
+  "pkexec",
+  "runas",
+  "gsudo",
+]);
+
+/** Classes no reviewer may ever be handed and no rule may cover, most
+ *  severe first: what a wrapper or a shell body is found to run, when it is
+ *  one of these, is the line's class. */
+const ESCALATING_CODES: readonly string[] = [
+  "command_ask_destructive",
+  "command_ask_system",
+  "command_ask_opaque",
+  "command_ask_download_exec",
+  "command_ask_network",
+  "command_ask_outside",
+  "command_ask_harness_state",
+];
+
+/**
+ * What the line's own text does not show (ADR 0075 step 1): a shell that
+ * runs its input, a body computed when it runs, a command PowerShell
+ * decodes, `eval`. Null for a line the harness can read.
+ */
+function opaqueShape(
+  id: string,
+  argv: readonly string[],
+  reentry: Reentry | null,
+): string | null {
+  if (id === "eval") return "eval runs a command assembled when it runs";
+  if (id === "iex" || id === "invoke-expression") {
+    return "Invoke-Expression runs a command assembled when it runs";
+  }
+  if (reentry?.kind === "body") {
+    if (reentry.via.endsWith("-EncodedCommand")) {
+      const shown = reentry.body.replace(/\s+/g, " ").trim();
+      return `${reentry.via} hides its command; it decodes to: ${shown.length > 160 ? `${shown.slice(0, 159)}…` : shown}`;
+    }
+    // `__SUBST__` is the bash lane's stand-in for a substitution it has
+    // pulled out to classify on its own.
+    if (/\$\(|`|__SUBST__/.test(reentry.body)) {
+      return `${reentry.via} runs a command computed when it runs`;
+    }
+    return null;
+  }
+  // A POSIX shell with no `-c` body and no script: it runs its input — a
+  // pipe, a heredoc — which the harness never reads.
+  if (SH_FAMILY.has(id)) {
+    const args = argv.slice(1);
+    if (args.length === 1 && /^--?(version|help)$/.test(args[0] as string)) {
+      return null;
+    }
+    const script = args.find((a) => !a.startsWith("-"));
+    if (script === undefined) {
+      return `${id} runs whatever its input feeds it — the harness does not read it`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The line's class when what it wraps is worse than the wrapper (ADR 0075
+ * step 1): an exec-wrapper's command (`timeout 60 npx -y …`, `sudo rm -rf
+ * …`) and every command of a shell body (`cmd //c "npx -y …"`, `bash -c
+ * "terraform destroy …"`) are classified in their own right. Only a class
+ * in ESCALATING_CODES is taken — a harmless inside never lends the wrapper
+ * an allow — and the most severe one found wins. Bounded by the re-entry
+ * depth cap, past which the block tier has already failed closed.
+ */
+function innerEscalation(
+  argv: readonly string[],
+  reentry: Reentry | null,
+  opts: ClassifyCommandOpts | undefined,
+  depth: number,
+): Verdict | null {
+  if (depth >= MAX_REENTRY_DEPTH) return null;
+  const found: Array<{
+    verdict: Extract<Verdict, { kind: "ask" }>;
+    via: string;
+  }> = [];
+  const take = (v: Verdict, via: string): void => {
+    if (v.kind === "ask" && ESCALATING_CODES.includes(v.code)) {
+      found.push({ verdict: v, via });
+    }
+  };
+  const peeled = peelExecWrappers(argv);
+  if (peeled !== null && peeled.length > 0) {
+    take(
+      classifyCommandTiers(peeled, opts, depth + 1),
+      interpreterName(argv[0] as string),
+    );
+  }
+  if (reentry?.kind === "body") {
+    for (const segment of splitShellSegments(reentry.body)) {
+      const tokens = shellBodyTokens(segment);
+      if (tokens.length === 0) continue;
+      take(
+        classifyCommandTiers(
+          tokens,
+          { shell: true, unresolved: true },
+          depth + 1,
+        ),
+        reentry.via,
+      );
+    }
+  }
+  if (found.length === 0) return null;
+  found.sort(
+    (a, b) =>
+      ESCALATING_CODES.indexOf(a.verdict.code) -
+      ESCALATING_CODES.indexOf(b.verdict.code),
+  );
+  const top = found[0] as (typeof found)[number];
+  return { ...top.verdict, reason: `${top.via}: ${top.verdict.reason}` };
+}
+
+/** A program that fetches a package and runs it (ADR 0075 step 1) — the
+ *  download is the point, so it is never "unknown". Null otherwise. */
+function downloadExecShape(id: string, argv: readonly string[]): string | null {
+  const args = argv.slice(1);
+  const sub = args[0];
+  if (args.length === 1 && /^(--version|-v|-V)$/.test(sub as string)) {
+    return null;
+  }
+  if (id === "npx" || id === "pnpx" || id === "bunx" || id === "uvx") {
+    if (
+      id === "npx" &&
+      args.some((a) => a === "--no-install" || a === "--no")
+    ) {
+      return null;
+    }
+    return `${id} fetches a package when it is not installed, then runs it`;
+  }
+  if (id === "npm" && (sub === "exec" || sub === "x")) {
+    return `npm ${sub} fetches a package when it is not installed, then runs it`;
+  }
+  if ((id === "pnpm" || id === "yarn") && sub === "dlx") {
+    return `${id} dlx fetches a package and runs it`;
+  }
+  if (id === "bun" && sub === "x") return "bun x fetches a package and runs it";
+  if (id === "pipx" && sub === "run")
+    return "pipx run fetches a package and runs it";
+  if (id === "uv" && sub === "tool" && args[1] === "run") {
+    return "uv tool run fetches a package and runs it";
+  }
+  if (
+    id === "go" &&
+    sub === "run" &&
+    args
+      .slice(1)
+      .some((a) => !a.startsWith("-") && !a.startsWith(".") && a.includes("@"))
+  ) {
+    return "go run of a module at a version fetches it and runs it";
+  }
+  if (id === "deno" && args.some((a) => /^(https?:|npm:|jsr:)/.test(a))) {
+    return "deno fetches a remote module and runs it";
+  }
+  return null;
+}
+
+/** Programs whose work is talking to another machine. */
+const REMOTE_PROGRAMS: ReadonlySet<string> = new Set([
+  "ssh",
+  "scp",
+  "sftp",
+  "telnet",
+  "ftp",
+  "nc",
+  "ncat",
+  "netcat",
+  "socat",
+  "gh",
+  "aws",
+  "az",
+  "gcloud",
+  "kubectl",
+  "helm",
+  "terraform",
+  "tofu",
+  "bitsadmin",
+  "invoke-webrequest",
+  "iwr",
+  "invoke-restmethod",
+  "irm",
+  "start-bitstransfer",
+]);
+
+/** The network, beyond the fetchers classified above it (ADR 0075 step 1).
+ *  Null for a local use of the same program. */
+function networkShape(id: string, argv: readonly string[]): string | null {
+  const args = argv.slice(1);
+  const sub = args.find((a) => !a.startsWith("-"));
+  // `curl.exe`, `/usr/bin/wget`: the plain spellings were classified above,
+  // with their loopback allow; these reach the network all the same.
+  if (id === "curl" || id === "wget") return `${id} network call`;
+  if (REMOTE_PROGRAMS.has(id)) {
+    if (
+      args.length === 1 &&
+      /^(--version|-v|version|--help|help)$/.test(args[0] as string)
+    ) {
+      return null;
+    }
+    return `${argv[0]} reaches another machine`;
+  }
+  if (
+    id === "rsync" &&
+    args.some(
+      (a) =>
+        a.startsWith("rsync://") ||
+        (/^[^-/\\.][^/\\]*:/.test(a) && !/^[A-Za-z]:[\\/]/.test(a)),
+    )
+  ) {
+    return "rsync to or from another machine";
+  }
+  if (
+    id === "certutil" &&
+    args.some(
+      (a) => /^(-|\/\/?)(urlcache|verifyctl)$/i.test(a) || /^https?:/i.test(a),
+    )
+  ) {
+    return "certutil downloads a file";
+  }
+  if (
+    (id === "docker" || id === "podman") &&
+    sub !== undefined &&
+    ["pull", "push", "login", "run", "create", "build", "search"].includes(sub)
+  ) {
+    return `${id} ${sub} reaches a registry`;
+  }
+  return null;
+}
+
+/** Tools whose ordinary verb destroys: wiping files past recovery, tearing
+ *  down infrastructure, pruning containers (ADR 0075 step 1). */
+function destructiveToolShape(
+  id: string,
+  argv: readonly string[],
+): string | null {
+  const args = argv.slice(1);
+  const sub = args.find((a) => !a.startsWith("-"));
+  if (id === "shred" || id === "wipe" || id === "srm") {
+    return `${id} overwrites files so they cannot be recovered`;
+  }
+  if (id === "cipher" && args.some((a) => /^\/\/?w/i.test(a))) {
+    return "cipher /w wipes free space";
+  }
+  if ((id === "terraform" || id === "tofu") && sub === "destroy") {
+    return `${id} destroy tears down the infrastructure it manages`;
+  }
+  if (
+    (id === "terraform" || id === "tofu") &&
+    sub === "apply" &&
+    args.some((a) => a === "-auto-approve" || a === "--auto-approve")
+  ) {
+    return `${id} apply -auto-approve changes infrastructure without its own review`;
+  }
+  if (id === "kubectl" && args.includes("delete")) {
+    return `kubectl delete removes cluster resources`;
+  }
+  if (
+    id === "helm" &&
+    (args.includes("uninstall") || args.includes("delete"))
+  ) {
+    return "helm uninstall removes a release";
+  }
+  if (id === "docker" || id === "podman") {
+    const second = args.filter((a) => !a.startsWith("-"))[1];
+    if (sub === "rm" || sub === "rmi")
+      return `${id} ${sub} removes containers or images`;
+    if (
+      sub !== undefined &&
+      ["system", "image", "container", "volume", "network", "builder"].includes(
+        sub,
+      ) &&
+      (second === "prune" || second === "rm")
+    ) {
+      return `${id} ${sub} ${second} deletes what it names`;
+    }
+  }
+  if (id === "dropdb") return "dropdb deletes a database";
+  return null;
+}
+
+/** A container that mounts a host path outside the workspace, or runs with
+ *  the host's privileges (ADR 0075 step 1). Null otherwise. */
+function containerShape(
+  id: string,
+  argv: readonly string[],
+  live: boolean,
+): Verdict | null {
+  if (id !== "docker" && id !== "podman") return null;
+  const args = argv.slice(1);
+  const sub = args.find((a) => !a.startsWith("-"));
+  if (sub !== "run" && sub !== "create") return null;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (
+      a === "--privileged" ||
+      /^--(pid|net|network|ipc|uts|userns)=host$/.test(a) ||
+      a.startsWith("--cap-add")
+    ) {
+      return {
+        kind: "ask",
+        risk: "workspace_destructive",
+        code: "command_ask_system",
+        reason: `${id} ${sub} ${a} gives the container the host's privileges`,
+      };
+    }
+    let spec: string | null = null;
+    if (a === "-v" || a === "--volume") spec = args[i + 1] ?? null;
+    else if (a.startsWith("--volume=")) spec = a.slice("--volume=".length);
+    let host: string | null = null;
+    if (spec !== null) {
+      const drive = /^([A-Za-z]:[\\/][^:]*)/.exec(spec);
+      host = drive !== null ? (drive[1] as string) : (spec.split(":")[0] ?? "");
+    }
+    if (a === "--mount" || a.startsWith("--mount=")) {
+      const m =
+        a === "--mount" ? (args[i + 1] ?? "") : a.slice("--mount=".length);
+      const src = /(?:^|,)(?:source|src)=([^,]*)/.exec(m);
+      host = src !== null ? (src[1] as string) : null;
+    }
+    // A named volume (`data:/data`) is no host path.
+    if (host !== null && host.length > 0 && /[\\/~.$]/.test(host)) {
+      if (escapesWorkspaceOperand(host, live)) return outsideAsk(id, host);
+    }
+  }
+  return null;
 }
 
 /**
@@ -2151,6 +2559,7 @@ function firstPathOperand(args: readonly string[]): string[] {
 function classifyCommandTiers(
   argv: readonly string[],
   opts?: ClassifyCommandOpts,
+  depth = 0,
 ): Verdict {
   // Whether an expansion in this argv is LIVE (a shell will perform it). The
   // caller settles it, because quoting decides and only the caller still has
@@ -2200,6 +2609,38 @@ function classifyCommandTiers(
   // path-qualified `/bin/rm -rf build/` must not slip past the destructive
   // ask into the cacheable, rule-eligible unknown class.
   const id = commandIdentity(a0);
+
+  // PHASE 1b — WHAT IT HIDES (ADR 0075 step 1, 2026-10-09)
+  //
+  // The replay found obfuscated execution, downloads, persistence and
+  // destruction all filed as `command_ask_unknown`: asked, so nothing ran
+  // unseen, but the card read 「未识别的命令」, a project rule could be
+  // offered, and a reviewer of the unknown class would have been handed
+  // them. Three looks, each only ever ESCALATING:
+  //   - a command whose text the harness cannot read at all is opaque;
+  //   - a wrapper's command and a shell body are classified in their own
+  //     right, and a dangerous class found there is the line's class;
+  //   - running as another, higher user is a system change.
+  const hidden = opaqueShape(id, argv, reentry);
+  if (hidden !== null) {
+    return {
+      kind: "ask",
+      risk: "workspace_destructive",
+      code: "command_ask_opaque",
+      reason: hidden,
+    };
+  }
+  const inner = innerEscalation(argv, reentry, opts, depth);
+  if (inner !== null) return inner;
+  if (PRIVILEGE_WRAPPERS.has(id)) {
+    return {
+      kind: "ask",
+      risk: "workspace_destructive",
+      code: "command_ask_system",
+      reason: `${id} runs ${argv.slice(1).join(" ")} with elevated privileges`,
+    };
+  }
+
   if (id === "rm" && hasRecursiveForce(argv)) {
     return {
       kind: "ask",
@@ -2268,6 +2709,17 @@ function classifyCommandTiers(
       reason: system,
     };
   }
+  const container = containerShape(id, argv, live);
+  if (container !== null) return container;
+  const wipe = destructiveToolShape(id, argv);
+  if (wipe !== null) {
+    return {
+      kind: "ask",
+      risk: "workspace_destructive",
+      code: "command_ask_destructive",
+      reason: wipe,
+    };
+  }
 
   // PHASE 3 — ASK network
   if (a0 === "curl" || a0 === "wget") {
@@ -2319,6 +2771,24 @@ function classifyCommandTiers(
       reason: "go install",
     };
   }
+  const fetchRun = downloadExecShape(id, argv);
+  if (fetchRun !== null) {
+    return {
+      kind: "ask",
+      risk: "network",
+      code: "command_ask_download_exec",
+      reason: fetchRun,
+    };
+  }
+  const remote = networkShape(id, argv);
+  if (remote !== null) {
+    return {
+      kind: "ask",
+      risk: "network",
+      code: "command_ask_network",
+      reason: remote,
+    };
+  }
 
   // PHASE 4 — ASK workspace_write (redirection inside any shell body)
   if (reentry?.kind === "body" && /(?<!\\)>>?/.test(reentry.body)) {
@@ -2362,8 +2832,8 @@ function classifyCommandTiers(
   if (hatch !== null) {
     return {
       kind: "ask",
-      risk: "workspace_write",
-      code: "command_ask_unknown",
+      risk: "workspace_destructive",
+      code: "command_ask_opaque",
       reason: `${interpreterName(a0)} ${hatch} runs or loads something the harness cannot see — review it`,
     };
   }

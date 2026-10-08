@@ -308,6 +308,19 @@ export const en = {
     "Changes system settings or drives other apps — asked every time",
   "approval.reason.commandHarnessState":
     "May reach .herta, the application's own state, in a way the line does not show — asked every time",
+  "approval.reason.commandDownloadExec":
+    "Downloads a package and runs it — asked every time",
+  "approval.reason.commandOpaque":
+    "What this runs cannot be read from the command (encoded, computed, or fed on input) — asked every time",
+  "approval.reason.commandOutside":
+    "Touches a path outside the workspace — check the path",
+  "approval.reason.commandLocalExec":
+    "Runs a program from the workspace — review it and its arguments",
+  "approval.reason.commandInterpreterInline":
+    "Interpreter runs inline code the record never showed — review it",
+  "approval.reason.commandScript": "Runs a project script — review the script",
+  "approval.reason.commandEnv":
+    "Changes the environment or command paths later commands use — review it",
   "approval.alsoClasses": "Also: {list}",
   "approval.consequence.discardsUncommitted":
     "Note: discards uncommitted changes — they cannot be recovered.",

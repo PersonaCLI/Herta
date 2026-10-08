@@ -41,6 +41,17 @@ export const REASON_KEY: Record<string, MessageKey> = {
   // A line whose reach into `.herta` the guard cannot bound (review
   // 2026-09-30): never trust-covered, never a rule.
   command_ask_harness_state: "approval.reason.commandHarnessState",
+  // Named out of `unknown` (ADR 0075 step 1): a fetch-and-run, and a line
+  // whose real command the text does not show.
+  command_ask_download_exec: "approval.reason.commandDownloadExec",
+  command_ask_opaque: "approval.reason.commandOpaque",
+  // Classes named earlier that never got copy, so their raw English reason
+  // showed on zh cards (found 2026-10-09 by the source scan in the test).
+  command_ask_outside: "approval.reason.commandOutside",
+  command_ask_local_exec: "approval.reason.commandLocalExec",
+  command_ask_interpreter_inline: "approval.reason.commandInterpreterInline",
+  command_ask_script: "approval.reason.commandScript",
+  command_ask_env: "approval.reason.commandEnv",
   write_new_file_ask: "approval.reason.writeNewFile",
   edit_file_ask: "approval.reason.editFile",
   // The minimal contract's editor (ADR 0040) — its raw reason ("writes

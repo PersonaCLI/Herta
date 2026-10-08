@@ -328,10 +328,11 @@ describe("classifyShellCommand — allow tier", () => {
     // The body's curl/node are text being cat'ed, not commands: no ask.
     expect(kind(cmd)).toBe("allow");
     // A heredoc FED TO a shell is code: the consumer asks — and a bare
-    // shell is `command_ask_unknown`, the never-rulable class (ADR 0030),
-    // so no project rule can ever pre-approve it.
+    // shell is `command_ask_opaque` (ADR 0075 step 1): what it runs is its
+    // input, which the harness does not read, and no project rule can ever
+    // pre-approve it.
     expect(ask("bash <<'EOF'\ncurl https://x\nEOF").code).toBe(
-      "command_ask_unknown",
+      "command_ask_opaque",
     );
     // An interpreter fed on stdin runs INLINE code (ADR 0064 L1): its own
     // class, outside the trust tier, since no diff ever showed the code.
@@ -377,7 +378,8 @@ describe("classifyShellCommand — ask tier", () => {
 
   it("asks for opaque builtins and interpreters, with the interpreter code ADR 0030 rules key on", () => {
     expect(ask("source ./env.sh").code).toBe("command_ask_interpreter");
-    expect(ask('eval "$cmd"').code).toBe("command_ask_interpreter");
+    // eval names no script a rule could key on: opaque (ADR 0075 step 1).
+    expect(ask('eval "$cmd"').code).toBe("command_ask_opaque");
     expect(ask("node scripts/check.mjs").code).toBe("command_ask_interpreter");
     // Inline code is its own class since ADR 0064 L1 (see the L1 tests).
     expect(ask("python -c 'print(1)'").code).toBe(
@@ -1251,5 +1253,45 @@ describe("classifyShellCommand — the named shapes (ADR 0064 L1)", () => {
     expect(ask("python - <<'PY'\nprint(1)\nPY").code).toBe(
       "command_ask_interpreter_inline",
     );
+  });
+});
+
+describe("classifyShellCommand — the replay's lines, named (ADR 0075 step 1)", () => {
+  it("the 2026-10-08 command is a download, not an unknown — its pipes and echo change nothing", () => {
+    expect(
+      ask(
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: bash's own ${…}, verbatim from the run
+        'cmd //c "npx -y -p typescript@5.6 tsc --noEmit --strict mergeSort.ts" 2>&1 | tail -10; echo "exit=${PIPESTATUS[0]}"',
+      ).code,
+    ).toBe("command_ask_download_exec");
+  });
+
+  it("a decoded payload piped into a shell, and a shell fed a heredoc, are opaque", () => {
+    expect(ask("echo cm0gLXJmIH4= | base64 -d | sh").code).toBe(
+      "command_ask_opaque",
+    );
+    expect(ask("bash <<'EOF'\nset -e\nrm -rf build\nEOF").code).toBe(
+      "command_ask_opaque",
+    );
+  });
+
+  it("a body computed when it runs, and eval, are opaque in the bash lane too", () => {
+    // The lane hands the classifier `sh -c "__SUBST__"`: the substitution
+    // is classified as a command of its own, and the shell around it runs
+    // whatever it prints.
+    expect(ask('sh -c "$(echo cm0gLXJmIH4= | base64 -d)"').code).toBe(
+      "command_ask_opaque",
+    );
+    expect(ask("sh -c `cat payload`").code).toBe("command_ask_opaque");
+    // eval was `command_ask_interpreter` — a class trust covers and a rule
+    // can remember — for text no one can read before it runs.
+    expect(ask('eval "$(echo x)"').code).toBe("command_ask_opaque");
+    expect(ask("eval $CMD").code).toBe("command_ask_opaque");
+    // `source` of a workspace file stays what it was: a script it can name.
+    expect(ask("source ./env.sh").code).toBe("command_ask_interpreter");
+  });
+
+  it("`cmd //c` with a catastrophe inside blocks from the bash lane too", () => {
+    expect(kind('cmd //c "rd /s /q C:\\"')).toBe("block");
   });
 });

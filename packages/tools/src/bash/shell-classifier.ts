@@ -1091,12 +1091,24 @@ function classifySegment(
   }
 
   if (OPAQUE_BUILTINS.has(name)) {
-    asks.push({
-      kind: "ask",
-      risk: "workspace_write",
-      code: "command_ask_interpreter",
-      reason: `${name} runs text the harness cannot classify — review it`,
-    });
+    // `eval` runs text assembled when it runs: opaque, never trust-covered
+    // nor rule-eligible (ADR 0075 step 1). `source`/`.`/`exec` name what
+    // they run and stay the interpreter class.
+    asks.push(
+      name === "eval"
+        ? {
+            kind: "ask",
+            risk: "workspace_destructive",
+            code: "command_ask_opaque",
+            reason: "eval runs a command assembled when it runs — review it",
+          }
+        : {
+            kind: "ask",
+            risk: "workspace_write",
+            code: "command_ask_interpreter",
+            reason: `${name} runs text the harness cannot classify — review it`,
+          },
+    );
     return segmentVerdict(asks);
   }
 

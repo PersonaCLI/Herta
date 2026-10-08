@@ -277,6 +277,17 @@ export const zh = {
   "approval.reason.commandSystem": "会改动系统设置或操控其他应用，每次都需确认",
   "approval.reason.commandHarnessState":
     "该命令可能触及 .herta（本程序自身的状态），且无法从命令本身判定，每次都需确认",
+  "approval.reason.commandDownloadExec":
+    "该命令会下载软件包并运行，每次都需确认",
+  "approval.reason.commandOpaque":
+    "命令实际执行的内容无法从文本判定（经编码、运行时生成或由输入提供），每次都需确认",
+  "approval.reason.commandOutside": "该命令会访问工作区之外的路径，请核对路径",
+  "approval.reason.commandLocalExec": "运行工作区内的程序，请核对程序与参数",
+  "approval.reason.commandInterpreterInline":
+    "解释器执行未在记录中出现的内联代码，请仔细核对",
+  "approval.reason.commandScript": "运行项目脚本，请核对脚本内容",
+  "approval.reason.commandEnv":
+    "该命令会改变后续命令所用的环境变量或命令路径，请核对",
   // A chained line with more than one ask class: the other classes, named.
   "approval.alsoClasses": "另含：{list}",
   // Consequence notes (ADR 0049 §5) — one sentence on what the command will

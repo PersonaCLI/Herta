@@ -41,6 +41,13 @@ export interface ReplDeps {
   home?: string;
   /** Threaded into SlashContext for /workspace reset (managed default). */
   sessionId?: string;
+  /** ADR 0075: the automatic reviewer's view of a turn — `begin` with the
+   *  message the turn answers (the driver commits it only when the turn
+   *  ends), `end` when it is over. Absent → no reviewer mounted. */
+  autoReview?: {
+    begin(userText: string): void;
+    end(): void;
+  };
 }
 
 export async function repl(deps: ReplDeps): Promise<void> {
@@ -76,6 +83,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
         persister: deps.persister,
         home: deps.home,
         sessionId: deps.sessionId,
+        autoReviewAvailable: deps.autoReview !== undefined,
       });
       if (r.action === "quit") break;
       continue;
@@ -87,6 +95,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
       // dispatch, so the delegation trigger is unchanged (display-only surface
       // both ways). Slash commands above are never aliased. zh passes through.
       const wireText = aliasBrickInput(trimmed, deps.lang ?? "zh");
+      deps.autoReview?.begin(wireText);
       const record = await deps.actor.runTurn(wireText, controller.signal);
       deps.renderer.update(record);
     } catch (err) {
@@ -118,6 +127,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
         deps.out.write(deps.style.red(`✗ internal: ${msg}\n`));
       }
     } finally {
+      deps.autoReview?.end();
       interruptHandle.dispose();
     }
   }

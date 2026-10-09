@@ -1,5 +1,7 @@
+import { type ReviewDeps, reviewBeforeCard } from "@herta/app-server/wiring";
 import {
   ApprovalPolicy,
+  type AskAnswer,
   type AskResolver,
   type PermissionRequest,
   type ProjectCommandRuleStore,
@@ -19,6 +21,12 @@ import type { Style } from "./style.js";
  * The policy itself — what counts as covered, which choices to offer, what
  * a grant writes back — is `@herta/core`'s `ApprovalPolicy`, shared with the
  * app-server's overlay resolver; this class only renders and awaits.
+ *
+ * ADR 0075: with a reviewer mounted and the workspace opted in
+ * (`/permissions auto-review on`), the reviewer answers before the prompt —
+ * the same step the desktop takes (`reviewBeforeCard`). Its decisions are
+ * silent, as on the desktop (owner, 2026-10-09); a card verdict or any
+ * failure shows the prompt as before.
  */
 export class CachingAskResolver implements AskResolver {
   private readonly policy: ApprovalPolicy;
@@ -29,6 +37,7 @@ export class CachingAskResolver implements AskResolver {
     private readonly stdout: NodeJS.WritableStream,
     private readonly style: Style,
     rules?: ProjectCommandRuleStore,
+    private readonly review?: ReviewDeps,
   ) {
     this.policy = new ApprovalPolicy(cache, rules);
   }
@@ -36,7 +45,7 @@ export class CachingAskResolver implements AskResolver {
   async present(
     request: PermissionRequest,
     signal: AbortSignal,
-  ): Promise<"allow" | "deny"> {
+  ): Promise<AskAnswer> {
     const pre = this.policy.preflight(request);
     if (pre.kind === "auto") {
       const tool = request.call.tool;
@@ -49,6 +58,10 @@ export class CachingAskResolver implements AskResolver {
             : `${tool} ${risk} (workspace trust)`;
       this.stdout.write(this.style.dim(`  auto-allow: ${note}\n`));
       return "allow";
+    }
+    if (this.review !== undefined) {
+      const answer = await reviewBeforeCard(this.review, request, signal);
+      if (answer !== null) return answer;
     }
 
     const outcome = await this.inner.presentDetailed(request, signal, {

@@ -29,11 +29,10 @@ import {
   type SessionApprovalCache,
 } from "@herta/core";
 import {
-  type AutoReviewer,
-  type ReviewVerdict,
-  reviewAnswer,
+  type ReviewDeps,
+  requestCommand,
+  reviewBeforeCard,
 } from "./auto-review.js";
-import type { AutoReviewNotice } from "./types.js";
 
 export interface OverlayAskResolverDeps {
   /**
@@ -75,18 +74,7 @@ export interface OverlayAskResolverDeps {
    * card, only where the CURRENT workspace opted in; its allow or deny
    * settles the request without a card, and anything else shows the card.
    */
-  readonly review?: {
-    readonly reviewer: AutoReviewer;
-    /** The owner opted the current workspace in. */
-    readonly enabled: () => boolean;
-    /** The user's messages, oldest first — what authorizes. */
-    readonly userMessages: () => readonly string[];
-    /** The current backend workspace root. */
-    readonly workspace: () => string;
-    /** Every decision, and the brake engaging — the owner sees each one
-     *  (user-only, never the record: D7). */
-    readonly onReviewed: (notice: AutoReviewNotice) => void;
-  };
+  readonly review?: ReviewDeps;
 }
 
 export type ResolveExternalResult =
@@ -147,50 +135,19 @@ export class OverlayAskResolver implements AskResolver {
    * decision is fabricated either way.
    */
   private async reviewFirst(
-    review: NonNullable<OverlayAskResolverDeps["review"]>,
+    review: ReviewDeps,
     request: PermissionRequest,
     pre: Extract<ApprovalPreflight, { kind: "ask" }>,
     signal: AbortSignal,
   ): Promise<AskAnswer> {
-    if (signal.aborted) throw gateAbortError();
-    const command = extractCommand(request);
-    let verdict: ReviewVerdict;
+    let answer: AskAnswer | null;
     try {
-      verdict = await review.reviewer.review(
-        {
-          request,
-          command,
-          workspace: review.workspace(),
-          userMessages: review.userMessages(),
-        },
-        signal,
-      );
+      answer = await reviewBeforeCard(review, request, signal);
     } catch {
-      if (signal.aborted) throw gateAbortError();
-      verdict = { kind: "card", why: "error" };
+      // Only an abort rejects: the card's own abort contract applies.
+      throw gateAbortError();
     }
-    if (signal.aborted) throw gateAbortError();
-    if (verdict.kind === "card") return this.surface(request, pre, signal);
-    const at = new Date().toISOString();
-    review.onReviewed({
-      requestId: request.id,
-      tool: request.call.tool,
-      command: command ?? null,
-      decision: verdict.kind,
-      reason: verdict.rationale,
-      at,
-    });
-    if (verdict.braked) {
-      review.onReviewed({
-        requestId: request.id,
-        tool: request.call.tool,
-        command: null,
-        decision: "paused",
-        reason: "",
-        at,
-      });
-    }
-    return reviewAnswer(verdict);
+    return answer ?? this.surface(request, pre, signal);
   }
 
   /** Show the card and await the owner. */
@@ -251,7 +208,7 @@ export class OverlayAskResolver implements AskResolver {
         ...(request.consequence !== undefined
           ? { consequence: request.consequence }
           : {}),
-        command: extractCommand(request),
+        command: requestCommand(request),
         diff: request.diff,
         files: request.files,
         // Gate the GUI "always allow (session)" button: only offer it when a
@@ -312,29 +269,4 @@ export class OverlayAskResolver implements AskResolver {
     resolve(opts.decision);
     return { ok: true };
   }
-}
-
-/**
- * Build a display command string for a command permission request:
- * run_command's argv joined with spaces, or the minimal contract's `bash`
- * command line verbatim (ADR 0040 — the panel's console well wraps and
- * scrolls, so a multi-line heredoc shows whole; a user must SEE what they
- * approve, live GUI 2026-08-17 showed only "未识别的命令" with no command).
- * Returns undefined for other tools or malformed input — the panel then
- * shows only the summary.
- */
-export function extractCommand(request: PermissionRequest): string | undefined {
-  const input = request.call.input;
-  if (typeof input !== "object" || input === null) return undefined;
-  if (request.call.tool === "bash") {
-    const command = (input as { command?: unknown }).command;
-    return typeof command === "string" && command.trim().length > 0
-      ? command
-      : undefined;
-  }
-  if (request.call.tool !== "run_command") return undefined;
-  const argv = (input as { argv?: unknown }).argv;
-  if (!Array.isArray(argv) || argv.length === 0) return undefined;
-  const parts = argv.filter((a): a is string => typeof a === "string");
-  return parts.length > 0 ? parts.join(" ") : undefined;
 }

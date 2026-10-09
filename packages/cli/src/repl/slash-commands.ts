@@ -41,6 +41,9 @@ export interface SlashContext {
    * only the task cache and `remove` reports unavailability.
    */
   commandRules?: ProjectCommandRuleStore;
+  /** ADR 0075: an automatic reviewer is mounted — `/permissions
+   *  auto-review on|off` switches it for this workspace. */
+  autoReviewAvailable?: boolean;
   /**
    * Optional /resume dependencies. Wired by main.ts; tests may omit. When
    * any is undefined, /resume prints "/resume not available in this build"
@@ -80,7 +83,7 @@ const HELP_LINES: readonly [string, string][] = [
   ["/tools", "list registered tools"],
   [
     "/permissions",
-    "list approvals & project rules (subs: clear, remove <rule>)",
+    "list approvals & project rules (subs: clear, remove <rule>, auto-review on|off)",
   ],
   ["/workspace", "show/set/reset the backend workspace (subs: set/reset)"],
   ["/resume", "list & resume prior sessions (subs: latest/all/<prefix>)"],
@@ -157,11 +160,20 @@ function renderTools(ctx: SlashContext): void {
 
 function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
   const sub = args[0];
-  if (sub !== undefined && sub !== "clear" && sub !== "remove") {
+  if (
+    sub !== undefined &&
+    sub !== "clear" &&
+    sub !== "remove" &&
+    sub !== "auto-review"
+  ) {
     ctx.out.write(`${ctx.style.red(`unknown subcommand: ${sub}`)}\n`);
     ctx.out.write(
-      `${ctx.style.dim("usage: /permissions (or clear, remove <rule>)")}\n`,
+      `${ctx.style.dim("usage: /permissions (or clear, remove <rule>, auto-review on|off)")}\n`,
     );
+    return;
+  }
+  if (sub === "auto-review") {
+    handleAutoReview(ctx, args[1]);
     return;
   }
   if (sub === "clear") {
@@ -196,6 +208,11 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
   }
   const list = ctx.approvalCache?.list() ?? [];
   const rules = ctx.commandRules?.list().map(ruleDisplay) ?? [];
+  if (ctx.autoReviewAvailable === true && ctx.commandRules !== undefined) {
+    ctx.out.write(
+      `${ctx.style.cyan("auto-review")} ${ctx.commandRules.autoReview() ? "on" : "off"}\n`,
+    );
+  }
   if (list.length === 0 && rules.length === 0) {
     ctx.out.write(
       `${ctx.style.dim("no session approvals or project rules — every workspace write will prompt")}\n`,
@@ -212,6 +229,32 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
   }
   ctx.out.write(
     `\n${ctx.style.dim("(/permissions clear drops session approvals; /permissions remove <rule> deletes a project rule)")}\n`,
+  );
+}
+
+/**
+ * `/permissions auto-review [on|off]` (ADR 0075): the automatic review of
+ * approval requests for THIS workspace, stored beside trust in
+ * `.herta/permissions.json` — which no command may write. Bare, it says the
+ * state. Its decisions stay silent, as on the desktop.
+ */
+function handleAutoReview(ctx: SlashContext, value: string | undefined): void {
+  if (ctx.autoReviewAvailable !== true || ctx.commandRules === undefined) {
+    ctx.out.write(
+      `${ctx.style.dim("auto-review is not available in this build")}\n`,
+    );
+    return;
+  }
+  if (value === "on" || value === "off") {
+    ctx.commandRules.setAutoReview(value === "on");
+  } else if (value !== undefined) {
+    ctx.out.write(
+      `${ctx.style.dim("usage: /permissions auto-review on|off")}\n`,
+    );
+    return;
+  }
+  ctx.out.write(
+    `${ctx.style.dim(`auto-review: ${ctx.commandRules.autoReview() ? "on" : "off"}`)}\n`,
   );
 }
 

@@ -246,6 +246,35 @@ describe("handleSlashCommand", () => {
       return s;
     }
 
+    it("/permissions auto-review on|off switches the reviewer for this workspace (ADR 0075)", async () => {
+      const rules = new ProjectCommandRuleStore(() => root);
+      const ctx = (out: MockWritable) => ({
+        ...mkCtx({ out, commandRules: rules }),
+        autoReviewAvailable: true,
+      });
+      let out = new MockWritable();
+      await handleSlashCommand("/permissions auto-review on", ctx(out));
+      expect(rules.autoReview()).toBe(true);
+      expect(out.full()).toContain("auto-review: on");
+      out = new MockWritable();
+      await handleSlashCommand("/permissions", ctx(out));
+      expect(out.full()).toContain("auto-review on");
+      out = new MockWritable();
+      await handleSlashCommand("/permissions auto-review off", ctx(out));
+      expect(rules.autoReview()).toBe(false);
+      out = new MockWritable();
+      await handleSlashCommand("/permissions auto-review maybe", ctx(out));
+      expect(out.full()).toContain("usage: /permissions auto-review on|off");
+      // Without a reviewer mounted, it says so and changes nothing.
+      out = new MockWritable();
+      await handleSlashCommand(
+        "/permissions auto-review on",
+        mkCtx({ out, commandRules: rules }),
+      );
+      expect(out.full()).toContain("not available");
+      expect(rules.autoReview()).toBe(false);
+    });
+
     it("/permissions lists project rules alongside session approvals", async () => {
       const out = new MockWritable();
       await handleSlashCommand(

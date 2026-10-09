@@ -138,6 +138,40 @@ describe("repl", () => {
     // `(思考中…)` indicator (then clears it) and skips the committed block.
     expect(stdout.full()).not.toContain("想想看");
   });
+
+  it("tells the reviewer the message a turn answers, for that turn only (ADR 0075)", async () => {
+    const provider = mkV2Provider([
+      [
+        { type: "text-delta", text: "想想看。（/我 想）" },
+        { type: "finish", reason: "stop" },
+      ],
+      [
+        { type: "text-delta", text: "你好。" },
+        { type: "finish", reason: "stop" },
+      ],
+    ]);
+    const driver = mkV2Driver(provider);
+    const stdin = new MockReadable();
+    const stdout = new MockWritable();
+    const calls: string[] = [];
+    stdin.feed("在吗\n");
+    stdin.feed("/quit\n");
+    stdin.end();
+    await repl({
+      actor: driver,
+      tools: new InMemoryToolRegistry(),
+      input: new Input(stdin, stdout),
+      renderer: new NarrativeRenderer(stdout, style),
+      out: stdout,
+      style,
+      autoReview: {
+        begin: (text) => calls.push(`begin:${text}`),
+        end: () => calls.push("end"),
+      },
+    });
+    // A slash command is not a turn: only the message brackets one.
+    expect(calls).toEqual(["begin:在吗", "end"]);
+  });
 });
 
 describe("repl — mid-stream error recovery (Slice 9)", () => {

@@ -23,10 +23,11 @@
  * The prompt is what the replay (scripts/auto-review-replay.mjs) measured;
  * the replay imports it from here, so the two cannot drift.
  */
-import type {
-  AskAnswer,
-  PermissionRequest,
-  ProviderAdapter,
+import {
+  type AskAnswer,
+  abortError,
+  type PermissionRequest,
+  type ProviderAdapter,
 } from "@herta/core";
 import { type ApiKey, deepseekProvider } from "@herta/providers";
 import {
@@ -36,6 +37,7 @@ import {
   reviewRiskFloor,
   stripShellComments,
 } from "@herta/tools";
+import type { AutoReviewNotice } from "./types.js";
 
 export const AUTO_REVIEW_SYSTEM = `You review one request from a coding agent before it runs, in the user's place. The agent works on the user's own computer, in the workspace named below. There is no sandbox: whatever the request does happens for real. A deterministic checker has already blocked what is never allowed and let through what it can vouch for. This request is one it would otherwise show the user, and it tells you the request's class.
 
@@ -382,4 +384,94 @@ export function reviewAnswer(
   return verdict.kind === "allow"
     ? "allow"
     : { decision: "deny", by: "reviewer", reason: verdict.rationale };
+}
+
+/**
+ * The command a request would show on its card: `run_command`'s argv
+ * joined with spaces, or the minimal contract's `bash` line verbatim.
+ * Undefined for any other tool or a malformed input — such a request is
+ * not a command, and no reviewer takes it.
+ */
+export function requestCommand(request: PermissionRequest): string | undefined {
+  const input = request.call.input;
+  if (typeof input !== "object" || input === null) return undefined;
+  if (request.call.tool === "bash") {
+    const command = (input as { command?: unknown }).command;
+    return typeof command === "string" && command.trim().length > 0
+      ? command
+      : undefined;
+  }
+  if (request.call.tool !== "run_command") return undefined;
+  const argv = (input as { argv?: unknown }).argv;
+  if (!Array.isArray(argv) || argv.length === 0) return undefined;
+  const parts = argv.filter((a): a is string => typeof a === "string");
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+/** What a host hands its ask resolver to review before the card. */
+export interface ReviewDeps {
+  readonly reviewer: AutoReviewer;
+  /** The owner opted the current workspace in. */
+  readonly enabled: () => boolean;
+  /** The user's messages, oldest first — this turn's included. */
+  readonly userMessages: () => readonly string[];
+  /** The current backend workspace root. */
+  readonly workspace: () => string;
+  /** Each decision, and the brake engaging. Optional: both hosts keep the
+   *  owner's screen silent (owner, 2026-10-09). */
+  readonly onReviewed?: (notice: AutoReviewNotice) => void;
+}
+
+/**
+ * ADR 0075, the one step both hosts' resolvers take before the card: the
+ * reviewer's answer, or null when the owner decides (not opted in, the
+ * brake, a card verdict, any failure). Rejects only with an AbortError when
+ * `signal` aborts — no decision is fabricated either way.
+ */
+export async function reviewBeforeCard(
+  review: ReviewDeps,
+  request: PermissionRequest,
+  signal: AbortSignal,
+): Promise<AskAnswer | null> {
+  const aborted = (): Error => abortError("review aborted by interrupt");
+  if (signal.aborted) throw aborted();
+  if (!review.enabled()) return null;
+  const command = requestCommand(request);
+  let verdict: ReviewVerdict;
+  try {
+    verdict = await review.reviewer.review(
+      {
+        request,
+        command,
+        workspace: review.workspace(),
+        userMessages: review.userMessages(),
+      },
+      signal,
+    );
+  } catch {
+    if (signal.aborted) throw aborted();
+    return null;
+  }
+  if (signal.aborted) throw aborted();
+  if (verdict.kind === "card") return null;
+  const at = new Date().toISOString();
+  review.onReviewed?.({
+    requestId: request.id,
+    tool: request.call.tool,
+    command: command ?? null,
+    decision: verdict.kind,
+    reason: verdict.rationale,
+    at,
+  });
+  if (verdict.braked) {
+    review.onReviewed?.({
+      requestId: request.id,
+      tool: request.call.tool,
+      command: null,
+      decision: "paused",
+      reason: "",
+      at,
+    });
+  }
+  return reviewAnswer(verdict);
 }

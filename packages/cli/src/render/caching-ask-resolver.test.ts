@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AutoReviewer } from "@herta/app-server/wiring";
 import {
   type AskResolver,
   type PermissionRequest,
@@ -470,5 +471,82 @@ describe("CachingAskResolver", () => {
         rmSync(root, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe("CachingAskResolver with the automatic reviewer (ADR 0075)", () => {
+  const reply = (risk: string, auth: string, outcome: string) =>
+    JSON.stringify({
+      risk_level: risk,
+      user_authorization: auth,
+      outcome,
+      rationale: "理由。",
+    });
+  const bash = (command: string): PermissionRequest =>
+    mkReq({
+      call: { id: "c1", tool: "bash", input: { command } },
+      reason: "unrecognized command — review carefully",
+      code: "command_ask_unknown",
+      files: undefined,
+    });
+
+  function setup(answers: Array<string | Error>, enabled = true) {
+    const sent: string[] = [];
+    const reviewer = new AutoReviewer(async ({ user }) => {
+      sent.push(user);
+      const next = answers.shift();
+      if (next instanceof Error) throw next;
+      return next ?? reply("low", "high", "allow");
+    });
+    const { inner, stdout } = mkInner();
+    const resolver = new CachingAskResolver(
+      inner,
+      new SessionApprovalCache(),
+      stdout,
+      style,
+      undefined,
+      {
+        reviewer,
+        enabled: () => enabled,
+        userMessages: () => ["@板砖 跑一下测试。"],
+        workspace: () => "/w",
+      },
+    );
+    return { resolver, inner, stdout, sent };
+  }
+  const signal = () => new AbortController().signal;
+
+  it("an allow settles with no prompt, and prints nothing", async () => {
+    const { resolver, inner, stdout, sent } = setup([
+      reply("low", "high", "allow"),
+    ]);
+    expect(await resolver.present(bash("make test"), signal())).toBe("allow");
+    expect(inner.optionsLog).toHaveLength(0);
+    expect(stdout.full()).toBe("");
+    expect(sent[0]).toContain("跑一下测试");
+  });
+
+  it("a deny settles as the reviewer's, with its reason", async () => {
+    const { resolver, inner } = setup([reply("medium", "low", "deny")]);
+    expect(await resolver.present(bash("pnpm add left-pad"), signal())).toEqual(
+      { decision: "deny", by: "reviewer", reason: "理由。" },
+    );
+    expect(inner.optionsLog).toHaveLength(0);
+  });
+
+  it("a failure, or a workspace not opted in, prompts as before", async () => {
+    const failing = setup([new Error("down")]);
+    failing.inner.outcomes.push("allow");
+    expect(await failing.resolver.present(bash("make test"), signal())).toBe(
+      "allow",
+    );
+    expect(failing.inner.optionsLog).toHaveLength(1);
+
+    const off = setup([], false);
+    off.inner.outcomes.push("deny");
+    expect(await off.resolver.present(bash("make test"), signal())).toBe(
+      "deny",
+    );
+    expect(off.sent).toHaveLength(0);
   });
 });

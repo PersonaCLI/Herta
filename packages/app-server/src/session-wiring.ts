@@ -105,6 +105,14 @@ import type { AppServerConfig } from "./types.js";
 
 // The usage log (token counts per model call) — a host that builds its
 // stacks by hand, as the CLI does, installs it from the same entry point.
+// ADR 0075: the automatic reviewer — the desktop session mounts it itself;
+// the CLI, a front-end over this same wiring, mounts it from here.
+export {
+  AutoReviewer,
+  defaultReviewModel,
+  type ReviewDeps,
+  reviewBeforeCard,
+} from "./auto-review.js";
 export { installUsageLog } from "./usage-log.js";
 
 // ── Backend stack ───────────────────────────────────────────────────────────

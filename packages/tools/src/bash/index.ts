@@ -48,6 +48,7 @@ export type { BashInput } from "./schema.js";
 export {
   classifyShellCommand,
   classifyShellCommandDetailed,
+  stripShellComments,
 } from "./shell-classifier.js";
 export {
   makeMsysPaths,

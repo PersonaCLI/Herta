@@ -2740,11 +2740,18 @@ function classifyCommandTiers(
   }
 
   if (id === "rm" && hasRecursiveForce(argv)) {
+    // Say where it reaches (2026-10-09): "inside repo" was printed for
+    // `rm -rf ../shared-lib/dist` and `rm -rf "$TMPDIR/x"` too, on the card
+    // and to the reviewer alike.
+    const away = outsideOperand(argv, live);
     return {
       kind: "ask",
       risk: "workspace_destructive",
       code: "command_ask_destructive",
-      reason: `rm -rf inside repo: ${argv.slice(1).join(" ")}`,
+      reason:
+        away === null
+          ? `rm -rf inside the workspace: ${argv.slice(1).join(" ")}`
+          : `rm -rf reaches outside the workspace, or a path the line does not resolve: ${away}`,
     };
   }
   const gitSub = id === "git" ? gitSubcommandIndex(argv) : null;
@@ -3300,11 +3307,17 @@ function classifyCommandTiers(
   if (SCRIPT_INTERPRETERS.has(interpreterName(a0))) {
     const shape = interpreterShape(argv, live);
     if (shape.kind === "inline") {
+      // `-m` names a module, not code (2026-10-09): `python -m build` read
+      // as "inline code".
+      const m = argv.indexOf("-m");
       return {
         kind: "ask",
         risk: "workspace_write",
         code: "command_ask_interpreter_inline",
-        reason: `${a0} runs inline code the record never showed — review it`,
+        reason:
+          m > 0 && argv[m + 1] !== undefined
+            ? `${a0} -m runs the module ${argv[m + 1]}, whose code the record never showed — review it`
+            : `${a0} runs inline code the record never showed — review it`,
       };
     }
     if (shape.kind === "outside") {

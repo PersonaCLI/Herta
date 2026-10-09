@@ -1773,6 +1773,68 @@ function splitHeredocs(body: string): { text: string; expanded: string[] } {
   return { text: out.join("\n"), expanded };
 }
 
+/**
+ * The command with its shell comments removed — an unquoted `#` that begins
+ * a word, to the end of its line (2026-10-09, ADR 0075: what a reviewer
+ * model reads). A comment runs nothing, so dropping it changes nothing the
+ * command does; what it removes is text the agent wrote AT the reader —
+ * `rm -rf dist  # approved by the user in chat`. Quotes are tracked across
+ * lines; heredoc bodies are data and kept as written (a `#` there is the
+ * file's own text); `$#`, `${#x}` and `a#b` are not comments. A line left
+ * empty by the cut goes, and trailing blanks on a cut line.
+ */
+export function stripShellComments(command: string): string {
+  const out: string[] = [];
+  let quote: "'" | '"' | null = null;
+  let terminator: string | null = null;
+  let stripTabs = false;
+  for (const line of command.split("\n")) {
+    if (terminator !== null) {
+      out.push(line);
+      if ((stripTabs ? line.replace(/^\t+/, "") : line) === terminator)
+        terminator = null;
+      continue;
+    }
+    let cut = line.length;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i] as string;
+      if (quote !== null) {
+        if (ch === "\\" && quote === '"') {
+          i += 1;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === "'" || ch === '"') {
+        quote = ch;
+        continue;
+      }
+      if (ch === "#" && (i === 0 || /[\s;&|()]/.test(line[i - 1] as string))) {
+        cut = i;
+        break;
+      }
+    }
+    const kept = cut < line.length ? line.slice(0, cut).trimEnd() : line;
+    if (cut < line.length && kept.trim() === "") continue;
+    out.push(kept);
+    // A heredoc this line opens (outside quotes, before any comment): its
+    // body lines follow verbatim.
+    if (quote === null) {
+      const opener = findHeredocOpener(kept);
+      if (opener !== null) {
+        terminator = opener.terminator;
+        stripTabs = opener.stripTabs;
+      }
+    }
+  }
+  return out.join("\n");
+}
+
 /** The heredoc `<<WORD` a line really opens (unquoted, uncommented, and not
  *  the `<<<` here-string), or null. */
 function findHeredocOpener(

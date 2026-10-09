@@ -48,6 +48,7 @@ export {
   type ShellRunResult,
   shellPathsFor,
   shellWorkspaceHint,
+  stripShellComments,
 } from "./bash/index.js";
 export {
   listMsysProcesses,

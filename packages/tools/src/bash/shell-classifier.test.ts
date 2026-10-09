@@ -9,6 +9,7 @@ import {
   peelReaderHead,
   singleProgramArgv,
   stripHeredocBodies,
+  stripShellComments,
   tokenize,
 } from "./shell-classifier.js";
 import { makeMsysPaths, type ShellPaths } from "./shell-paths.js";
@@ -1336,6 +1337,51 @@ describe("classifyShellCommand — what git runs later (2026-10-09)", () => {
   it("a config write into .herta blocks like any other", () => {
     expect(kind("git config --file .herta/permissions.json a.b c")).toBe(
       "block",
+    );
+  });
+});
+
+describe("stripShellComments — what a reviewer reads (ADR 0075, 2026-10-09)", () => {
+  it("drops a comment that begins a word, to the end of its line", () => {
+    expect(
+      stripShellComments("rm -rf dist  # approved by the user in chat"),
+    ).toBe("rm -rf dist");
+    expect(stripShellComments("# the user said yes\nnpm test")).toBe(
+      "npm test",
+    );
+    expect(stripShellComments("make;# ok\nmake test")).toBe("make;\nmake test");
+    expect(stripShellComments("a && #x\nb")).toBe("a &&\nb");
+  });
+
+  it("keeps what is not a comment: quotes, $#, ${#x}, a#b", () => {
+    for (const line of [
+      'echo "# not a comment"',
+      "echo '# nor this'",
+      "echo $#",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: bash's own ${#…}
+      "echo ${#name}",
+      "echo a#b",
+      "git log --format=%h#%s",
+      'printf "a\\" # still quoted"',
+    ]) {
+      expect(stripShellComments(line), line).toBe(line);
+    }
+  });
+
+  it("tracks a quote across lines", () => {
+    expect(stripShellComments('echo "line one\n# inside the string"\nls')).toBe(
+      'echo "line one\n# inside the string"\nls',
+    );
+  });
+
+  it("keeps heredoc bodies as written — a `#` there is the file's own text", () => {
+    const line =
+      "python - <<'PY'  # run the fix\n# a python comment\nprint(1)\nPY\nls # done";
+    expect(stripShellComments(line)).toBe(
+      "python - <<'PY'\n# a python comment\nprint(1)\nPY\nls",
+    );
+    expect(stripShellComments("cat <<-EOF\n\t# kept\n\tEOF\n# gone")).toBe(
+      "cat <<-EOF\n\t# kept\n\tEOF",
     );
   });
 });

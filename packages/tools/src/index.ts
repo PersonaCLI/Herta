@@ -189,6 +189,13 @@ export {
 // the same class of untrusted text reaching the record and a provider — one
 // definition of "secret-shaped", or none.
 export { redactSecrets } from "./run-command/redactor.js";
+// ADR 0075's reviewer: the risk a command carries whatever the model says.
+export {
+  maxReviewRisk,
+  type ReviewFloor,
+  type ReviewRisk,
+  reviewRiskFloor,
+} from "./run-command/review-floor.js";
 export type { RunCommandInput } from "./run-command/schema.js";
 export type { SearchMatch, SearchTextData } from "./search-text/index.js";
 export {

@@ -112,6 +112,7 @@ export {
   defaultReviewModel,
   type ReviewDeps,
   reviewBeforeCard,
+  reviewTakes,
 } from "./auto-review.js";
 export { installUsageLog } from "./usage-log.js";
 

@@ -750,8 +750,8 @@ describe("ApprovalPanel — conversation reserve (2026-07-27)", () => {
   });
 });
 
-describe("ApprovalPanel — workspace trust (ADR 0064)", () => {
-  it("offers 「Trust this workspace」 with its scope note only when the request is trustable, and resolves allow/trust", async () => {
+describe("ApprovalPanel — automatic review (ADR 0064 amendment 2026-10-10)", () => {
+  it("offers 「Turn on auto-review」 with its scope note only when it would answer the request, and resolves allow/auto_review", async () => {
     const mock = setup();
     await settle();
     act(() => {
@@ -765,29 +765,31 @@ describe("ApprovalPanel — workspace trust (ADR 0064)", () => {
           summary: "git commit changes the repository",
           command: "git add -A && git commit -m x",
           cacheable: true,
-          trustable: true,
+          offerAutoReview: true,
         },
       });
     });
     expect(
-      screen.getByText(/Once this workspace is trusted/),
+      screen.getByText(/that undo can take back run directly/),
     ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: "Trust this workspace" }),
+      screen.getByRole("button", { name: "Turn on auto-review" }),
     );
     expect(mock.calls.resolveApproval).toEqual([
-      { requestId: "req-t", decision: "allow", persistence: "trust" },
+      { requestId: "req-t", decision: "allow", persistence: "auto_review" },
     ]);
   });
 
-  it("hides the trust choice when the request is not trustable (network, destructive, or already trusted)", async () => {
+  it("hides the choice when it would not answer the request (already on, or the owner's alone)", async () => {
     const mock = setup();
     await settle();
-    emitPending(mock); // the network fixture carries no `trustable`
+    emitPending(mock); // the network fixture carries no `offerAutoReview`
     expect(screen.getByTestId("approval-panel")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Trust this workspace" }),
+      screen.queryByRole("button", { name: "Turn on auto-review" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/Once this workspace is trusted/)).toBeNull();
+    expect(
+      screen.queryByText(/that undo can take back run directly/),
+    ).toBeNull();
   });
 });

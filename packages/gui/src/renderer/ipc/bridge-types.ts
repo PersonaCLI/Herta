@@ -2,6 +2,7 @@ import type {
   ApprovalOverlayState,
   ApprovalResult,
   AttachProgress,
+  AutoReviewState,
   BranchList,
   CommitDescription,
   ContinueInterruptedResult,
@@ -33,9 +34,7 @@ import type {
   VoiceCueEvent,
   WorkingDiff,
   WorkspaceEvent,
-  WorkspaceTrustState,
 } from "@herta/app-server";
-import type { WorkspaceTrust } from "@herta/core";
 import type { LiveToolSnapshot } from "../../shared/live-tool-feed.js";
 
 /** One file's progress in an attach in flight, from main (2026-10-01). */
@@ -590,17 +589,13 @@ export interface HertaBridge {
   listCommandRules?(): Promise<readonly string[]>;
   /** Remove one rule by its display form; false when nothing matched. */
   removeCommandRule?(display: string): Promise<boolean>;
-  /** Workspace trust (ADR 0064) for the ACTIVE session's workspace. OPTIONAL
-   *  like the rule pair; the device card's menu hides the row without it. */
-  getWorkspaceTrust?(): Promise<WorkspaceTrustState>;
+  /** Automatic review (ADR 0075, which replaced workspace trust) for the
+   *  ACTIVE session's workspace. OPTIONAL like the rule pair; the device
+   *  card's menu hides the row without it. */
+  getAutoReview?(): Promise<AutoReviewState>;
   /** Record the owner's choice for this workspace (null → back to the
    *  default); resolves with the state after the change. */
-  setWorkspaceTrust?(
-    value: WorkspaceTrust | null,
-  ): Promise<WorkspaceTrustState>;
-  /** ADR 0075: opt the active session's workspace in or out of the
-   *  automatic review of approval requests; resolves with the state after. */
-  setAutoReview?(on: boolean): Promise<WorkspaceTrustState>;
+  setAutoReview?(on: boolean | null): Promise<AutoReviewState>;
   /** Fire-and-forget record heal: ask main to re-emit the active session's
    *  full record as a `reset` through the record stream. Called by the store
    *  when a record-channel `dropped` overflow sentinel arrives (a block was

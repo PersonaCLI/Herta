@@ -210,7 +210,7 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
   const rules = ctx.commandRules?.list().map(ruleDisplay) ?? [];
   if (ctx.autoReviewAvailable === true && ctx.commandRules !== undefined) {
     ctx.out.write(
-      `${ctx.style.cyan("auto-review")} ${ctx.commandRules.autoReview() ? "on" : "off"}\n`,
+      `${ctx.style.cyan("auto-review")} ${ctx.commandRules.autoReview() === true ? "on" : "off"}\n`,
     );
   }
   if (list.length === 0 && rules.length === 0) {
@@ -233,10 +233,11 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
 }
 
 /**
- * `/permissions auto-review [on|off]` (ADR 0075): the automatic review of
- * approval requests for THIS workspace, stored beside trust in
- * `.herta/permissions.json` — which no command may write. Bare, it says the
- * state. Its decisions stay silent, as on the desktop.
+ * `/permissions auto-review [on|off]` (ADR 0075): automatic review for THIS
+ * workspace — writes undo can take back run, a review model answers the
+ * rest — stored in `.herta/permissions.json`, which no command may write.
+ * It replaced workspace trust (ADR 0064 amendment 2026-10-10). Bare, it says
+ * the state. Its decisions stay silent, as on the desktop.
  */
 function handleAutoReview(ctx: SlashContext, value: string | undefined): void {
   if (ctx.autoReviewAvailable !== true || ctx.commandRules === undefined) {
@@ -254,7 +255,7 @@ function handleAutoReview(ctx: SlashContext, value: string | undefined): void {
     return;
   }
   ctx.out.write(
-    `${ctx.style.dim(`auto-review: ${ctx.commandRules.autoReview() ? "on" : "off"}`)}\n`,
+    `${ctx.style.dim(`auto-review: ${ctx.commandRules.autoReview() === true ? "on" : "off"}`)}\n`,
   );
 }
 

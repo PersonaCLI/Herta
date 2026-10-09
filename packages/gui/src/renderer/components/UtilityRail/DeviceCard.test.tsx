@@ -460,13 +460,9 @@ describe("DeviceCard", () => {
     expect(mock.calls.resetWorkspace).toEqual(["s-1"]);
   });
 
-  it("⋯ menu shows workspace trust and toggles it through the bridge (ADR 0064)", async () => {
+  it("⋯ menu shows automatic review and toggles it through the bridge (ADR 0075)", async () => {
     const mock = createMockHertaBridge({
-      workspaceTrust: {
-        effective: "workspace",
-        explicit: null,
-        isDefaultWorkspace: true,
-      },
+      autoReview: { on: true, explicit: null, isDefaultWorkspace: true },
     });
     renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
@@ -476,37 +472,33 @@ describe("DeviceCard", () => {
     fireEvent.click(screen.getByLabelText("device card info"));
     await waitFor(() =>
       expect(
-        screen.queryByText("Sandbox workspace, trusted by default"),
+        screen.queryByRole("button", { name: "Turn off auto-review" }),
       ).toBeTruthy(),
     );
-    expect(mock.calls.getWorkspaceTrust).toBe(1);
+    expect(mock.calls.getAutoReview).toBe(1);
     fireEvent.click(
-      screen.getByRole("button", { name: "Confirm each operation instead" }),
-    );
-    await waitFor(() =>
-      expect(screen.queryByText("Confirms each operation")).toBeTruthy(),
-    );
-    expect(mock.calls.setWorkspaceTrust).toEqual(["ask"]);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Trust this workspace" }),
+      screen.getByRole("button", { name: "Turn off auto-review" }),
     );
     await waitFor(() =>
       expect(
-        screen.queryByText(
-          "Trusted: writes, git operations and scripts within it no longer request confirmation",
-        ),
+        screen.queryByRole("button", { name: "Turn on auto-review" }),
       ).toBeTruthy(),
     );
-    expect(mock.calls.setWorkspaceTrust).toEqual(["ask", "workspace"]);
+    expect(mock.calls.setAutoReview).toEqual([false]);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Turn on auto-review" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Turn off auto-review" }),
+      ).toBeTruthy(),
+    );
+    expect(mock.calls.setAutoReview).toEqual([false, true]);
   });
 
-  it("⋯ menu hides the trust row when the bridge lacks the surface", async () => {
+  it("⋯ menu hides the review row when the bridge lacks the surface", async () => {
     const mock = createMockHertaBridge();
-    const {
-      getWorkspaceTrust: _a,
-      setWorkspaceTrust: _b,
-      ...rest
-    } = mock.bridge;
+    const { getAutoReview: _a, setAutoReview: _b, ...rest } = mock.bridge;
     const { container } = renderWithLocale(
       <HertaBridgeProvider bridge={rest as typeof mock.bridge}>
         <DeviceCard />
@@ -516,6 +508,6 @@ describe("DeviceCard", () => {
     await waitFor(() =>
       expect(screen.queryByText("No commands remembered")).toBeTruthy(),
     );
-    expect(document.querySelector(".card-menu-trust")).toBeNull();
+    expect(document.querySelector(".card-menu-review")).toBeNull();
   });
 });

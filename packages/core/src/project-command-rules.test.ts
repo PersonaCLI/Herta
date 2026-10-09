@@ -303,90 +303,79 @@ describe("ProjectCommandRuleStore", () => {
     }
   });
 
-  describe("the auto-review opt-in (ADR 0075) rides the same file", () => {
-    it("is off until chosen, persists, and survives trust and rule edits both ways", () => {
-      const root = mkdtempSync(join(tmpdir(), "herta-rules-review-"));
-      try {
-        const store = new ProjectCommandRuleStore(() => root);
-        expect(store.autoReview()).toBe(false);
-        store.setAutoReview(true);
-        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBe(true);
-        store.setTrust("workspace");
-        store.add({ argvPrefix: ["git", "commit"], anyArgs: true });
-        store.remove("git commit:*");
-        expect(store.autoReview()).toBe(true);
-        expect(store.trust()).toBe("workspace");
-        store.setAutoReview(false);
-        expect(store.autoReview()).toBe(false);
-        expect(store.trust()).toBe("workspace");
-        const file = JSON.parse(
-          readFileSync(join(root, ".herta", "permissions.json"), "utf8"),
-        );
-        expect(file.autoReview).toBeUndefined();
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it("only the literal true opts in", () => {
+  describe("the automatic-review choice (ADR 0075, ADR 0064 amendment 2026-10-10) rides the same file", () => {
+    const withFile = (body: object, check: (root: string) => void) => {
       const root = mkdtempSync(join(tmpdir(), "herta-rules-review-"));
       try {
         mkdirSync(join(root, ".herta"), { recursive: true });
         writeFileSync(
           join(root, ".herta", "permissions.json"),
-          JSON.stringify({ version: 1, commandAllow: [], autoReview: "yes" }),
+          JSON.stringify({ version: 1, commandAllow: [], ...body }),
         );
-        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBe(
-          false,
-        );
+        check(root);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
-    });
-  });
+    };
 
-  describe("workspace trust (ADR 0064) rides the same file", () => {
-    it("starts unset, persists a choice, clears back to null, and survives rule edits", () => {
-      const root = mkdtempSync(join(tmpdir(), "herta-rules-trust-"));
+    it("starts unset, persists either choice, clears back to null, and survives rule edits", () => {
+      const root = mkdtempSync(join(tmpdir(), "herta-rules-review-"));
       try {
         const store = new ProjectCommandRuleStore(() => root);
-        expect(store.trust()).toBeNull();
-        store.setTrust("workspace");
-        expect(store.trust()).toBe("workspace");
-        expect(new ProjectCommandRuleStore(() => root).trust()).toBe(
-          "workspace",
-        );
-        // Adding and removing a rule keeps the trust choice.
+        expect(store.autoReview()).toBeNull();
+        store.setAutoReview(true);
+        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBe(true);
         store.add({ argvPrefix: ["git", "commit"], anyArgs: true });
-        expect(store.trust()).toBe("workspace");
-        expect(store.list()).toHaveLength(1);
         store.remove("git commit:*");
-        expect(store.trust()).toBe("workspace");
-        store.setTrust("ask");
-        expect(store.trust()).toBe("ask");
-        store.setTrust(null);
-        expect(store.trust()).toBeNull();
-        // And setting trust keeps the rules.
+        expect(store.autoReview()).toBe(true);
+        store.setAutoReview(false);
+        expect(store.autoReview()).toBe(false);
+        const file = JSON.parse(
+          readFileSync(join(root, ".herta", "permissions.json"), "utf8"),
+        );
+        expect(file.autoReview).toBe(false);
+        store.setAutoReview(null);
+        expect(store.autoReview()).toBeNull();
+        // And the choice keeps the rules.
         store.add({ argvPrefix: ["npm", "run"], anyArgs: true });
-        store.setTrust("workspace");
+        store.setAutoReview(true);
         expect(store.list().map(ruleDisplay)).toEqual(["npm run:*"]);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     });
 
-    it("a hand-written value that is not a trust level loads as unset", () => {
-      const root = mkdtempSync(join(tmpdir(), "herta-rules-trust-"));
-      try {
-        mkdirSync(join(root, ".herta"), { recursive: true });
-        writeFileSync(
-          join(root, ".herta", "permissions.json"),
-          JSON.stringify({ version: 1, commandAllow: [], trust: "always" }),
+    it("only a boolean is a choice", () => {
+      withFile({ autoReview: "yes" }, (root) =>
+        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBeNull(),
+      );
+    });
+
+    it("an earlier trust choice carries over, and the next write keeps it as autoReview", () => {
+      withFile({ trust: "workspace" }, (root) => {
+        const store = new ProjectCommandRuleStore(() => root);
+        expect(store.autoReview()).toBe(true);
+        store.add({ argvPrefix: ["git", "commit"], anyArgs: true });
+        const file = JSON.parse(
+          readFileSync(join(root, ".herta", "permissions.json"), "utf8"),
         );
-        expect(new ProjectCommandRuleStore(() => root).trust()).toBeNull();
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+        expect(file.autoReview).toBe(true);
+        expect(file.trust).toBeUndefined();
+      });
+      withFile({ trust: "ask" }, (root) =>
+        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBe(
+          false,
+        ),
+      );
+      withFile({ trust: "always" }, (root) =>
+        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBeNull(),
+      );
+      // A choice made since wins over the old field.
+      withFile({ trust: "workspace", autoReview: false }, (root) =>
+        expect(new ProjectCommandRuleStore(() => root).autoReview()).toBe(
+          false,
+        ),
+      );
     });
   });
 });

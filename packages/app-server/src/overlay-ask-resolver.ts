@@ -32,6 +32,7 @@ import {
   type ReviewDeps,
   requestCommand,
   reviewBeforeCard,
+  reviewTakes,
 } from "./auto-review.js";
 
 export interface OverlayAskResolverDeps {
@@ -64,15 +65,17 @@ export interface OverlayAskResolverDeps {
    */
   readonly rules?: ProjectCommandRuleStore;
   /**
-   * Whether the CURRENT workspace trusts by default (ADR 0064): the
-   * session's managed sandbox does, a real project does not. A provider —
-   * the workspace can move mid-session. Absent → never by default.
+   * Whether automatic review is on by default in the CURRENT workspace
+   * (ADR 0064 amendment 2026-10-10): the session's managed sandbox is, a
+   * real project is not. A provider — the workspace can move mid-session.
+   * Absent → off by default.
    */
-  readonly defaultTrust?: () => boolean;
+  readonly defaultAutoReview?: () => boolean;
   /**
    * The automatic reviewer (ADR 0075), when one is mounted. Asked before the
-   * card, only where the CURRENT workspace opted in; its allow or deny
-   * settles the request without a card, and anything else shows the card.
+   * card, only where automatic review is on in the CURRENT workspace; its
+   * allow or deny settles the request without a card, and anything else
+   * shows the card.
    */
   readonly review?: ReviewDeps;
 }
@@ -101,16 +104,17 @@ export class OverlayAskResolver implements AskResolver {
 
   constructor(private readonly deps: OverlayAskResolverDeps) {
     this.policy = new ApprovalPolicy(deps.cache, deps.rules, {
-      ...(deps.defaultTrust !== undefined
-        ? { defaultTrust: deps.defaultTrust }
+      ...(deps.defaultAutoReview !== undefined
+        ? { defaultAutoReview: deps.defaultAutoReview }
         : {}),
+      ...(deps.review !== undefined ? { reviewable: reviewTakes } : {}),
     });
   }
 
-  /** The policy's view of workspace trust (ADR 0064) — the session's
-   *  trust surface reads it here so the two never disagree. */
-  get workspaceTrusted(): boolean {
-    return this.policy.workspaceTrusted();
+  /** The policy's view of automatic review — the session's switch reads it
+   *  here so the two never disagree. */
+  get autoReviewOn(): boolean {
+    return this.policy.autoReviewOn();
   }
 
   /** A new user message: the reviewer's brake lifts (ADR 0075). */
@@ -119,11 +123,11 @@ export class OverlayAskResolver implements AskResolver {
   }
 
   present(request: PermissionRequest, signal: AbortSignal): Promise<AskAnswer> {
-    // Cache / project-rule hit: short-circuit without surfacing an overlay.
+    // Cache / undoable write / project-rule hit: no overlay.
     const pre = this.policy.preflight(request);
     if (pre.kind === "auto") return Promise.resolve("allow");
     const review = this.deps.review;
-    if (review?.enabled() === true) {
+    if (review !== undefined && this.policy.autoReviewOn()) {
       return this.reviewFirst(review, request, pre, signal);
     }
     return this.surface(request, pre, signal);
@@ -221,9 +225,9 @@ export class OverlayAskResolver implements AskResolver {
         // Same contract for the 「本项目允许」 button (ADR 0030): present only
         // when persistence:"always" would actually save this exact rule.
         projectRule: pre.projectRule,
-        // And for 「信任此工作区」 (ADR 0064): only when the tier would
-        // cover this class and the workspace does not trust yet.
-        ...(pre.showTrust ? { trustable: true } : {}),
+        // And for 「开启自动审核」: only when automatic review is off and
+        // would answer this request.
+        ...(pre.showAutoReview ? { offerAutoReview: true } : {}),
       };
       this.deps.setPendingOverlay(overlay);
     });
@@ -248,7 +252,7 @@ export class OverlayAskResolver implements AskResolver {
   resolveExternal(opts: {
     readonly requestId: string;
     readonly decision: "allow" | "deny";
-    readonly persistence?: "once" | "session" | "always" | "trust";
+    readonly persistence?: "once" | "session" | "always" | "auto_review";
   }): ResolveExternalResult {
     if (this.pending === null) {
       return { ok: false, reason: "no_pending_overlay" };

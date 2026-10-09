@@ -465,6 +465,46 @@ d("bash tool (real bash)", () => {
     await ctx.bg.stopAll();
   });
 
+  it("the rule marks a line undoable only when everything it changes is a file undo keeps, or a folder (ADR 0064 amendment 2026-10-10)", async () => {
+    ws = await mkTmpWorkspace({ "notes.md": "one\n" });
+    const ctx = ctxFor(ws.root);
+    const engine = new RulePermissionEngine({
+      ask: { present: async () => "allow" },
+    });
+    registerBashRule(engine, { bashPath: BASH, bus: ctx.bus });
+    const undoable = async (cmd: string): Promise<boolean | undefined> => {
+      const d = await engine.check(call(cmd), ctx);
+      expect(d.kind, cmd).toBe("ask");
+      return d.kind === "ask" ? d.request.undoable : undefined;
+    };
+    // The contract's file writes, and a folder made for them.
+    for (const cmd of [
+      "mkdir -p src && cat > src/server.mjs <<'EOF'\nx\nEOF",
+      "cat >> notes.md <<'EOF'\ntwo\nEOF",
+      "echo hi > notes.md",
+      "printf 'a\\nb\\n' > notes.md && cat notes.md",
+      "mkdir -p build/out",
+    ]) {
+      expect(await undoable(cmd), cmd).toBe(true);
+    }
+    // Everything trust let through that undo cannot put back, or that runs
+    // a program: the reviewer's now.
+    for (const cmd of [
+      "rm notes.md",
+      "cp notes.md b.md",
+      "mv notes.md b.md",
+      "sed -i 's/one/two/' notes.md",
+      "find src -name '*.md' -exec wc -l {} +",
+      "node gen.mjs > out.txt",
+      "cat > notes.md <<EOF\n$(rm b.txt)\nEOF",
+      "git add -A && git commit -m x",
+      "echo x > notes.md && rm notes.md",
+    ]) {
+      expect(await undoable(cmd), cmd).toBeUndefined();
+    }
+    await ctx.bg.stopAll();
+  });
+
   it("summarize: the record header drops the model's `cd <workspace> &&` in the SHELL's own spelling (MSYS `/tmp/…` under %TEMP%), which the loop cannot derive", async () => {
     ws = await mkTmpWorkspace({});
     const tool = bashTool({ bashPath: BASH as string });

@@ -222,16 +222,46 @@ export function writesAccounted(
   opts: ShellClassifyOpts,
   targets: readonly RedirectTarget[],
 ): boolean {
-  if (targets.length === 0 || !heredocBodiesInert(command, opts)) return false;
+  return targets.length > 0 && heldParts(command, opts, targets) !== null;
+}
+
+/**
+ * Whether everything the line changes is held (ADR 0064 amendment,
+ * 2026-10-10): the files its printers write, read before it runs
+ * (`writesAccounted`), and folders `mkdir -p` makes inside the workspace —
+ * at least one of the two, and nothing else. Such a line runs without a
+ * review when automatic review is on: undo can put back every file it
+ * touches, and a new folder loses nothing.
+ */
+export function writesUndoable(
+  command: string,
+  opts: ShellClassifyOpts,
+  targets: readonly RedirectTarget[],
+): boolean {
+  const held = heldParts(command, opts, targets);
+  return held !== null && held > 0;
+}
+
+/** The number of parts that write or make a folder when every part of the
+ *  line is held (see `writesAccounted`), else null. */
+function heldParts(
+  command: string,
+  opts: ShellClassifyOpts,
+  targets: readonly RedirectTarget[],
+): number | null {
+  if (!heredocBodiesInert(command, opts)) return null;
   const read = new Set(targets.map((t) => t.native));
   const cwd = opts.cwd ?? opts.workspaceRoot;
   const rest: string[] = [];
+  let changes = 0;
   for (const seg of segmentsOf(command, opts)) {
     const { program, words } = seg;
     if (seg.writes) {
-      if (!PRINTERS.has(program) || !seg.complete) return false;
-      if (/\$\(|`/.test(seg.text)) return false;
-      if (!seg.targets.every((t) => read.has(t.native))) return false;
+      if (!PRINTERS.has(program) || !seg.complete) return null;
+      if (/\$\(|`/.test(seg.text)) return null;
+      if (!seg.targets.every((t) => read.has(t.native))) return null;
+      // Output only dropped (`> /dev/null`) changes nothing.
+      if (seg.targets.length > 0) changes += 1;
       continue;
     }
     if (program === "cd" || program === "pushd") {
@@ -241,7 +271,7 @@ export function writesAccounted(
         words.length === 2
           ? resolveWorkspacePath(words[1] as string, opts)
           : null;
-      if (to === null || relativePath(cwd, to.native) !== "") return false;
+      if (to === null || relativePath(cwd, to.native) !== "") return null;
       continue;
     }
     if (program === "mkdir") {
@@ -250,19 +280,22 @@ export function writesAccounted(
       const flagsOk = args
         .filter((a) => a.startsWith("-"))
         .every((a) => a === "-p" || a === "--parents");
-      if (!flagsOk || dirs.length === 0) return false;
+      if (!flagsOk || dirs.length === 0) return null;
       for (const d of dirs) {
         const at = resolveWorkspacePath(d, opts);
-        if (at === null) return false;
-        const head = at.relative.split("/")[0]?.toLowerCase();
-        if (head === ".git" || head === ".herta") return false;
+        if (at === null) return null;
+        // Any repository's `.git`, nested ones included, and Herta's state.
+        const parts = at.relative.toLowerCase().split("/");
+        if (parts.includes(".git") || parts.includes(".herta")) return null;
       }
+      changes += 1;
       continue;
     }
     rest.push(seg.text);
   }
-  return (
+  const restAllowed =
     rest.length === 0 ||
-    classifyShellCommandDetailed(rest.join("\n"), opts).verdict.kind === "allow"
-  );
+    classifyShellCommandDetailed(rest.join("\n"), opts).verdict.kind ===
+      "allow";
+  return restAllowed ? changes : null;
 }

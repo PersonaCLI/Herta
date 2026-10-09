@@ -1,9 +1,13 @@
-import type {
-  PendingPermissionApproval,
-  PermissionRequest,
-  SessionApprovalCache,
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  type PendingPermissionApproval,
+  type PermissionRequest,
+  ProjectCommandRuleStore,
+  type SessionApprovalCache,
 } from "@herta/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   AUTO_REVIEW_SYSTEM,
   AutoReviewer,
@@ -237,9 +241,16 @@ describe("AutoReviewer.review", () => {
 });
 
 describe("OverlayAskResolver with a reviewer (ADR 0075)", () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const r of roots.splice(0))
+      rmSync(r, { recursive: true, force: true });
+  });
   function setup(model: ReviewModel, enabled = true) {
     const pending: PendingPermissionApproval[] = [];
     const notices: AutoReviewNotice[] = [];
+    const root = mkdtempSync(join(tmpdir(), "herta-review-rules-"));
+    roots.push(root);
     const resolver = new OverlayAskResolver({
       setPendingOverlay: (o) => pending.push(o),
       clearOverlay: () => {},
@@ -248,9 +259,11 @@ describe("OverlayAskResolver with a reviewer (ADR 0075)", () => {
         add: () => {},
         isCacheable: () => false,
       } as unknown as SessionApprovalCache,
+      // A store to record a choice in; the host's default decides until then.
+      rules: new ProjectCommandRuleStore(() => root),
+      defaultAutoReview: () => enabled,
       review: {
         reviewer: new AutoReviewer(model),
-        enabled: () => enabled,
         userMessages: () => ["@板砖 跑一下测试。"],
         workspace: () => "/w",
         onReviewed: (n) => notices.push(n),
@@ -302,6 +315,32 @@ describe("OverlayAskResolver with a reviewer (ADR 0075)", () => {
     void off.resolver.present(bashRequest("make test"), signal());
     expect(off.pending).toHaveLength(1);
     expect(sent).toHaveLength(0);
+    // Off, the card offers turning it on — the reviewer would take this.
+    expect(off.pending[0]?.offerAutoReview).toBe(true);
+  });
+
+  it("an undoable write runs without a review; the owner's own requests never reach it (ADR 0064 amendment 2026-10-10)", async () => {
+    const { model, sent } = scripted();
+    const { resolver, pending } = setup(model);
+    expect(
+      await resolver.present(
+        {
+          ...bashRequest("cat > a.txt <<'EOF'\nx\nEOF"),
+          code: "command_ask_write",
+          undoable: true,
+        },
+        signal(),
+      ),
+    ).toBe("allow");
+    expect(sent).toHaveLength(0);
+    expect(pending).toHaveLength(0);
+    // Off, a reach into .herta is not offered: no review would answer it.
+    const off = setup(scripted().model, false);
+    void off.resolver.present(
+      { ...bashRequest("find . -delete"), code: "command_ask_harness_state" },
+      signal(),
+    );
+    expect(off.pending[0]?.offerAutoReview).toBeUndefined();
   });
 
   it("the brake engaging is shown, and the next request asks", async () => {

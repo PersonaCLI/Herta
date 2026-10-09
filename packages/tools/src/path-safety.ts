@@ -328,8 +328,8 @@ function relativeTouchesHerta(
  *
  * The editors never write there (the structural `.git` denial in
  * {@link resolveSafePath}); a shell could, as a plain write: `> .git/config`,
- * `cp x .git/hooks/pre-commit`, `sed -i … .git/config`. Those are classes
- * workspace trust answers with no card, and a hook or a config key there is
+ * `cp x .git/hooks/pre-commit`, `sed -i … .git/config`. Those were classes
+ * workspace trust answered with no card, and a hook or a config key there is
  * a command git runs later — `git commit` runs `pre-commit`, `git status`
  * runs `core.fsmonitor` — behind commands that are allowed or trusted
  * themselves. Not a block: removing a stale `.git/index.lock` is an honest
@@ -357,7 +357,7 @@ export function gitInternalsWrite(
  * workspace's trust choice (ADR 0030, ADR 0064); beside it sit memory, logs
  * and attachments. The editors could never write there (the structural
  * denial in {@link resolveSafePath}), but a shell could: a redirect, `tee`,
- * `cp`, `rm` are classes the trust tier answers with no card, so one line in
+ * `cp`, `rm` were classes the trust tier answered with no card, so one line in
  * a trusted workspace — every managed one, by default — planted rules or trust
  * that outlived the session and a later switch back to 逐项确认. Codex keeps
  * `.codex`, Claude Code its settings, Cursor `.cursor` out of the agent's

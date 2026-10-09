@@ -6,7 +6,6 @@ import type {
   TerminalRecord,
   TerminalRecordBlock,
   UndoFileResult,
-  WorkspaceTrust,
 } from "@herta/core";
 import type {
   BranchList,
@@ -226,30 +225,25 @@ export interface ResolveApprovalOpts {
   /** "session" → task-scoped remember (ADR 0026, cleared when the brief
    *  ends). "always" → persist the derived PROJECT command rule (ADR 0030,
    *  `.herta/permissions.json`); no-ops when the pending request derives no
-   *  rule — the GUI only offers it when `projectRule` is present. "trust"
-   *  → turn workspace trust on for this workspace (ADR 0064); no-ops unless
-   *  the pending request's class is one the tier covers — the GUI only
-   *  offers it when `trustable` is present. */
-  readonly persistence?: "once" | "session" | "always" | "trust";
+   *  rule — the GUI only offers it when `projectRule` is present.
+   *  "auto_review" → turn automatic review on for this workspace (ADR 0064
+   *  amendment 2026-10-10); no-ops unless it would answer the pending
+   *  request — the GUI only offers it when `offerAutoReview` is present. */
+  readonly persistence?: "once" | "session" | "always" | "auto_review";
 }
 
-/** Workspace trust as the session sees it (ADR 0064): the owner's explicit
- *  choice, the default for this workspace kind, and what applies now. */
-export interface WorkspaceTrustState {
-  /** What applies: "workspace" auto-allows the covered classes. */
-  readonly effective: WorkspaceTrust;
+/** Automatic review as the session sees it (ADR 0075, which replaced
+ *  workspace trust on 2026-10-10): the owner's explicit choice, the default
+ *  for this workspace kind, and what applies now. */
+export interface AutoReviewState {
+  /** What applies: undoable writes run, and a reviewer answers the rest. */
+  readonly on: boolean;
   /** The owner's recorded choice for this workspace, or null when the
    *  default applies. */
-  readonly explicit: WorkspaceTrust | null;
-  /** The backend workspace is the session's managed sandbox — trusted by
+  readonly explicit: boolean | null;
+  /** The backend workspace is the session's managed sandbox — on by
    *  default; nothing of the user's lives there. */
   readonly isDefaultWorkspace: boolean;
-  /** ADR 0075: the owner opted this workspace into the automatic review of
-   *  approval requests. */
-  readonly autoReview?: boolean;
-  /** A reviewer is mounted (a provider key, not a test stub) — the menu
-   *  offers the switch only then. */
-  readonly autoReviewAvailable?: boolean;
 }
 
 /**
@@ -804,17 +798,12 @@ export interface Session {
   listCommandRules?(): Promise<readonly string[]>;
   /** Removes one rule by its display form. False when nothing matched. */
   removeCommandRule?(display: string): Promise<boolean>;
-  /** Workspace trust (ADR 0064) for the CURRENT effective workspace.
+  /** Automatic review (ADR 0075) for the CURRENT effective workspace.
    *  Optional: only the GUI SessionImpl implements the pair. */
-  getWorkspaceTrust?(): Promise<WorkspaceTrustState>;
+  getAutoReview?(): Promise<AutoReviewState>;
   /** Record the owner's choice for this workspace; null clears it back to
    *  the default. Resolves with the state after the change. */
-  setWorkspaceTrust?(
-    value: WorkspaceTrust | null,
-  ): Promise<WorkspaceTrustState>;
-  /** ADR 0075: opt the CURRENT workspace in or out of the automatic review
-   *  of approval requests. Resolves with the state after the change. */
-  setAutoReview?(on: boolean): Promise<WorkspaceTrustState>;
+  setAutoReview?(on: boolean | null): Promise<AutoReviewState>;
   /** Set the effective backend (板砖) workspace. Trusts its caller —
    *  validation happens at the GUI/CLI boundary. Persisted + broadcast.
    *  Idle-only (audit 2026-07-10, finding 13): refused with

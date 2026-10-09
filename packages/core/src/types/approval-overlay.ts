@@ -56,11 +56,10 @@ export interface PendingPermissionApproval {
    *  「本项目允许」 button otherwise — same never-offer-a-no-op contract as
    *  `cacheable` above. */
   readonly projectRule?: string;
-  /** Whether a 「信任此工作区」 choice would take effect for this request
-   *  (ADR 0064): the ask class is one workspace trust covers and the
-   *  workspace does not trust yet. Same never-offer-a-no-op contract as
-   *  `cacheable`. */
-  readonly trustable?: boolean;
+  /** Whether a 「开启自动审核」 choice would take effect for this request
+   *  (ADR 0064 amendment 2026-10-10): automatic review is off here and would
+   *  answer it. Same never-offer-a-no-op contract as `cacheable`. */
+  readonly offerAutoReview?: boolean;
 }
 
 export interface PendingCommandApproval {

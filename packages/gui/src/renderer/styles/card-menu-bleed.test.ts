@@ -42,10 +42,12 @@ const px = (value: string | undefined): number =>
  * agree: the section's side padding, the negative side margin, and the width
  * that makes up for both.
  */
-describe("the trust toggle's hover band runs edge to edge", () => {
+describe("the switch row's toggle hover band runs edge to edge", () => {
   it("bleeds the section's side padding in its margin AND its width", () => {
-    const section = ruleBody(".card-menu-trust");
-    const toggle = ruleBody(".card-menu-trust-toggle");
+    // The trust row's rules, kept by the automatic-review row that replaced
+    // it (ADR 0075 amendment 2026-10-10).
+    const section = ruleBody(".card-menu-review");
+    const toggle = ruleBody(".card-menu-review-toggle");
     // `padding: <top> <sides> <bottom>`
     const sidePad = px(/padding:\s*\S+\s+(\S+?)px/.exec(section)?.[1]);
     // `margin: <top> -<sides> <bottom>`

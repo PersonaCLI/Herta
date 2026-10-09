@@ -942,7 +942,7 @@ describe("@herta/app-server — the automatic reviewer reads this turn's message
         review,
       });
       try {
-        expect((await session.setAutoReview(true)).autoReview).toBe(true);
+        expect((await session.setAutoReview(true)).on).toBe(true);
         const events: OverlayEvent[] = [];
         const overlayConsumer = (async () => {
           for await (const ev of session.subscribeOverlay()) {

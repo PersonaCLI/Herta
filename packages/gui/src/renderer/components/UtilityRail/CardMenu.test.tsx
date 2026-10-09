@@ -290,24 +290,16 @@ describe("CardMenu", () => {
     }
   });
 
-  it("offers the auto-review switch only when a reviewer is available (ADR 0075)", () => {
+  it("shows the auto-review switch when the state is known, off, and turns it on (ADR 0075)", () => {
     const onSetAutoReview = vi.fn();
     const base = {
       cardKind: "device" as const,
       activeWorkspace: "/p",
       onSetWorkspace: vi.fn(),
       onResetWorkspace: vi.fn(),
-      onSetTrust: vi.fn(),
       onSetAutoReview,
     };
-    const trust = {
-      effective: "ask" as const,
-      explicit: null,
-      isDefaultWorkspace: false,
-    };
-    const { unmount } = renderWithLocale(
-      <CardMenu {...base} trust={{ ...trust, autoReviewAvailable: false }} />,
-    );
+    const { unmount } = renderWithLocale(<CardMenu {...base} />);
     fireEvent.click(screen.getByLabelText("device card info"));
     expect(document.querySelector(".card-menu-review")).toBeNull();
     unmount();
@@ -315,12 +307,12 @@ describe("CardMenu", () => {
     renderWithLocale(
       <CardMenu
         {...base}
-        trust={{ ...trust, autoReviewAvailable: true, autoReview: false }}
+        review={{ on: false, explicit: null, isDefaultWorkspace: false }}
       />,
     );
     fireEvent.click(screen.getByLabelText("device card info"));
     expect(
-      document.querySelector(".card-menu-review .card-menu-trust-state")
+      document.querySelector(".card-menu-review .card-menu-review-state")
         ?.textContent,
     ).toBe("Off");
     fireEvent.click(
@@ -337,20 +329,13 @@ describe("CardMenu", () => {
         activeWorkspace="/p"
         onSetWorkspace={vi.fn()}
         onResetWorkspace={vi.fn()}
-        trust={{
-          effective: "workspace",
-          explicit: "workspace",
-          isDefaultWorkspace: false,
-          autoReviewAvailable: true,
-          autoReview: true,
-        }}
-        onSetTrust={vi.fn()}
+        review={{ on: true, explicit: null, isDefaultWorkspace: true }}
         onSetAutoReview={onSetAutoReview}
       />,
     );
     fireEvent.click(screen.getByLabelText("device card info"));
     expect(
-      document.querySelector(".card-menu-review .card-menu-trust-state")
+      document.querySelector(".card-menu-review .card-menu-review-state")
         ?.textContent,
     ).toBe("On");
     fireEvent.click(
@@ -414,12 +399,8 @@ describe("CardMenu", () => {
       isDefault: true, // Reset is disabled — the arrows must skip it
       onSetWorkspace: vi.fn(),
       onResetWorkspace: vi.fn(),
-      trust: {
-        effective: "ask" as const,
-        explicit: null,
-        isDefaultWorkspace: false,
-      },
-      onSetTrust: vi.fn(),
+      review: { on: false, explicit: null, isDefaultWorkspace: false },
+      onSetAutoReview: vi.fn(),
       rules: ["node a.js:*"],
       onRemoveRule: vi.fn(),
     };
@@ -436,7 +417,9 @@ describe("CardMenu", () => {
       renderWithLocale(<CardMenu {...keyProps} />);
       fireEvent.click(screen.getByLabelText("device card info"));
       const set = screen.getByRole("button", { name: /Set workspace/ });
-      const trust = screen.getByRole("button", { name: /Trust/ });
+      const review = screen.getByRole("button", {
+        name: "Turn on auto-review",
+      });
       const remove = screen.getByRole("button", {
         name: "Remove rule node a.js:*",
       });
@@ -447,7 +430,7 @@ describe("CardMenu", () => {
       };
       const copy = screen.getByRole("button", { name: "Copy path" });
       down();
-      expect(document.activeElement).toBe(trust); // Reset (disabled) skipped
+      expect(document.activeElement).toBe(review); // Reset (disabled) skipped
       down();
       expect(document.activeElement).toBe(remove);
       down();

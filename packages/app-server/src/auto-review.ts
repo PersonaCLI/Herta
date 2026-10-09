@@ -13,7 +13,8 @@
  *     may address it.
  *   - Never reviewed: `.herta` (`command_ask_harness_state`), a body the
  *     harness cannot read before it runs (`bodyUnreadable`), and anything
- *     but a command — those are the owner's.
+ *     but a command — those are the owner's. A write undo can take back
+ *     needs no review: the policy lets it through first.
  *   - An error, a timeout, a malformed or disagreeing reply, or an over-long
  *     context is the card, not a deny: the owner is present, and a failure is
  *     no verdict on the request.
@@ -297,18 +298,8 @@ export class AutoReviewer {
     if (this.stoodDown) return { kind: "card", why: "brake" };
     const { request, command } = input;
     if (command === undefined) return { kind: "card", why: "not_a_command" };
-    const codes =
-      request.codes !== undefined && request.codes.length > 0
-        ? request.codes
-        : request.code !== undefined
-          ? [request.code]
-          : [];
-    if (
-      codes.includes("command_ask_harness_state") ||
-      bodyUnreadable(codes, request.reason, command)
-    ) {
-      return { kind: "card", why: "owner_only" };
-    }
+    const codes = requestCodes(request);
+    if (ownerOnly(request, command)) return { kind: "card", why: "owner_only" };
     const user = reviewMessage(
       {
         command,
@@ -408,11 +399,40 @@ export function requestCommand(request: PermissionRequest): string | undefined {
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-/** What a host hands its ask resolver to review before the card. */
+/** The request's ask classes, `code` first. */
+function requestCodes(request: PermissionRequest): readonly string[] {
+  return request.codes !== undefined && request.codes.length > 0
+    ? request.codes
+    : request.code !== undefined
+      ? [request.code]
+      : [];
+}
+
+/** Requests only the owner answers: a reach into `.herta`, or a body the
+ *  harness cannot read before it runs. */
+function ownerOnly(request: PermissionRequest, command: string): boolean {
+  const codes = requestCodes(request);
+  return (
+    codes.includes("command_ask_harness_state") ||
+    bodyUnreadable(codes, request.reason, command)
+  );
+}
+
+/**
+ * Whether a reviewer would judge this request at all: a command that is not
+ * the owner's alone. The card offers turning automatic review on only where
+ * it would take effect (`ApprovalPolicy`'s `reviewable`).
+ */
+export function reviewTakes(request: PermissionRequest): boolean {
+  const command = requestCommand(request);
+  return command !== undefined && !ownerOnly(request, command);
+}
+
+/** What a host hands its ask resolver to review before the card. The
+ *  resolver asks only when automatic review is on in the current workspace
+ *  (`ApprovalPolicy.autoReviewOn`). */
 export interface ReviewDeps {
   readonly reviewer: AutoReviewer;
-  /** The owner opted the current workspace in. */
-  readonly enabled: () => boolean;
   /** The user's messages, oldest first — this turn's included. */
   readonly userMessages: () => readonly string[];
   /** The current backend workspace root. */
@@ -423,10 +443,10 @@ export interface ReviewDeps {
 }
 
 /**
- * ADR 0075, the one step both hosts' resolvers take before the card: the
- * reviewer's answer, or null when the owner decides (not opted in, the
- * brake, a card verdict, any failure). Rejects only with an AbortError when
- * `signal` aborts — no decision is fabricated either way.
+ * ADR 0075, the one step both hosts' resolvers take before the card when
+ * automatic review is on: the reviewer's answer, or null when the owner
+ * decides (the brake, a card verdict, any failure). Rejects only with an
+ * AbortError when `signal` aborts — no decision is fabricated either way.
  */
 export async function reviewBeforeCard(
   review: ReviewDeps,
@@ -435,7 +455,6 @@ export async function reviewBeforeCard(
 ): Promise<AskAnswer | null> {
   const aborted = (): Error => abortError("review aborted by interrupt");
   if (signal.aborted) throw aborted();
-  if (!review.enabled()) return null;
   const command = requestCommand(request);
   let verdict: ReviewVerdict;
   try {

@@ -40,7 +40,6 @@ import {
   undoSegments,
   undoStoreDir,
   type V2RecordPersister,
-  type WorkspaceTrust,
 } from "@herta/core";
 import {
   type MetaThinkCorpus,
@@ -109,6 +108,7 @@ import type {
   AppServerConfig,
   AttachProgress,
   AttachResult,
+  AutoReviewState,
   ContinueInterruptedResult,
   OverlayEvent,
   RecordEvent,
@@ -130,7 +130,6 @@ import type {
   VoiceCueEvent,
   WorkspaceEvent,
   WorkspaceSetResult,
-  WorkspaceTrustState,
 } from "./types.js";
 import { undoNoteBody } from "./undo-note.js";
 
@@ -475,9 +474,6 @@ export class SessionImpl implements Session {
    *  boundary to reach. Tracked from the bus, cleared with the turn. */
   private backendRunning = false;
   private readonly contract: string;
-  /** ADR 0075: an automatic reviewer is mounted (a real provider, or a
-   *  test's stub) — set once in `create`. */
-  private autoReviewAvailable = false;
   /** Whether a 继续 is on offer (ADR 0071 §1.4); see `refreshResumable`. */
   private _resumable = false;
   /** Whether the latest turn can be undone (ADR 0074); see
@@ -1506,30 +1502,21 @@ export class SessionImpl implements Session {
     return this.commandRules.remove(display);
   }
 
-  /** Workspace trust (ADR 0064) for the CURRENT effective workspace — read
-   *  through the resolver's policy so the card and the menu agree. */
-  async getWorkspaceTrust(): Promise<WorkspaceTrustState> {
+  /** Automatic review (ADR 0075) for the CURRENT effective workspace —
+   *  read through the resolver's policy so the card and the menu agree. */
+  async getAutoReview(): Promise<AutoReviewState> {
     return {
-      effective: this.overlayResolver.workspaceTrusted ? "workspace" : "ask",
-      explicit: this.commandRules.trust(),
+      on: this.overlayResolver.autoReviewOn,
+      explicit: this.commandRules.autoReview(),
       isDefaultWorkspace: this.backendWorkspaceIsDefault,
-      autoReview: this.commandRules.autoReview(),
-      autoReviewAvailable: this.autoReviewAvailable,
     };
   }
 
-  /** ADR 0075: the owner's opt-in for the CURRENT workspace — beside trust,
-   *  in the same file, which no command may write. */
-  async setAutoReview(on: boolean): Promise<WorkspaceTrustState> {
+  /** The owner's choice for the CURRENT workspace, in the file no command
+   *  may write; null clears it back to the default. */
+  async setAutoReview(on: boolean | null): Promise<AutoReviewState> {
     this.commandRules.setAutoReview(on);
-    return this.getWorkspaceTrust();
-  }
-
-  async setWorkspaceTrust(
-    value: WorkspaceTrust | null,
-  ): Promise<WorkspaceTrustState> {
-    this.commandRules.setTrust(value);
-    return this.getWorkspaceTrust();
+    return this.getAutoReview();
   }
 
   async resolveApproval(opts: ResolveApprovalOpts): Promise<ApprovalResult> {
@@ -2053,16 +2040,16 @@ export class SessionImpl implements Session {
         overlayResolver = new OverlayAskResolver({
           cache,
           rules,
-          // The managed sandbox trusts by default (ADR 0064): a new session's
-          // workspace under ~/.herta/workspaces holds nothing of the user's.
-          // A provider — setWorkspace moves the workspace mid-session.
-          defaultTrust: () =>
+          // Automatic review is on by default in the managed sandbox (ADR 0064
+          // amendment 2026-10-10): a new session's workspace under
+          // ~/.herta/workspaces holds nothing of the user's. A provider —
+          // setWorkspace moves the workspace mid-session.
+          defaultAutoReview: () =>
             sessionHolder.session?.backendWorkspaceIsDefault === true,
           ...(autoReviewer !== null
             ? {
                 review: {
                   reviewer: autoReviewer,
-                  enabled: () => rules?.autoReview() === true,
                   // What the sink has projected so far — this turn's own
                   // blocks included. `record` and the driver's `getRecord()`
                   // both commit at turn boundaries, so mid-turn neither yet
@@ -2403,7 +2390,6 @@ export class SessionImpl implements Session {
       contract: backend.contract,
     });
     sessionHolder.session = session;
-    session.autoReviewAvailable = autoReviewer !== null;
     // The repository card's first answer (ADR 0058): fire-and-forget, the
     // event reaches whoever subscribes; the open/create snapshot carries
     // whatever has landed by then.

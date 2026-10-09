@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type AppServerConfig,
+  type AutoReviewState,
   type ContinueInterruptedResult,
   createSessionHost,
   defaultDirsFor,
@@ -17,7 +18,6 @@ import {
   type SteerTextResult,
   type UndoTarget,
   type UndoTurnEditsResult,
-  type WorkspaceTrustState,
 } from "@herta/app-server";
 import { errorMessage } from "@herta/core";
 import {
@@ -198,7 +198,6 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.saveSessionExport,
   CMD.resolveApproval,
   CMD.removeCommandRule,
-  CMD.setWorkspaceTrust,
   CMD.setAutoReview,
   CMD.pickWorkspace,
   CMD.setWorkspace,
@@ -947,26 +946,22 @@ export function createSessionService(
       if (typeof display !== "string" || display.length === 0) return false;
       return (await host?.activeSession?.removeCommandRule?.(display)) ?? false;
     });
-    // Workspace trust (ADR 0064) — the ACTIVE session's effective workspace.
-    // No session → a real project that asks (the honest default).
-    const noTrust: WorkspaceTrustState = {
-      effective: "ask",
+    // Automatic review (ADR 0075, which replaced workspace trust) — the
+    // ACTIVE session's effective workspace. No session → a real project,
+    // off (the honest default).
+    const noReview: AutoReviewState = {
+      on: false,
       explicit: null,
       isDefaultWorkspace: false,
     };
     handle(
-      CMD.getWorkspaceTrust,
-      async () => (await host?.activeSession?.getWorkspaceTrust?.()) ?? noTrust,
+      CMD.getAutoReview,
+      async () => (await host?.activeSession?.getAutoReview?.()) ?? noReview,
     );
-    handle(CMD.setWorkspaceTrust, async (_e, value: unknown) => {
-      const v = value === "workspace" || value === "ask" ? value : null;
-      return (await host?.activeSession?.setWorkspaceTrust?.(v)) ?? noTrust;
-    });
-    // ADR 0075: the owner's opt-in to the automatic review — only a literal
-    // boolean from the window counts.
+    // Only a literal boolean from the window is a choice; null clears it.
     handle(CMD.setAutoReview, async (_e, on: unknown) => {
-      if (typeof on !== "boolean") return noTrust;
-      return (await host?.activeSession?.setAutoReview?.(on)) ?? noTrust;
+      const v = typeof on === "boolean" ? on : null;
+      return (await host?.activeSession?.setAutoReview?.(v)) ?? noReview;
     });
     // Record heal after a record-channel overflow drop: the session re-emits
     // its live record as a `reset` through the record stream (FIFO with block

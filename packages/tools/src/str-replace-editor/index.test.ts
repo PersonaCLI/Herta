@@ -501,6 +501,9 @@ describe("str_replace_editor rule", () => {
     if (edit.kind === "ask") {
       expect(edit.request.risk).toBe("workspace_write");
       expect(edit.request.code).toBe("str_replace_editor_ask");
+      // An editor keeps what it replaces: no review needed (ADR 0064
+      // amendment 2026-10-10).
+      expect(edit.request.undoable).toBe(true);
       expect(edit.request.diff).toContain("+ALPHA");
       expect(edit.request.files).toEqual(["a.txt"]);
     }
@@ -511,6 +514,7 @@ describe("str_replace_editor rule", () => {
       ctx,
     );
     expect(create.kind).toBe("ask");
+    if (create.kind === "ask") expect(create.request.undoable).toBe(true);
     expect(previews).toHaveLength(2);
 
     const notFound = await engine.check(

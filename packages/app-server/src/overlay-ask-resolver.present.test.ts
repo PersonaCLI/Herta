@@ -409,7 +409,18 @@ describe("OverlayAskResolver.present — interrupt during a pending gate (audit 
   });
 });
 
-describe("OverlayAskResolver — workspace trust (ADR 0064)", () => {
+describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 0064 amendment 2026-10-10)", () => {
+  const writeRequest = (): PermissionRequest =>
+    makeRequest({
+      call: {
+        id: "c",
+        tool: "bash",
+        input: { command: "mkdir -p src && cat > src/a.mjs <<'EOF'\nx\nEOF" },
+      },
+      code: "command_ask_write",
+      codes: ["command_ask_write", "command_ask_fs"],
+      undoable: true,
+    });
   const vcsRequest = (): PermissionRequest =>
     makeRequest({
       call: { id: "c", tool: "bash", input: { command: "git commit -m x" } },
@@ -418,46 +429,52 @@ describe("OverlayAskResolver — workspace trust (ADR 0064)", () => {
       programs: ["git"],
     });
 
-  it("offers 「信任此工作区」 on a covered class, and a 'trust' resolution turns trust on for the workspace", async () => {
-    const root = mkdtempSync(join(tmpdir(), "herta-overlay-trust-"));
+  it("offers 「开启自动审核」 on an undoable write, and an 'auto_review' resolution turns it on for the workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
     try {
       const rules = new ProjectCommandRuleStore(() => root);
       const { resolver, pending } = makeResolver({ rules });
-      expect(resolver.workspaceTrusted).toBe(false);
-      const p1 = resolver.present(vcsRequest(), new AbortController().signal);
-      expect(pending[0]?.trustable).toBe(true);
+      expect(resolver.autoReviewOn).toBe(false);
+      const p1 = resolver.present(writeRequest(), new AbortController().signal);
+      expect(pending[0]?.offerAutoReview).toBe(true);
       const r = resolver.resolveExternal({
         requestId: "req-1",
         decision: "allow",
-        persistence: "trust",
+        persistence: "auto_review",
       });
       expect(r).toEqual({ ok: true });
       await expect(p1).resolves.toBe("allow");
-      expect(rules.trust()).toBe("workspace");
-      expect(resolver.workspaceTrusted).toBe(true);
-      // The next covered ask is auto-allowed — no card.
+      expect(rules.autoReview()).toBe(true);
+      expect(resolver.autoReviewOn).toBe(true);
+      // The next undoable write runs — no card, no review.
       await expect(
-        resolver.present(vcsRequest(), new AbortController().signal),
+        resolver.present(writeRequest(), new AbortController().signal),
       ).resolves.toBe("allow");
       expect(pending).toHaveLength(1);
-      // An uncovered one still surfaces, without the trust button.
-      void resolver.present(
-        makeRequest({
-          call: { id: "c2", tool: "bash", input: { command: "npm install x" } },
-          risk: "network",
-          code: "command_ask_network",
-        }),
-        new AbortController().signal,
-      );
+      // A git commit trust used to let through is no longer let through:
+      // with no reviewer mounted, it is the card, and nothing to offer.
+      void resolver.present(vcsRequest(), new AbortController().signal);
       expect(pending).toHaveLength(2);
-      expect(pending[1]?.trustable).toBeUndefined();
+      expect(pending[1]?.offerAutoReview).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("the host's default trusts the managed sandbox until the owner chooses", async () => {
-    const root = mkdtempSync(join(tmpdir(), "herta-overlay-trust-"));
+  it("without a reviewer, a command's card does not offer it — it would change nothing there", () => {
+    const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
+    try {
+      const rules = new ProjectCommandRuleStore(() => root);
+      const { resolver, pending } = makeResolver({ rules });
+      void resolver.present(vcsRequest(), new AbortController().signal);
+      expect(pending[0]?.offerAutoReview).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("the host's default turns it on in the managed sandbox until the owner chooses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
     try {
       const rules = new ProjectCommandRuleStore(() => root);
       let sandbox = true;
@@ -474,16 +491,16 @@ describe("OverlayAskResolver — workspace trust (ADR 0064)", () => {
           list: () => [],
         } as unknown as import("@herta/core").SessionApprovalCache,
         rules,
-        defaultTrust: () => sandbox,
+        defaultAutoReview: () => sandbox,
       });
       await expect(
-        resolver.present(vcsRequest(), new AbortController().signal),
+        resolver.present(writeRequest(), new AbortController().signal),
       ).resolves.toBe("allow");
       expect(pending).toHaveLength(0);
       sandbox = false;
-      void resolver.present(vcsRequest(), new AbortController().signal);
+      void resolver.present(writeRequest(), new AbortController().signal);
       expect(pending).toHaveLength(1);
-      expect(pending[0]?.trustable).toBe(true);
+      expect(pending[0]?.offerAutoReview).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

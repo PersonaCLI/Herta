@@ -1102,8 +1102,8 @@ function classifySegment(
   }
 
   if (OPAQUE_BUILTINS.has(name)) {
-    // `eval` runs text assembled when it runs: opaque, never trust-covered
-    // nor rule-eligible (ADR 0075 step 1). `source`/`.`/`exec` name what
+    // `eval` runs text assembled when it runs: opaque, never reviewed nor
+    // rule-eligible (ADR 0075 step 1). `source`/`.`/`exec` name what
     // they run and stay the interpreter class.
     asks.push(
       name === "eval"

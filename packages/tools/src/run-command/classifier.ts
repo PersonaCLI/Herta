@@ -2244,7 +2244,7 @@ export interface WriteGuard {
 }
 
 /** The ask class of a line whose reach into `.herta` the guard cannot
- *  bound (see `harnessReach`): never trust-covered, never rule-eligible. */
+ *  bound (see `harnessReach`): never reviewed, never rule-eligible. */
 export const HARNESS_STATE_ASK_CODE = "command_ask_harness_state";
 
 /**
@@ -2253,9 +2253,9 @@ export const HARNESS_STATE_ASK_CODE = "command_ask_harness_state";
  * `git config` key whose value is a command or loads more config
  * (`core.hooksPath`, `core.fsmonitor`, `alias.*`, `filter.*`,
  * `include.path`, …). Each was a plain write or vcs class, which workspace
- * trust answers with no card, while the command it plants runs behind
+ * trust answered with no card, while the command it plants runs behind
  * `git commit` or an allowed `git status`. Risk `workspace_destructive`:
- * never cached, never trust-covered, never rule-eligible.
+ * never cached, never rule-eligible; a review scores it high.
  */
 export const GIT_INTERNALS_ASK_CODE = "command_ask_git_internals";
 
@@ -3191,8 +3191,8 @@ function classifyCommandTiers(
   // an honest class. Network-touching subcommands are still git (the remote
   // is the repo's own); the destructive shapes were classified above.
   // The subcommands that reach the REMOTE are the network, not the working
-  // tree (ADR 0064 L1): a trusted workspace auto-allows `command_ask_vcs`,
-  // and a push that leaves the machine must not ride that. The destructive
+  // tree (ADR 0064 L1): a push that leaves the machine is not a change the
+  // working tree keeps, and must not be scored as one. The destructive
   // shapes (`push --force`, history rewrites) were classified above.
   if (
     a0 === "git" &&
@@ -3342,8 +3342,8 @@ function classifyCommandTiers(
   //     unknown was, so nothing that could be persisted before cannot now.
   // The filesystem verbs split on WHERE they act (ADR 0064 L1): an operand
   // outside the workspace — absolute, `..`, `~`, or unknowable under a live
-  // shell — is its own class, so a trusted workspace never auto-allows
-  // `cp secrets /tmp/x` on the strength of `cp` being "fs".
+  // shell — is its own class, so `cp secrets /tmp/x` is never scored as a
+  // workspace-local copy on the strength of `cp` being "fs".
   const cmdDelete = cmdDeleteShape(id, argv, live);
   if (cmdDelete !== null) return cmdDelete;
   if (id === "rm" || id === "rmdir" || id === "unlink") {

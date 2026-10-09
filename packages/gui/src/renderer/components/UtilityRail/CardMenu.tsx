@@ -1,5 +1,4 @@
-import type { WorkspaceTrustState } from "@herta/app-server";
-import type { WorkspaceTrust } from "@herta/core";
+import type { AutoReviewState } from "@herta/app-server";
 import {
   type CSSProperties,
   Fragment,
@@ -134,12 +133,10 @@ export interface CardMenuProps {
    *  relies on and which a first cut broke (CI 2026-08-04). */
   readonly rules?: readonly string[];
   readonly onRemoveRule?: (display: string) => void;
-  /** Workspace trust (ADR 0064) — presentational like `rules`: `undefined`
-   *  hides the row (the bridge lacks the surface). */
-  readonly trust?: WorkspaceTrustState;
-  readonly onSetTrust?: (value: WorkspaceTrust | null) => void;
-  /** ADR 0075: the automatic review switch, shown only when the trust state
-   *  says a reviewer is available. */
+  /** Automatic review (ADR 0075, which replaced workspace trust) —
+   *  presentational like `rules`: `undefined` hides the row (the bridge
+   *  lacks the surface). */
+  readonly review?: AutoReviewState;
   readonly onSetAutoReview?: (on: boolean) => void;
   /** Fired when the menu OPENS — DeviceCard re-fetches rules on it, so a rule
    *  granted mid-commission shows up without a remount. */
@@ -153,7 +150,7 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   // The menu itself lives OUTSIDE the card (2026-09-17): `.device-card`
-  // clips its overflow for the frost and the scene, and once the trust row
+  // clips its overflow for the frost and the scene, and once a switch row
   // joined the rules the menu ran past the card's bottom edge and was cut
   // off. It is rendered through a portal at the body, fixed at the ⋯
   // button's bottom-right corner, so the card's clip never reaches it.
@@ -354,60 +351,30 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
               >
                 {t("card.resetDefault")}
               </button>
-              {props.trust !== undefined && (
+              {props.review !== undefined && (
                 <>
                   <div className="card-menu-divider" />
-                  <div className="card-menu-trust">
-                    <span className="card-menu-label">{t("card.trust")}</span>
-                    <span className="card-menu-trust-state">
-                      {props.trust.effective === "workspace"
-                        ? props.trust.explicit === null &&
-                          props.trust.isDefaultWorkspace
-                          ? t("card.trustOnDefault")
-                          : t("card.trustOn")
-                        : t("card.trustOff")}
+                  <div className="card-menu-review">
+                    <span className="card-menu-label">
+                      {t("card.autoReview")}
+                    </span>
+                    <span className="card-menu-review-state">
+                      {props.review.on
+                        ? t("card.autoReviewOn")
+                        : t("card.autoReviewOff")}
                     </span>
                     <button
                       type="button"
-                      className="card-menu-item card-menu-trust-toggle"
+                      className="card-menu-item card-menu-review-toggle"
                       onClick={() =>
-                        props.onSetTrust?.(
-                          props.trust?.effective === "workspace"
-                            ? "ask"
-                            : "workspace",
-                        )
+                        props.onSetAutoReview?.(props.review?.on !== true)
                       }
                     >
-                      {props.trust.effective === "workspace"
-                        ? t("card.trustDisable")
-                        : t("card.trustEnable")}
+                      {props.review.on
+                        ? t("card.autoReviewDisable")
+                        : t("card.autoReviewEnable")}
                     </button>
                   </div>
-                  {props.trust.autoReviewAvailable === true && (
-                    <div className="card-menu-trust card-menu-review">
-                      <span className="card-menu-label">
-                        {t("card.autoReview")}
-                      </span>
-                      <span className="card-menu-trust-state">
-                        {props.trust.autoReview === true
-                          ? t("card.autoReviewOn")
-                          : t("card.autoReviewOff")}
-                      </span>
-                      <button
-                        type="button"
-                        className="card-menu-item card-menu-trust-toggle"
-                        onClick={() =>
-                          props.onSetAutoReview?.(
-                            props.trust?.autoReview !== true,
-                          )
-                        }
-                      >
-                        {props.trust.autoReview === true
-                          ? t("card.autoReviewDisable")
-                          : t("card.autoReviewEnable")}
-                      </button>
-                    </div>
-                  )}
                 </>
               )}
               {rules !== undefined && (

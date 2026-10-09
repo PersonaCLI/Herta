@@ -345,9 +345,9 @@ export const en = {
   "approval.reason.editFile": "Edits an existing file",
   "approval.reason.strReplaceEditor": "Writes a file",
   "approval.heredocFolded": "    ⋯ {n} lines folded — see the diff below ⋯",
-  "approval.trustWorkspace": "Trust this workspace",
-  "approval.trustNote":
-    "Once this workspace is trusted, file edits, directory creation, non-destructive git operations and workspace scripts within it no longer request confirmation; network access, destructive operations and anything outside the workspace still do. This can be revoked from the device card's menu.",
+  "approval.autoReviewEnable": "Turn on auto-review",
+  "approval.autoReviewNote":
+    "Once on, file writes in this workspace that undo can take back run directly, and a review model allows or denies everything else against what you asked; what it cannot judge still asks you. It can be turned off from the device card's menu.",
   "composer.placeholder": "Message Herta…",
   "composer.aria": "Message composer",
   "composer.send": "Send message",
@@ -700,13 +700,6 @@ export const en = {
   "card.rules": "Remembered commands",
   "card.rulesEmpty": "No commands remembered",
   "card.rulesRemove": "Remove rule {rule}",
-  "card.trust": "Workspace trust",
-  "card.trustOn":
-    "Trusted: writes, git operations and scripts within it no longer request confirmation",
-  "card.trustOnDefault": "Sandbox workspace, trusted by default",
-  "card.trustOff": "Confirms each operation",
-  "card.trustEnable": "Trust this workspace",
-  "card.trustDisable": "Confirm each operation instead",
   "card.autoReview": "Auto-review",
   "card.autoReviewOn": "On",
   "card.autoReviewOff": "Off",

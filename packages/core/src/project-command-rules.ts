@@ -45,18 +45,6 @@ const RULE_ELIGIBLE_ASK_CODES: ReadonlySet<string> = new Set([
   "command_ask_script",
 ]);
 
-/**
- * Workspace trust (ADR 0064), persisted beside the rules: `"workspace"` —
- * the classes whose effects stay inside the workspace auto-allow;
- * `"ask"` — every ask is a card. Absent → the policy's default for the
- * workspace kind (the managed sandbox trusts, a real project asks).
- */
-export type WorkspaceTrust = "workspace" | "ask";
-
-function validTrust(v: unknown): v is WorkspaceTrust {
-  return v === "workspace" || v === "ask";
-}
-
 export function isRuleEligibleAskCode(code: string | undefined): boolean {
   return code !== undefined && RULE_ELIGIBLE_ASK_CODES.has(code);
 }
@@ -256,13 +244,16 @@ export function normalizeRuleCwd(cwd: string | undefined): string {
 interface PermissionsFile {
   readonly version: 1;
   readonly commandAllow: readonly ProjectCommandRule[];
-  /** ADR 0064; absent on files written before it. */
-  readonly trust?: WorkspaceTrust;
-  /** ADR 0075: the owner opted this workspace into the automatic review
-   *  of approval requests. Absent → off. Kept here, beside trust, for the
-   *  same reason: no command may write `.herta`, so the agent cannot turn
-   *  its own reviewer on. */
-  readonly autoReview?: true;
+  /** Workspace trust (ADR 0064), replaced by automatic review on
+   *  2026-10-10. Only read: on a file that never chose `autoReview`,
+   *  `"workspace"` reads as on and `"ask"` as off, so the owner's earlier
+   *  choice carries over; the next write keeps it as `autoReview`. */
+  readonly trust?: "workspace" | "ask";
+  /** The owner's automatic-review choice for this workspace (ADR 0075,
+   *  ADR 0064 amendment 2026-10-10). Absent → the policy's default for the
+   *  workspace kind. Kept here because no command may write `.herta`: the
+   *  agent cannot turn its own reviewer on or off. */
+  readonly autoReview?: boolean;
 }
 
 function validRule(entry: unknown): entry is ProjectCommandRule {
@@ -303,10 +294,9 @@ export class ProjectCommandRuleStore {
   /** The file as loaded — tolerant: missing/malformed → empty, no throw. */
   private load(): {
     rules: ProjectCommandRule[];
-    trust: WorkspaceTrust | null;
-    autoReview: boolean;
+    autoReview: boolean | null;
   } {
-    const empty = { rules: [], trust: null, autoReview: false };
+    const empty = { rules: [], autoReview: null };
     let raw: string;
     try {
       raw = readFileSync(this.filePath(), "utf8");
@@ -324,9 +314,15 @@ export class ProjectCommandRuleStore {
       rules: Array.isArray(parsed.commandAllow)
         ? parsed.commandAllow.filter(validRule)
         : [],
-      trust: validTrust(parsed.trust) ? parsed.trust : null,
-      // Only the literal `true` opts in: a hand-edited "yes" stays off.
-      autoReview: parsed.autoReview === true,
+      // Only a boolean is a choice: a hand-edited "yes" is none.
+      autoReview:
+        typeof parsed.autoReview === "boolean"
+          ? parsed.autoReview
+          : parsed.trust === "workspace"
+            ? true
+            : parsed.trust === "ask"
+              ? false
+              : null,
     };
   }
 
@@ -334,31 +330,17 @@ export class ProjectCommandRuleStore {
     return this.load().rules;
   }
 
-  /** The workspace's explicit trust choice (ADR 0064), or null when the
-   *  owner never chose — the policy then applies its default. */
-  trust(): WorkspaceTrust | null {
-    return this.load().trust;
-  }
-
-  /** Persist the trust choice; null clears it back to the default. Only
-   *  ever called from the owner's explicit choice on a card or the device
-   *  card's menu. */
-  setTrust(value: WorkspaceTrust | null): void {
-    const { rules, autoReview } = this.load();
-    this.write(rules, value, autoReview);
-  }
-
-  /** Whether the owner opted this workspace into the automatic review of
-   *  approval requests (ADR 0075). Off unless chosen. */
-  autoReview(): boolean {
+  /** The owner's automatic-review choice for this workspace (ADR 0075),
+   *  or null when they never chose — the policy then applies its default. */
+  autoReview(): boolean | null {
     return this.load().autoReview;
   }
 
-  /** Persist the opt-in. Only ever called from the owner's explicit choice
-   *  in the device card's menu. */
-  setAutoReview(on: boolean): void {
-    const { rules, trust } = this.load();
-    this.write(rules, trust, on);
+  /** Persist the choice; null clears it back to the default. Only ever
+   *  called from the owner's explicit choice: a card, the device card's
+   *  menu, or the CLI's `/permissions auto-review`. */
+  setAutoReview(on: boolean | null): void {
+    this.write(this.load().rules, on);
   }
 
   /** True when a persisted rule covers `argv` run from `cwd`. Callers MUST
@@ -407,7 +389,7 @@ export class ProjectCommandRuleStore {
       return;
     }
     if (!validRule(entry)) return; // fail-closed: never persist a refused shape
-    this.write([...existing, entry], this.trust(), this.autoReview());
+    this.write([...existing, entry], this.autoReview());
   }
 
   /** Removes the rule whose display form matches (Settings / CLI delete). */
@@ -415,22 +397,20 @@ export class ProjectCommandRuleStore {
     const existing = this.list();
     const kept = existing.filter((r) => ruleDisplay(r) !== display);
     if (kept.length === existing.length) return false;
-    this.write(kept, this.trust(), this.autoReview());
+    this.write(kept, this.autoReview());
     return true;
   }
 
   private write(
     rules: readonly ProjectCommandRule[],
-    trust: WorkspaceTrust | null,
-    autoReview: boolean,
+    autoReview: boolean | null,
   ): void {
     const dir = join(this.rootProvider(), ".herta");
     mkdirSync(dir, { recursive: true });
     const payload: PermissionsFile = {
       version: 1,
       commandAllow: rules,
-      ...(trust !== null ? { trust } : {}),
-      ...(autoReview ? { autoReview: true as const } : {}),
+      ...(autoReview !== null ? { autoReview } : {}),
     };
     // Atomic (audit BL7). A torn write here fails CLOSED — the loader drops
     // an unparseable file and everything re-prompts — so this is about not

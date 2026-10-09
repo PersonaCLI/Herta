@@ -314,10 +314,11 @@ export const zh = {
   // A heredoc body folded out of the command well (the content is in the
   // diff below) — 2026-08-17.
   "approval.heredocFolded": "    ⋯ 已折叠 {n} 行，内容见下方差异 ⋯",
-  // Workspace trust (ADR 0064): the button, and the one-line scope above it.
-  "approval.trustWorkspace": "信任此工作区",
-  "approval.trustNote":
-    "选择「信任此工作区」后，工作区内的文件修改、目录创建、非破坏性 git 操作与工作区脚本的执行将不再请求确认；网络访问、破坏性操作及工作区之外的操作仍会请求确认。可在设备卡片菜单中撤销。",
+  // Automatic review (ADR 0075, which replaced workspace trust): the button,
+  // and the one-line scope above it.
+  "approval.autoReviewEnable": "开启自动审核",
+  "approval.autoReviewNote":
+    "开启后，此工作区里撤销能还原的文件写入直接执行，其余操作先由审核模型对照你的要求放行或拒绝；它判断不了的仍会请你确认。可在设备卡片菜单中关闭。",
   "composer.placeholder": "给黑塔发消息…",
   "composer.aria": "消息输入框",
   "composer.send": "发送消息",
@@ -692,14 +693,8 @@ export const zh = {
   "card.rules": "已记住的命令",
   "card.rulesEmpty": "暂无已记住的命令",
   "card.rulesRemove": "删除规则 {rule}",
-  // Workspace trust (ADR 0064) — the row in the device card's menu.
-  "card.trust": "工作区信任",
-  "card.trustOn": "已信任：工作区内的写入、git 操作与脚本执行不再请求确认",
-  "card.trustOnDefault": "沙盒工作区，默认信任",
-  "card.trustOff": "逐项确认",
-  "card.trustEnable": "信任此工作区",
-  "card.trustDisable": "改为逐项确认",
-  // ADR 0075: the automatic review of approval requests.
+  // ADR 0075: the automatic review of approval requests — the row in the
+  // device card's menu (it replaced workspace trust, 2026-10-10).
   "card.autoReview": "自动审核",
   "card.autoReviewOn": "开启",
   "card.autoReviewOff": "关闭",

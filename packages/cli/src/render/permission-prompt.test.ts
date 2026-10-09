@@ -195,20 +195,20 @@ describe("CliAskResolver.presentDetailed", () => {
     await expect(promise).resolves.toBe("deny");
   });
 
-  it("[t] trusts the workspace when offered (ADR 0064), and falls through to deny when not", async () => {
+  it("[r] turns automatic review on when offered (ADR 0064 amendment 2026-10-10), and falls through to deny when not", async () => {
     const stdin = new MockReadable();
     const stdout = new MockWritable();
     const resolver = new CliAskResolver(stdin, stdout, style);
     const promise = resolver.presentDetailed(
       mkReq({ code: "command_ask_vcs" }),
       new AbortController().signal,
-      { showRemember: false, showTrust: true },
+      { showRemember: false, showAutoReview: true },
     );
-    stdin.feed("t");
-    await expect(promise).resolves.toBe("allow_trust");
+    stdin.feed("r");
+    await expect(promise).resolves.toBe("allow_auto_review");
     const text = stdout.full();
-    expect(text).toContain("[y/t/N]");
-    expect(text).toContain("[t] trusts this workspace");
+    expect(text).toContain("[y/r/N]");
+    expect(text).toContain("[r] turns on automatic review here");
 
     const stdin2 = new MockReadable();
     const stdout2 = new MockWritable();
@@ -216,8 +216,8 @@ describe("CliAskResolver.presentDetailed", () => {
     const p2 = r2.presentDetailed(mkReq(), new AbortController().signal, {
       showRemember: false,
     });
-    stdin2.feed("t");
+    stdin2.feed("r");
     await expect(p2).resolves.toBe("deny");
-    expect(stdout2.full()).not.toContain("[t]");
+    expect(stdout2.full()).not.toContain("[r]");
   });
 });

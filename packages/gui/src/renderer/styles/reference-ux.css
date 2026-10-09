@@ -2350,19 +2350,20 @@ button.agent-preview {
   font-size: 11px;
   color: var(--muted-slate);
 }
-/* Workspace trust row (ADR 0064): the label, the one-line state, and the
-   toggle — same register as the rules section it sits above. */
-.card-menu-trust {
+/* Automatic review row (ADR 0075, which replaced workspace trust): the
+   label, the one-line state, and the toggle — same register as the rules
+   section it sits above. */
+.card-menu-review {
   padding: 6px 12px 4px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.card-menu-trust-state {
+.card-menu-review-state {
   font-size: 11px;
   color: var(--muted-slate);
 }
-.card-menu-trust-toggle {
+.card-menu-review-toggle {
   /* Bleeds through the section's 12px side padding so its hover band runs
      edge to edge like the rows above it. The width has to bleed WITH the
      margins: `.card-menu-item` is `width: 100%`, and a negative left margin

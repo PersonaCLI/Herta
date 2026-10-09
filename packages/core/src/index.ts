@@ -177,7 +177,6 @@ export {
   ProjectCommandRuleStore,
   ruleDisplay,
   SCRIPT_INTERPRETERS,
-  type WorkspaceTrust,
 } from "./project-command-rules.js";
 export { ReadLedger, type ReadLedgerEntry } from "./read-ledger.js";
 export {
@@ -277,6 +276,7 @@ export {
 } from "./types/terminal-record.js";
 export type * from "./types/tool.js";
 export type * from "./types/transcript.js";
+export { UNDOABLE_WRITE_CODES, undoableWrite } from "./undoable-write.js";
 export {
   type ActorTurnNote,
   type BackendRunNote,
@@ -285,4 +285,3 @@ export {
   type UsageNote,
   type UsageNoteSink,
 } from "./usage-note.js";
-export { trustCovers, WORKSPACE_TRUST_CODES } from "./workspace-trust.js";

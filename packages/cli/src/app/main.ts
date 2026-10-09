@@ -274,7 +274,8 @@ export async function main(
   const wantMinimal = process.env.HERTA_BACKEND_CONTRACT !== "standard";
   await prepareBackendStack({ wantMinimal });
   // ADR 0075: the automatic reviewer, as the desktop mounts it — it answers
-  // only where `/permissions auto-review on` opted the workspace in. It reads
+  // only where automatic review is on (`/permissions auto-review on`, or [r]
+  // on a prompt; off by default in the CLI, which has no managed sandbox). It reads
   // the record's user messages plus the line this turn answers: the driver
   // commits the turn's own message only when the turn ends.
   const autoReviewer = new AutoReviewer(defaultReviewModel(apiKey, baseUrl));
@@ -303,7 +304,6 @@ export async function main(
         rules,
         {
           reviewer: autoReviewer,
-          enabled: () => rules?.autoReview() === true,
           userMessages: () => {
             const committed = (reviewDriver?.getRecord() ?? []).flatMap((b) =>
               b.kind === "user" && b.resume !== true ? [b.text] : [],

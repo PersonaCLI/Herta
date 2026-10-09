@@ -59,6 +59,14 @@ export type RuleVerdict =
       /** One-sentence consequence note for the card (ADR 0049 §5); see
        *  {@link CommandConsequence}. Display-only, absent for most asks. */
       consequence?: CommandConsequence;
+      /** Everything the request changes is a workspace file the harness
+       *  reads before the write and keeps for undo (ADR 0074): an editor's
+       *  write, or a shell line whose only writes are a printer's redirects
+       *  to such files, beside `mkdir -p` inside the workspace. The rule
+       *  decides it from the request's own text; with automatic review on,
+       *  such a request runs without a review (ADR 0064 amendment
+       *  2026-10-10). */
+      undoable?: true;
     }
   | {
       kind: "deny";
@@ -199,6 +207,7 @@ export class RulePermissionEngine implements PermissionEngine {
       ...(verdict.consequence !== undefined
         ? { consequence: verdict.consequence }
         : {}),
+      ...(verdict.undoable === true ? { undoable: true as const } : {}),
     };
     const decision = this.ask.present(request, ctx.signal);
     return { kind: "ask", request, decision };

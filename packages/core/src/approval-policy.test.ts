@@ -193,106 +193,131 @@ describe("commandArgv / commandCwd", () => {
   });
 });
 
-describe("ApprovalPolicy — workspace trust (ADR 0064)", () => {
-  const covered = (code: string, over: Partial<PermissionRequest> = {}) =>
+describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", () => {
+  // An undoable write: the rule marked it, and every class is a write class.
+  const undoable = (over: Partial<PermissionRequest> = {}) =>
+    writeReq({ code: "edit_file_ask", undoable: true, ...over });
+  const cmd = (code: string, over: Partial<PermissionRequest> = {}) =>
     cmdReq(["git", "commit", "-m", "x"], { code, ...over });
 
-  it("does not trust by default, and offers the grant on a covered class only", () => {
+  it("is off by default; an undoable write then asks and offers turning it on", () => {
     const rules = mkRules();
     const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    expect(policy.workspaceTrusted()).toBe(false);
-    const vcs = policy.preflight(covered("command_ask_vcs"));
-    expect(vcs.kind).toBe("ask");
+    expect(policy.autoReviewOn()).toBe(false);
+    const pre = policy.preflight(undoable());
+    expect(pre.kind).toBe("ask");
+    if (pre.kind !== "ask") throw new Error("unreachable");
+    expect(pre.showAutoReview).toBe(true);
+    // Without a reviewer, a command is nothing review would answer.
+    const vcs = policy.preflight(cmd("command_ask_vcs"));
     if (vcs.kind !== "ask") throw new Error("unreachable");
-    expect(vcs.showTrust).toBe(true);
-    // Not covered: network, destructive, outside, unknown, unresolved.
-    for (const [code, risk] of [
-      ["command_ask_network", "network"],
-      ["command_ask_destructive", "workspace_destructive"],
-      ["command_ask_outside", "workspace_write"],
-      ["command_ask_unknown", "workspace_write"],
-      ["command_ask_unresolved", "workspace_write"],
-      ["command_ask_interpreter_inline", "workspace_write"],
-      ["command_ask_process", "workspace_write"],
-    ] as const) {
-      const pre = policy.preflight(covered(code, { risk }));
-      expect(pre.kind, code).toBe("ask");
-      if (pre.kind !== "ask") throw new Error("unreachable");
-      expect(pre.showTrust, code).toBe(false);
-    }
-    // A chained line: every class must be covered.
-    const mixed = policy.preflight(
-      covered("command_ask_vcs", {
-        codes: ["command_ask_vcs", "command_ask_network"],
-      }),
-    );
-    if (mixed.kind !== "ask") throw new Error("unreachable");
-    expect(mixed.showTrust).toBe(false);
+    expect(vcs.showAutoReview).toBe(false);
     // Without a rule store there is nowhere to record the choice.
     const bare = new ApprovalPolicy(new SessionApprovalCache());
-    const b = bare.preflight(covered("command_ask_vcs"));
+    const b = bare.preflight(undoable());
     if (b.kind !== "ask") throw new Error("unreachable");
-    expect(b.showTrust).toBe(false);
+    expect(b.showAutoReview).toBe(false);
   });
 
-  it("a 'trust' commit persists workspace trust; covered asks then auto-allow, the rest still ask", () => {
+  it("with a reviewer, offers it on whatever the reviewer would take", () => {
+    const rules = mkRules();
+    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules, {
+      reviewable: (r) => r.code !== "command_ask_harness_state",
+    });
+    const vcs = policy.preflight(cmd("command_ask_vcs"));
+    if (vcs.kind !== "ask") throw new Error("unreachable");
+    expect(vcs.showAutoReview).toBe(true);
+    const owner = policy.preflight(cmd("command_ask_harness_state"));
+    if (owner.kind !== "ask") throw new Error("unreachable");
+    expect(owner.showAutoReview).toBe(false);
+    // Committing on a request no review answers writes nothing.
+    policy.commit(cmd("command_ask_harness_state"), "auto_review");
+    expect(rules.autoReview()).toBeNull();
+    policy.commit(cmd("command_ask_vcs"), "auto_review");
+    expect(rules.autoReview()).toBe(true);
+  });
+
+  it("on: only an undoable write skips the review; everything trust used to cover asks", () => {
     const rules = mkRules();
     const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    policy.commit(covered("command_ask_vcs"), "trust");
-    expect(rules.trust()).toBe("workspace");
-    expect(policy.workspaceTrusted()).toBe(true);
-    expect(policy.preflight(covered("command_ask_vcs"))).toMatchObject({
+    policy.commit(undoable(), "auto_review");
+    expect(rules.autoReview()).toBe(true);
+    expect(policy.autoReviewOn()).toBe(true);
+    expect(policy.preflight(undoable())).toMatchObject({
       kind: "auto",
-      via: "workspace_trust",
+      via: "undoable_write",
+      scope: "task",
     });
-    expect(policy.preflight(writeReq({ code: "edit_file_ask" }))).toMatchObject(
-      { kind: "auto", via: "workspace_trust", scope: "task" },
-    );
+    // A shell line the bash rule marked: a printer's write plus mkdir -p.
     expect(
       policy.preflight(
-        covered("command_ask_recursive_read", { risk: "workspace_read" }),
+        cmd("command_ask_write", {
+          codes: ["command_ask_write", "command_ask_fs"],
+          undoable: true,
+        }),
       ),
-    ).toMatchObject({ kind: "auto", via: "workspace_trust" });
-    const net = policy.preflight(
-      covered("command_ask_network", { risk: "network" }),
-    );
-    expect(net.kind).toBe("ask");
-    if (net.kind !== "ask") throw new Error("unreachable");
-    expect(net.showTrust).toBe(false); // already trusted — nothing to offer
-    // An ask with NO class is never covered (the tier is earned, not assumed).
-    expect(policy.preflight(writeReq()).kind).toBe("ask");
-  });
-
-  it("a 'trust' commit on an uncovered request writes nothing", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    policy.commit(covered("command_ask_network", { risk: "network" }), "trust");
-    expect(rules.trust()).toBeNull();
-    expect(policy.workspaceTrusted()).toBe(false);
+    ).toMatchObject({ kind: "auto", via: "undoable_write" });
+    // What trust let through now goes to the reviewer (the resolver's step).
+    for (const code of [
+      "command_ask_vcs",
+      "command_ask_delete",
+      "command_ask_interpreter",
+      "command_ask_local_exec",
+      "command_ask_script",
+      "command_ask_fs",
+      "command_ask_write",
+    ]) {
+      const pre = policy.preflight(cmd(code));
+      expect(pre.kind, code).toBe("ask");
+      if (pre.kind !== "ask") throw new Error("unreachable");
+      expect(pre.showAutoReview, code).toBe(false); // already on
+    }
+    // The mark alone is not enough: a class that is not a write never skips.
+    for (const [code, risk] of [
+      ["command_ask_delete", "workspace_write"],
+      ["command_ask_network", "network"],
+      ["command_ask_vcs", "workspace_write"],
+    ] as const) {
+      expect(
+        policy.preflight(cmd(code, { risk, undoable: true })).kind,
+        code,
+      ).toBe("ask");
+    }
+    // Every class of a chained line must be a write class.
+    expect(
+      policy.preflight(
+        cmd("command_ask_write", {
+          codes: ["command_ask_write", "command_ask_vcs"],
+          undoable: true,
+        }),
+      ).kind,
+    ).toBe("ask");
+    // An ask with NO class is never covered: earned, not assumed.
+    expect(policy.preflight(writeReq({ undoable: true })).kind).toBe("ask");
   });
 
   it("the host's default applies until the owner chooses; an explicit choice beats it either way", () => {
     const rules = mkRules();
     let sandbox = true;
     const policy = new ApprovalPolicy(new SessionApprovalCache(), rules, {
-      defaultTrust: () => sandbox,
+      defaultAutoReview: () => sandbox,
     });
-    expect(policy.workspaceTrusted()).toBe(true);
-    expect(policy.preflight(covered("command_ask_fs"))).toMatchObject({
+    expect(policy.autoReviewOn()).toBe(true);
+    expect(policy.preflight(undoable())).toMatchObject({
       kind: "auto",
-      via: "workspace_trust",
+      via: "undoable_write",
     });
     // The workspace moved to a real project: the default flips with it.
     sandbox = false;
-    expect(policy.workspaceTrusted()).toBe(false);
-    // The owner turned trust OFF on the sandbox: explicit wins.
+    expect(policy.autoReviewOn()).toBe(false);
+    // The owner turned it OFF on the sandbox: explicit wins.
     sandbox = true;
-    rules.setTrust("ask");
-    expect(policy.workspaceTrusted()).toBe(false);
-    const pre = policy.preflight(covered("command_ask_fs"));
+    rules.setAutoReview(false);
+    expect(policy.autoReviewOn()).toBe(false);
+    const pre = policy.preflight(undoable());
     if (pre.kind !== "ask") throw new Error("unreachable");
-    expect(pre.showTrust).toBe(true);
-    rules.setTrust(null);
-    expect(policy.workspaceTrusted()).toBe(true);
+    expect(pre.showAutoReview).toBe(true);
+    rules.setAutoReview(null);
+    expect(policy.autoReviewOn()).toBe(true);
   });
 });

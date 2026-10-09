@@ -116,6 +116,8 @@ export function makeStrReplaceEditorRule(
         code: "str_replace_editor_ask",
         diff,
         files: [target.relative],
+        // An editor keeps what it replaces (ADR 0074).
+        undoable: true,
       };
     }
 
@@ -188,6 +190,8 @@ export function makeStrReplaceEditorRule(
       code: "str_replace_editor_ask",
       diff: plan.diff,
       files: [target.relative],
+      // An editor keeps what it replaces (ADR 0074).
+      undoable: true,
     };
   };
 }

@@ -42,9 +42,7 @@ const bridge: HertaBridge = {
   listCommandRules: () => ipcRenderer.invoke(CMD.listCommandRules),
   removeCommandRule: (display) =>
     ipcRenderer.invoke(CMD.removeCommandRule, display),
-  getWorkspaceTrust: () => ipcRenderer.invoke(CMD.getWorkspaceTrust),
-  setWorkspaceTrust: (value) =>
-    ipcRenderer.invoke(CMD.setWorkspaceTrust, value),
+  getAutoReview: () => ipcRenderer.invoke(CMD.getAutoReview),
   setAutoReview: (on) => ipcRenderer.invoke(CMD.setAutoReview, on),
   resyncRecord: () => ipcRenderer.invoke(CMD.resyncRecord),
   requestSessionSync: () => ipcRenderer.invoke(CMD.requestSync),

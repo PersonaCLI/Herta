@@ -160,6 +160,8 @@ export function makeEditFileRule(deps: EditFileRuleDeps = {}): PermissionRule {
       code: "edit_file_ask",
       diff,
       files: [safe.relative],
+      // An editor keeps what it replaces (ADR 0074).
+      undoable: true,
     };
   };
 }

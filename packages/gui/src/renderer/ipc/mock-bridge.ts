@@ -1,5 +1,6 @@
 import type {
   ApprovalResult,
+  AutoReviewState,
   ContinueInterruptedResult,
   CreateSessionOpts,
   OverlayEvent,
@@ -24,9 +25,7 @@ import type {
   UndoTurnEditsResult,
   VoiceCueEvent,
   WorkspaceEvent,
-  WorkspaceTrustState,
 } from "@herta/app-server";
-import type { WorkspaceTrust } from "@herta/core";
 import type {
   AttachProgressEvent,
   AttentionSettings,
@@ -79,9 +78,9 @@ export interface MockHertaBridgeOpts {
    *  is mutated by removeCommandRule so tests observe the round-trip.
    *  Default []. */
   readonly commandRules?: readonly string[];
-  /** Seed for getWorkspaceTrust (ADR 0064); setWorkspaceTrust mutates it so
-   *  tests observe the round-trip. Default: a real project, asking. */
-  readonly workspaceTrust?: WorkspaceTrustState;
+  /** Seed for getAutoReview (ADR 0075); setAutoReview mutates it so tests
+   *  observe the round-trip. Default: a real project, off. */
+  readonly autoReview?: AutoReviewState;
   readonly pickWorkspaceResult?: string | null;
   readonly setWorkspaceResult?: { ok: boolean; message?: string };
   /** Seed for the attachment picker (ADR 0033). Null = cancelled. */
@@ -225,9 +224,8 @@ export interface MockHertaBridge {
     resolveApproval: ResolveApprovalOpts[];
     listCommandRules: number;
     removeCommandRule: string[];
-    getWorkspaceTrust: number;
-    setWorkspaceTrust: Array<WorkspaceTrust | null>;
-    setAutoReview: boolean[];
+    getAutoReview: number;
+    setAutoReview: Array<boolean | null>;
     resyncRecord: number;
     checkForUpdate: number;
     restartAndInstall: number;
@@ -371,8 +369,7 @@ export function createMockHertaBridge(
     resolveApproval: [],
     listCommandRules: 0,
     removeCommandRule: [],
-    getWorkspaceTrust: 0,
-    setWorkspaceTrust: [],
+    getAutoReview: 0,
     setAutoReview: [],
     resyncRecord: 0,
     checkForUpdate: 0,
@@ -444,9 +441,9 @@ export function createMockHertaBridge(
   // Live project command rules (ADR 0030), seeded then mutated by
   // removeCommandRule so tests observe the round-trip.
   const commandRules: string[] = [...(opts.commandRules ?? [])];
-  // Live workspace trust (ADR 0064), seeded then mutated by setWorkspaceTrust.
-  let workspaceTrust: WorkspaceTrustState = opts.workspaceTrust ?? {
-    effective: "ask",
+  // Live automatic review (ADR 0075), seeded then mutated by setAutoReview.
+  let autoReview: AutoReviewState = opts.autoReview ?? {
+    on: false,
     explicit: null,
     isDefaultWorkspace: false,
   };
@@ -651,21 +648,18 @@ export function createMockHertaBridge(
       commandRules.splice(i, 1);
       return true;
     },
-    getWorkspaceTrust: async () => {
-      calls.getWorkspaceTrust += 1;
-      return workspaceTrust;
-    },
-    setWorkspaceTrust: async (value) => {
-      calls.setWorkspaceTrust.push(value);
-      const effective =
-        value ?? (workspaceTrust.isDefaultWorkspace ? "workspace" : "ask");
-      workspaceTrust = { ...workspaceTrust, explicit: value, effective };
-      return workspaceTrust;
+    getAutoReview: async () => {
+      calls.getAutoReview += 1;
+      return autoReview;
     },
     setAutoReview: async (on) => {
       calls.setAutoReview.push(on);
-      workspaceTrust = { ...workspaceTrust, autoReview: on };
-      return workspaceTrust;
+      autoReview = {
+        ...autoReview,
+        explicit: on,
+        on: on ?? autoReview.isDefaultWorkspace,
+      };
+      return autoReview;
     },
     resyncRecord: async () => {
       calls.resyncRecord += 1;

@@ -39,14 +39,15 @@ export const REASON_KEY: Record<string, MessageKey> = {
   // macOS / Linux machine-level changes (platform review 2026-09-23).
   command_ask_system: "approval.reason.commandSystem",
   // A line whose reach into `.herta` the guard cannot bound (review
-  // 2026-09-30): never trust-covered, never a rule.
+  // 2026-09-30): never reviewed, never a rule.
   command_ask_harness_state: "approval.reason.commandHarnessState",
   // Named out of `unknown` (ADR 0075 step 1): a fetch-and-run, and a line
   // whose real command the text does not show.
   command_ask_download_exec: "approval.reason.commandDownloadExec",
   command_ask_opaque: "approval.reason.commandOpaque",
   // A change to what git runs later (2026-10-09): a write into `.git`, or a
-  // repo-local config key that is a command. Never trust-covered.
+  // repo-local config key that is a command. Never a rule; a review scores
+  // it high.
   command_ask_git_internals: "approval.reason.commandGitInternals",
   // Classes named earlier that never got copy, so their raw English reason
   // showed on zh cards (found 2026-10-09 by the source scan in the test).

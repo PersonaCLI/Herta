@@ -1,5 +1,4 @@
-import type { WorkspaceTrustState } from "@herta/app-server";
-import type { WorkspaceTrust } from "@herta/core";
+import type { AutoReviewState } from "@herta/app-server";
 import { useCallback, useEffect, useRef, useState } from "react";
 import agentDevice from "../../assets/agent_device.png";
 import agentDeviceNight from "../../assets/agent_device_night.png";
@@ -255,32 +254,23 @@ export function DeviceCard(): JSX.Element {
       },
     );
   };
-  // Workspace trust (ADR 0064): same ownership as the rules — the data lives
-  // here, refreshed on every menu open, and the row is omitted when the
-  // bridge has no surface for it.
-  const trustSupported = bridge.getWorkspaceTrust !== undefined;
-  const [trust, setTrust] = useSessionScoped<WorkspaceTrustState | null>(null);
-  const refreshTrust = (): void => {
-    if (!trustSupported) return;
-    void bridge.getWorkspaceTrust?.().then(
-      (s) => setTrust(s),
+  // Automatic review (ADR 0075, which replaced workspace trust): same
+  // ownership as the rules — the data lives here, refreshed on every menu
+  // open, and the row is omitted when the bridge has no surface for it.
+  const reviewSupported = bridge.getAutoReview !== undefined;
+  const [review, setReview] = useSessionScoped<AutoReviewState | null>(null);
+  const refreshReview = (): void => {
+    if (!reviewSupported) return;
+    void bridge.getAutoReview?.().then(
+      (s) => setReview(s),
       () => {
         /* keep the last state — best-effort chrome */
       },
     );
   };
-  const handleSetTrust = (value: WorkspaceTrust | null): void => {
-    void bridge.setWorkspaceTrust?.(value).then(
-      (s) => setTrust(s),
-      () => {
-        /* unchanged — nothing was written */
-      },
-    );
-  };
-  // ADR 0075: the automatic review rides the trust state it sits beside.
   const handleSetAutoReview = (on: boolean): void => {
     void bridge.setAutoReview?.(on).then(
-      (s) => setTrust(s),
+      (s) => setReview(s),
       () => {
         /* unchanged — nothing was written */
       },
@@ -299,7 +289,7 @@ export function DeviceCard(): JSX.Element {
   };
   const refreshMenu = (): void => {
     refreshRules();
-    refreshTrust();
+    refreshReview();
   };
   const handleReset = async () => {
     if (snap.sessionId === null) return;
@@ -344,7 +334,7 @@ export function DeviceCard(): JSX.Element {
       <CardMenu
         // One menu per session: a switch by keyboard or from the tray left
         // an open menu showing the new session with an empty rules list and
-        // no trust row — the scoped data reset, and the refetch fires only
+        // no review row — the scoped data reset, and the refetch fires only
         // on the open edge (UX review 2026-09-22, item 11). The key closes
         // it with the session it described.
         key={snap.sessionId ?? "no-session"}
@@ -361,8 +351,7 @@ export function DeviceCard(): JSX.Element {
         errorText={wsError ?? undefined}
         rules={rulesSupported ? rules : undefined}
         onRemoveRule={handleRemoveRule}
-        trust={trustSupported && trust !== null ? trust : undefined}
-        onSetTrust={handleSetTrust}
+        review={reviewSupported && review !== null ? review : undefined}
         onSetAutoReview={handleSetAutoReview}
         onOpen={refreshMenu}
       />

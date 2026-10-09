@@ -314,11 +314,16 @@ describe("listSessions — bounded head/tail reads (2026-07-12)", () => {
     expect(result[0]?.lastUserText).toBe("the last message");
   });
 
-  it("accepted degradation: a last user message buried >64KB before EOF is not surfaced", () => {
+  it("a last user message buried >64KB before EOF is found by stepping back (owner 2026-10-09)", () => {
+    // Was the "accepted degradation": one request, then a run whose command
+    // text and diffs left >64KB after it, and the sidebar card showed no
+    // line at all.
     const lines = [
       HEADER({ sessionId: "buried" }),
+      '{"kind":"user","text":"first message"}',
+      ...Array.from({ length: 80 }, () => filler),
       '{"kind":"user","text":"deep message"}',
-      ...Array.from({ length: 100 }, () => filler), // ~100KB AFTER the last user msg
+      ...Array.from({ length: 300 }, () => filler), // ~300KB AFTER it
       "",
     ];
     writeFileSync(join(tmp, "buried.jsonl"), lines.join("\n"), "utf8");
@@ -327,10 +332,43 @@ describe("listSessions — bounded head/tail reads (2026-07-12)", () => {
       currentWorkspaceRoot: "/p",
     });
     expect(result).toHaveLength(1);
-    // The header + preview still resolve from the head window…
-    expect(result[0]?.preview).toBe("deep message");
-    // …but the tail window holds only backend blocks: no lastUserText.
-    expect(result[0]?.lastUserText).toBeUndefined();
+    expect(result[0]?.preview).toBe("first message");
+    expect(result[0]?.lastUserText).toBe("deep message");
+  });
+
+  it("past the step-back budget, the head's last user message stands in — never a blank card", () => {
+    const lines = [
+      HEADER({ sessionId: "deeper" }),
+      '{"kind":"user","text":"opening request"}',
+      ...Array.from({ length: 1200 }, () => filler), // ~1.2MB, past 1MB
+      "",
+    ];
+    writeFileSync(join(tmp, "deeper.jsonl"), lines.join("\n"), "utf8");
+    const result = listSessions({
+      transcriptDir: tmp,
+      currentWorkspaceRoot: "/p",
+    });
+    expect(result[0]?.lastUserText).toBe("opening request");
+  });
+
+  it("a multi-byte message cut by a step's edge comes back whole", () => {
+    const message = "帮我写个五子棋试试，".repeat(40);
+    const userLine = JSON.stringify({ kind: "user", text: message });
+    // Pad after the message so the 64KB step edge falls inside it.
+    const tailPad = "x".repeat(64 * 1024 - 300);
+    const lines = [
+      HEADER({ sessionId: "cut" }),
+      ...Array.from({ length: 80 }, () => filler),
+      userLine,
+      JSON.stringify({ kind: "system", label: "差分协处理器", body: tailPad }),
+      "",
+    ];
+    writeFileSync(join(tmp, "cut.jsonl"), lines.join("\n"), "utf8");
+    const result = listSessions({
+      transcriptDir: tmp,
+      currentWorkspaceRoot: "/p",
+    });
+    expect(result[0]?.lastUserText).toBe(`${message.slice(0, 140)}…`);
   });
 
   it("a small file behaves exactly as before (single head read)", () => {

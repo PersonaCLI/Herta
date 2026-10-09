@@ -38,13 +38,21 @@ const PREVIEW_SCAN_LINES = 5;
 const LAST_USER_MAX = 140;
 
 /** Bounded read windows (2026-07-12): the list needs only the file's HEAD
- *  (header + first-user preview) and TAIL (last user message), so it reads
- *  64KB of each instead of the whole file — a multi-MB transcript no longer
- *  costs its full bytes per sidebar refresh. Known degradation, accepted:
- *  a session whose LAST user message sits more than 64KB before EOF (>64KB
- *  of backend/system blocks after it) shows no `lastUserText`. */
+ *  (header + first-user preview) and, for the last user message, its TAIL —
+ *  64KB of each rather than the whole file, so a multi-MB transcript no
+ *  longer costs its full bytes per sidebar refresh.
+ *
+ *  The last user message is looked for BACKWARD from EOF in tail-sized
+ *  steps, up to LAST_USER_SCAN_BYTES (2026-10-09). One step was the old
+ *  "accepted degradation", and the owner met it: a single request followed
+ *  by a run that wrote a few files (command text, diffs, two runs) left
+ *  more than 64KB after the message, and the sidebar card showed no line at
+ *  all. Most sessions still stop in the first step — the message is usually
+ *  near the end. Past the budget, the last user message in the head window
+ *  stands in: a message, if not the newest, rather than a blank card. */
 const HEAD_SCAN_BYTES = 64 * 1024;
 const TAIL_SCAN_BYTES = 64 * 1024;
+const LAST_USER_SCAN_BYTES = 1024 * 1024;
 
 /** Header-only listing reads just enough to cover the first line (the
  *  `session_meta` header); a header carries only ids + two workspace paths,
@@ -60,6 +68,64 @@ function readWindow(fd: number, position: number, length: number): string {
   const buf = Buffer.alloc(length);
   const n = readSync(fd, buf, 0, length, position);
   return buf.toString("utf8", 0, n);
+}
+
+/** The text of a user block on `line`, or undefined. */
+function userText(line: string): string | undefined {
+  if (line === "") return undefined;
+  try {
+    const block = JSON.parse(line) as { kind?: string; text?: string };
+    return block.kind === "user" && typeof block.text === "string"
+      ? block.text
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The last user message of a file, read BACKWARD from EOF in tail-sized
+ * steps until one is found, the start is reached, or `budget` bytes are
+ * read. Steps are joined as BYTES and split at `\n` before decoding — a
+ * newline byte never occurs inside a UTF-8 sequence — so a line, or a
+ * multi-byte character, cut by a step's edge is carried whole into the
+ * next step instead of decoded in two garbled halves.
+ */
+function lastUserBackward(
+  fd: number,
+  size: number,
+  budget: number,
+): string | undefined {
+  let end = size;
+  let carry = Buffer.alloc(0);
+  let read = 0;
+  while (end > 0 && read < budget) {
+    const start = Math.max(0, end - TAIL_SCAN_BYTES);
+    const buf = Buffer.alloc(end - start);
+    const n = readSync(fd, buf, 0, buf.length, start);
+    read += n;
+    let chunk = Buffer.concat([buf.subarray(0, n), carry]);
+    if (start > 0) {
+      // The first line may begin before this step: carry it back.
+      const nl = chunk.indexOf(0x0a);
+      if (nl === -1) {
+        carry = chunk;
+        end = start;
+        continue;
+      }
+      carry = Buffer.from(chunk.subarray(0, nl));
+      chunk = chunk.subarray(nl + 1);
+    } else {
+      carry = Buffer.alloc(0);
+    }
+    const lines = chunk.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const text = userText(lines[i] ?? "");
+      if (text !== undefined) return text;
+    }
+    end = start;
+  }
+  return undefined;
 }
 
 interface ValidatedSessionHeader {
@@ -179,15 +245,26 @@ export function listSessions(opts: ListSessionsOpts): SessionListEntry[] {
   const entries: SessionListEntry[] = [];
   for (const { sessionFile, mtime, size } of stats) {
     if (entries.length >= limit) break;
-    let head: string;
-    // null when the head window covers the whole file (small transcript).
-    let tailStr: string | null = null;
+    let headLines: string[];
+    let header: ValidatedSessionHeader | null;
+    // The last user message found backward from EOF; undefined when the head
+    // covers the whole file (small transcript) or none was found in budget.
+    let lastFromEnd: string | undefined;
     try {
       const fd = openSync(sessionFile, "r");
       try {
-        head = readWindow(fd, 0, Math.min(size, HEAD_SCAN_BYTES));
-        if (size > HEAD_SCAN_BYTES) {
-          tailStr = readWindow(fd, size - TAIL_SCAN_BYTES, TAIL_SCAN_BYTES);
+        headLines = readWindow(fd, 0, Math.min(size, HEAD_SCAN_BYTES)).split(
+          "\n",
+        );
+        header = parseSessionHeader(headLines[0] ?? "");
+        // Only a file this workspace lists reads past its head: a foreign
+        // one costs its head alone, as before.
+        const listed =
+          header !== null &&
+          (opts.allWorkspaces === true ||
+            header.workspaceRoot === opts.currentWorkspaceRoot);
+        if (listed && size > HEAD_SCAN_BYTES) {
+          lastFromEnd = lastUserBackward(fd, size, LAST_USER_SCAN_BYTES);
         }
       } finally {
         closeSync(fd);
@@ -195,9 +272,7 @@ export function listSessions(opts: ListSessionsOpts): SessionListEntry[] {
     } catch {
       continue;
     }
-    const headLines = head.split("\n");
     const lines = headLines.slice(0, PREVIEW_SCAN_LINES + 1);
-    const header = parseSessionHeader(lines[0] ?? "");
     if (header === null) continue;
     if (
       opts.allWorkspaces !== true &&
@@ -226,38 +301,21 @@ export function listSessions(opts: ListSessionsOpts): SessionListEntry[] {
       }
     }
 
-    // Find the LAST user block — the message the user most recently sent
-    // (where they left off). Scans backward over the TAIL window for large
-    // files (its first element is a likely-partial line — and the landing
-    // spot for any mid-char window split — so it is dropped), or over the
-    // head lines (minus the header) when the head covered the whole file.
-    let scanLines: string[];
-    let scanFloor: number;
-    if (tailStr === null) {
-      scanLines = headLines;
-      scanFloor = 1; // index 0 is the header
-    } else {
-      scanLines = tailStr.split("\n");
-      scanLines.shift();
-      scanFloor = 0;
+    // The LAST user block — the message the user most recently sent (where
+    // they left off): found backward from EOF for a large file; otherwise —
+    // and as the fallback past that scan's budget — the last one in the
+    // head (minus the header; a head cut mid-line leaves a partial last
+    // line, which fails its parse).
+    let found = lastFromEnd;
+    for (let i = headLines.length - 1; found === undefined && i >= 1; i--) {
+      found = userText(headLines[i] ?? "");
     }
-    let lastUserText: string | undefined;
-    for (let i = scanLines.length - 1; i >= scanFloor; i--) {
-      const line = scanLines[i];
-      if (line === undefined || line === "") continue;
-      try {
-        const block = JSON.parse(line) as { kind?: string; text?: string };
-        if (block.kind === "user" && typeof block.text === "string") {
-          lastUserText =
-            block.text.length > LAST_USER_MAX
-              ? `${block.text.slice(0, LAST_USER_MAX)}…`
-              : block.text;
-          break;
-        }
-      } catch {
-        // ignore individual line parse errors
-      }
-    }
+    const lastUserText =
+      found === undefined
+        ? undefined
+        : found.length > LAST_USER_MAX
+          ? `${found.slice(0, LAST_USER_MAX)}…`
+          : found;
 
     const title = readSessionTitle(opts.transcriptDir, header.sessionId);
     entries.push({

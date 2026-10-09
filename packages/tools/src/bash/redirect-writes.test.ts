@@ -9,9 +9,16 @@ import {
   settleRedirectTargets,
   writesAccounted,
 } from "./redirect-writes.js";
-import { makeMsysPaths, type ShellPaths } from "./shell-paths.js";
+import {
+  makeMsysPaths,
+  type ShellPaths,
+  shellPathsFor,
+} from "./shell-paths.js";
 
-const PATHS: ShellPaths = makeMsysPaths(null);
+// The mapping the tool gets on this platform: MSYS spellings on Windows, the
+// identity on POSIX — where an MSYS mapping cannot place `/tmp/…` at all.
+const PATHS: ShellPaths =
+  process.platform === "win32" ? makeMsysPaths(null) : shellPathsFor(null);
 
 let ws: TmpWorkspace;
 afterEach(async () => {

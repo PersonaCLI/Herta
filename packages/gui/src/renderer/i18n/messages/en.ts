@@ -312,6 +312,8 @@ export const en = {
     "Downloads a package and runs it — asked every time",
   "approval.reason.commandOpaque":
     "What this runs cannot be read from the command (encoded, computed, or fed on input) — asked every time",
+  "approval.reason.commandGitInternals":
+    "Changes .git internals (hooks or config) that git later runs as commands — asked every time",
   "approval.reason.commandOutside":
     "Touches a path outside the workspace — check the path",
   "approval.reason.commandLocalExec":

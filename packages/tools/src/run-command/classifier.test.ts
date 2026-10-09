@@ -1708,13 +1708,20 @@ describe("classifyCommand — the named shapes (ADR 0064 L1)", () => {
     for (const argv of [
       ["git", "config", "core.autocrlf", "false"],
       ["git", "config", "--unset", "core.autocrlf"],
-      ["git", "config", "--add", "a.b", "c"],
-      ["git", "config", "-e"],
-      ["git", "config", "--file", "../x", "a.b"],
       ["git", "config", "--list", "a.b"],
     ]) {
       expect(code(argv), argv.join(" ")).toBe("command_ask_vcs");
     }
+    // Still not reads; since 2026-10-09 no longer plain vcs either. A key not
+    // known to be data, and an edit of keys the line does not name, may be a
+    // command git runs later; a file outside the workspace is outside.
+    expect(code(["git", "config", "--add", "a.b", "c"])).toBe(
+      "command_ask_git_internals",
+    );
+    expect(code(["git", "config", "-e"])).toBe("command_ask_git_internals");
+    expect(code(["git", "config", "--file", "../x", "a.b"])).toBe(
+      "command_ask_outside",
+    );
     for (const argv of [
       ["od", "-c", "README.md"],
       ["hexdump", "-C", "a.bin"],
@@ -2000,5 +2007,199 @@ describe("classifyCommand — what hid in `command_ask_unknown` is named (ADR 00
     expect(code(["ls", "-la"])).toBe("allow");
     expect(code(["curl", "http://localhost:4642/x"])).toBe("allow");
     expect(code(["rm", "-rf", "/"])).toBe("block");
+  });
+});
+
+describe("classifyCommand — what git runs later, and where git points (2026-10-09)", () => {
+  // The ADR 0075 replay's held-out set found `git config --global
+  // core.hooksPath /tmp/hooks` filed as `command_ask_vcs` — a class
+  // workspace trust answers with no card — while the hooks it names run on
+  // every commit in every repository.
+  const verdict = (argv: string[], writeGuard?: WriteGuard) =>
+    classifyCommand(argv, { shell: true, unresolved: true, writeGuard });
+  const code = (argv: string[], writeGuard?: WriteGuard) => {
+    const r = verdict(argv, writeGuard);
+    return r.kind === "ask" ? r.code : r.kind;
+  };
+  const risk = (argv: string[], writeGuard?: WriteGuard) => {
+    const r = verdict(argv, writeGuard);
+    return r.kind === "ask" ? r.risk : r.kind;
+  };
+
+  it("a --global or --system config write is a system change; reads stay allowed", () => {
+    for (const argv of [
+      ["git", "config", "--global", "core.hooksPath", "/tmp/hooks"],
+      ["git", "config", "--global", "user.name", "Robin"],
+      ["git", "config", "--system", "core.editor", "vim"],
+      ["git", "config", "--global", "--add", "safe.directory", "*"],
+      ["git", "config", "set", "--global", "alias.x", "!sh"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_system");
+      expect(risk(argv), argv.join(" ")).toBe("workspace_destructive");
+    }
+    expect(code(["git", "config", "--global", "--get", "user.name"])).toBe(
+      "allow",
+    );
+    expect(code(["git", "config", "--global", "--list"])).toBe("allow");
+    expect(code(["git", "config", "--get", "user.name"])).toBe("allow");
+  });
+
+  it("--file outside the workspace is outside, a read of it too", () => {
+    for (const argv of [
+      ["git", "config", "--file", "~/.bashrc", "a.b", "c"],
+      ["git", "config", "--file=/etc/gitconfig", "a.b", "c"],
+      ["git", "config", "-f", "../other/.git/config", "user.name", "x"],
+      ["git", "config", "--file", "~/.ssh/config", "--list"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_outside");
+    }
+    // Inside, a read of a config file stays what it was.
+    expect(
+      code(["git", "config", "-f", ".gitmodules", "--get", "submodule.a.url"]),
+    ).toBe("command_ask_vcs");
+  });
+
+  it("a repo-local key that is a command, or loads config, is git internals", () => {
+    for (const argv of [
+      ["git", "config", "core.hooksPath", "/tmp/hooks"],
+      ["git", "config", "--local", "core.fsmonitor", "sh -c x"],
+      ["git", "config", "core.sshCommand", "ssh -o ProxyCommand=x"],
+      ["git", "config", "core.pager", "sh -c x"],
+      ["git", "config", "alias.st", "!rm -rf ~"],
+      ["git", "config", "alias.co", "checkout"],
+      ["git", "config", "filter.lfs.clean", "x"],
+      ["git", "config", "diff.bin.textconv", "x"],
+      ["git", "config", "include.path", "../evil.cfg"],
+      ["git", "config", "credential.helper", "store"],
+      ["git", "config", "http.sslVerify", "false"],
+      ["git", "config", "submodule.a.update", "!x"],
+      ["git", "config", "Core.HooksPath", "/tmp/hooks"],
+      ["git", "config", "set", "alias.st", "!x"],
+      ["git", "config", "--add", "alias.st", "!x"],
+      ["git", "config", "--edit"],
+      ["git", "config", "--rename-section", "foo", "core"],
+      ["git", "config", "--frobnicate", "user.name", "x"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_git_internals");
+      expect(risk(argv), argv.join(" ")).toBe("workspace_destructive");
+    }
+  });
+
+  it("a repo-local key that is data, and removing a key, stay vcs", () => {
+    for (const argv of [
+      ["git", "config", "user.name", "Robin"],
+      ["git", "config", "USER.EMAIL", "r@example.com"],
+      ["git", "config", "core.autocrlf", "false"],
+      ["git", "config", "pull.rebase", "true"],
+      ["git", "config", "remote.origin.url", "https://example.com/r.git"],
+      ["git", "config", "branch.main.remote", "origin"],
+      ["git", "config", "submodule.a.url", "https://example.com/a.git"],
+      ["git", "config", "color.ui", "auto"],
+      ["git", "config", "--unset", "core.hooksPath"],
+      ["git", "config", "unset", "alias.st"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_vcs");
+    }
+  });
+
+  it("git pointed at a repository outside the workspace is outside", () => {
+    for (const argv of [
+      ["git", "-C", "../other", "commit", "-m", "x"],
+      ["git", "-C", "../other", "config", "core.hooksPath", "x"],
+      ["git", "--git-dir", "../other/.git", "status"],
+      ["git", "--git-dir=../other/.git", "log"],
+      ["git", "--work-tree=/tmp/w", "add", "."],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_outside");
+    }
+    expect(code(["git", "-C", "sub", "commit", "-m", "x"])).toBe(
+      "command_ask_vcs",
+    );
+    expect(code(["git", "status"])).toBe("allow");
+  });
+
+  it("a written operand inside .git, or a shell body naming it, is git internals", () => {
+    const guard: WriteGuard = {
+      path: () => null,
+      body: () => null,
+      gitInternal: (o) => /(^|[\\/])\.git([\\/]|$)/.test(o),
+    };
+    for (const argv of [
+      ["cp", "evil.sh", ".git/hooks/pre-commit"],
+      ["mv", "x", ".git/hooks/pre-commit"],
+      ["sed", "-i", "s/a/b/", ".git/config"],
+      ["rm", "-f", ".git/index.lock"],
+      ["git", "config", "--file", ".git/config", "user.name", "x"],
+      ["bash", "-c", "echo x > .git/hooks/pre-commit"],
+      ["bash", "-c", "cp evil .git/hooks/pre-commit"],
+      ["cmd", "/c", "copy evil .git\\hooks\\pre-commit"],
+    ]) {
+      expect(code(argv, guard), argv.join(" ")).toBe(
+        "command_ask_git_internals",
+      );
+    }
+    // A class already outside trust keeps its own, stronger label.
+    expect(code(["rm", "-rf", ".git"], guard)).toBe("command_ask_destructive");
+    // `.gitignore` is not `.git`.
+    expect(code(["cp", ".gitignore", "backup.txt"], guard)).toBe(
+      "command_ask_fs",
+    );
+    expect(code(["bash", "-c", "cat .gitignore > x.txt"], guard)).toBe(
+      "command_ask_write",
+    );
+    // Without the hook, nothing changes.
+    expect(code(["cp", "evil.sh", ".git/hooks/pre-commit"])).toBe(
+      "command_ask_fs",
+    );
+  });
+
+  it("git config --file names the file a write lands in, for the .herta guard", () => {
+    expect(
+      writtenOperands(["git", "config", "--file", ".herta/p.json", "a.b", "c"]),
+    ).toEqual([".herta/p.json"]);
+    expect(
+      writtenOperands(["git", "config", "--file=.herta/p.json", "a.b", "c"]),
+    ).toEqual([".herta/p.json"]);
+    // A read writes nothing.
+    expect(
+      writtenOperands(["git", "config", "-f", ".herta/p.json", "--list"]),
+    ).toEqual([]);
+    expect(writtenOperands(["git", "config", "user.name", "x"])).toEqual([]);
+  });
+
+  it("cmd's delete commands are judged like rm, and %VAR% paths are outside", () => {
+    expect(code(["cmd", "//c", "del /s /q %TEMP%\\*"])).toBe(
+      "command_ask_outside",
+    );
+    expect(code(["cmd", "/c", "rd /s /q build"])).toBe(
+      "command_ask_destructive",
+    );
+    expect(code(["del", "/q", "x.txt"])).toBe("command_ask_delete");
+    expect(code(["erase", "notes.txt"])).toBe("command_ask_delete");
+    expect(code(["rd", "/s", "/q", "build"])).toBe("command_ask_destructive");
+    expect(code(["rmdir", "/S", "/Q", "build"])).toBe(
+      "command_ask_destructive",
+    );
+    expect(code(["del", "%USERPROFILE%\\x.txt"])).toBe("command_ask_outside");
+    expect(code(["cp", "x", "%TEMP%\\y"])).toBe("command_ask_outside");
+    // POSIX rmdir is unchanged, and the catastrophe still blocks.
+    expect(code(["rmdir", "build"])).toBe("command_ask_delete");
+    expect(code(["cmd", "/c", "rd /s /q C:\\"])).toBe("block");
+  });
+
+  it("publishing to a package registry is network", () => {
+    for (const argv of [
+      ["npm", "publish"],
+      ["npm", "publish", "--dry-run"],
+      ["pnpm", "publish", "--access", "public"],
+      ["yarn", "publish"],
+      ["yarn", "npm", "publish"],
+      ["bun", "publish"],
+      ["npm", "unpublish", "pkg@1.0.0"],
+      ["npm", "deprecate", "pkg@1", "old"],
+      ["npm", "dist-tag", "add", "pkg@1.0.0", "latest"],
+    ]) {
+      expect(code(argv), argv.join(" ")).toBe("command_ask_network");
+    }
   });
 });

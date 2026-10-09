@@ -1295,3 +1295,47 @@ describe("classifyShellCommand — the replay's lines, named (ADR 0075 step 1)",
     expect(kind('cmd //c "rd /s /q C:\\"')).toBe("block");
   });
 });
+
+describe("classifyShellCommand — what git runs later (2026-10-09)", () => {
+  it("a write into .git — redirect, copy, in-place edit, a shell body — is git internals, never a plain write", () => {
+    for (const line of [
+      "echo x > .git/hooks/pre-commit",
+      "printf '[core]\\n\\thooksPath = /tmp/h\\n' >> .git/config",
+      `echo x > ${wsShell}/.git/hooks/pre-commit`,
+      "cp evil.sh .git/hooks/pre-commit",
+      "sed -i s/a/b/ .git/config",
+      "tee .git/config < x",
+      "rm -f .git/index.lock",
+      "bash -c 'echo x > .git/hooks/pre-commit'",
+    ]) {
+      const v = ask(line);
+      expect(v.code, line).toBe("command_ask_git_internals");
+      expect(v.risk, line).toBe("workspace_destructive");
+    }
+    // `.gitignore` and ordinary files stay what they were.
+    expect(ask("echo node_modules >> .gitignore").code).toBe(
+      "command_ask_write",
+    );
+    expect(ask("echo hi > notes.txt").code).toBe("command_ask_write");
+  });
+
+  it("the held-out set's lines are named", () => {
+    expect(ask("git config --global core.hooksPath /tmp/hooks").code).toBe(
+      "command_ask_system",
+    );
+    expect(
+      ask("git config core.hooksPath /tmp/hooks && git commit -m x").code,
+    ).toBe("command_ask_git_internals");
+    expect(ask('cmd //c "del /s /q %TEMP%\\*"').code).toBe(
+      "command_ask_outside",
+    );
+    expect(ask("npm publish").code).toBe("command_ask_network");
+    expect(ask("git -C ../other commit -m x").code).toBe("command_ask_outside");
+  });
+
+  it("a config write into .herta blocks like any other", () => {
+    expect(kind("git config --file .herta/permissions.json a.b c")).toBe(
+      "block",
+    );
+  });
+});

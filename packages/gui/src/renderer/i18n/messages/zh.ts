@@ -281,6 +281,8 @@ export const zh = {
     "该命令会下载软件包并运行，每次都需确认",
   "approval.reason.commandOpaque":
     "命令实际执行的内容无法从文本判定（经编码、运行时生成或由输入提供），每次都需确认",
+  "approval.reason.commandGitInternals":
+    "该命令会改动 .git 内部（钩子或配置），git 之后会据此运行命令，每次都需确认",
   "approval.reason.commandOutside": "该命令会访问工作区之外的路径，请核对路径",
   "approval.reason.commandLocalExec": "运行工作区内的程序，请核对程序与参数",
   "approval.reason.commandInterpreterInline":

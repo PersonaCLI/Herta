@@ -299,11 +299,12 @@ function realpathSyncViaExistingAncestor(candidate: string): string {
   }
 }
 
-/** True when a path RELATIVE to the workspace passes through `.herta`
- *  (the filesystem's case policy, Win32's trimmed spelling). */
-function relativeTouchesHerta(
+/** True when a path RELATIVE to the workspace passes through a directory
+ *  named `name` (the filesystem's case policy, Win32's trimmed spelling). */
+function relativeTouchesSegment(
   workspaceRoot: string,
   absolute: string,
+  name: string,
 ): boolean {
   if (!isPathInside(workspaceRoot, absolute)) return false;
   const rel = relativePath(workspaceRoot, absolute);
@@ -311,7 +312,41 @@ function relativeTouchesHerta(
   return rel
     .split(sep)
     .map(winCanonicalizeSegment)
-    .some((seg) => caseNormalize(seg) === caseNormalize(".herta"));
+    .some((seg) => caseNormalize(seg) === caseNormalize(name));
+}
+
+function relativeTouchesHerta(
+  workspaceRoot: string,
+  absolute: string,
+): boolean {
+  return relativeTouchesSegment(workspaceRoot, absolute, ".herta");
+}
+
+/**
+ * True when a COMMAND's write lands inside a repository's `.git` beneath the
+ * workspace — its config, hooks or internals (2026-10-09).
+ *
+ * The editors never write there (the structural `.git` denial in
+ * {@link resolveSafePath}); a shell could, as a plain write: `> .git/config`,
+ * `cp x .git/hooks/pre-commit`, `sed -i … .git/config`. Those are classes
+ * workspace trust answers with no card, and a hook or a config key there is
+ * a command git runs later — `git commit` runs `pre-commit`, `git status`
+ * runs `core.fsmonitor` — behind commands that are allowed or trusted
+ * themselves. Not a block: removing a stale `.git/index.lock` is an honest
+ * repair. The classifiers ask in a class trust never covers. Judged like
+ * {@link hertaStateWriteDenial}: as spelled and through links.
+ */
+export function gitInternalsWrite(
+  workspaceRoot: string,
+  absolute: string,
+): boolean {
+  const resolved = realpathSyncViaExistingAncestor(absolute);
+  const rootResolved = realpathSyncViaExistingAncestor(workspaceRoot);
+  return (
+    relativeTouchesSegment(workspaceRoot, absolute, ".git") ||
+    relativeTouchesSegment(workspaceRoot, resolved, ".git") ||
+    relativeTouchesSegment(rootResolved, resolved, ".git")
+  );
 }
 
 /**

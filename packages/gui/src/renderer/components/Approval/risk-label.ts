@@ -45,6 +45,9 @@ export const REASON_KEY: Record<string, MessageKey> = {
   // whose real command the text does not show.
   command_ask_download_exec: "approval.reason.commandDownloadExec",
   command_ask_opaque: "approval.reason.commandOpaque",
+  // A change to what git runs later (2026-10-09): a write into `.git`, or a
+  // repo-local config key that is a command. Never trust-covered.
+  command_ask_git_internals: "approval.reason.commandGitInternals",
   // Classes named earlier that never got copy, so their raw English reason
   // showed on zh cards (found 2026-10-09 by the source scan in the test).
   command_ask_outside: "approval.reason.commandOutside",

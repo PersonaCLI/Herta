@@ -1387,6 +1387,7 @@ const ESCALATING_CODES: readonly string[] = [
   "command_ask_network",
   "command_ask_outside",
   "command_ask_harness_state",
+  "command_ask_git_internals",
 ];
 
 /**
@@ -1598,6 +1599,27 @@ function networkShape(id: string, argv: readonly string[]): string | null {
     ["pull", "push", "login", "run", "create", "build", "search"].includes(sub)
   ) {
     return `${id} ${sub} reaches a registry`;
+  }
+  // Publishing to a package registry (2026-10-09): `npm publish` was
+  // `unknown`. `yarn npm publish` is Berry's spelling.
+  if (["npm", "pnpm", "yarn", "bun"].includes(id) && sub !== undefined) {
+    const verb =
+      id === "yarn" && sub === "npm"
+        ? args.filter((a) => !a.startsWith("-"))[1]
+        : sub;
+    if (
+      verb !== undefined &&
+      [
+        "publish",
+        "unpublish",
+        "deprecate",
+        "dist-tag",
+        "owner",
+        "access",
+      ].includes(verb)
+    ) {
+      return `${id} ${verb} changes what the package registry serves`;
+    }
   }
   return null;
 }
@@ -2215,11 +2237,36 @@ export interface WriteGuard {
   /** The paths a patch file WRITES, read now; null when the file cannot be
    *  read (absent, too large, stdin, a token the caller cannot resolve). */
   patch?(file: string): readonly string[] | null;
+  /** True when writing the operand lands inside a repository's `.git`
+   *  beneath the workspace (`gitInternalsWrite`). A caller without it gets
+   *  no git-internals ask for written operands. */
+  gitInternal?(operand: string): boolean;
 }
 
 /** The ask class of a line whose reach into `.herta` the guard cannot
  *  bound (see `harnessReach`): never trust-covered, never rule-eligible. */
 export const HARNESS_STATE_ASK_CODE = "command_ask_harness_state";
+
+/**
+ * The ask class of a change to what git RUNS later (2026-10-09): a write
+ * into a repository's `.git` (hooks, config, internals), and a repo-local
+ * `git config` key whose value is a command or loads more config
+ * (`core.hooksPath`, `core.fsmonitor`, `alias.*`, `filter.*`,
+ * `include.path`, …). Each was a plain write or vcs class, which workspace
+ * trust answers with no card, while the command it plants runs behind
+ * `git commit` or an allowed `git status`. Risk `workspace_destructive`:
+ * never cached, never trust-covered, never rule-eligible.
+ */
+export const GIT_INTERNALS_ASK_CODE = "command_ask_git_internals";
+
+function gitInternalsAsk(reason: string): Verdict {
+  return {
+    kind: "ask",
+    risk: "workspace_destructive",
+    code: GIT_INTERNALS_ASK_CODE,
+    reason,
+  };
+}
 
 export function classifyCommand(
   argv: readonly string[],
@@ -2245,8 +2292,52 @@ export function classifyCommand(
       return { kind: "block", code: "command_blocked", reason: denial };
     }
   }
-  if (verdict.kind === "ask") return harnessReach(argv, guard) ?? verdict;
+  if (verdict.kind === "ask") {
+    return (
+      harnessReach(argv, guard) ??
+      gitInternalsReach(argv, verdict, guard, reentry) ??
+      verdict
+    );
+  }
   return verdict;
+}
+
+/** A `.git` path segment in shell text: `.git/hooks`, `.git\config`,
+ *  `./.git`, a bare `.git` operand. */
+const GIT_DIR_IN_TEXT = /(?:^|[\s"'=/\\(;&|])\.git(?:[/\\\s"';&|)]|$)/;
+
+/**
+ * A written operand inside a repository's `.git` (2026-10-09): its own
+ * class when the verdict was one trust or the cache could answer — `cp x
+ * .git/hooks/pre-commit` was `_fs`, `sed -i … .git/config` was `_write`. A
+ * verdict already outside that tier (destructive, outside, …) keeps its own
+ * label. Null when no written operand is there, or the guard cannot judge.
+ */
+function gitInternalsReach(
+  argv: readonly string[],
+  verdict: Extract<Verdict, { kind: "ask" }>,
+  guard: WriteGuard,
+  reentry: ReturnType<typeof extractShellReentry>,
+): Verdict | null {
+  if (guard.gitInternal === undefined) return null;
+  if (verdict.risk !== "workspace_write") return null;
+  const into = writtenOperands(argv).find(
+    (o) => o !== "" && guard.gitInternal?.(o) === true,
+  );
+  if (into !== undefined) {
+    return gitInternalsAsk(
+      `${interpreterName(argv[0] ?? "")} changes ${into}, inside .git — git runs its hooks and reads its config later`,
+    );
+  }
+  // A body handed to another shell is text no argv parse reaches (`bash -c
+  // "echo x > .git/hooks/pre-commit"`): naming `.git` is enough, as naming
+  // `.herta` is for the state guard.
+  if (reentry?.kind === "body" && GIT_DIR_IN_TEXT.test(reentry.body)) {
+    return gitInternalsAsk(
+      `${reentry.via} is handed a command that names .git — git runs its hooks and reads its config later`,
+    );
+  }
+  return null;
 }
 
 /**
@@ -2519,6 +2610,13 @@ function gitWrittenOperands(argv: readonly string[]): string[] {
       return rest[0] === "create" ? firstPathOperand(rest.slice(1)) : [];
     case "format-patch":
       return optionValues(rest, ["-o", "--output-directory"]);
+    case "config": {
+      // The file a config WRITE lands in (2026-10-09): `git config --file
+      // .herta/permissions.json k v` wrote the harness's rules with a vcs
+      // card. A read of it writes nothing.
+      const c = parseGitConfig(rest);
+      return c.read || c.file === null ? [] : [c.file];
+    }
     default:
       return [];
   }
@@ -2971,11 +3069,23 @@ function classifyCommandTiers(
   if (a0 === "go" && argv[1] === "test") {
     return readerArgvGuard(argv, live) ?? { kind: "allow" };
   }
+  // git pointed at a repository elsewhere (2026-10-09): `-C ../other`,
+  // `--git-dir`, `--work-tree` outside the workspace. Every subcommand below
+  // would otherwise be judged as if it acted on this repository — `vcs`,
+  // which trust answers with no card.
+  if (gitSub !== null) {
+    const elsewhere = gitRepoElsewhere(argv.slice(1, gitSub), live);
+    if (elsewhere !== null) return outsideAsk("git", elsewhere);
+  }
   // `git config` that only READS (ADR 0064 L1): `--get`/`--list` forms, or a
   // bare key. A value operand, an unset/add/edit flag, or a `--file`/`--blob`
-  // source is a write or a read of somewhere else and stays vcs below.
+  // source is a write or a read of somewhere else, judged next.
   if (a0 === "git" && gitSubName === "config" && gitConfigReads(gitSubArgs)) {
     return { kind: "allow" };
+  }
+  if (gitSubName === "config") {
+    const config = gitConfigVerdict(gitSubArgs, live);
+    if (config !== null) return config;
   }
   if (
     a0 === "git" &&
@@ -3221,6 +3331,8 @@ function classifyCommandTiers(
   // outside the workspace — absolute, `..`, `~`, or unknowable under a live
   // shell — is its own class, so a trusted workspace never auto-allows
   // `cp secrets /tmp/x` on the strength of `cp` being "fs".
+  const cmdDelete = cmdDeleteShape(id, argv, live);
+  if (cmdDelete !== null) return cmdDelete;
   if (id === "rm" || id === "rmdir" || id === "unlink") {
     const out = outsideOperand(argv, live);
     if (out !== null) return outsideAsk(id, out);
@@ -3280,6 +3392,9 @@ function classifyCommandTiers(
 function escapesWorkspaceOperand(a: string, live: boolean): boolean {
   if (a.includes("__SUBST__")) return true;
   if (live && /[$`]/.test(a)) return true;
+  // cmd's own expansion (`%TEMP%\x`, `%USERPROFILE%`, `%ProgramFiles(x86)%`):
+  // a place the harness cannot resolve from the line (2026-10-09).
+  if (/%[A-Za-z_][\w()]*%/.test(a)) return true;
   if (/^([A-Za-z]:|[\\/]|~)/.test(a)) return true;
   return a === ".." || a.includes("../") || a.includes("..\\") || a === "...";
 }
@@ -3292,6 +3407,49 @@ function outsideOperand(argv: readonly string[], live: boolean): string | null {
     if (escapesWorkspaceOperand(a, live)) return a;
   }
   return null;
+}
+
+/** A cmd switch: `/s`, `/q`, `/a:h`. */
+const CMD_SWITCH = /^\/[A-Za-z?](?::\S*)?$/;
+
+/**
+ * cmd's own delete commands, as a cmd body runs them (2026-10-09): `del` /
+ * `erase` delete files, `rd` — and `rmdir` given a cmd switch — directories.
+ * They were `unknown`, so `cmd //c "del /s /q %TEMP%\*"` read as
+ * unrecognised. Judged like `rm`: a target the line cannot place inside the
+ * workspace (absolute, `..`, `%TEMP%`) is outside; `/s` reaches the whole
+ * tree beneath, rm -rf's class; anything else is a delete. The catastrophic
+ * targets (`rd /s /q C:\`) blocked before this.
+ */
+function cmdDeleteShape(
+  id: string,
+  argv: readonly string[],
+  live: boolean,
+): Verdict | null {
+  const args = argv.slice(1);
+  const cmdForm =
+    id === "del" ||
+    id === "erase" ||
+    id === "rd" ||
+    (id === "rmdir" && args.some((a) => CMD_SWITCH.test(a)));
+  if (!cmdForm) return null;
+  const targets = args.filter((a) => !CMD_SWITCH.test(a));
+  const out = targets.find((t) => escapesWorkspaceOperand(t, live));
+  if (out !== undefined) return outsideAsk(id, out);
+  if (args.some((a) => a.toLowerCase() === "/s")) {
+    return {
+      kind: "ask",
+      risk: "workspace_destructive",
+      code: "command_ask_destructive",
+      reason: `${id} /s deletes through the whole tree: ${targets.join(" ")}`,
+    };
+  }
+  return {
+    kind: "ask",
+    risk: "workspace_write",
+    code: "command_ask_delete",
+    reason: `${id} deletes: ${targets.join(" ")}`,
+  };
 }
 
 function outsideAsk(program: string, operand: string): Verdict {
@@ -3499,6 +3657,221 @@ function gitConfigReads(subArgs: readonly string[]): boolean {
     operands += 1;
   }
   return listing ? operands === 0 : operands === 1;
+}
+
+/** The first of git's repository-selecting global options (`-C`,
+ *  `--git-dir`, `--work-tree`, as `--opt V` or `--opt=V`) whose value leaves
+ *  the workspace, or null. `globals` is argv between `git` and the
+ *  subcommand. */
+function gitRepoElsewhere(
+  globals: readonly string[],
+  live: boolean,
+): string | null {
+  for (let i = 0; i < globals.length; i += 1) {
+    const a = globals[i] as string;
+    let value: string | undefined;
+    if (a === "-C" || a === "--git-dir" || a === "--work-tree") {
+      value = globals[i + 1];
+      i += 1;
+    } else if (a.startsWith("--git-dir=") || a.startsWith("--work-tree=")) {
+      value = a.slice(a.indexOf("=") + 1);
+    }
+    if (value !== undefined && escapesWorkspaceOperand(value, live))
+      return value;
+  }
+  return null;
+}
+
+/**
+ * Repo-local `git config` keys whose value is data, not a command git runs
+ * later (2026-10-09). Fail closed: any other key — `core.hooksPath`,
+ * `core.fsmonitor`, `core.sshCommand`, `core.pager`, `core.editor`,
+ * `alias.*`, `filter.*`, `diff.*.textconv`, `merge.*.driver`,
+ * `credential.helper`, `include.path`, `http.sslVerify`, … — asks as
+ * `command_ask_git_internals`. Section and variable names are
+ * case-insensitive in git.
+ */
+const GIT_CONFIG_INERT_KEY =
+  /^(?:user\.(?:name|email|signingkey)|core\.(?:autocrlf|eol|filemode|ignorecase|quotepath|safecrlf|longpaths|symlinks|precomposeunicode|whitespace|abbrev)|init\.defaultbranch|pull\.(?:rebase|ff)|push\.(?:default|autosetupremote|followtags)|fetch\.(?:prune|prunetags)|merge\.(?:ff|conflictstyle)|rebase\.(?:autosquash|autostash|updaterefs)|commit\.(?:gpgsign|verbose)|tag\.gpgsign|gpg\.format|log\.(?:date|decorate)|diff\.(?:renames|algorithm|colormoved|mnemonicprefix)|status\.(?:short|branch|showuntrackedfiles)|branch\.\S+\.(?:remote|merge|rebase|pushremote|description)|remote\.\S+\.(?:url|pushurl|fetch|push|prune|tagopt)|submodule\.\S+\.(?:url|path|branch)|color\.\S+|advice\.\S+|i18n\.\S+)$/i;
+
+/** `git config` options that take a value (`--opt V` or `--opt=V`). */
+const GIT_CONFIG_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "-f",
+  "--file",
+  "--blob",
+  "--type",
+  "--default",
+  "--comment",
+  "--value",
+]);
+const GIT_CONFIG_READ_MODES: ReadonlySet<string> = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--get-color",
+  "--get-colorbool",
+  "--list",
+  "-l",
+]);
+const GIT_CONFIG_INERT_OPTS: ReadonlySet<string> = new Set([
+  "--global",
+  "--system",
+  "--local",
+  "--worktree",
+  "--add",
+  "--replace-all",
+  "--show-origin",
+  "--show-scope",
+  "--name-only",
+  "--null",
+  "-z",
+  "--bool",
+  "--int",
+  "--bool-or-int",
+  "--path",
+  "--expiry-date",
+  "--no-type",
+  "--includes",
+  "--no-includes",
+  "--fixed-value",
+  "--all",
+  "--regexp",
+  "--url",
+]);
+
+/** A `git config` call, parsed for what it would change. Fail closed: an
+ *  option it does not know makes the call a `rewrite`. */
+interface GitConfigCall {
+  read: boolean;
+  scope: "global" | "system" | "local";
+  file: string | null;
+  key: string | null;
+  removes: boolean;
+  /** `--edit`, `--rename-section`, or an unknown option: changes the line
+   *  does not name. */
+  rewrites: boolean;
+}
+
+function parseGitConfig(subArgs: readonly string[]): GitConfigCall {
+  const call: GitConfigCall = {
+    read: false,
+    scope: "local",
+    file: null,
+    key: null,
+    removes: false,
+    rewrites: false,
+  };
+  let readMode = false;
+  let writeMode = false;
+  const operands: string[] = [];
+  for (let i = 0; i < subArgs.length; i += 1) {
+    const a = subArgs[i] as string;
+    if (a === "--") {
+      operands.push(...subArgs.slice(i + 1));
+      break;
+    }
+    if (!a.startsWith("-") || a === "-") {
+      operands.push(a);
+      continue;
+    }
+    const eq = a.indexOf("=");
+    const name = a.startsWith("--") && eq > 0 ? a.slice(0, eq) : a;
+    if (GIT_CONFIG_VALUE_OPTS.has(name)) {
+      const value = name === a ? subArgs[i + 1] : a.slice(eq + 1);
+      if (name === a) i += 1;
+      if (name === "-f" || name === "--file") call.file = value ?? "";
+      continue;
+    }
+    if (name === "--global") call.scope = "global";
+    else if (name === "--system") call.scope = "system";
+    if (GIT_CONFIG_READ_MODES.has(name)) readMode = true;
+    else if (
+      name === "--unset" ||
+      name === "--unset-all" ||
+      name === "--remove-section"
+    ) {
+      call.removes = true;
+      writeMode = true;
+    } else if (
+      name === "--edit" ||
+      name === "-e" ||
+      name === "--rename-section"
+    ) {
+      call.rewrites = true;
+      writeMode = true;
+    } else if (name === "--add" || name === "--replace-all") writeMode = true;
+    else if (!GIT_CONFIG_INERT_OPTS.has(name)) call.rewrites = true;
+  }
+  // git 2.46's subcommand form: `git config set|unset|get|list|edit …`.
+  const sub = operands[0];
+  if (
+    sub !== undefined &&
+    [
+      "set",
+      "unset",
+      "get",
+      "list",
+      "edit",
+      "rename-section",
+      "remove-section",
+    ].includes(sub)
+  ) {
+    if (sub === "get" || sub === "list") call.read = !writeMode;
+    if (sub === "unset" || sub === "remove-section") call.removes = true;
+    if (sub === "edit" || sub === "rename-section") call.rewrites = true;
+    if (sub === "set") call.key = operands[1] ?? null;
+    return call;
+  }
+  call.key = operands[0] ?? null;
+  call.read =
+    !writeMode && !call.rewrites && (readMode || operands.length <= 1);
+  return call;
+}
+
+/**
+ * What a `git config` call that is not a plain read changes (2026-10-09),
+ * or null to leave it the `vcs` it was:
+ *   - `--file`/`-f` outside the workspace → outside (a write — or a read —
+ *     of any file, in config form);
+ *   - `--global` / `--system` writes → system: the user's (or every user's)
+ *     git settings, read by every repository, `core.hooksPath` included;
+ *   - a repo-local key that is a command git runs later, or loads more
+ *     config, and `--edit` / `--rename-section` → git internals.
+ * Removing a key, and setting one that is data, stay vcs.
+ */
+function gitConfigVerdict(
+  subArgs: readonly string[],
+  live: boolean,
+): Verdict | null {
+  const c = parseGitConfig(subArgs);
+  if (
+    c.file !== null &&
+    (c.file === "" || escapesWorkspaceOperand(c.file, live))
+  )
+    return outsideAsk("git config", c.file === "" ? "--file" : c.file);
+  if (c.read) return null;
+  if (c.scope === "global" || c.scope === "system") {
+    return {
+      kind: "ask",
+      risk: "workspace_destructive",
+      code: "command_ask_system",
+      reason:
+        c.scope === "global"
+          ? "git config --global changes the user's git settings, which every repository reads"
+          : "git config --system changes the machine's git settings, which every user's repositories read",
+    };
+  }
+  if (c.rewrites) {
+    return gitInternalsAsk(
+      "git config changes keys the line does not name — one may be a command git runs later",
+    );
+  }
+  if (c.removes || c.key === null) return null;
+  if (GIT_CONFIG_INERT_KEY.test(c.key)) return null;
+  return gitInternalsAsk(
+    `git config ${c.key} sets something git runs or loads later — the line does not show what will run`,
+  );
 }
 
 /** git subcommands that reach the remote (ADR 0064 L1) — the network tier. */

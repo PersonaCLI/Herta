@@ -10,6 +10,7 @@ import {
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import { formatInputIssues } from "../input-issues.js";
 import {
+  gitInternalsWrite,
   hertaStateWriteDenial,
   mentionsHertaState,
   resolveSafePath,
@@ -44,6 +45,8 @@ export function runCommandWriteGuard(
     holds: (operand) =>
       operand !== "" && isPathInside(at(operand), resolve(workspaceRoot)),
     patch: (file) => (file === "" ? null : readPatchTargets(at(file))),
+    gitInternal: (operand) =>
+      operand !== "" && gitInternalsWrite(workspaceRoot, at(operand)),
   };
 }
 

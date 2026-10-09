@@ -4,6 +4,7 @@ import { isCredentialPath } from "../credential-denylist.js";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import {
   gitDirShapeWriteDenial,
+  gitInternalsWrite,
   globReachesHertaState,
   hertaStateWriteDenial,
   mentionsHertaState,
@@ -11,6 +12,7 @@ import {
 import {
   classifyCommand,
   classifyShellBody,
+  GIT_INTERNALS_ASK_CODE,
   splitShellSegments,
   unresolvedProgramName,
   type Verdict,
@@ -858,7 +860,9 @@ function classifySegment(
       }
       // Its own class when the target leaves the workspace (ADR 0064 L1):
       // the trust tier covers writes INSIDE, and `> $HOME/.bashrc` must
-      // not ride `>` being "a write".
+      // not ride `>` being "a write". Inside, a repository's `.git` is its
+      // own class too (2026-10-09): `> .git/hooks/pre-commit` is a command
+      // the next `git commit` runs.
       const outside = leavesWorkspace(r.target, opts);
       asks.push(
         outside
@@ -868,12 +872,19 @@ function classifySegment(
               code: "command_ask_outside",
               reason: `redirects output outside the workspace: ${r.target}`,
             }
-          : {
-              kind: "ask",
-              risk: "workspace_write",
-              code: "command_ask_write",
-              reason: `redirects output to ${r.target}`,
-            },
+          : gitInternalTarget(r.target, opts)
+            ? {
+                kind: "ask",
+                risk: "workspace_destructive",
+                code: GIT_INTERNALS_ASK_CODE,
+                reason: `redirects output inside .git (${r.target}) — hooks and config there are commands git runs later`,
+              }
+            : {
+                kind: "ask",
+                risk: "workspace_write",
+                code: "command_ask_write",
+                reason: `redirects output to ${r.target}`,
+              },
       );
     } else if (r.kind === "in") {
       if (leavesWorkspace(r.target, opts) || isCredentialPath(r.target)) {
@@ -1305,6 +1316,9 @@ function classifySegment(
         const native = nativeOf(spelled(file), opts);
         return native === null ? null : readPatchTargets(native);
       },
+      // A write into a repository's `.git` (2026-10-09): hooks and config
+      // there are commands git runs later.
+      gitInternal: (operand) => gitInternalTarget(spelled(operand), opts),
     },
   });
   if (v.kind === "block") return { verdict: v };
@@ -1643,6 +1657,14 @@ function nativeOf(token: string, opts: ShellClassifyOpts): string | null {
     opts.paths.toNative(t) ??
     (/^[\\/]/.test(t) ? null : resolveNative(opts.cwd ?? opts.workspaceRoot, t))
   );
+}
+
+/** True when the path a shell token names lands inside a repository's
+ *  `.git` beneath the workspace (`gitInternalsWrite`). A token the harness
+ *  cannot place is not this guard's: it already asks as leaving. */
+function gitInternalTarget(token: string, opts: ShellClassifyOpts): boolean {
+  const at = resolveWorkspacePath(token, opts);
+  return at !== null && gitInternalsWrite(opts.workspaceRoot, at.native);
 }
 
 /** Denial when writing the path a shell token names would change the

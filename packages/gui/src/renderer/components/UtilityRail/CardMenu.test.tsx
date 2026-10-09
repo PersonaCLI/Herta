@@ -319,7 +319,10 @@ describe("CardMenu", () => {
       />,
     );
     fireEvent.click(screen.getByLabelText("device card info"));
-    expect(screen.getByText(/you decide commands/)).toBeInTheDocument();
+    expect(
+      document.querySelector(".card-menu-review .card-menu-trust-state")
+        ?.textContent,
+    ).toBe("Off");
     fireEvent.click(
       screen.getByRole("button", { name: "Turn on auto-review" }),
     );
@@ -346,7 +349,10 @@ describe("CardMenu", () => {
       />,
     );
     fireEvent.click(screen.getByLabelText("device card info"));
-    expect(screen.getByText(/a model reviews commands/)).toBeInTheDocument();
+    expect(
+      document.querySelector(".card-menu-review .card-menu-trust-state")
+        ?.textContent,
+    ).toBe("On");
     fireEvent.click(
       screen.getByRole("button", { name: "Turn off auto-review" }),
     );

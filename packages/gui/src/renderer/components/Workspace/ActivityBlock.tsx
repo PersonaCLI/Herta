@@ -1,4 +1,3 @@
-import type { AutoReviewNotice } from "@herta/app-server";
 import type { UndoFileResult } from "@herta/core";
 import {
   memo,
@@ -105,19 +104,7 @@ export interface ActivityBlockProps {
   readonly undo?:
     | { readonly state: "offer" | "busy"; readonly onUndo: () => void }
     | { readonly state: "done" };
-  /**
-   * ADR 0075: what the automatic reviewer settled in this run, shown under
-   * the header so the owner sees each one without opening the history —
-   * user-only, never the record's (D7).
-   */
-  readonly autoReviews?: readonly AutoReviewNotice[];
 }
-
-const AUTO_REVIEW_KEY = {
-  allow: "activity.autoReview.allowed",
-  deny: "activity.autoReview.denied",
-  paused: "activity.autoReview.paused",
-} as const satisfies Record<AutoReviewNotice["decision"], MessageKey>;
 
 /** An undo line's per-file results (ADR 0074 §3), in the session language. */
 const UNDO_RESULT_KEY = {
@@ -876,36 +863,6 @@ export const ActivityBlock = memo(function ActivityBlock(
           <span className="activity-line__duration">{durationLabel}</span>
         )}
       </div>
-      {props.autoReviews !== undefined && props.autoReviews.length > 0 && (
-        <ul className="activity-reviews">
-          {props.autoReviews.map((n) => (
-            <li
-              key={`${n.requestId}:${n.decision}`}
-              className={`activity-review is-${n.decision}`}
-            >
-              <span className="activity-review__label">
-                {t(AUTO_REVIEW_KEY[n.decision])}
-              </span>
-              {n.command !== null && (
-                <code
-                  className="activity-review__command"
-                  {...hoverTipProps(n.command)}
-                >
-                  {n.command}
-                </code>
-              )}
-              {n.reason !== "" && (
-                <span
-                  className="activity-review__reason"
-                  {...hoverTipProps(n.reason)}
-                >
-                  {n.reason}
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
       {expandable && (
         <div
           ref={historyRef}

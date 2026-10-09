@@ -131,44 +131,6 @@ describe("SessionStore", () => {
     expect(s.error).toBeNull();
   });
 
-  it("keeps the turn's automatic reviews across its runs, and the next turn clears them (ADR 0075)", () => {
-    const mock = createMockHertaBridge();
-    const store = new SessionStore();
-    store.connect(mock.bridge);
-    const notice = (requestId: string, decision: "allow" | "deny") => ({
-      kind: "reviewed" as const,
-      notice: {
-        requestId,
-        tool: "bash",
-        command: "make test",
-        decision,
-        reason: "理由。",
-        at: "2026-10-09T00:00:00.000Z",
-      },
-    });
-    mock.emitOverlay(notice("r1", "allow"));
-    mock.emitOverlay(notice("r2", "deny"));
-    expect(store.getSnapshot().autoReviews.map((n) => n.decision)).toEqual([
-      "allow",
-      "deny",
-    ]);
-    // A reviewed request shows no card.
-    expect(store.getSnapshot().overlay).toBeNull();
-    // Another backend run in the same turn keeps them…
-    mock.emitAgent({
-      kind: "agent",
-      event: {
-        type: "turn.started",
-        layer: "backend",
-        userText: "x",
-      } as AgentEvent,
-    });
-    expect(store.getSnapshot().autoReviews).toHaveLength(2);
-    // …the next user turn does not.
-    mock.emitTurn({ kind: "started", turnId: "t2" });
-    expect(store.getSnapshot().autoReviews).toEqual([]);
-  });
-
   it("clears a stranded approval overlay when the turn fails (safety net)", () => {
     const mock = createMockHertaBridge();
     const store = new SessionStore();

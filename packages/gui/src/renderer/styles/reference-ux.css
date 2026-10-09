@@ -4459,61 +4459,6 @@ button.session-item__badge--dismiss {
 .activity-undo + .activity-line__duration {
   margin-left: 0;
 }
-/* 自动审核 (ADR 0075): what the reviewer settled in this run, under the
-   header so each one is seen without opening the history. Quiet like the
-   steps; a denial and the brake take the failure amber, the one colour this
-   block lets win. The owner's alone — not the record's. */
-.activity-reviews {
-  list-style: none;
-  margin: 2px 0 0;
-  padding: 0 0 0 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.activity-review {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  font-size: 11.5px;
-  line-height: 18px;
-  color: var(--muted-slate);
-}
-.activity-review__label {
-  flex: none;
-  font-weight: 500;
-}
-.activity-review__command {
-  /* Keeps its own width up to the cap; the reason takes what is left and is
-     the one that gives way (live lab 2026-10-09: the command shrank to
-     `node -e "con…` beside a long reason). */
-  flex: 0 0 auto;
-  min-width: 0;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 11px;
-  color: var(--ink-2);
-}
-.activity-review__reason {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted-faint);
-}
-.activity-review.is-deny .activity-review__label,
-.activity-review.is-paused .activity-review__label {
-  color: #b45309;
-}
-:root[data-theme="dark"] .activity-review.is-deny .activity-review__label,
-:root[data-theme="dark"] .activity-review.is-paused .activity-review__label {
-  color: #d99a4e;
-}
 .activity-line__chevron {
   flex: none;
   color: var(--muted-4);

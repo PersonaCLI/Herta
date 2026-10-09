@@ -5,11 +5,7 @@
 // only, no effects — with every dependency array exactly as it was, so the
 // element identities the row memos below Conversation rely on are unchanged.
 
-import type {
-  AutoReviewNotice,
-  TerminalRecord,
-  TerminalRecordBlock,
-} from "@herta/app-server";
+import type { TerminalRecord, TerminalRecordBlock } from "@herta/app-server";
 import { useMemo } from "react";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { SessionStatus } from "../../store/session-store.js";
@@ -92,8 +88,6 @@ export function useConversationRows(opts: {
   readonly backendStartedAt: number | null;
   readonly backendInFlight: number;
   readonly backendActive: boolean;
-  /** ADR 0075: what the automatic reviewer settled in the current run. */
-  readonly autoReviews: readonly AutoReviewNotice[];
   readonly handleRewind: () => Promise<void>;
   readonly removeAttachmentFactory: RemoveAttachmentFactory | undefined;
   /** Main says the latest turn's edits can be taken back (ADR 0074 §4). */
@@ -111,7 +105,6 @@ export function useConversationRows(opts: {
     backendStartedAt,
     backendInFlight,
     backendActive,
-    autoReviews,
     handleRewind,
     removeAttachmentFactory,
     undoable,
@@ -213,21 +206,6 @@ export function useConversationRows(opts: {
     [items, recordStart, lang, lastUserIndex, handleRewind],
   );
 
-  // ADR 0075: the current turn's last activity group carries the turn's
-  // automatic reviews — wherever it sits. Herta's reply lands after it, so
-  // "the last row" is her bubble once the turn ends (live lab 2026-10-09:
-  // the reviews never showed).
-  const reviewGroup = useMemo(() => {
-    for (let i = items.length - 1; i >= 0; i--) {
-      const it = items[i];
-      if (it === undefined) break;
-      const at = it.kind === "block" ? it.index : it.startIndex;
-      if (at <= lastUserIndex) break;
-      if (it.kind === "activity") return i;
-    }
-    return -1;
-  }, [items, lastUserIndex]);
-
   // ── assembly ────────────────────────────────────────────────────────────
   // Re-runs when the turn state moves, but only the activity groups are built
   // here; the bubble rows come from `blockRows` by reference.
@@ -277,11 +255,6 @@ export function useConversationRows(opts: {
               lang={lang}
               inFlightCount={isActive ? backendInFlight : 1}
               onRemoveAttachment={removeAttachmentFactory}
-              // ADR 0075: the current turn's reviews, on its last group, and
-              // only when there are any, so every other group's memo holds.
-              {...(idx === reviewGroup && autoReviews.length > 0
-                ? { autoReviews }
-                : {})}
               {...(idx !== undoCard.card
                 ? {}
                 : undoCard.undone
@@ -323,8 +296,6 @@ export function useConversationRows(opts: {
       undoable,
       undoBusy,
       handleUndo,
-      autoReviews,
-      reviewGroup,
     ],
   );
 

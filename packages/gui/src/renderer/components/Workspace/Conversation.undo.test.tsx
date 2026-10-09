@@ -166,29 +166,3 @@ describe("⟲ offers the rewound turn's edits back in its notice (ADR 0074 §4)"
     expect(screen.getByRole("button", { name: "Undo changes" })).toBeTruthy();
   });
 });
-
-describe("the automatic reviews on the turn's card (ADR 0075)", () => {
-  it("sit on the current turn's last card even when her reply comes after it", () => {
-    const { mock, container } = render([...turn(1), ...turn(2)]);
-    act(() => {
-      mock.emitOverlay({
-        kind: "reviewed",
-        notice: {
-          requestId: "r1",
-          tool: "bash",
-          command: 'node -e "console.log(6*7)"',
-          decision: "allow",
-          reason: "运行用户要求的内联计算。",
-          at: "2026-10-09T00:00:00.000Z",
-        },
-      });
-    });
-    const blocks = cards(container);
-    expect(blocks).toHaveLength(2);
-    // Her reply is the last row; the turn's card still carries the review.
-    expect(blocks[0]?.querySelector(".activity-review")).toBeNull();
-    expect(blocks[1]?.querySelector(".activity-review")?.textContent).toContain(
-      "console.log(6*7)",
-    );
-  });
-});

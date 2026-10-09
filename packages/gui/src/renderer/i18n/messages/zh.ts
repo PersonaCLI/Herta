@@ -701,13 +701,8 @@ export const zh = {
   "card.trustDisable": "改为逐项确认",
   // ADR 0075: the automatic review of approval requests.
   "card.autoReview": "自动审核",
-  "activity.autoReview.allowed": "已自动放行",
-  "activity.autoReview.denied": "已自动拒绝",
-  "activity.autoReview.paused":
-    "连续拒绝过多，自动审核已暂停；本轮之后需要确认的命令将询问你",
-  "card.autoReviewOn":
-    "已开启：需要确认的命令先由模型审核，放行或拒绝都会在执行过程中列出",
-  "card.autoReviewOff": "关闭，需要确认的命令仍由你决定",
+  "card.autoReviewOn": "开启",
+  "card.autoReviewOff": "关闭",
   "card.autoReviewEnable": "开启自动审核",
   "card.autoReviewDisable": "关闭自动审核",
   "card.deviceInfoAria": "设备卡片信息",

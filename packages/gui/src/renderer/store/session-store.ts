@@ -1,6 +1,5 @@
 import type {
   ApprovalOverlayState,
-  AutoReviewNotice,
   OverlayEvent,
   RecordEvent,
   RepoContextSnapshot,
@@ -55,10 +54,6 @@ export interface SessionSnapshotView {
   readonly pendingJump: { sessionId: string; blockIndex: number } | null;
   readonly streamingText: string | null;
   readonly overlay: ApprovalOverlayState | null;
-  /** ADR 0075: what the automatic reviewer settled in the current turn,
-   *  oldest first — user-only, like the card it stands in for. Cleared when
-   *  the next user turn starts. */
-  readonly autoReviews: readonly AutoReviewNotice[];
   readonly status: SessionStatus;
   readonly error: string | null;
   /** Optimistic echo of the message the user just sent, shown
@@ -242,7 +237,6 @@ const INITIAL: SessionSnapshotView = {
   pendingJump: null,
   streamingText: null,
   overlay: null,
-  autoReviews: [],
   status: "idle",
   error: null,
   pendingUser: null,
@@ -794,9 +788,6 @@ export class SessionStore {
           : null,
       streamingText: null,
       overlay: e.overlay,
-      // ADR 0075: another session, or a reloaded window — the notices were
-      // this window's view of a run, never the record's.
-      autoReviews: [],
       // A reset that lands mid-turn — a window reloaded while Herta or 板砖
       // worked — comes back busy (UX review 2026-09-22, item 7): Stop, the
       // hold window, the live timers. Idle was the only state a reset knew,
@@ -1236,10 +1227,6 @@ export class SessionStore {
         turnStartedAt: Date.now(),
         backendStartedAt: null,
         backendError: false,
-        // ADR 0075: a new user turn — the last turn's reviews were its own.
-        // Not at each backend run: one turn can dispatch several, and the
-        // turn's card shows them all.
-        autoReviews: [],
         supervisorChecking: false,
         // Same dropped-end-event reasoning as supervisorChecking above: a
         // lost `recap.compaction end` otherwise strands the flag, and the
@@ -1339,12 +1326,6 @@ export class SessionStore {
       this.emit({ ...this.snapshot, overlay: e.overlay });
     } else if (e.kind === "resolved") {
       this.emit({ ...this.snapshot, overlay: null });
-    } else if (e.kind === "reviewed") {
-      // Bounded: a run that reviews more than this shows its latest.
-      this.emit({
-        ...this.snapshot,
-        autoReviews: [...this.snapshot.autoReviews, e.notice].slice(-30),
-      });
     }
   }
 }

@@ -92,6 +92,47 @@ function runsWhatItFetches(text: string): string | null {
   return null;
 }
 
+/**
+ * A body the harness cannot read before it runs (ADR 0075): what a
+ * substitution computes, what `eval` / `Invoke-Expression` assemble, an
+ * encoded command, a shell fed by a pipe. Such a request never reaches a
+ * review model — the owner sees the card, which already shows what
+ * `-EncodedCommand` decodes to. A shell fed a heredoc that lands as written
+ * stays reviewable: its text is the command.
+ *
+ * Read from the classifier's own reasons (`opaqueShape`), which live in
+ * this package; review-floor.test.ts classifies each shape so a reworded
+ * reason fails there, not silently here.
+ */
+export function bodyUnreadable(
+  codes: readonly string[],
+  reason: string,
+  command: string,
+): boolean {
+  if (!codes.includes("command_ask_opaque")) return false;
+  if (
+    /assembled when it runs|computed when it runs|hides its command/.test(
+      reason,
+    )
+  )
+    return true;
+  if (/runs whatever its input feeds it/.test(reason))
+    return !shellReadsLiteralHeredoc(command);
+  return false;
+}
+
+/** The line's shell reads a heredoc that lands as written, and nothing
+ *  pipes into a shell. */
+function shellReadsLiteralHeredoc(command: string): boolean {
+  if (/\|\s*(?:ba|da|z)?sh\b/.test(command)) return false;
+  const m =
+    /\b(?:ba|da|z)?sh(?:\.exe)?\s+(?:-[A-Za-z]+\s+)*<<-?\s*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n([\s\S]*?)\n\s*\2\s*(?:\n|$)/.exec(
+      command,
+    );
+  if (m === null) return false;
+  return m[1] !== "" || !/[$`\\]/.test(m[3] as string);
+}
+
 export function reviewRiskFloor(
   command: string,
   codes: readonly string[],

@@ -3,7 +3,7 @@ import { abortError, errorMessage, isAbortError } from "../errors.js";
 import type { EventBus } from "../event-bus.js";
 import { type FindingsLedger, MAX_FINDINGS } from "../findings-ledger.js";
 import type { MemoryManager } from "../memory-manager.js";
-import type { PermissionEngine } from "../permission-engine.js";
+import type { AskAnswer, PermissionEngine } from "../permission-engine.js";
 import type { ReadLedger } from "../read-ledger.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import type { TranscriptStore } from "../transcript-store.js";
@@ -170,6 +170,11 @@ type GateOutcome =
 const PERMISSION_DENIED_SUGGESTION =
   "Choose a read-only inspection path or ask the user.";
 
+/** After a reviewer's denial (ADR 0075): what Codex and Claude Code both
+ *  tell their agent with theirs. */
+const REVIEWER_DENIED_SUGGESTION =
+  "Do not reach the same outcome another way. Take an approach the user's request covers, or ask the user.";
+
 /** The model-facing hint for a rule-deny, by code. `invalid_input` surfaces
  *  through the same deny path as real permission denials (rules validate
  *  before tiering) — say so, or the model reads a malformed call as "tool
@@ -262,7 +267,7 @@ export async function* runBackendTurnLoop(
         type: "permission.requested",
         request: decision.request,
       });
-      let resolved: "allow" | "deny";
+      let resolved: AskAnswer;
       try {
         resolved = await decision.decision;
       } catch (err) {
@@ -283,8 +288,26 @@ export async function* runBackendTurnLoop(
       yield* emit({
         type: "permission.resolved",
         id: decision.request.id,
-        decision: resolved,
+        decision: resolved === "allow" ? "allow" : "deny",
       });
+      // A reviewer's denial (ADR 0075): its reason, and the instruction both
+      // reference agents give with theirs — the outcome, not the command, is
+      // what was refused.
+      if (typeof resolved === "object") {
+        return {
+          kind: "result",
+          result: {
+            ok: false,
+            error: {
+              code: "permission_denied",
+              message: `An automatic review denied ${call.tool}: ${resolved.reason}`,
+              retryable: false,
+            },
+            suggestion: REVIEWER_DENIED_SUGGESTION,
+            summary: "denied",
+          },
+        };
+      }
       if (resolved === "deny") {
         return {
           kind: "result",

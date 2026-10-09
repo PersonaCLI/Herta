@@ -1353,7 +1353,7 @@ describe("stripShellComments — what a reviewer reads (ADR 0075, 2026-10-09)", 
     expect(stripShellComments("a && #x\nb")).toBe("a &&\nb");
   });
 
-  it("keeps what is not a comment: quotes, $#, ${#x}, a#b", () => {
+  it("keeps what is not a comment: quotes, $#, a brace length, a#b", () => {
     for (const line of [
       'echo "# not a comment"',
       "echo '# nor this'",

@@ -199,6 +199,7 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.resolveApproval,
   CMD.removeCommandRule,
   CMD.setWorkspaceTrust,
+  CMD.setAutoReview,
   CMD.pickWorkspace,
   CMD.setWorkspace,
   CMD.resetWorkspace,
@@ -960,6 +961,12 @@ export function createSessionService(
     handle(CMD.setWorkspaceTrust, async (_e, value: unknown) => {
       const v = value === "workspace" || value === "ask" ? value : null;
       return (await host?.activeSession?.setWorkspaceTrust?.(v)) ?? noTrust;
+    });
+    // ADR 0075: the owner's opt-in to the automatic review — only a literal
+    // boolean from the window counts.
+    handle(CMD.setAutoReview, async (_e, on: unknown) => {
+      if (typeof on !== "boolean") return noTrust;
+      return (await host?.activeSession?.setAutoReview?.(on)) ?? noTrust;
     });
     // Record heal after a record-channel overflow drop: the session re-emits
     // its live record as a `reset` through the record stream (FIFO with block

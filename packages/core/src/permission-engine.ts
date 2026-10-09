@@ -88,11 +88,24 @@ export type PermissionRule = (
   ctx: ToolContext,
 ) => RuleVerdict | Promise<RuleVerdict>;
 
+/**
+ * A denial an automatic reviewer gave in the owner's place (ADR 0075). The
+ * loop sends the agent its reason, not "User denied", and says not to reach
+ * the same outcome another way — an agent told no looks for a side door.
+ */
+export interface ReviewerDenial {
+  readonly decision: "deny";
+  readonly by: "reviewer";
+  /** One sentence, in the language the reviewer wrote it. */
+  readonly reason: string;
+}
+
+/** What an ask settles to: the owner's allow or deny, or a reviewer's
+ *  denial. A reviewer's allow is a plain "allow". */
+export type AskAnswer = "allow" | "deny" | ReviewerDenial;
+
 export interface AskResolver {
-  present(
-    request: PermissionRequest,
-    signal: AbortSignal,
-  ): Promise<"allow" | "deny">;
+  present(request: PermissionRequest, signal: AbortSignal): Promise<AskAnswer>;
 }
 
 export type PermissionDecision =
@@ -100,7 +113,7 @@ export type PermissionDecision =
   | {
       kind: "ask";
       request: PermissionRequest;
-      decision: Promise<"allow" | "deny">;
+      decision: Promise<AskAnswer>;
     }
   | {
       kind: "deny";

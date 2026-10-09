@@ -20,6 +20,7 @@ export const CMD = {
   removeCommandRule: "session:removeCommandRule",
   getWorkspaceTrust: "session:getWorkspaceTrust",
   setWorkspaceTrust: "session:setWorkspaceTrust",
+  setAutoReview: "session:setAutoReview",
   resyncRecord: "session:resyncRecord",
   requestSync: "session:requestSync",
   updateCheck: "update:check",

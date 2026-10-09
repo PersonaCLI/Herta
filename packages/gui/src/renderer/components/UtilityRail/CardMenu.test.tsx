@@ -290,6 +290,69 @@ describe("CardMenu", () => {
     }
   });
 
+  it("offers the auto-review switch only when a reviewer is available (ADR 0075)", () => {
+    const onSetAutoReview = vi.fn();
+    const base = {
+      cardKind: "device" as const,
+      activeWorkspace: "/p",
+      onSetWorkspace: vi.fn(),
+      onResetWorkspace: vi.fn(),
+      onSetTrust: vi.fn(),
+      onSetAutoReview,
+    };
+    const trust = {
+      effective: "ask" as const,
+      explicit: null,
+      isDefaultWorkspace: false,
+    };
+    const { unmount } = renderWithLocale(
+      <CardMenu {...base} trust={{ ...trust, autoReviewAvailable: false }} />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    expect(document.querySelector(".card-menu-review")).toBeNull();
+    unmount();
+
+    renderWithLocale(
+      <CardMenu
+        {...base}
+        trust={{ ...trust, autoReviewAvailable: true, autoReview: false }}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    expect(screen.getByText(/you decide commands/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Turn on auto-review" }),
+    );
+    expect(onSetAutoReview).toHaveBeenCalledWith(true);
+  });
+
+  it("an opted-in workspace says so and offers to turn it off", () => {
+    const onSetAutoReview = vi.fn();
+    renderWithLocale(
+      <CardMenu
+        cardKind="device"
+        activeWorkspace="/p"
+        onSetWorkspace={vi.fn()}
+        onResetWorkspace={vi.fn()}
+        trust={{
+          effective: "workspace",
+          explicit: "workspace",
+          isDefaultWorkspace: false,
+          autoReviewAvailable: true,
+          autoReview: true,
+        }}
+        onSetTrust={vi.fn()}
+        onSetAutoReview={onSetAutoReview}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("device card info"));
+    expect(screen.getByText(/a model reviews commands/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Turn off auto-review" }),
+    );
+    expect(onSetAutoReview).toHaveBeenCalledWith(false);
+  });
+
   it("shows the empty note for an empty rule list", () => {
     renderWithLocale(<CardMenu {...rulesProps} rules={[]} />);
     fireEvent.click(screen.getByLabelText("device card info"));

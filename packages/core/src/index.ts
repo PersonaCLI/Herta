@@ -156,11 +156,13 @@ export {
   REFUSAL_DENY_CODES,
 } from "./permission-deny-codes.js";
 export type {
+  AskAnswer,
   AskResolver,
   CommandConsequence,
   PermissionDecision,
   PermissionEngine,
   PermissionRule,
+  ReviewerDenial,
   RiskLevel,
   RuleVerdict,
 } from "./permission-engine.js";

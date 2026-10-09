@@ -258,6 +258,11 @@ interface PermissionsFile {
   readonly commandAllow: readonly ProjectCommandRule[];
   /** ADR 0064; absent on files written before it. */
   readonly trust?: WorkspaceTrust;
+  /** ADR 0075: the owner opted this workspace into the automatic review
+   *  of approval requests. Absent → off. Kept here, beside trust, for the
+   *  same reason: no command may write `.herta`, so the agent cannot turn
+   *  its own reviewer on. */
+  readonly autoReview?: true;
 }
 
 function validRule(entry: unknown): entry is ProjectCommandRule {
@@ -299,25 +304,29 @@ export class ProjectCommandRuleStore {
   private load(): {
     rules: ProjectCommandRule[];
     trust: WorkspaceTrust | null;
+    autoReview: boolean;
   } {
+    const empty = { rules: [], trust: null, autoReview: false };
     let raw: string;
     try {
       raw = readFileSync(this.filePath(), "utf8");
     } catch {
-      return { rules: [], trust: null };
+      return empty;
     }
     let parsed: Partial<PermissionsFile>;
     try {
       parsed = JSON.parse(raw) as Partial<PermissionsFile>;
     } catch {
-      return { rules: [], trust: null };
+      return empty;
     }
-    if (parsed.version !== 1) return { rules: [], trust: null };
+    if (parsed.version !== 1) return empty;
     return {
       rules: Array.isArray(parsed.commandAllow)
         ? parsed.commandAllow.filter(validRule)
         : [],
       trust: validTrust(parsed.trust) ? parsed.trust : null,
+      // Only the literal `true` opts in: a hand-edited "yes" stays off.
+      autoReview: parsed.autoReview === true,
     };
   }
 
@@ -335,8 +344,21 @@ export class ProjectCommandRuleStore {
    *  ever called from the owner's explicit choice on a card or the device
    *  card's menu. */
   setTrust(value: WorkspaceTrust | null): void {
-    const { rules } = this.load();
-    this.write(rules, value);
+    const { rules, autoReview } = this.load();
+    this.write(rules, value, autoReview);
+  }
+
+  /** Whether the owner opted this workspace into the automatic review of
+   *  approval requests (ADR 0075). Off unless chosen. */
+  autoReview(): boolean {
+    return this.load().autoReview;
+  }
+
+  /** Persist the opt-in. Only ever called from the owner's explicit choice
+   *  in the device card's menu. */
+  setAutoReview(on: boolean): void {
+    const { rules, trust } = this.load();
+    this.write(rules, trust, on);
   }
 
   /** True when a persisted rule covers `argv` run from `cwd`. Callers MUST
@@ -385,7 +407,7 @@ export class ProjectCommandRuleStore {
       return;
     }
     if (!validRule(entry)) return; // fail-closed: never persist a refused shape
-    this.write([...existing, entry], this.trust());
+    this.write([...existing, entry], this.trust(), this.autoReview());
   }
 
   /** Removes the rule whose display form matches (Settings / CLI delete). */
@@ -393,13 +415,14 @@ export class ProjectCommandRuleStore {
     const existing = this.list();
     const kept = existing.filter((r) => ruleDisplay(r) !== display);
     if (kept.length === existing.length) return false;
-    this.write(kept, this.trust());
+    this.write(kept, this.trust(), this.autoReview());
     return true;
   }
 
   private write(
     rules: readonly ProjectCommandRule[],
     trust: WorkspaceTrust | null,
+    autoReview: boolean,
   ): void {
     const dir = join(this.rootProvider(), ".herta");
     mkdirSync(dir, { recursive: true });
@@ -407,6 +430,7 @@ export class ProjectCommandRuleStore {
       version: 1,
       commandAllow: rules,
       ...(trust !== null ? { trust } : {}),
+      ...(autoReview ? { autoReview: true as const } : {}),
     };
     // Atomic (audit BL7). A torn write here fails CLOSED — the loader drops
     // an unparseable file and everything re-prompts — so this is about not

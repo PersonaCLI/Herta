@@ -277,6 +277,15 @@ export function DeviceCard(): JSX.Element {
       },
     );
   };
+  // ADR 0075: the automatic review rides the trust state it sits beside.
+  const handleSetAutoReview = (on: boolean): void => {
+    void bridge.setAutoReview?.(on).then(
+      (s) => setTrust(s),
+      () => {
+        /* unchanged — nothing was written */
+      },
+    );
+  };
   // The menu's path opens the folder in the OS file manager (owner
   // 2026-10-08) — through the viewer's own jailed open, where `.` is the
   // workspace itself. Without that surface (the demo) the path stays text.
@@ -354,6 +363,7 @@ export function DeviceCard(): JSX.Element {
         onRemoveRule={handleRemoveRule}
         trust={trustSupported && trust !== null ? trust : undefined}
         onSetTrust={handleSetTrust}
+        onSetAutoReview={handleSetAutoReview}
         onOpen={refreshMenu}
       />
       <button

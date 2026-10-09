@@ -244,6 +244,29 @@ export interface WorkspaceTrustState {
   /** The backend workspace is the session's managed sandbox — trusted by
    *  default; nothing of the user's lives there. */
   readonly isDefaultWorkspace: boolean;
+  /** ADR 0075: the owner opted this workspace into the automatic review of
+   *  approval requests. */
+  readonly autoReview?: boolean;
+  /** A reviewer is mounted (a provider key, not a test stub) — the menu
+   *  offers the switch only then. */
+  readonly autoReviewAvailable?: boolean;
+}
+
+/**
+ * One automatic review the owner sees (ADR 0075) — user-only, like the
+ * card it stands in for (D7): it never enters the record, and Herta is not
+ * told. `paused` marks the brake engaging: every later request asks until
+ * the next user message.
+ */
+export interface AutoReviewNotice {
+  readonly requestId: string;
+  readonly tool: string;
+  /** The command as the card would have shown it. */
+  readonly command: string | null;
+  readonly decision: "allow" | "deny" | "paused";
+  /** The reviewer's one sentence, in formal Chinese. */
+  readonly reason: string;
+  readonly at: string;
 }
 
 export type ApprovalResult =
@@ -433,6 +456,8 @@ export type OverlayEvent =
       readonly overlay: ApprovalOverlayState;
     }
   | { readonly kind: "resolved"; readonly requestId: string }
+  /** ADR 0075: a request the automatic reviewer settled, no card shown. */
+  | { readonly kind: "reviewed"; readonly notice: AutoReviewNotice }
   | { readonly kind: "dropped"; readonly count: number };
 
 export type SessionAgentEvent =
@@ -787,6 +812,9 @@ export interface Session {
   setWorkspaceTrust?(
     value: WorkspaceTrust | null,
   ): Promise<WorkspaceTrustState>;
+  /** ADR 0075: opt the CURRENT workspace in or out of the automatic review
+   *  of approval requests. Resolves with the state after the change. */
+  setAutoReview?(on: boolean): Promise<WorkspaceTrustState>;
   /** Set the effective backend (板砖) workspace. Trusts its caller —
    *  validation happens at the GUI/CLI boundary. Persisted + broadcast.
    *  Idle-only (audit 2026-07-10, finding 13): refused with

@@ -598,6 +598,9 @@ export interface HertaBridge {
   setWorkspaceTrust?(
     value: WorkspaceTrust | null,
   ): Promise<WorkspaceTrustState>;
+  /** ADR 0075: opt the active session's workspace in or out of the
+   *  automatic review of approval requests; resolves with the state after. */
+  setAutoReview?(on: boolean): Promise<WorkspaceTrustState>;
   /** Fire-and-forget record heal: ask main to re-emit the active session's
    *  full record as a `reset` through the record stream. Called by the store
    *  when a record-channel `dropped` overflow sentinel arrives (a block was

@@ -191,6 +191,7 @@ export {
 export { redactSecrets } from "./run-command/redactor.js";
 // ADR 0075's reviewer: the risk a command carries whatever the model says.
 export {
+  bodyUnreadable,
   maxReviewRisk,
   type ReviewFloor,
   type ReviewRisk,

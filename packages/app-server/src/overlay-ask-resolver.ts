@@ -19,6 +19,8 @@
  */
 import {
   ApprovalPolicy,
+  type ApprovalPreflight,
+  type AskAnswer,
   type AskResolver,
   abortError,
   type PendingPermissionApproval,
@@ -26,6 +28,12 @@ import {
   type ProjectCommandRuleStore,
   type SessionApprovalCache,
 } from "@herta/core";
+import {
+  type AutoReviewer,
+  type ReviewVerdict,
+  reviewAnswer,
+} from "./auto-review.js";
+import type { AutoReviewNotice } from "./types.js";
 
 export interface OverlayAskResolverDeps {
   /**
@@ -62,6 +70,23 @@ export interface OverlayAskResolverDeps {
    * the workspace can move mid-session. Absent → never by default.
    */
   readonly defaultTrust?: () => boolean;
+  /**
+   * The automatic reviewer (ADR 0075), when one is mounted. Asked before the
+   * card, only where the CURRENT workspace opted in; its allow or deny
+   * settles the request without a card, and anything else shows the card.
+   */
+  readonly review?: {
+    readonly reviewer: AutoReviewer;
+    /** The owner opted the current workspace in. */
+    readonly enabled: () => boolean;
+    /** The user's messages, oldest first — what authorizes. */
+    readonly userMessages: () => readonly string[];
+    /** The current backend workspace root. */
+    readonly workspace: () => string;
+    /** Every decision, and the brake engaging — the owner sees each one
+     *  (user-only, never the record: D7). */
+    readonly onReviewed: (notice: AutoReviewNotice) => void;
+  };
 }
 
 export type ResolveExternalResult =
@@ -100,14 +125,80 @@ export class OverlayAskResolver implements AskResolver {
     return this.policy.workspaceTrusted();
   }
 
-  present(
-    request: PermissionRequest,
-    signal: AbortSignal,
-  ): Promise<"allow" | "deny"> {
+  /** A new user message: the reviewer's brake lifts (ADR 0075). */
+  resetReviewBrake(): void {
+    this.deps.review?.reviewer.resetBrake();
+  }
+
+  present(request: PermissionRequest, signal: AbortSignal): Promise<AskAnswer> {
     // Cache / project-rule hit: short-circuit without surfacing an overlay.
     const pre = this.policy.preflight(request);
     if (pre.kind === "auto") return Promise.resolve("allow");
+    const review = this.deps.review;
+    if (review?.enabled() === true) {
+      return this.reviewFirst(review, request, pre, signal);
+    }
+    return this.surface(request, pre, signal);
+  }
 
+  /**
+   * ADR 0075: the reviewer answers in the owner's place, or the card shows.
+   * An abort while it reviews rejects like an abort at the card — no
+   * decision is fabricated either way.
+   */
+  private async reviewFirst(
+    review: NonNullable<OverlayAskResolverDeps["review"]>,
+    request: PermissionRequest,
+    pre: Extract<ApprovalPreflight, { kind: "ask" }>,
+    signal: AbortSignal,
+  ): Promise<AskAnswer> {
+    if (signal.aborted) throw gateAbortError();
+    const command = extractCommand(request);
+    let verdict: ReviewVerdict;
+    try {
+      verdict = await review.reviewer.review(
+        {
+          request,
+          command,
+          workspace: review.workspace(),
+          userMessages: review.userMessages(),
+        },
+        signal,
+      );
+    } catch {
+      if (signal.aborted) throw gateAbortError();
+      verdict = { kind: "card", why: "error" };
+    }
+    if (signal.aborted) throw gateAbortError();
+    if (verdict.kind === "card") return this.surface(request, pre, signal);
+    const at = new Date().toISOString();
+    review.onReviewed({
+      requestId: request.id,
+      tool: request.call.tool,
+      command: command ?? null,
+      decision: verdict.kind,
+      reason: verdict.rationale,
+      at,
+    });
+    if (verdict.braked) {
+      review.onReviewed({
+        requestId: request.id,
+        tool: request.call.tool,
+        command: null,
+        decision: "paused",
+        reason: "",
+        at,
+      });
+    }
+    return reviewAnswer(verdict);
+  }
+
+  /** Show the card and await the owner. */
+  private surface(
+    request: PermissionRequest,
+    pre: Extract<ApprovalPreflight, { kind: "ask" }>,
+    signal: AbortSignal,
+  ): Promise<AskAnswer> {
     const requestId = request.id;
     // An interrupted turn must settle a pending ask — but as an ABORT, not a
     // decision. Two prior states of this code were both wrong:
@@ -128,7 +219,7 @@ export class OverlayAskResolver implements AskResolver {
     // while producing NO permission.resolved event and NO fabricated tool
     // result. The overlay still clears so the renderer unlocks.
     if (signal.aborted) return Promise.reject(gateAbortError());
-    return new Promise<"allow" | "deny">((resolve, reject) => {
+    return new Promise<AskAnswer>((resolve, reject) => {
       const onAbort = (): void => {
         // Only if still the pending slot (a user resolution wins the race).
         if (this.pending?.requestId !== requestId) return;
@@ -232,7 +323,7 @@ export class OverlayAskResolver implements AskResolver {
  * Returns undefined for other tools or malformed input — the panel then
  * shows only the summary.
  */
-function extractCommand(request: PermissionRequest): string | undefined {
+export function extractCommand(request: PermissionRequest): string | undefined {
   const input = request.call.input;
   if (typeof input !== "object" || input === null) return undefined;
   if (request.call.tool === "bash") {

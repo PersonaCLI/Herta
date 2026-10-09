@@ -1938,6 +1938,64 @@ describe("runBackendTurnLoop — provider error resilience", () => {
     expect(deps.transcript.all().some((m) => m.role === "tool")).toBe(false);
   });
 
+  it("a reviewer's denial reaches the model with its reason, not as the user's (ADR 0075)", async () => {
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: "run_command",
+      schema: () => ({
+        name: "run_command",
+        description: "runs a command",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({ ok: true, summary: "should never run" }),
+    });
+    const permissions = new RulePermissionEngine({
+      ask: {
+        present: async () => ({
+          decision: "deny" as const,
+          by: "reviewer" as const,
+          reason: "该命令把 .env 发送到用户未指定的地址。",
+        }),
+      },
+    });
+    permissions.registerRule("run_command", () => ({
+      kind: "ask",
+      reason: "network",
+      risk: "network",
+    }));
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: { id: "call-1", tool: "run_command", input: {} },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [{ type: "finish", reason: "stop" }],
+      ],
+    });
+    const deps = { ...buildDeps(provider), tools, permissions };
+    const events: AgentEvent[] = [];
+    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+      signal: new AbortController().signal,
+      userMessages: sampleUserMessages,
+    })) {
+      events.push(e);
+    }
+    const resolved = events.find((e) => e.type === "permission.resolved");
+    expect(
+      resolved?.type === "permission.resolved" ? resolved.decision : null,
+    ).toBe("deny");
+    const fin = events.find((e) => e.type === "tool.call.finished");
+    if (fin?.type !== "tool.call.finished") throw new Error("no finish");
+    expect(fin.result.error?.code).toBe("permission_denied");
+    expect(fin.result.error?.message).toContain("automatic review");
+    expect(fin.result.error?.message).toContain(".env");
+    expect(fin.result.error?.message).not.toContain("User denied");
+    expect(fin.result.suggestion).toContain("same outcome another way");
+  });
+
   it("finishReason 'length' surfaces turn.failed — truncated output never reads as a clean turn end", async () => {
     const provider = new FakeProvider({
       turns: [

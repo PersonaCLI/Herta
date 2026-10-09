@@ -227,6 +227,7 @@ export interface MockHertaBridge {
     removeCommandRule: string[];
     getWorkspaceTrust: number;
     setWorkspaceTrust: Array<WorkspaceTrust | null>;
+    setAutoReview: boolean[];
     resyncRecord: number;
     checkForUpdate: number;
     restartAndInstall: number;
@@ -372,6 +373,7 @@ export function createMockHertaBridge(
     removeCommandRule: [],
     getWorkspaceTrust: 0,
     setWorkspaceTrust: [],
+    setAutoReview: [],
     resyncRecord: 0,
     checkForUpdate: 0,
     restartAndInstall: 0,
@@ -658,6 +660,11 @@ export function createMockHertaBridge(
       const effective =
         value ?? (workspaceTrust.isDefaultWorkspace ? "workspace" : "ask");
       workspaceTrust = { ...workspaceTrust, explicit: value, effective };
+      return workspaceTrust;
+    },
+    setAutoReview: async (on) => {
+      calls.setAutoReview.push(on);
+      workspaceTrust = { ...workspaceTrust, autoReview: on };
       return workspaceTrust;
     },
     resyncRecord: async () => {

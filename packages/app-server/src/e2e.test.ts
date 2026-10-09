@@ -91,7 +91,19 @@ function mkConfig(): AppServerConfig {
  *           test calls resolveApproval.
  *   Turn 2: after approval, "done." text response.
  */
-async function mkE2eSession(cfg: AppServerConfig): Promise<{
+async function mkE2eSession(
+  cfg: AppServerConfig,
+  opts: {
+    /** The backend's first call, in place of the scripted write. */
+    readonly backendCall?: {
+      readonly id: string;
+      readonly tool: string;
+      readonly input: unknown;
+    };
+    /** The automatic reviewer's model (ADR 0075). */
+    readonly review?: import("@herta/core").ProviderAdapter;
+  } = {},
+): Promise<{
   session: SessionImpl;
   cleanup: () => Promise<void>;
 }> {
@@ -145,7 +157,7 @@ async function mkE2eSession(cfg: AppServerConfig): Promise<{
       events: [
         {
           type: "tool-call-request",
-          call: {
+          call: (opts.backendCall as never) ?? {
             id: "wf1",
             tool: "write_new_file",
             input: { path: "a.ts", content: "export const a = 1;\n" },
@@ -177,6 +189,7 @@ async function mkE2eSession(cfg: AppServerConfig): Promise<{
         // fire-and-forget title generation makes a REAL DeepSeek call. The
         // empty stub throws on call; title gen is best-effort → title null.
         title: stubChatProvider([]),
+        ...(opts.review !== undefined ? { review: opts.review } : {}),
       },
       staticPrefixOverride: { bio: "[test-bio]", env: "", fewShots: [] },
       // M-prompts-1: the compiled assets are ALWAYS present now, so the
@@ -889,6 +902,83 @@ describe("@herta/app-server — end-to-end scripted turn", () => {
       expect(verdictSeen).toBe(true);
 
       await cleanup();
+    },
+    SESSION_TEST_TIMEOUT_MS,
+  );
+});
+
+describe("@herta/app-server — the automatic reviewer reads this turn's message (ADR 0075)", () => {
+  it(
+    "an opted-in workspace's command is reviewed with the message the turn answers, and settles with no card",
+    async () => {
+      const cfg = mkConfig();
+      // The review model, recording what it was sent: one allow.
+      const seen: string[] = [];
+      const review: import("@herta/core").ProviderAdapter = {
+        streamChat(frame) {
+          seen.push(
+            frame.messages.map((m) => ("text" in m ? m.text : "")).join("\n"),
+          );
+          return (async function* () {
+            yield {
+              type: "text-delta" as const,
+              text: JSON.stringify({
+                risk_level: "low",
+                user_authorization: "high",
+                outcome: "allow",
+                rationale: "运行用户要求的内联计算。",
+              }),
+            };
+            yield { type: "finish" as const, reason: "stop" as const };
+          })();
+        },
+      };
+      const { session, cleanup } = await mkE2eSession(cfg, {
+        backendCall: {
+          id: "rc1",
+          tool: "run_command",
+          input: { argv: ["node", "-e", "console.log(6*7)"] },
+        },
+        review,
+      });
+      try {
+        expect((await session.setAutoReview(true)).autoReview).toBe(true);
+        const events: OverlayEvent[] = [];
+        const overlayConsumer = (async () => {
+          for await (const ev of session.subscribeOverlay()) {
+            events.push(ev);
+            if (ev.kind === "pending") {
+              // A card would mean the reviewer did not settle it.
+              session
+                .resolveApproval({
+                  requestId: (ev.overlay as { requestId: string }).requestId,
+                  decision: "deny",
+                })
+                .catch(() => undefined);
+            }
+            if (ev.kind === "reviewed" || ev.kind === "resolved") break;
+          }
+        })();
+        const turnConsumer = (async () => {
+          for await (const ev of session.subscribeTurnLifecycle()) {
+            if (ev.kind === "finished" || ev.kind === "failed") break;
+          }
+        })();
+        await session.submitText("用 node -e 算一下 6*7");
+        await Promise.all([overlayConsumer, turnConsumer]);
+
+        // Live lab 2026-10-09: mid-turn the session's record snapshot did not
+        // yet hold this message, and the reviewer was sent none.
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toContain("用 node -e 算一下 6*7");
+        expect(events.some((e) => e.kind === "pending")).toBe(false);
+        const reviewed = events.find((e) => e.kind === "reviewed");
+        expect(
+          reviewed?.kind === "reviewed" ? reviewed.notice.decision : null,
+        ).toBe("allow");
+      } finally {
+        await cleanup();
+      }
     },
     SESSION_TEST_TIMEOUT_MS,
   );

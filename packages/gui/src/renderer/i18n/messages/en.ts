@@ -707,6 +707,16 @@ export const en = {
   "card.trustOff": "Confirms each operation",
   "card.trustEnable": "Trust this workspace",
   "card.trustDisable": "Confirm each operation instead",
+  "card.autoReview": "Auto-review",
+  "activity.autoReview.allowed": "Auto-allowed",
+  "activity.autoReview.denied": "Auto-denied",
+  "activity.autoReview.paused":
+    "Auto-review paused after repeated denials; later commands in this run will ask you",
+  "card.autoReviewOn":
+    "On: a model reviews commands that need approval first; each allow or deny is listed in the run",
+  "card.autoReviewOff": "Off: you decide commands that need approval",
+  "card.autoReviewEnable": "Turn on auto-review",
+  "card.autoReviewDisable": "Turn off auto-review",
   "card.deviceInfoAria": "device card info",
   "card.deviceInfo":
     "The device card represents Brick (the differential coprocessor) — " +

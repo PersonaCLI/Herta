@@ -66,6 +66,11 @@ import {
   type WorkingDiff,
 } from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
+import {
+  AutoReviewer,
+  defaultReviewModel,
+  reviewModelFrom,
+} from "./auto-review.js";
 import { BusActorStreamingSink } from "./bus-streaming-sink.js";
 import { dropWithdrawnJournal } from "./dispatch-recovery.js";
 import {
@@ -201,6 +206,9 @@ export interface SessionInternalDeps {
     /** The digest tool's side model (ADR 0043). With `providerOverrides`
      *  present and this absent, the tool mounts `unavailable`. */
     readonly digest?: ProviderAdapter;
+    /** The automatic reviewer's model (ADR 0075). With `providerOverrides`
+     *  present and this absent, no reviewer is mounted. */
+    readonly review?: ProviderAdapter;
   };
   /** Skip the async buildStaticHertaPrefix disk scan. */
   readonly staticPrefixOverride?: StaticHertaPrefix;
@@ -467,6 +475,9 @@ export class SessionImpl implements Session {
    *  boundary to reach. Tracked from the bus, cleared with the turn. */
   private backendRunning = false;
   private readonly contract: string;
+  /** ADR 0075: an automatic reviewer is mounted (a real provider, or a
+   *  test's stub) — set once in `create`. */
+  private autoReviewAvailable = false;
   /** Whether a 继续 is on offer (ADR 0071 §1.4); see `refreshResumable`. */
   private _resumable = false;
   /** Whether the latest turn can be undone (ADR 0074); see
@@ -1071,6 +1082,8 @@ export class SessionImpl implements Session {
     if (this.currentTurn !== null) {
       throw new Error("a turn is already in progress");
     }
+    // ADR 0075: the owner has spoken — the reviewer's brake lifts.
+    this.overlayResolver.resetReviewBrake();
     // ADR 0044: a front-end that never calls playOpening (the CLI) still gets
     // the contract-fallback note — between turns, before this turn's user
     // block. One-shot no-op everywhere else.
@@ -1500,7 +1513,16 @@ export class SessionImpl implements Session {
       effective: this.overlayResolver.workspaceTrusted ? "workspace" : "ask",
       explicit: this.commandRules.trust(),
       isDefaultWorkspace: this.backendWorkspaceIsDefault,
+      autoReview: this.commandRules.autoReview(),
+      autoReviewAvailable: this.autoReviewAvailable,
     };
+  }
+
+  /** ADR 0075: the owner's opt-in for the CURRENT workspace — beside trust,
+   *  in the same file, which no command may write. */
+  async setAutoReview(on: boolean): Promise<WorkspaceTrustState> {
+    this.commandRules.setAutoReview(on);
+    return this.getWorkspaceTrust();
   }
 
   async setWorkspaceTrust(
@@ -1942,6 +1964,18 @@ export class SessionImpl implements Session {
       config.providers.baseUrl !== undefined
         ? { baseUrl: config.providers.baseUrl }
         : {};
+    // ADR 0075: the automatic reviewer — flash, thinking low, the replay's
+    // better config. It answers only where the owner opted the workspace in.
+    // A test override takes the real provider's place; a test without one
+    // mounts none, so nothing reaches the network under test.
+    const reviewModel =
+      deps.providerOverrides?.review !== undefined
+        ? reviewModelFrom(deps.providerOverrides.review)
+        : deps.providerOverrides === undefined
+          ? defaultReviewModel(apiKey, baseUrl)
+          : null;
+    const autoReviewer =
+      reviewModel === null ? null : new AutoReviewer(reviewModel);
     // The one way both hosts build it (session-wiring.ts): Settings →
     // Coprocessor supplies the model and the thinking level (default
     // "high"), the wiring supplies everything the CLI would spell the same.
@@ -2024,6 +2058,36 @@ export class SessionImpl implements Session {
           // A provider — setWorkspace moves the workspace mid-session.
           defaultTrust: () =>
             sessionHolder.session?.backendWorkspaceIsDefault === true,
+          ...(autoReviewer !== null
+            ? {
+                review: {
+                  reviewer: autoReviewer,
+                  enabled: () => rules?.autoReview() === true,
+                  // What the sink has projected so far — this turn's own
+                  // blocks included. `record` and the driver's `getRecord()`
+                  // both commit at turn boundaries, so mid-turn neither yet
+                  // holds the message this run answers (live lab 2026-10-09:
+                  // the reviewer was sent no user message at all and denied
+                  // what was asked for). The bridge reads the turn's working
+                  // record, which the sink mirrors.
+                  userMessages: () => {
+                    const s = sessionHolder.session;
+                    if (s === undefined || s === null) return [];
+                    const live = s.sink.flushedRecord() ?? s.driver.getRecord();
+                    return live.flatMap((b) =>
+                      b.kind === "user" && b.resume !== true ? [b.text] : [],
+                    );
+                  },
+                  workspace: () =>
+                    sessionHolder.session?.backendWorkspace ?? "",
+                  onReviewed: (notice) =>
+                    sessionHolder.session?.projector.emitOverlay({
+                      kind: "reviewed",
+                      notice,
+                    }),
+                },
+              }
+            : {}),
           setPendingOverlay(overlay) {
             // biome-ignore lint/style/noNonNullAssertion: set before any turn runs
             sessionHolder.session!._overlay = overlay;
@@ -2339,6 +2403,7 @@ export class SessionImpl implements Session {
       contract: backend.contract,
     });
     sessionHolder.session = session;
+    session.autoReviewAvailable = autoReviewer !== null;
     // The repository card's first answer (ADR 0058): fire-and-forget, the
     // event reaches whoever subscribes; the open/create snapshot carries
     // whatever has landed by then.

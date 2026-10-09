@@ -138,6 +138,9 @@ export interface CardMenuProps {
    *  hides the row (the bridge lacks the surface). */
   readonly trust?: WorkspaceTrustState;
   readonly onSetTrust?: (value: WorkspaceTrust | null) => void;
+  /** ADR 0075: the automatic review switch, shown only when the trust state
+   *  says a reviewer is available. */
+  readonly onSetAutoReview?: (on: boolean) => void;
   /** Fired when the menu OPENS — DeviceCard re-fetches rules on it, so a rule
    *  granted mid-commission shows up without a remount. */
   readonly onOpen?: () => void;
@@ -380,6 +383,31 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
                         : t("card.trustEnable")}
                     </button>
                   </div>
+                  {props.trust.autoReviewAvailable === true && (
+                    <div className="card-menu-trust card-menu-review">
+                      <span className="card-menu-label">
+                        {t("card.autoReview")}
+                      </span>
+                      <span className="card-menu-trust-state">
+                        {props.trust.autoReview === true
+                          ? t("card.autoReviewOn")
+                          : t("card.autoReviewOff")}
+                      </span>
+                      <button
+                        type="button"
+                        className="card-menu-item card-menu-trust-toggle"
+                        onClick={() =>
+                          props.onSetAutoReview?.(
+                            props.trust?.autoReview !== true,
+                          )
+                        }
+                      >
+                        {props.trust.autoReview === true
+                          ? t("card.autoReviewDisable")
+                          : t("card.autoReviewEnable")}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
               {rules !== undefined && (

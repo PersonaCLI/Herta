@@ -53,6 +53,11 @@ export interface SessionSnapshotView {
    *  screen and jump in the wrong transcript. */
   readonly pendingJump: { sessionId: string; blockIndex: number } | null;
   readonly streamingText: string | null;
+  /** The Trailblazer's likely next message, offered in the composer after a
+   *  finished turn (composer predictions, owner 2026-10-10): Tab fills it
+   *  in, typing replaces it. Null when there is none; cleared when a turn
+   *  starts or the session changes. Never part of the record. */
+  readonly prediction: string | null;
   readonly overlay: ApprovalOverlayState | null;
   readonly status: SessionStatus;
   readonly error: string | null;
@@ -236,6 +241,7 @@ const INITIAL: SessionSnapshotView = {
   recordStart: 0,
   pendingJump: null,
   streamingText: null,
+  prediction: null,
   overlay: null,
   status: "idle",
   error: null,
@@ -787,6 +793,7 @@ export class SessionStore {
           ? this.snapshot.pendingJump
           : null,
       streamingText: null,
+      prediction: null,
       overlay: e.overlay,
       // A reset that lands mid-turn — a window reloaded while Herta or 板砖
       // worked — comes back busy (UX review 2026-09-22, item 7): Stop, the
@@ -1221,6 +1228,8 @@ export class SessionStore {
         ...this.snapshot,
         status: "thinking",
         streamingText: null,
+        // The suggestion was for the line just sent.
+        prediction: null,
         retracting: false,
         retryText: null,
         retractKeepLen: null,
@@ -1282,6 +1291,12 @@ export class SessionStore {
         overlay: null,
         ...retractCleanup,
       });
+    } else if (e.kind === "predicted") {
+      // Offered only to an idle composer with no card up; anything that
+      // started since owns the composer now.
+      if (this.snapshot.status === "idle" && this.snapshot.overlay === null) {
+        this.emit({ ...this.snapshot, prediction: e.text });
+      }
     } else if (e.kind === "failed") {
       // Safety net: on failure (no blocks emitted) drop the dangling echo and
       // also clear any retract state (no finalized record block will come to

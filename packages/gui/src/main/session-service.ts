@@ -46,6 +46,7 @@ import { slimAgentEventForRenderer } from "../shared/agent-event-wire.js";
 import { createLiveToolFeed } from "../shared/live-tool-feed.js";
 import type { VoiceEngine } from "./app-global-settings.js";
 import {
+  composerPredictionsEnabled,
   type InteractionLang,
   type Locale,
   osLocale,
@@ -1463,6 +1464,8 @@ export function createSessionService(
       host.setPdfPictureTranscription(
         pdfPictureTranscriptsEnabled(startupSettings),
       );
+      // And the composer-prediction switch (2026-10-10), before any turn.
+      host.setComposerPredictions(composerPredictionsEnabled(startupSettings));
       // Launch lands on the connect screen (接入黑塔空间站) rather than
       // auto-resuming the latest session: the user explicitly opens one from the
       // sidebar or starts a new one from the connect button (user 2026-06-20).

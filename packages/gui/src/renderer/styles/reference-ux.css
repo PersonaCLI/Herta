@@ -1644,6 +1644,22 @@ button,
 .composer-input::placeholder {
   color: var(--muted-4);
 }
+/* Composer predictions (owner 2026-10-10): the suggestion reads as the
+   placeholder; this is the key that takes it, at the box's right edge while
+   one shows. Clear of the 10px scrollbar gutter. */
+.composer-prediction-key {
+  position: absolute;
+  right: 14px;
+  bottom: 2px;
+  font-family: var(--mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--muted-4);
+  border: 1px solid var(--ink-a13);
+  border-radius: 5px;
+  padding: 2px 5px;
+  pointer-events: none;
+}
 /* Attachment take-back (ADR 0033). Hidden until the row is hovered or the
    button itself is focused — a persistent ✕ on every attachment row would
    make a destructive action the most eye-catching thing in the history, and

@@ -50,6 +50,9 @@ export const zh = {
     "窗口不在前台时，有事项需要处理或较长的回复完成，会发出通知。",
   "window.keepAwake": "运行时保持唤醒",
   "window.keepAwakeDesc": "板砖运行期间阻止电脑睡眠；显示器仍可关闭。",
+  "window.predictions": "输入预测",
+  "window.predictionsDesc":
+    "黑塔说完后，输入框里会给出你可能想说的下一句。按 Tab 填入，不会自动发送；每次回复多一次很小的调用。",
   "window.minimize": "最小化",
   "window.maximize": "最大化",
   "window.restore": "还原",
@@ -318,6 +321,7 @@ export const zh = {
   "approval.autoReviewNote":
     "开启后，此工作区里撤销能还原的文件写入直接执行，其余操作先由审核模型对照你的要求放行或拒绝；它判断不了的仍会请你确认。可在设备卡片菜单中关闭。",
   "composer.placeholder": "给黑塔发消息…",
+  "composer.predictionAria": "建议的下一句，按 Tab 填入",
   "composer.aria": "消息输入框",
   "composer.send": "发送消息",
   "composer.stop": "打断当前回合",

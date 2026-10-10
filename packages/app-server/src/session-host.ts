@@ -86,6 +86,8 @@ class SessionHostImpl implements SessionHost {
    *  way as the key: each session reads it at every attach. On until a host
    *  says otherwise — the CLI never does. */
   private readonly pdfTranscriptsHolder = { current: true };
+  /** Composer predictions (2026-10-10): on unless the user turned them off. */
+  private readonly predictionsHolder = { current: true };
   /** Serializes create/open/delete/closeActive (audit 2026-07-10, finding
    *  11): each op awaits a long disk load and then assigns `_active`
    *  unconditionally, so two concurrent activations could leave `_active`
@@ -374,6 +376,13 @@ class SessionHostImpl implements SessionHost {
     this.pdfTranscriptsHolder.current = enabled;
   }
 
+  /** Update the composer-prediction switch (Settings, 2026-10-10). The next
+   *  finished turn — in this session or any later one — reads the new
+   *  value. Persistence is the caller's job. */
+  setComposerPredictions(enabled: boolean): void {
+    this.predictionsHolder.current = enabled;
+  }
+
   async reapOrphanedProcesses(): Promise<void> {
     try {
       const reaped = await reapOrphanedDispatches(
@@ -432,6 +441,7 @@ class SessionHostImpl implements SessionHost {
       config: this.config,
       deepSeekKey: () => this.keyHolder.current,
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
+      composerPredictions: () => this.predictionsHolder.current,
       persister,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     });
@@ -505,6 +515,7 @@ class SessionHostImpl implements SessionHost {
       config: this.config,
       deepSeekKey: () => this.keyHolder.current,
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
+      composerPredictions: () => this.predictionsHolder.current,
       persister,
       initialRecord: record,
       // How the last turn ENDED, when the file recorded it. Its absence is

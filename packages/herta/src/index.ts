@@ -72,6 +72,16 @@ export {
   resolveMetaThink,
 } from "./narrative/meta-think.js";
 export {
+  acceptPrediction,
+  MAX_REPLY_CHARS,
+  PREDICTION_FRAME,
+  PREDICTION_HINT,
+  type PredictionDeps,
+  predictionPrompt,
+  predictNextUserMessage,
+  RECENT_TURNS,
+} from "./narrative/next-message-prediction.js";
+export {
   extractBand,
   type OpeningChoice,
   type PickOpeningOpts,

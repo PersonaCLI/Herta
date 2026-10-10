@@ -60,6 +60,8 @@ export const CMD = {
   setTheme: "settings:setTheme",
   getPdfPictureTranscripts: "settings:getPdfPictureTranscripts",
   setPdfPictureTranscripts: "settings:setPdfPictureTranscripts",
+  getComposerPredictions: "settings:getComposerPredictions",
+  setComposerPredictions: "settings:setComposerPredictions",
   getRealtimeVoice: "settings:getRealtimeVoice",
   setRealtimeVoice: "settings:setRealtimeVoice",
   downloadVoiceModel: "voice:downloadModel",

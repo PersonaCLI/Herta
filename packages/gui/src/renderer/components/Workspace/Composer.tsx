@@ -106,6 +106,7 @@ export function Composer(): JSX.Element {
     held,
     resumable,
     restagedImages,
+    prediction,
   } = useSessionSelector(
     (s) => ({
       status: s.status,
@@ -119,6 +120,7 @@ export function Composer(): JSX.Element {
       held: s.held,
       resumable: s.resumable,
       restagedImages: s.restagedImages,
+      prediction: s.prediction,
     }),
     shallowEqualObjects,
   );
@@ -180,6 +182,16 @@ export function Composer(): JSX.Element {
   } | null>(null);
   const busy = status !== "idle";
   const suppressed = overlay?.kind === "pending-permission";
+  // Composer predictions (owner 2026-10-10): the Trailblazer's likely next
+  // line, shown where the placeholder is while the box is empty. Tab takes
+  // it (nothing is sent); typing replaces it. In an EN session the trigger
+  // is spelled the way this composer spells it, `@brick`.
+  const suggestion =
+    prediction !== null && text.length === 0 && !busy && !suppressed
+      ? lang === "en"
+        ? prediction.replaceAll("@板砖", "@brick")
+        : prediction
+      : null;
   // A message while 板砖 works (ADR 0063). The hold exists ONLY while the
   // coprocessor runs — the one phase with a sampling boundary a steer can
   // reach (owner 2026-09-14: a conversation with Herta has no such
@@ -1148,7 +1160,7 @@ export function Composer(): JSX.Element {
           <textarea
             ref={taRef}
             className="composer-input"
-            placeholder={t("composer.placeholder")}
+            placeholder={suggestion ?? t("composer.placeholder")}
             // The mention list is the textarea's: assistive technology hears
             // it open and follows the highlighted option (review 2026-09-30).
             aria-autocomplete="list"
@@ -1245,6 +1257,18 @@ export function Composer(): JSX.Element {
                 }
                 return;
               }
+              if (
+                e.key === "Tab" &&
+                suggestion !== null &&
+                !e.shiftKey &&
+                !(e.nativeEvent.isComposing || e.keyCode === 229)
+              ) {
+                // Take the suggestion into the box — never send it.
+                e.preventDefault();
+                setText(suggestion);
+                pendingCaret.current = suggestion.length;
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 // IME safety (Chinese input): Enter during composition confirms
                 // the candidate, it does NOT send. isComposing covers the spec
@@ -1284,8 +1308,16 @@ export function Composer(): JSX.Element {
             }}
             rows={2}
             aria-label={t("composer.aria")}
+            aria-description={
+              suggestion !== null ? t("composer.predictionAria") : undefined
+            }
             disabled={busy && !holding}
           />
+          {suggestion !== null && (
+            <span className="composer-prediction-key" aria-hidden="true">
+              Tab
+            </span>
+          )}
         </div>
         {/* ONE persistent button that morphs between SEND (↑) and STOP (■).
           While a turn runs it is wired to bridge.interrupt — previously a

@@ -781,6 +781,12 @@ export interface HertaBridge {
   getPdfPictureTranscripts?(): Promise<boolean>;
   /** Persist the switch; main applies it to the next attach, no restart. */
   setPdfPictureTranscripts?(enabled: boolean): Promise<void>;
+  /** Read whether the composer offers a predicted next message (2026-10-10;
+   *  Settings → 窗口). Default on. OPTIONAL — fakes and the website demo
+   *  omit it, and the row hides. */
+  getComposerPredictions?(): Promise<boolean>;
+  /** Persist the switch; main applies it from the next finished turn. */
+  setComposerPredictions?(enabled: boolean): Promise<void>;
   /** Read Herta's real-time-voice state (ADR 0042): whether the user has it
    *  ON, and whether it can run here at all — `available` folds in the model
    *  bundle, the native runtime, and a worker that has failed for good, so

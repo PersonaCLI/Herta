@@ -1769,3 +1769,22 @@ describe("SessionStore — turn-failure status (official DeepSeek codes)", () =>
     store.dispose();
   });
 });
+
+describe("SessionStore — composer predictions (owner 2026-10-10)", () => {
+  it("takes a prediction only into an idle composer, and a new turn drops it", () => {
+    const mock = createMockHertaBridge();
+    const store = new SessionStore();
+    store.connect(mock.bridge);
+    mock.emitTurn({ kind: "started", turnId: "t1" });
+    // A late prediction while a turn runs is for a line already sent.
+    mock.emitTurn({ kind: "predicted", turnId: "t0", text: "旧的" });
+    expect(store.getSnapshot().prediction).toBeNull();
+    mock.emitTurn({ kind: "finished", turnId: "t1" });
+    mock.emitTurn({ kind: "predicted", turnId: "t1", text: "再跑一遍测试" });
+    expect(store.getSnapshot().prediction).toBe("再跑一遍测试");
+    // It is no turn end: the composer stays idle.
+    expect(store.getSnapshot().status).toBe("idle");
+    mock.emitTurn({ kind: "started", turnId: "t2" });
+    expect(store.getSnapshot().prediction).toBeNull();
+  });
+});

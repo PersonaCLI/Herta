@@ -25,6 +25,7 @@ import type {
 } from "../renderer/ipc/bridge-types.js";
 import type { VoiceEngine } from "./app-global-settings.js";
 import {
+  composerPredictionsEnabled,
   defaultCloseToTray,
   type GlobalSettings,
   type Locale,
@@ -356,6 +357,22 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
       pdfPictureTranscripts: enabled,
     }));
     deps.host()?.setPdfPictureTranscription(enabled);
+  });
+  // Settings → 窗口 → composer predictions (2026-10-10). Per user and LIVE:
+  // persisted here, mirrored to the running host, which reads it at every
+  // finished turn. Anything but a boolean is ignored.
+  handle(CMD.getComposerPredictions, async () =>
+    composerPredictionsEnabled(
+      await readGlobalSettings(app.getPath("userData")),
+    ),
+  );
+  handle(CMD.setComposerPredictions, async (_e, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return;
+    await updateGlobalSettings(app.getPath("userData"), (s) => ({
+      ...s,
+      composerPredictions: enabled,
+    }));
+    deps.host()?.setComposerPredictions(enabled);
   });
   // Settings → Voice: Herta's real-time synthesized voice (ADR 0042).
   // App-global and applied LIVE — the synthesizer reads the cached flag at

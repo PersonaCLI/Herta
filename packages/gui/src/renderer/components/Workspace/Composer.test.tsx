@@ -2020,3 +2020,64 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     expect(mock.calls.listWorkspaceFiles).toBe(0);
   });
 });
+
+describe("Composer — predictions (owner 2026-10-10)", () => {
+  function open(
+    mock: ReturnType<typeof createMockHertaBridge>,
+    lang: "zh" | "en" = "en",
+  ): void {
+    act(() =>
+      mock.emitReset({
+        sessionId: "s-pred",
+        workspaceRoot: "/mock",
+        record: [],
+        overlay: null,
+        backendWorkspace: "/mock",
+        backendWorkspaceIsDefault: true,
+        lang,
+      }),
+    );
+  }
+  const predict = (
+    mock: ReturnType<typeof createMockHertaBridge>,
+    text: string,
+  ): void =>
+    act(() => mock.emitTurn({ kind: "predicted", turnId: "t1", text }));
+
+  it("shows the suggestion in the empty box; Tab takes it in and sends nothing", () => {
+    const { mock } = renderComposer();
+    open(mock);
+    predict(mock, "@板砖 add an undo test");
+    // An EN composer spells the trigger its own way.
+    const input = screen.getByPlaceholderText(
+      "@brick add an undo test",
+    ) as HTMLTextAreaElement;
+    expect(document.querySelector(".composer-prediction-key")).not.toBeNull();
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(input.value).toBe("@brick add an undo test");
+    expect(mock.calls.submitText).toEqual([]);
+    // With text in the box, the suggestion and its key are gone.
+    expect(document.querySelector(".composer-prediction-key")).toBeNull();
+  });
+
+  it("typing replaces it, and Tab then does nothing of the kind", () => {
+    const { mock } = renderComposer();
+    open(mock, "zh");
+    predict(mock, "再跑一遍测试");
+    const input = screen.getByPlaceholderText(
+      "再跑一遍测试",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "不用了" } });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(input.value).toBe("不用了");
+  });
+
+  it("a new turn clears it", () => {
+    const { mock } = renderComposer();
+    open(mock);
+    predict(mock, "run the tests again");
+    act(() => mock.emitTurn({ kind: "started", turnId: "t2" }));
+    act(() => mock.emitTurn({ kind: "finished", turnId: "t2" }));
+    expect(screen.getByPlaceholderText("Message Herta…")).toBeInTheDocument();
+  });
+});

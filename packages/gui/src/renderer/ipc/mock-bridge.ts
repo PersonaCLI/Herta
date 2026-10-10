@@ -151,6 +151,9 @@ export interface MockHertaBridgeOpts {
   readonly pdfPictureTranscriptsResult?: boolean;
   /** When true, setPdfPictureTranscripts rejects. */
   readonly failSetPdfPictureTranscripts?: boolean;
+  /** Seed for getComposerPredictions (2026-10-10). UNDEFINED (the default)
+   *  omits the surface — the row hides, like the website demo's bridge. */
+  readonly composerPredictionsResult?: boolean;
   /** Seed for getInteractionLanguage (Settings → Language, slice 4).
    *  Default "follow" (no stored choice). Mutated by setInteractionLanguage
    *  so tests observe the round-trip. */
@@ -264,6 +267,7 @@ export interface MockHertaBridge {
     saveSessionExport: Array<[string, string]>;
     setTheme: ThemePref[];
     setPdfPictureTranscripts: boolean[];
+    setComposerPredictions: boolean[];
     getInteractionLanguage: number;
     setInteractionLanguage: InteractionLanguageChoice[];
     getRealtimeVoice: number;
@@ -389,6 +393,7 @@ export function createMockHertaBridge(
     saveSessionExport: [],
     setTheme: [],
     setPdfPictureTranscripts: [],
+    setComposerPredictions: [],
     getInteractionLanguage: 0,
     setInteractionLanguage: [],
     getRealtimeVoice: 0,
@@ -870,6 +875,15 @@ export function createMockHertaBridge(
             if (opts.failSetPdfPictureTranscripts === true) {
               throw new Error("write failed");
             }
+          },
+        }
+      : {}),
+    ...(opts.composerPredictionsResult !== undefined
+      ? {
+          getComposerPredictions: async () =>
+            opts.composerPredictionsResult === true,
+          setComposerPredictions: async (enabled: boolean) => {
+            calls.setComposerPredictions.push(enabled);
           },
         }
       : {}),

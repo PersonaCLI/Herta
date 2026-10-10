@@ -442,6 +442,11 @@ export class SessionImpl implements Session {
   // Live DeepSeek key getter (the host's mutable holder). submitText reads it to
   // detect the no-key case; the providers were built with the same getter.
   private readonly deepSeekKey: () => string;
+  /** The composer-prediction switch, live (2026-10-10). */
+  private readonly composerPredictions: () => boolean;
+  /** The prediction in flight after a finished turn, if any — aborted when
+   *  the next turn starts or the session closes. */
+  private prediction: AbortController | null = null;
 
   // Per-turn abort tracking. Set at the start of submitText; cleared in
   // finally. interrupt() aborts this controller; close() calls interrupt()
@@ -543,6 +548,8 @@ export class SessionImpl implements Session {
     captionImage: ImageCaptioner | null;
     /** The user's PDF-picture transcription switch, live (2026-10-01). */
     transcribePdfPictures: () => boolean;
+    /** The composer-prediction switch, live (2026-10-10). */
+    composerPredictions: () => boolean;
     steer: SteerChannel;
     bus: EventBus<AgentEvent>;
     /** ADR 0067: the toolset follows the environment. Fired after the
@@ -586,6 +593,7 @@ export class SessionImpl implements Session {
     this.voice = opts.voice;
     this.openingLeadMs = opts.openingLeadMs;
     this.deepSeekKey = opts.deepSeekKey;
+    this.composerPredictions = opts.composerPredictions;
     this.lang = opts.lang;
     this.pendingContractNote = opts.pendingContractNote;
     this.attachments = new SessionAttachments({
@@ -669,6 +677,7 @@ export class SessionImpl implements Session {
       settleTurn = resolve;
     });
     this.currentTurn = { turnId, abortController, settled };
+    this.abortPrediction();
     this.projector.emitTurnLifecycle({ kind: "started", turnId });
     try {
       await body(abortController.signal);
@@ -1134,7 +1143,38 @@ export class SessionImpl implements Session {
     // re-entry, or periodic on a long session). Fire-and-forget — the user
     // already sees Herta's reply; the title fills/updates after.
     this.titler.afterUserTurn();
+    // And the composer's suggestion for what they might say next.
+    void this.predictNextMessage(turnId);
     return { turnId };
+  }
+
+  /**
+   * Composer predictions (owner 2026-10-10): after a submitted turn finishes,
+   * the driver guesses the Trailblazer's next message and the composer offers
+   * it (`predicted`). Fire-and-forget and best-effort: off unless the user's
+   * switch is on, dropped when another turn has started by the time it
+   * lands, and silent on any failure. Never touches the record.
+   */
+  private async predictNextMessage(turnId: string): Promise<void> {
+    if (!this.composerPredictions()) return;
+    this.abortPrediction();
+    const ac = new AbortController();
+    this.prediction = ac;
+    try {
+      const text = await this.driver.predictNextUserMessage(ac.signal);
+      if (text === null || ac.signal.aborted || this.currentTurn !== null)
+        return;
+      this.projector.emitTurnLifecycle({ kind: "predicted", turnId, text });
+    } catch {
+      // An abort, or a failure the driver did not swallow: no suggestion.
+    } finally {
+      if (this.prediction === ac) this.prediction = null;
+    }
+  }
+
+  private abortPrediction(): void {
+    this.prediction?.abort();
+    this.prediction = null;
   }
 
   /**
@@ -1839,8 +1879,9 @@ export class SessionImpl implements Session {
     // currentTurn is null, so this is always safe to call.
     await this.interrupt();
     // Abort any in-flight title generation so a slow flash call can't outlive
-    // the session.
+    // the session — and the composer's prediction with it.
     this.titler.dispose();
+    this.abortPrediction();
 
     // Await the interrupted turn's REAL settlement (audit 2026-07-10,
     // finding 14): one setImmediate was not enough — a still-unwinding turn
@@ -1912,6 +1953,10 @@ export class SessionImpl implements Session {
     /** Live getter for the user's PDF-picture transcription switch (from the
      *  host's holder, 2026-10-01). Absent = on (tests, the CLI). */
     transcribePdfPictures?: () => boolean;
+    /** Live getter for the composer-prediction switch (from the host's
+     *  holder, 2026-10-10). Absent = off: a host that offers no switch
+     *  (tests, the CLI) makes no prediction calls. */
+    composerPredictions?: () => boolean;
     /** Interaction language (slice 4): threaded into every language-
      *  parameterized constructor below (static prefix, seeds, opening,
      *  meta-think, hints, recap, title) and into the V2ActorDriver. The
@@ -2371,6 +2416,7 @@ export class SessionImpl implements Session {
           ? deepseekVisionCaptioner({ apiKey, ...baseUrl })
           : null,
       transcribePdfPictures: opts.transcribePdfPictures ?? (() => true),
+      composerPredictions: opts.composerPredictions ?? (() => false),
       repoDescriber: deps.repoDescriber ?? describeRepoOutcome,
       repoWatcher: deps.repoWatcher ?? watchGitDir,
       repoWatchDebounceMs: deps.repoWatchDebounceMs ?? REPO_WATCH_DEBOUNCE_MS,

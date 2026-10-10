@@ -43,6 +43,40 @@ export function WindowSettings(): JSX.Element {
     "window.attention",
     { notifications: true, keepAwake: true },
   );
+  // Composer predictions (2026-10-10): on unless turned off, like main's
+  // reading; the row exists when the bridge can read it.
+  const hasPredictions = bridge.getComposerPredictions !== undefined;
+  const [predictions, setPredictions] = useRememberedSetting(
+    bridge,
+    "window.predictions",
+    true,
+  );
+
+  useEffect(() => {
+    if (bridge.getComposerPredictions === undefined) return;
+    let alive = true;
+    bridge.getComposerPredictions().then(
+      (v) => {
+        if (alive) setPredictions(v);
+      },
+      () => {
+        if (alive) setLoadFailed(true);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [bridge, setPredictions]);
+
+  const onPredictions = (next: boolean): void => {
+    // Optimistic, like the rows above: flip now, snap back on a failed write.
+    setPredictions(next);
+    setFailed(false);
+    void bridge.setComposerPredictions?.(next).catch(() => {
+      setPredictions(!next);
+      setFailed(true);
+    });
+  };
 
   useEffect(() => {
     if (bridge.getAttention === undefined) return;
@@ -166,6 +200,19 @@ export function WindowSettings(): JSX.Element {
             }
           />
         </>
+      )}
+      {hasPredictions && (
+        <SettingRow
+          title={t("window.predictions")}
+          description={t("window.predictionsDesc")}
+          control={
+            <Toggle
+              checked={predictions}
+              ariaLabel={t("window.predictions")}
+              onChange={onPredictions}
+            />
+          }
+        />
       )}
       {failed ? (
         <p className="settings-note">{t("common.couldntSave")}</p>

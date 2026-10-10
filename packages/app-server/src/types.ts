@@ -463,6 +463,15 @@ export type SpeechControlEvent =
 export type TurnLifecycleEvent =
   | { readonly kind: "started"; readonly turnId: string }
   | { readonly kind: "finished"; readonly turnId: string }
+  /** After `finished`: the Trailblazer's likely next message, for the
+   *  composer to offer (composer predictions, owner 2026-10-10). User-side
+   *  chrome — it never enters the record. Not a turn's end: `finished`
+   *  came first, and a consumer counting turn ends must skip it. */
+  | {
+      readonly kind: "predicted";
+      readonly turnId: string;
+      readonly text: string;
+    }
   | {
       readonly kind: "failed";
       readonly turnId: string;
@@ -619,6 +628,10 @@ export interface SessionHost {
    *  NEXT attach, in any session, reads it — no restart. On until set.
    *  Persistence is the caller's job. */
   setPdfPictureTranscription(enabled: boolean): void;
+  /** Update the composer-prediction switch (Settings, 2026-10-10): the NEXT
+   *  finished turn, in any session, reads it — no restart. On until set.
+   *  Persistence is the caller's job. */
+  setComposerPredictions(enabled: boolean): void;
   /** The user did something in the window that is not a turn (a rewind, an
    *  attachment, a search, a file opened in the viewer): it counts as
    *  activity for the dream trigger, and a running pass steps aside at its

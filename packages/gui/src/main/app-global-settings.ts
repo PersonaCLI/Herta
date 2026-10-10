@@ -84,6 +84,12 @@ export interface GlobalSettings {
    *  reads it at every attach. Per user, like the other cost switches here,
    *  because the calls are paid on the user's key. */
   readonly pdfPictureTranscripts?: boolean;
+  /** Composer predictions (2026-10-10, Settings → 窗口): after Herta
+   *  replies, the message box suggests the Trailblazer's likely next line.
+   *  ABSENT = on (the owner's pick, as Codex ships it). Live: the host reads
+   *  it at every finished turn. Per user — one small call per reply, on the
+   *  user's key. */
+  readonly composerPredictions?: boolean;
 }
 
 /** Whether an attached PDF's pictures are transcribed: the ONE resolver the
@@ -91,6 +97,12 @@ export interface GlobalSettings {
  *  the app is not running with. */
 export function pdfPictureTranscriptsEnabled(s: GlobalSettings): boolean {
   return s.pdfPictureTranscripts ?? true;
+}
+
+/** Whether the composer offers a predicted next message — the ONE resolver
+ *  the bootstrap and the Settings row both read. */
+export function composerPredictionsEnabled(s: GlobalSettings): boolean {
+  return s.composerPredictions ?? true;
 }
 
 export interface WindowStateSnapshot {

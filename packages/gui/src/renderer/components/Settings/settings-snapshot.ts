@@ -40,6 +40,7 @@ export interface SettingsSnapshot {
   "language.interaction": InteractionLanguageChoice;
   "window.closeToTray": boolean;
   "window.attention": AttentionSettings;
+  "window.predictions": boolean;
   "update.version": string | null;
   "update.state": UpdateState;
   "update.auto": boolean;

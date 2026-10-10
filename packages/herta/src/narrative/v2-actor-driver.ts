@@ -25,6 +25,7 @@ import {
   type MoodState,
   resolveMetaThink,
 } from "./meta-think.js";
+import { predictNextUserMessage } from "./next-message-prediction.js";
 import type { PromptLang } from "./prompt-lang.js";
 import {
   type PreparedRecap,
@@ -301,6 +302,13 @@ export class V2ActorDriver {
    * turns. See `AttachedMetaThink` JSDoc for the full contract.
    */
   private attachedMetaThink: AttachedMetaThink | null = null;
+  /**
+   * A submitted turn completed and nothing has replaced the record since —
+   * the one state a composer prediction is made in. The opening never sets
+   * it (owner 2026-10-10: no prediction after 黑塔's 开场白 alone); a load
+   * or a rewind clears it.
+   */
+  private turnCompleted = false;
   /**
    * Number of same-state turns elapsed since the SPEAK anchor was
    * last refreshed. Reset to 0 on state change, on speak-anchor
@@ -726,6 +734,7 @@ export class V2ActorDriver {
     // had no use for stops here.
     speculation?.discard();
     this.record = result.record;
+    this.turnCompleted = true;
     // Push newly-appended blocks to the persister, in order. Per-turn diff:
     // only the blocks at indices [prevLen, this.record.length). D1: SKIP when
     // the sink persisted these incrementally on flush (mid-stream durable) —
@@ -937,6 +946,33 @@ export class V2ActorDriver {
   }
 
   /**
+   * The Trailblazer's likely next message, for the composer to offer
+   * (`next-message-prediction.ts`: the last few turns, with guidance). Only
+   * right after a completed turn whose record still ends on Herta's speech,
+   * and null otherwise, or when the model offers nothing worth showing.
+   * Never touches the record. Rejects only with the caller's abort.
+   */
+  async predictNextUserMessage(signal: AbortSignal): Promise<string | null> {
+    const last = this.record.at(-1);
+    if (
+      !this.turnCompleted ||
+      last === undefined ||
+      last.kind !== "herta" ||
+      last.surface !== "speech"
+    )
+      return null;
+    return predictNextUserMessage(
+      {
+        provider: this.deps.provider,
+        model: this.deps.model,
+        record: this.record,
+        lang: this.deps.lang ?? "zh",
+      },
+      signal,
+    );
+  }
+
+  /**
    * Rewind the latest 开拓者 (user) turn: remove the last `user` block and every
    * block after it (Herta speech/thought, → 系统 / → 差分协处理器, beats, markers)
    * from BOTH the in-memory record and the persisted JSONL. Returns the withdrawn
@@ -1008,6 +1044,7 @@ export class V2ActorDriver {
     this.currentIntentState = "默认";
     this.attachedMetaThink = null;
     this.turnsSinceSpeakAnchor = 0;
+    this.turnCompleted = false;
     return { userText, withdrawn };
   }
 
@@ -1078,6 +1115,7 @@ export class V2ActorDriver {
     // record's length, and counts from zero again.
     this.attachedMetaThink = null;
     this.turnsSinceSpeakAnchor = 0;
+    this.turnCompleted = false;
   }
 
   /**

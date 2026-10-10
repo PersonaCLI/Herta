@@ -199,6 +199,8 @@ export function watchAttention(
   }
 
   void pump<TurnLifecycleEvent>(session.subscribeTurnLifecycle(), (e) => {
+    // A composer prediction follows a turn's `finished`; it ends nothing.
+    if (e.kind === "predicted") return;
     const labels = attentionLabels(host.locale());
     if (e.kind === "started") {
       dropReply();

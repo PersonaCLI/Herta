@@ -110,6 +110,9 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.getPdfPictureTranscripts),
   setPdfPictureTranscripts: (enabled) =>
     ipcRenderer.invoke(CMD.setPdfPictureTranscripts, enabled),
+  getComposerPredictions: () => ipcRenderer.invoke(CMD.getComposerPredictions),
+  setComposerPredictions: (enabled) =>
+    ipcRenderer.invoke(CMD.setComposerPredictions, enabled),
   getRealtimeVoice: () => ipcRenderer.invoke(CMD.getRealtimeVoice),
   setRealtimeVoice: (enabled) =>
     ipcRenderer.invoke(CMD.setRealtimeVoice, enabled),

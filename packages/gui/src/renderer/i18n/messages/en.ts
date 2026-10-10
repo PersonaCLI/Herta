@@ -53,6 +53,9 @@ export const en = {
   "window.keepAwake": "Keep awake during runs",
   "window.keepAwakeDesc":
     "Keeps the computer from sleeping while Brick runs; the display may still turn off.",
+  "window.predictions": "Composer predictions",
+  "window.predictionsDesc":
+    "After Herta replies, the message box suggests what you might say next. Tab fills it in and nothing is sent on its own; each reply costs one small extra call.",
   "window.minimize": "Minimize",
   "window.maximize": "Maximize",
   "window.restore": "Restore",
@@ -347,6 +350,7 @@ export const en = {
   "approval.autoReviewNote":
     "Once on, file writes in this workspace that undo can take back run directly, and a review model allows or denies everything else against what you asked; what it cannot judge still asks you. It can be turned off from the device card's menu.",
   "composer.placeholder": "Message Herta…",
+  "composer.predictionAria": "Suggested next message — press Tab to fill it in",
   "composer.aria": "Message composer",
   "composer.send": "Send message",
   "composer.stop": "Interrupt the current turn",

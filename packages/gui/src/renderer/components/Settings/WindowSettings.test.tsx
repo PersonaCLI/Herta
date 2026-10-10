@@ -51,3 +51,24 @@ describe("WindowSettings appearance row (night-mode slice 2)", () => {
     expect(mock.calls.setTheme).toEqual(["system"]);
   });
 });
+
+describe("WindowSettings — composer predictions (2026-10-10)", () => {
+  it("shows the switch when the bridge has it, reads it, and persists a change", async () => {
+    const mock = createMockHertaBridge({ composerPredictionsResult: true });
+    renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <WindowSettings />
+      </HertaBridgeProvider>,
+    );
+    const toggle = await screen.findByLabelText("Composer predictions");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    expect(mock.calls.setComposerPredictions).toEqual([false]);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("hides the row when the bridge has no such surface (the website demo)", () => {
+    setup();
+    expect(screen.queryByLabelText("Composer predictions")).toBeNull();
+  });
+});

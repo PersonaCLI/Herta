@@ -209,6 +209,23 @@ describe("the attention watcher (ADR 0072 §1)", () => {
     f.stop();
   });
 
+  it("a composer prediction after the turn ends nothing and notifies nothing (2026-10-10)", async () => {
+    const f = fixture();
+    f.turn.push({ kind: "started", turnId: "p" });
+    await tick();
+    f.advance(LONG_TURN_MS);
+    f.turn.push({ kind: "finished", turnId: "p" });
+    await tick();
+    f.fireTimers();
+    expect(f.notices.map((n) => n.kind)).toEqual(["reply"]);
+    // Read as a turn end, it would have queued a second reply notice.
+    f.turn.push({ kind: "predicted", turnId: "p", text: "再跑一遍测试" });
+    await tick();
+    f.fireTimers();
+    expect(f.notices.map((n) => n.kind)).toEqual(["reply"]);
+    f.stop();
+  });
+
   it("a quick chat reply does not notify; one that took LONG_TURN_MS does", async () => {
     const f = fixture();
     f.turn.push({ kind: "started", turnId: "a" });

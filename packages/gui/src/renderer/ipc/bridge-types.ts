@@ -582,13 +582,6 @@ export interface HertaBridge {
     markdown: string,
   ): Promise<{ readonly saved: boolean; readonly failed?: boolean }>;
   resolveApproval(opts: ResolveApprovalOpts): Promise<ApprovalResult>;
-  /** Project command allow rules (ADR 0030) for the ACTIVE session's
-   *  workspace, as display strings (`node src/index.mjs:*`). OPTIONAL —
-   *  fakes and the website demo omit the pair; the Settings management
-   *  list hides with it (same contract as getBackendConfig). */
-  listCommandRules?(): Promise<readonly string[]>;
-  /** Remove one rule by its display form; false when nothing matched. */
-  removeCommandRule?(display: string): Promise<boolean>;
   /** Automatic review (ADR 0075, which replaced workspace trust) for the
    *  ACTIVE session's workspace. OPTIONAL like the rule pair; the device
    *  card's menu hides the row without it. */

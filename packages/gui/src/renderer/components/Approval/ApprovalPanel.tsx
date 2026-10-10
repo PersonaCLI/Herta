@@ -181,7 +181,7 @@ export function ApprovalPanel(): JSX.Element | null {
 
   const resolve = (
     decision: "allow" | "deny",
-    persistence?: "once" | "session" | "always" | "auto_review",
+    persistence?: "once" | "session" | "auto_review",
   ): void => {
     if (shown === null || resolving) return;
     setResolving(true);
@@ -341,15 +341,10 @@ export function ApprovalPanel(): JSX.Element | null {
         {shownCommand !== undefined && (
           <pre className="approval-panel__command">{shownCommand}</pre>
         )}
-        {shown.projectRule !== undefined && (
-          <p className="approval-panel__rule">
-            {t("approval.projectRuleNote", { rule: shown.projectRule })}
-          </p>
-        )}
         {shown.offerAutoReview === true && (
           // What turning automatic review on does, spelled out before the
           // button — same inspect-before-commit contract as the
-          // project-rule caption above.
+          // other dim captions.
           <p className="approval-panel__rule">{t("approval.autoReviewNote")}</p>
         )}
         {shown.files !== undefined && shown.files.length > 0 && (
@@ -433,18 +428,6 @@ export function ApprovalPanel(): JSX.Element | null {
             onClick={() => resolve("allow", "session")}
           >
             {t("approval.alwaysAllow")}
-          </button>
-        )}
-        {shown.projectRule !== undefined && (
-          <button
-            type="button"
-            className="approval-btn approval-btn--always"
-            disabled={resolving}
-            // Short click target (owner 2026-08-04) — the exact grant is
-            // spelled out by the dim __rule note above the actions.
-            onClick={() => resolve("allow", "always")}
-          >
-            {t("approval.allowProject")}
           </button>
         )}
         {shown.offerAutoReview === true && (

@@ -50,12 +50,6 @@ export interface PendingPermissionApproval {
    *  (audit T3.4 follow-up; mirrors the CLI's showRemember gate). Absent on
    *  hand-built test/legacy overlays → treated as not cacheable. */
   readonly cacheable?: boolean;
-  /** Display form of the ONE project rule a persistence:"always" resolution
-   *  would save (`node src/index.mjs:*` — ADR 0030). Present only when the
-   *  ask class is rule-eligible AND a rule is derivable; the GUI hides its
-   *  「本项目允许」 button otherwise — same never-offer-a-no-op contract as
-   *  `cacheable` above. */
-  readonly projectRule?: string;
   /** Whether a 「开启自动审核」 choice would take effect for this request
    *  (ADR 0064 amendment 2026-10-10): automatic review is off here and would
    *  answer it. Same never-offer-a-no-op contract as `cacheable`. */

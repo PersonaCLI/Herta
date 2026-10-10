@@ -5,9 +5,8 @@ import { AutoReviewer } from "@herta/app-server/wiring";
 import {
   type AskResolver,
   type PermissionRequest,
-  ProjectCommandRuleStore,
-  ruleDisplay,
   SessionApprovalCache,
+  WorkspacePermissions,
 } from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { MockReadable, MockWritable } from "../testing/mock-streams.js";
@@ -279,102 +278,6 @@ describe("CachingAskResolver", () => {
       expect(cache.size()).toBe(0);
     });
 
-    it("project rules (ADR 0030): hit auto-allows with a marker; [p] persists; non-eligible codes never match", async () => {
-      const root = mkdtempSync(join(tmpdir(), "herta-cli-rules-"));
-      try {
-        const rules = new ProjectCommandRuleStore(() => root);
-        const nodeReq = (argv: string[], code?: string): PermissionRequest =>
-          mkReq({
-            call: { id: "c1", tool: "run_command", input: { argv } },
-            code: code ?? "command_ask_interpreter",
-          });
-
-        // 1) Derivable + eligible: the prompt carries the rule display;
-        //    allow_project persists it.
-        const first = mkInner();
-        first.inner.outcomes = ["allow_project"];
-        const w1 = new CachingAskResolver(
-          first.inner,
-          new SessionApprovalCache(),
-          first.stdout,
-          style,
-          rules,
-        );
-        const d1 = await w1.present(
-          nodeReq(["node", "src/index.mjs", "sample.txt"]),
-          new AbortController().signal,
-        );
-        expect(d1).toBe("allow");
-        // The pinned script also makes the task-remember available (the
-        // cache scopes by `node src/index.mjs`, 2026-08-17). No [r]: with
-        // no reviewer mounted, automatic review would not answer a script.
-        expect(first.inner.optionsLog).toEqual([
-          {
-            showRemember: true,
-            projectRule: "node src/index.mjs:*",
-          },
-        ]);
-        expect(rules.list().map(ruleDisplay)).toEqual(["node src/index.mjs:*"]);
-
-        // 2) Same script, different args: silent auto-allow, no prompt.
-        const second = mkInner();
-        const w2 = new CachingAskResolver(
-          second.inner,
-          new SessionApprovalCache(),
-          second.stdout,
-          style,
-          rules,
-        );
-        const d2 = await w2.present(
-          nodeReq(["node", "src/index.mjs", "other.txt"]),
-          new AbortController().signal,
-        );
-        expect(d2).toBe("allow");
-        expect(second.inner.optionsLog).toEqual([]);
-        expect(second.stdout.full()).toContain(
-          "auto-allow: project rule covers node src/index.mjs other.txt",
-        );
-
-        // 3) Matching argv but a NON-eligible ask class: prompts anyway, and
-        //    offers no [p] (the rule cannot cross tiers).
-        const third = mkInner();
-        third.inner.outcomes = ["allow"];
-        const w3 = new CachingAskResolver(
-          third.inner,
-          new SessionApprovalCache(),
-          third.stdout,
-          style,
-          rules,
-        );
-        await w3.present(
-          nodeReq(["node", "src/index.mjs"], "command_ask_destructive"),
-          new AbortController().signal,
-        );
-        // (showRemember follows the RISK, which this fixture leaves at
-        // workspace_write with a pinnable script — the point here is that no
-        // projectRule is offered for the non-eligible class.)
-        expect(third.inner.optionsLog).toEqual([{ showRemember: true }]);
-
-        // 4) Eligible but underivable (eval flag): no [p] offered.
-        const fourth = mkInner();
-        fourth.inner.outcomes = ["allow"];
-        const w4 = new CachingAskResolver(
-          fourth.inner,
-          new SessionApprovalCache(),
-          fourth.stdout,
-          style,
-          rules,
-        );
-        await w4.present(
-          nodeReq(["node", "-e", "x"]),
-          new AbortController().signal,
-        );
-        expect(fourth.inner.optionsLog).toEqual([{ showRemember: false }]);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-
     it("missing/empty argv: falls through to non-cacheable behavior", async () => {
       const cache = new SessionApprovalCache();
       const { inner, stdout } = mkInner();
@@ -397,7 +300,7 @@ describe("CachingAskResolver", () => {
     it("[r] turns it on for the workspace; an undoable write then runs with a marker, and what trust covered still prompts", async () => {
       const root = mkdtempSync(join(tmpdir(), "herta-cli-review-"));
       try {
-        const rules = new ProjectCommandRuleStore(() => root);
+        const permissions = new WorkspacePermissions(() => root);
         const write = (): PermissionRequest =>
           mkReq({
             call: { id: "c1", tool: "edit_file", input: { path: "a.txt" } },
@@ -411,7 +314,7 @@ describe("CachingAskResolver", () => {
           new SessionApprovalCache(),
           first.stdout,
           style,
-          rules,
+          permissions,
         );
         await expect(
           w1.present(write(), new AbortController().signal),
@@ -419,7 +322,7 @@ describe("CachingAskResolver", () => {
         expect(first.inner.optionsLog[0]).toMatchObject({
           showAutoReview: true,
         });
-        expect(rules.autoReview()).toBe(true);
+        expect(permissions.autoReview()).toBe(true);
 
         const second = mkInner();
         const w2 = new CachingAskResolver(
@@ -427,7 +330,7 @@ describe("CachingAskResolver", () => {
           new SessionApprovalCache(),
           second.stdout,
           style,
-          rules,
+          permissions,
         );
         await expect(
           w2.present(write(), new AbortController().signal),
@@ -445,7 +348,7 @@ describe("CachingAskResolver", () => {
           new SessionApprovalCache(),
           third.stdout,
           style,
-          rules,
+          permissions,
         );
         await w3.present(
           mkReq({
@@ -493,8 +396,8 @@ describe("CachingAskResolver with the automatic reviewer (ADR 0075)", () => {
     // The CLI is off unless chosen: `enabled` is the owner's choice.
     const root = mkdtempSync(join(tmpdir(), "herta-cli-review-"));
     roots.push(root);
-    const rules = new ProjectCommandRuleStore(() => root);
-    if (enabled) rules.setAutoReview(true);
+    const permissions = new WorkspacePermissions(() => root);
+    if (enabled) permissions.setAutoReview(true);
     const reviewer = new AutoReviewer(async ({ user }) => {
       sent.push(user);
       const next = answers.shift();
@@ -507,7 +410,7 @@ describe("CachingAskResolver with the automatic reviewer (ADR 0075)", () => {
       new SessionApprovalCache(),
       stdout,
       style,
-      rules,
+      permissions,
       {
         reviewer,
         userMessages: () => ["@板砖 跑一下测试。"],

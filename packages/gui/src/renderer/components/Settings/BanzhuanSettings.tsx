@@ -76,10 +76,10 @@ function metaFor(state: BanzhuanDeviceState): StateMeta {
  * restart-to-apply), then a read-only device card that auto-cycles through
  * its lifecycle (pause on hover) with a synced caption, plus a static
  * 5-state legend. The visual reuses the live rail card; only the meaning
- * text lives here. The ADR 0030 command-rule list deliberately does NOT
- * live in this pane: rules are session-workspace-scoped, so they're managed
- * in the device card's ⋯ menu next to the workspace they bind to (owner
- * 2026-08-04 — a first cut here was moved out same day).
+ * text lives here. Per-workspace permission choices (automatic review) do
+ * NOT live in this pane: they're managed in the device card's ⋯ menu next to
+ * the workspace they bind to (owner 2026-08-04, for the command rules that
+ * were removed on 2026-10-10).
  *
  * Layout rules (owner feedback 2026-08-03, "re-design — it changed the
  * panel height"): the pane must stay inside `.settings-content`'s stable

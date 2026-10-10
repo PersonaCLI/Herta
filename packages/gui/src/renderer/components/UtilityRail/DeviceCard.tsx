@@ -228,35 +228,10 @@ export function DeviceCard(): JSX.Element {
       picking.current = false;
     }
   };
-  // Project command allow rules (ADR 0030). The DATA lives here — CardMenu is
-  // presentational (its own tests render it with no bridge provider) — and is
-  // refreshed on every menu OPEN so a rule granted mid-commission appears
-  // without a remount. `null` means "this bridge has no rule surface" (fakes /
-  // the website demo): the menu then omits the section entirely.
-  const rulesSupported = bridge.listCommandRules !== undefined;
-  const [rules, setRules] = useSessionScoped<readonly string[]>([]);
-  const refreshRules = (): void => {
-    if (!rulesSupported) return;
-    void bridge.listCommandRules?.().then(
-      (r) => setRules(r),
-      () => {
-        /* keep the last list — best-effort chrome */
-      },
-    );
-  };
-  const handleRemoveRule = (display: string): void => {
-    void bridge.removeCommandRule?.(display).then(
-      (ok) => {
-        if (ok) setRules((prev) => prev.filter((r) => r !== display));
-      },
-      () => {
-        /* row stays — nothing was deleted */
-      },
-    );
-  };
-  // Automatic review (ADR 0075, which replaced workspace trust): same
-  // ownership as the rules — the data lives here, refreshed on every menu
-  // open, and the row is omitted when the bridge has no surface for it.
+  // Automatic review (ADR 0075, which replaced workspace trust). The DATA
+  // lives here — CardMenu is presentational (its own tests render it with no
+  // bridge provider) — refreshed on every menu OPEN, and the row is omitted
+  // when the bridge has no surface for it (fakes / the website demo).
   const reviewSupported = bridge.getAutoReview !== undefined;
   const [review, setReview] = useSessionScoped<AutoReviewState | null>(null);
   const refreshReview = (): void => {
@@ -288,7 +263,6 @@ export function DeviceCard(): JSX.Element {
     }, fail);
   };
   const refreshMenu = (): void => {
-    refreshRules();
     refreshReview();
   };
   const handleReset = async () => {
@@ -333,8 +307,8 @@ export function DeviceCard(): JSX.Element {
       )}
       <CardMenu
         // One menu per session: a switch by keyboard or from the tray left
-        // an open menu showing the new session with an empty rules list and
-        // no review row — the scoped data reset, and the refetch fires only
+        // an open menu showing the new session with no review row — the
+        // scoped data reset, and the refetch fires only
         // on the open edge (UX review 2026-09-22, item 11). The key closes
         // it with the session it described.
         key={snap.sessionId ?? "no-session"}
@@ -349,8 +323,6 @@ export function DeviceCard(): JSX.Element {
             : undefined
         }
         errorText={wsError ?? undefined}
-        rules={rulesSupported ? rules : undefined}
-        onRemoveRule={handleRemoveRule}
         review={reviewSupported && review !== null ? review : undefined}
         onSetAutoReview={handleSetAutoReview}
         onOpen={refreshMenu}

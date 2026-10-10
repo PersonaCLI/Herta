@@ -4,9 +4,9 @@ import { join, parse } from "node:path";
 import type { TerminalRecord } from "@herta/core";
 import {
   InMemoryToolRegistry,
-  ProjectCommandRuleStore,
   SessionApprovalCache,
   type ToolSchema,
+  WorkspacePermissions,
 } from "@herta/core";
 import type { V2ActorDriver } from "@herta/herta";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -34,14 +34,14 @@ function mkCtx(opts?: {
   tools?: InMemoryToolRegistry;
   out?: MockWritable;
   approvalCache?: SessionApprovalCache;
-  commandRules?: ProjectCommandRuleStore;
+  workspacePermissions?: WorkspacePermissions;
 }) {
   return {
     tools: opts?.tools ?? mkTools(),
     out: opts?.out ?? new MockWritable(),
     style,
     approvalCache: opts?.approvalCache,
-    commandRules: opts?.commandRules,
+    workspacePermissions: opts?.workspacePermissions,
   };
 }
 
@@ -231,37 +231,31 @@ describe("handleSlashCommand", () => {
     expect(out.full()).toContain("unknown subcommand: foo");
   });
 
-  describe("/permissions project rules (ADR 0030)", () => {
+  describe("/permissions auto-review (ADR 0075)", () => {
     let root: string;
     beforeEach(() => {
-      root = mkdtempSync(join(tmpdir(), "herta-slash-rules-"));
+      root = mkdtempSync(join(tmpdir(), "herta-slash-review-"));
     });
     afterEach(() => {
       rmSync(root, { recursive: true, force: true });
     });
 
-    function mkRules(): ProjectCommandRuleStore {
-      const s = new ProjectCommandRuleStore(() => root);
-      s.add({ argvPrefix: ["node", "src/index.mjs"], anyArgs: true });
-      return s;
-    }
-
-    it("/permissions auto-review on|off switches the reviewer for this workspace (ADR 0075)", async () => {
-      const rules = new ProjectCommandRuleStore(() => root);
+    it("/permissions auto-review on|off switches the reviewer for this workspace", async () => {
+      const permissions = new WorkspacePermissions(() => root);
       const ctx = (out: MockWritable) => ({
-        ...mkCtx({ out, commandRules: rules }),
+        ...mkCtx({ out, workspacePermissions: permissions }),
         autoReviewAvailable: true,
       });
       let out = new MockWritable();
       await handleSlashCommand("/permissions auto-review on", ctx(out));
-      expect(rules.autoReview()).toBe(true);
+      expect(permissions.autoReview()).toBe(true);
       expect(out.full()).toContain("auto-review: on");
       out = new MockWritable();
       await handleSlashCommand("/permissions", ctx(out));
       expect(out.full()).toContain("auto-review on");
       out = new MockWritable();
       await handleSlashCommand("/permissions auto-review off", ctx(out));
-      expect(rules.autoReview()).toBe(false);
+      expect(permissions.autoReview()).toBe(false);
       out = new MockWritable();
       await handleSlashCommand("/permissions auto-review maybe", ctx(out));
       expect(out.full()).toContain("usage: /permissions auto-review on|off");
@@ -269,52 +263,17 @@ describe("handleSlashCommand", () => {
       out = new MockWritable();
       await handleSlashCommand(
         "/permissions auto-review on",
-        mkCtx({ out, commandRules: rules }),
+        mkCtx({ out, workspacePermissions: permissions }),
       );
       expect(out.full()).toContain("not available");
-      expect(rules.autoReview()).toBe(false);
+      expect(permissions.autoReview()).toBe(false);
     });
 
-    it("/permissions lists project rules alongside session approvals", async () => {
-      const out = new MockWritable();
-      await handleSlashCommand(
-        "/permissions",
-        mkCtx({ out, commandRules: mkRules() }),
-      );
-      const text = out.full();
-      expect(text).toContain("project rules (1)");
-      expect(text).toContain("node src/index.mjs:*");
-      expect(text).toContain("/permissions remove <rule>");
-    });
-
-    it("/permissions remove deletes a rule by its (spaced) display form", async () => {
-      const rules = mkRules();
-      const out = new MockWritable();
-      await handleSlashCommand(
-        "/permissions remove node src/index.mjs:*",
-        mkCtx({ out, commandRules: rules }),
-      );
-      expect(out.full()).toContain(
-        "removed project rule: node src/index.mjs:*",
-      );
-      expect(rules.list()).toEqual([]);
-    });
-
-    it("/permissions remove reports a miss without deleting anything", async () => {
-      const rules = mkRules();
-      const out = new MockWritable();
-      await handleSlashCommand(
-        "/permissions remove dotnet build:*",
-        mkCtx({ out, commandRules: rules }),
-      );
-      expect(out.full()).toContain("no project rule matches: dotnet build:*");
-      expect(rules.list()).toHaveLength(1);
-    });
-
-    it("/permissions remove without a store reports unavailability", async () => {
+    it("remembered project commands are gone (2026-10-10): `remove` is an unknown subcommand", async () => {
       const out = new MockWritable();
       await handleSlashCommand("/permissions remove x", mkCtx({ out }));
-      expect(out.full()).toContain("not available in this build");
+      expect(out.full()).toContain("unknown subcommand: remove");
+      expect(out.full()).not.toContain("project rule");
     });
   });
 

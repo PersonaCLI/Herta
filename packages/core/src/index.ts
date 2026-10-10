@@ -3,8 +3,6 @@ export {
   ApprovalPolicy,
   type ApprovalPolicyOpts,
   type ApprovalPreflight,
-  commandArgv,
-  commandCwd,
 } from "./approval-policy.js";
 export {
   type AtomicWriteOptions,
@@ -171,13 +169,11 @@ export {
   RulePermissionEngine,
 } from "./permission-engine.js";
 export {
-  deriveProjectCommandRule,
-  isRuleEligibleAskCode,
-  type ProjectCommandRule,
-  ProjectCommandRuleStore,
-  ruleDisplay,
+  binaryBasename,
+  pinnedScript,
+  RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,
-} from "./project-command-rules.js";
+} from "./program-identity.js";
 export { ReadLedger, type ReadLedgerEntry } from "./read-ledger.js";
 export {
   isCacheableProgram,
@@ -285,3 +281,4 @@ export {
   type UsageNote,
   type UsageNoteSink,
 } from "./usage-note.js";
+export { WorkspacePermissions } from "./workspace-permissions.js";

@@ -110,42 +110,10 @@ describe("ApprovalPanel", () => {
     ]);
   });
 
-  it("Allow in project resolves allow/always and names the exact rule (ADR 0030)", async () => {
+  it("never offers Allow in project — remembered project commands were removed (2026-10-10)", async () => {
     const mock = setup();
     await settle();
-    act(() => {
-      mock.emitOverlay({
-        kind: "pending",
-        overlay: {
-          kind: "pending-permission",
-          requestId: "req-pr",
-          risk: "workspace_write",
-          tool: "run_command",
-          summary: "interpreter runs a script",
-          command: "node src/index.mjs sample.txt",
-          cacheable: false,
-          projectRule: "node src/index.mjs:*",
-        },
-      });
-    });
-    // The dim note spells out the exact grant before the user commits.
-    expect(
-      screen.getByText("“Allow in project” remembers: node src/index.mjs:*"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Allow in project" }));
-    expect(mock.calls.resolveApproval).toEqual([
-      { requestId: "req-pr", decision: "allow", persistence: "always" },
-    ]);
-  });
-
-  it("hides Allow in project when no rule is derivable", async () => {
-    // resolveExternal would silently no-op an "always" persist for a request
-    // that derives no rule (node -e, shells, non-eligible ask classes) — the
-    // button is withheld rather than offered-and-ignored, same contract as
-    // the cacheable gate below.
-    const mock = setup();
-    await settle();
-    emitPending(mock); // fixture carries no projectRule
+    emitPending(mock);
     expect(screen.getByTestId("approval-panel")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Allow in project" }),

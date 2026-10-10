@@ -1165,7 +1165,26 @@ describe("BusActorStreamingSink — a text beat is paced like the reply (owner 2
     vi.useRealTimers();
   });
 
-  it("turn end and the stop click land it in one emit", async () => {
+  it("turn end waits for it to finish at its own pace — with the supervisor off it is the whole reply", async () => {
+    const { sink, deltas, kinds } = setup();
+    sink.seedEmittedCount(1);
+    fireBeat(sink, BEAT);
+    sink.flushBlocks(record(BEAT));
+    let settled = false;
+    void sink.textRevealsDone().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(SLOW_MS_PER_CHAR * 3);
+    expect(settled).toBe(false);
+    expect(deltas.join("").length).toBeLessThan(BEAT.length);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(true);
+    expect(deltas.join("")).toBe(BEAT);
+    expect(kinds()).toEqual(["herta", "system"]);
+    vi.useRealTimers();
+  });
+
+  it("the stop click lands it in one emit", async () => {
     const { sink, deltas, kinds } = setup();
     sink.seedEmittedCount(1);
     fireBeat(sink, BEAT);

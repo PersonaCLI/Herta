@@ -11,7 +11,7 @@
  * but resolveExternal will still return { ok: false, reason: "stale_request" }
  * if the requestId doesn't match (defense-in-depth).
  *
- * The POLICY (cache / project-rule short-circuits, which persistence choices
+ * The POLICY (cache / undoable-write short-circuits, which persistence choices
  * to offer, what a grant writes back) is `@herta/core`'s `ApprovalPolicy`,
  * shared with the CLI's resolver; this class only renders and awaits.
  *
@@ -25,8 +25,8 @@ import {
   abortError,
   type PendingPermissionApproval,
   type PermissionRequest,
-  type ProjectCommandRuleStore,
   type SessionApprovalCache,
+  type WorkspacePermissions,
 } from "@herta/core";
 import {
   type ReviewDeps,
@@ -55,15 +55,12 @@ export interface OverlayAskResolverDeps {
    */
   readonly cache: SessionApprovalCache;
   /**
-   * Project-scoped command allow rules (ADR 0030). Consulted before
-   * surfacing a rule-eligible run_command ask (a match short-circuits to
-   * "allow", silent like a cache hit — the operation still projects its
-   * → 系统 blocks into the record); written when a request resolves with
-   * persistence "always" (the reserved value the v0.3 design doc §7 left
-   * for exactly this store). Optional so hand-built test resolvers keep
-   * their pre-0030 behavior.
+   * The workspace's permission choices (`.herta/permissions.json`): whether
+   * automatic review is on. Written when a request resolves with
+   * persistence "auto_review". Optional: a hand-built test resolver without
+   * one has only the host's default.
    */
-  readonly rules?: ProjectCommandRuleStore;
+  readonly permissions?: WorkspacePermissions;
   /**
    * Whether automatic review is on by default in the CURRENT workspace
    * (ADR 0064 amendment 2026-10-10): the session's managed sandbox is, a
@@ -103,7 +100,7 @@ export class OverlayAskResolver implements AskResolver {
   private readonly policy: ApprovalPolicy;
 
   constructor(private readonly deps: OverlayAskResolverDeps) {
-    this.policy = new ApprovalPolicy(deps.cache, deps.rules, {
+    this.policy = new ApprovalPolicy(deps.cache, deps.permissions, {
       ...(deps.defaultAutoReview !== undefined
         ? { defaultAutoReview: deps.defaultAutoReview }
         : {}),
@@ -123,7 +120,7 @@ export class OverlayAskResolver implements AskResolver {
   }
 
   present(request: PermissionRequest, signal: AbortSignal): Promise<AskAnswer> {
-    // Cache / undoable write / project-rule hit: no overlay.
+    // Cache / undoable-write hit: no overlay.
     const pre = this.policy.preflight(request);
     if (pre.kind === "auto") return Promise.resolve("allow");
     const review = this.deps.review;
@@ -222,11 +219,8 @@ export class OverlayAskResolver implements AskResolver {
         // silently no-op and re-prompt (audit T3.4 follow-up; mirrors the
         // CLI showRemember gate).
         cacheable: pre.showRemember,
-        // Same contract for the 「本项目允许」 button (ADR 0030): present only
-        // when persistence:"always" would actually save this exact rule.
-        projectRule: pre.projectRule,
-        // And for 「开启自动审核」: only when automatic review is off and
-        // would answer this request.
+        // Same contract for 「开启自动审核」: only when automatic review is
+        // off and would answer this request.
         ...(pre.showAutoReview ? { offerAutoReview: true } : {}),
       };
       this.deps.setPendingOverlay(overlay);
@@ -239,9 +233,8 @@ export class OverlayAskResolver implements AskResolver {
    *
    * When decision is "allow" and persistence is "session", the (tool, risk)
    * pair is written to the task-scoped cache so subsequent identical asks
-   * short-circuit until the brief ends. Persistence "always" instead persists
-   * the derived PROJECT rule (ADR 0030) — the reserved value the v0.3 design
-   * doc §7 left open now has its store. Both re-derive from the pending
+   * short-circuit until the brief ends. Persistence "auto_review" turns
+   * automatic review on for the workspace. Both re-derive from the pending
    * request (never a caller-supplied shape) inside `ApprovalPolicy.commit`.
    *
    * Returns:
@@ -252,7 +245,7 @@ export class OverlayAskResolver implements AskResolver {
   resolveExternal(opts: {
     readonly requestId: string;
     readonly decision: "allow" | "deny";
-    readonly persistence?: "once" | "session" | "always" | "auto_review";
+    readonly persistence?: "once" | "session" | "auto_review";
   }): ResolveExternalResult {
     if (this.pending === null) {
       return { ok: false, reason: "no_pending_overlay" };

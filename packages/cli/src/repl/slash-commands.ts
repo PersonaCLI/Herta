@@ -1,15 +1,14 @@
 import type {
-  ProjectCommandRuleStore,
   SessionApprovalCache,
   TerminalRecord,
   ToolRegistry,
+  WorkspacePermissions,
 } from "@herta/core";
 import {
   defaultWorkspaceFor,
   errorMessage,
   listSessions,
   readSessionFile,
-  ruleDisplay,
   SessionFileError,
   type SessionListEntry,
   type V2RecordPersister as V2RecordPersisterType,
@@ -36,11 +35,10 @@ export interface SlashContext {
    */
   approvalCache?: SessionApprovalCache;
   /**
-   * Optional project command-rule store (ADR 0030) for /permissions.
-   * Wired by main.ts; tests may omit. When undefined, /permissions lists
-   * only the task cache and `remove` reports unavailability.
+   * Optional workspace permission choices for `/permissions auto-review`.
+   * Wired by main.ts; tests may omit.
    */
-  commandRules?: ProjectCommandRuleStore;
+  workspacePermissions?: WorkspacePermissions;
   /** ADR 0075: an automatic reviewer is mounted — `/permissions
    *  auto-review on|off` switches it for this workspace. */
   autoReviewAvailable?: boolean;
@@ -81,10 +79,7 @@ const HELP_LINES: readonly [string, string][] = [
   ["/help", "show this list"],
   ["/compact", "force older history into the recap"],
   ["/tools", "list registered tools"],
-  [
-    "/permissions",
-    "list approvals & project rules (subs: clear, remove <rule>, auto-review on|off)",
-  ],
+  ["/permissions", "list session approvals (subs: clear, auto-review on|off)"],
   ["/workspace", "show/set/reset the backend workspace (subs: set/reset)"],
   ["/resume", "list & resume prior sessions (subs: latest/all/<prefix>)"],
   ["/quit  /exit", "end session"],
@@ -160,15 +155,10 @@ function renderTools(ctx: SlashContext): void {
 
 function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
   const sub = args[0];
-  if (
-    sub !== undefined &&
-    sub !== "clear" &&
-    sub !== "remove" &&
-    sub !== "auto-review"
-  ) {
+  if (sub !== undefined && sub !== "clear" && sub !== "auto-review") {
     ctx.out.write(`${ctx.style.red(`unknown subcommand: ${sub}`)}\n`);
     ctx.out.write(
-      `${ctx.style.dim("usage: /permissions (or clear, remove <rule>, auto-review on|off)")}\n`,
+      `${ctx.style.dim("usage: /permissions (or clear, auto-review on|off)")}\n`,
     );
     return;
   }
@@ -182,53 +172,25 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
     ctx.out.write(`${ctx.style.dim(`cleared ${n} session approval(s)`)}\n`);
     return;
   }
-  if (sub === "remove") {
-    // Rule displays contain spaces (`node src/index.mjs:*`) — rejoin the
-    // whitespace-split args. Multiple original spaces inside a rule token
-    // can't survive the split; rules never contain runs of spaces (argv
-    // tokens are joined with single spaces).
-    const display = args.slice(1).join(" ");
-    if (ctx.commandRules === undefined) {
-      ctx.out.write(
-        `${ctx.style.dim("project rules are not available in this build")}\n`,
-      );
-      return;
-    }
-    if (display.length === 0) {
-      ctx.out.write(`${ctx.style.dim("usage: /permissions remove <rule>")}\n`);
-      return;
-    }
-    const removed = ctx.commandRules.remove(display);
-    ctx.out.write(
-      removed
-        ? `${ctx.style.dim(`removed project rule: ${display}`)}\n`
-        : `${ctx.style.red(`no project rule matches: ${display}`)}\n`,
-    );
-    return;
-  }
   const list = ctx.approvalCache?.list() ?? [];
-  const rules = ctx.commandRules?.list().map(ruleDisplay) ?? [];
-  if (ctx.autoReviewAvailable === true && ctx.commandRules !== undefined) {
+  if (
+    ctx.autoReviewAvailable === true &&
+    ctx.workspacePermissions !== undefined
+  ) {
     ctx.out.write(
-      `${ctx.style.cyan("auto-review")} ${ctx.commandRules.autoReview() === true ? "on" : "off"}\n`,
+      `${ctx.style.cyan("auto-review")} ${ctx.workspacePermissions.autoReview() === true ? "on" : "off"}\n`,
     );
   }
-  if (list.length === 0 && rules.length === 0) {
+  if (list.length === 0) {
     ctx.out.write(
-      `${ctx.style.dim("no session approvals or project rules — every workspace write will prompt")}\n`,
+      `${ctx.style.dim("no session approvals — every workspace write will prompt")}\n`,
     );
     return;
   }
-  if (list.length > 0) {
-    ctx.out.write(`${ctx.style.cyan(`session approvals (${list.length})`)}\n`);
-    for (const entry of list) ctx.out.write(`  ${entry}\n`);
-  }
-  if (rules.length > 0) {
-    ctx.out.write(`${ctx.style.cyan(`project rules (${rules.length})`)}\n`);
-    for (const entry of rules) ctx.out.write(`  ${entry}\n`);
-  }
+  ctx.out.write(`${ctx.style.cyan(`session approvals (${list.length})`)}\n`);
+  for (const entry of list) ctx.out.write(`  ${entry}\n`);
   ctx.out.write(
-    `\n${ctx.style.dim("(/permissions clear drops session approvals; /permissions remove <rule> deletes a project rule)")}\n`,
+    `\n${ctx.style.dim("(/permissions clear drops session approvals)")}\n`,
   );
 }
 
@@ -240,14 +202,17 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
  * the state. Its decisions stay silent, as on the desktop.
  */
 function handleAutoReview(ctx: SlashContext, value: string | undefined): void {
-  if (ctx.autoReviewAvailable !== true || ctx.commandRules === undefined) {
+  if (
+    ctx.autoReviewAvailable !== true ||
+    ctx.workspacePermissions === undefined
+  ) {
     ctx.out.write(
       `${ctx.style.dim("auto-review is not available in this build")}\n`,
     );
     return;
   }
   if (value === "on" || value === "off") {
-    ctx.commandRules.setAutoReview(value === "on");
+    ctx.workspacePermissions.setAutoReview(value === "on");
   } else if (value !== undefined) {
     ctx.out.write(
       `${ctx.style.dim("usage: /permissions auto-review on|off")}\n`,
@@ -255,7 +220,7 @@ function handleAutoReview(ctx: SlashContext, value: string | undefined): void {
     return;
   }
   ctx.out.write(
-    `${ctx.style.dim(`auto-review: ${ctx.commandRules.autoReview() === true ? "on" : "off"}`)}\n`,
+    `${ctx.style.dim(`auto-review: ${ctx.workspacePermissions.autoReview() === true ? "on" : "off"}`)}\n`,
   );
 }
 

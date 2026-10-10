@@ -311,6 +311,22 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   }
 
   /**
+   * Resolves when every text reveal on the beat lane has finished at its own
+   * pace. The session awaits it before a turn's end settles: the raw lane
+   * carries the whole reply when the supervisor is off, and landing that at
+   * turn end would flash its tail — the very thing the pacing removed. The
+   * stop click lands it instead (`settleVoice({ interrupt: true })`), and the
+   * reveal ceiling bounds the wait.
+   */
+  async textRevealsDone(): Promise<void> {
+    while (this.liveBeatText.size > 0) {
+      await Promise.all(
+        [...this.liveBeatText].map((d) => d.done.catch(() => undefined)),
+      );
+    }
+  }
+
+  /**
    * A new stream is opening: a text beat still revealing lands now, and the
    * blocks it held — its own block among them — reach the renderer first.
    * The renderer keeps ONE streaming bubble and clears it on a herta block,

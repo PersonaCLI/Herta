@@ -16,8 +16,6 @@ export const CMD = {
   readSessionForExport: "session:readForExport",
   saveSessionExport: "session:saveExport",
   resolveApproval: "session:resolveApproval",
-  listCommandRules: "session:listCommandRules",
-  removeCommandRule: "session:removeCommandRule",
   getAutoReview: "session:getAutoReview",
   setAutoReview: "session:setAutoReview",
   resyncRecord: "session:resyncRecord",

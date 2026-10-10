@@ -253,8 +253,6 @@ export const zh = {
   "approval.title": "请求权限",
   "approval.allow": "同意",
   "approval.alwaysAllow": "任务内同意",
-  "approval.allowProject": "本项目允许",
-  "approval.projectRuleNote": "「本项目允许」会记住：{rule}",
   "approval.deny": "拒绝",
   "approval.risk.read": "读取工作区",
   "approval.risk.write": "写入工作区",
@@ -690,9 +688,6 @@ export const zh = {
   "card.copyPath": "复制路径",
   "card.pathCopied": "已复制",
   "card.copyFailed": "复制失败",
-  "card.rules": "已记住的命令",
-  "card.rulesEmpty": "暂无已记住的命令",
-  "card.rulesRemove": "删除规则 {rule}",
   // ADR 0075: the automatic review of approval requests — the row in the
   // device card's menu (it replaced workspace trust, 2026-10-10).
   "card.autoReview": "自动审核",

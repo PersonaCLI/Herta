@@ -295,13 +295,13 @@ export async function main(
     // The digest tool's side model (ADR 0043) — the same flash sidecar the
     // GUI host builds.
     digestModel: defaultDigestModel(apiKey, baseUrl),
-    makeAsk: ({ cache, rules }) =>
+    makeAsk: ({ cache, workspacePermissions }) =>
       new CachingAskResolver(
         new CliAskResolver(stdin as NodeJS.ReadStream, stdout, style),
         cache,
         stdout,
         style,
-        rules,
+        workspacePermissions,
         {
           reviewer: autoReviewer,
           userMessages: () => {
@@ -325,7 +325,7 @@ export async function main(
       "herta: HERTA_BACKEND_CONTRACT=minimal but no bash found (install Git for Windows or set HERTA_BASH); running the standard contract\n",
     );
   }
-  const { bus, approvalCache, commandRules } = backend;
+  const { bus, approvalCache, workspacePermissions } = backend;
 
   // Actor session ID — for new sessions, a fresh uuid; for resumes, the
   // original session's id from the loaded file's header. Reusing the
@@ -481,7 +481,7 @@ export async function main(
     style,
     lang,
     approvalCache,
-    commandRules,
+    workspacePermissions,
     transcriptDir,
     currentWorkspaceRoot: workspaceRoot,
     workspaceHolder: wsHolder,

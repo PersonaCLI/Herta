@@ -260,8 +260,8 @@ d("bash tool (real bash)", () => {
     registerBashRule(engine, { bashPath: BASH });
     expect((await engine.check(call("cat a.txt"), ctx)).kind).toBe("allow");
     expect((await engine.check(call("echo x > a.txt"), ctx)).kind).toBe("ask");
-    // The ask carries the effective argv (approval cache scope + ADR 0030
-    // rules) when the line runs ONE program — even behind the model's
+    // The ask carries the effective argv (the approval cache scope) when
+    // the line runs ONE program — even behind the model's
     // `cd <workspace> &&` prefix — and nothing otherwise.
     const wsShell = new PersistentShell({
       bashPath: BASH as string,
@@ -286,8 +286,8 @@ d("bash tool (real bash)", () => {
       // … but the task cache can still scope it by its one program.
       expect(multi.request.programs).toEqual(["git"]);
     }
-    // An interpreter line still carries argv (ADR 0030 rules accept the
-    // script-pinned shape); the CACHE excludes it separately.
+    // An interpreter line still carries argv; the cache keys only its
+    // script-pinned shape.
     const interp = await engine.check(call("node scripts/x.mjs"), ctx);
     expect(interp.kind).toBe("ask");
     if (interp.kind === "ask") {

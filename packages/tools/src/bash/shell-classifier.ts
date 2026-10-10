@@ -58,9 +58,8 @@ import type { ShellPaths } from "./shell-paths.js";
  *
  * Aggregation: any block → block; else any ask → ONE ask carrying the
  * highest risk and the joined reasons (the user sees the whole command in
- * the prompt anyway); else allow. `code` follows the highest-risk ask so
- * ADR 0030 project rules (`command_ask_unknown` / `_interpreter`) can still
- * be derived when that is the only ask in the line.
+ * the prompt anyway); else allow. `code` follows the highest-risk ask, so
+ * the card labels the line by its most serious class.
  */
 export interface ShellClassifyOpts {
   workspaceRoot: string;
@@ -412,8 +411,7 @@ export function classifyShellCommandDetailed(
 /**
  * The single program a command line really runs, as argv — or null.
  *
- * Feeds the approval cache and ADR 0030 project rules for `bash` the way
- * run_command's argv does. Deliberately narrow (fail-closed): after dropping
+ * Feeds the approval cache for `bash` the way run_command's argv does. Deliberately narrow (fail-closed): after dropping
  * leading `cd`/`pushd` segments whose target is the WORKSPACE ROOT itself
  * (the model's habit; a cd into a subdirectory would change what a
  * cwd-scoped rule means, so it disqualifies), exactly ONE segment may

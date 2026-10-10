@@ -1699,13 +1699,15 @@ describe("NarrativeRenderer.slowStreamSpeech — cancelAndBackspace (TTY)", () =
     r.beginHertaStream("speech");
     r.streamHertaToken("retry");
     r.endHertaStream();
+    // The raw lane reveals at the paced cadence on a TTY (2026-10-10).
+    await vi.advanceTimersByTimeAsync(TICK * 10);
 
     // The retry's `r.beginHertaStream` writes nothing visible for
-    // speech surface (just sets internal state). `streamHertaToken`
-    // writes "retry" at col 0 of the blanked text row. `endHerta-
-    // Stream` writes "\n" to move cursor to the next line. So the
-    // total output appends "retry\n" with NO extra blank line
-    // between the retract sequence and the retry chars.
+    // speech surface (just sets internal state). The reveal writes
+    // "retry" at col 0 of the blanked text row, then "\n" to move the
+    // cursor to the next line. So the total output appends "retry\n"
+    // with NO extra blank line between the retract sequence and the
+    // retry chars.
     expect(out.full()).toBe(
       "rejected\n\x1b[1A\x1b[8C\b \b\b \b\b \b\b \b\b \b\b \b\b \b\b \bretry\n",
     );
@@ -1951,5 +1953,96 @@ describe("NarrativeRenderer — EN transient chrome (audit 2026-07-16)", () => {
     r.endHertaStream();
     r.beginCompactionHint();
     expect(out.full()).toContain("⋯ 正在压缩对话记忆…");
+  });
+});
+
+describe("NarrativeRenderer — a beat is paced like the reply on a TTY (owner 2026-10-10)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  function mkTty(): { out: MockWritable; r: NarrativeRenderer } {
+    const out = new MockWritable();
+    const r = new NarrativeRenderer(out, plainStyle, {
+      isTTY: true,
+      random: () => 0.5,
+    });
+    return { out, r };
+  }
+  const BEAT = "先让测试兜住。";
+  const ROW: TerminalRecordBlock = {
+    kind: "system",
+    label: "差分协处理器",
+    body: "Running node --test",
+  };
+  // The bridge's order: begin at the first safe token, the chunk, end, then
+  // the beat block committed and flushed, the backend's next row behind it.
+  function fireBeat(
+    r: NarrativeRenderer,
+    text: string,
+    record: TerminalRecord,
+  ) {
+    r.beginHertaStream("speech");
+    r.streamHertaToken(text);
+    r.endHertaStream();
+    r.flushBlocks(record);
+  }
+  const recordWith = (...beats: string[]): TerminalRecord => [
+    ...beats.flatMap((b): TerminalRecordBlock[] => [
+      { kind: "herta", surface: "speech", text: b },
+      ROW,
+    ]),
+  ];
+
+  it("reveals one glyph at a time, and the row behind it prints after its newline", async () => {
+    const { out, r } = mkTty();
+    fireBeat(r, BEAT, recordWith(BEAT).slice(0, 2));
+    expect(out.full()).toBe("");
+    await vi.advanceTimersByTimeAsync(TICK * 2);
+    expect(out.full().length).toBeGreaterThan(0);
+    expect(out.full()).not.toContain("→");
+    await vi.advanceTimersByTimeAsync(TICK * 30);
+    await r.settled();
+    expect(out.full()).toBe(`${BEAT}\n→ 差分协处理器\n  Running node --test\n`);
+  });
+
+  it("the next stream lands it first: its tail, its newline, its row", async () => {
+    const { out, r } = mkTty();
+    fireBeat(r, BEAT, recordWith(BEAT).slice(0, 2));
+    await vi.advanceTimersByTimeAsync(TICK);
+    r.beginHertaStream("thought");
+    expect(out.full()).toBe(
+      `${BEAT}\n→ 差分协处理器\n  Running node --test\n(思考中…)`,
+    );
+  });
+
+  it("settled() waits for the reveal; an error mid-beat lands what was handed over", async () => {
+    const { r } = mkTty();
+    fireBeat(r, BEAT, recordWith(BEAT).slice(0, 2));
+    let done = false;
+    void r.settled().then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(TICK * 2);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(TICK * 30);
+    expect(done).toBe(true);
+
+    const second = mkTty();
+    second.r.beginHertaStream("speech");
+    second.r.streamHertaToken("半句");
+    second.r.cancelStream();
+    expect(second.out.full()).toBe("半句\n");
+  });
+
+  it("non-TTY output keeps the raw writes", () => {
+    const out = new MockWritable();
+    const r = new NarrativeRenderer(out, plainStyle);
+    r.beginHertaStream("speech");
+    r.streamHertaToken(BEAT);
+    r.endHertaStream();
+    expect(out.full()).toBe(`${BEAT}\n`);
   });
 });

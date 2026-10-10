@@ -39,9 +39,6 @@ const bridge: HertaBridge = {
   saveSessionExport: (fileName, markdown) =>
     ipcRenderer.invoke(CMD.saveSessionExport, fileName, markdown),
   resolveApproval: (opts) => ipcRenderer.invoke(CMD.resolveApproval, opts),
-  listCommandRules: () => ipcRenderer.invoke(CMD.listCommandRules),
-  removeCommandRule: (display) =>
-    ipcRenderer.invoke(CMD.removeCommandRule, display),
   getAutoReview: () => ipcRenderer.invoke(CMD.getAutoReview),
   setAutoReview: (on) => ipcRenderer.invoke(CMD.setAutoReview, on),
   resyncRecord: () => ipcRenderer.invoke(CMD.resyncRecord),

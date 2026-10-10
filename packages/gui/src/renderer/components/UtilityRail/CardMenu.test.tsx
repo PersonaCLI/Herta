@@ -161,12 +161,12 @@ describe("CardMenu", () => {
     expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
-  // ── Project command rules (ADR 0030) ──────────────────────────────────────
-  // PRESENTATIONAL ONLY. Every case here renders CardMenu with NO
-  // HertaBridgeProvider on purpose: a first cut fetched rules from the bridge
-  // inside this component and broke all 11 tests above (CI 2026-08-04). The
-  // data belongs to DeviceCard; these props are the seam.
-  const rulesProps = {
+  // ── Presentational only ───────────────────────────────────────────────────
+  // Every case here renders CardMenu with NO HertaBridgeProvider on purpose:
+  // a first cut fetched data from the bridge inside this component and broke
+  // all 11 tests above (CI 2026-08-04). The data belongs to DeviceCard; these
+  // props are the seam.
+  const menuProps = {
     cardKind: "device" as const,
     activeWorkspace: "/p",
     isDefault: false,
@@ -174,40 +174,13 @@ describe("CardMenu", () => {
     onResetWorkspace: vi.fn(),
   };
 
-  it("renders the rules section from props, with no bridge in scope", () => {
-    renderWithLocale(
-      <CardMenu {...rulesProps} rules={["node src/index.mjs:*"]} />,
-    );
+  it("its tips are the app's own: no OS tooltip anywhere in the menu (owner 2026-10-08)", () => {
+    renderWithLocale(<CardMenu {...menuProps} />);
     fireEvent.click(screen.getByLabelText("device card info"));
-    expect(screen.getByText("Remembered commands")).toBeInTheDocument();
-    expect(screen.getByText("node src/index.mjs:*")).toBeInTheDocument();
-  });
-
-  it("its tips are the app's own: none on the wrapping path, and a rule's only while it is cut off (owner 2026-10-08)", () => {
-    renderWithLocale(
-      <CardMenu {...rulesProps} rules={["node src/index.mjs:*"]} />,
-    );
-    fireEvent.click(screen.getByLabelText("device card info"));
-    // No OS tooltip anywhere in the menu (a portal at the body).
+    // A portal at the body.
     expect(
       document.querySelectorAll(".card-menu-tooltip [title]"),
     ).toHaveLength(0);
-    const rule = screen.getByText("node src/index.mjs:*");
-    const tip = (): string | undefined => {
-      act(() => {
-        fireEvent.focusIn(rule);
-      });
-      const text = getHoverTip()?.text;
-      act(() => {
-        hideHoverTip();
-      });
-      return text;
-    };
-    // Seen whole (jsdom lays out nothing): no tip.
-    expect(tip()).toBeUndefined();
-    Object.defineProperty(rule, "scrollWidth", { value: 300 });
-    Object.defineProperty(rule, "clientWidth", { value: 120 });
-    expect(tip()).toBe("node src/index.mjs:*");
   });
 
   it("the path opens the workspace folder, and stays text when it cannot (owner 2026-10-08)", () => {
@@ -344,40 +317,9 @@ describe("CardMenu", () => {
     expect(onSetAutoReview).toHaveBeenCalledWith(false);
   });
 
-  it("shows the empty note for an empty rule list", () => {
-    renderWithLocale(<CardMenu {...rulesProps} rules={[]} />);
-    fireEvent.click(screen.getByLabelText("device card info"));
-    expect(screen.getByText("No commands remembered")).toBeInTheDocument();
-  });
-
-  it("omits the section entirely when rules are undefined (no rule surface)", () => {
-    renderWithLocale(<CardMenu {...rulesProps} />);
-    fireEvent.click(screen.getByLabelText("device card info"));
-    // The menu is a portal at the body (2026-09-17): assert document-wide.
-    expect(document.querySelector(".card-menu-rules")).toBeNull();
-    // The workspace half is unaffected by the rules gate.
-    expect(screen.getByRole("button", { name: /Set workspace/ })).toBeTruthy();
-  });
-
-  it("✕ delegates removal to the parent", () => {
-    const onRemoveRule = vi.fn();
-    renderWithLocale(
-      <CardMenu
-        {...rulesProps}
-        rules={["node a.js:*"]}
-        onRemoveRule={onRemoveRule}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText("device card info"));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Remove rule node a.js:*" }),
-    );
-    expect(onRemoveRule).toHaveBeenCalledWith("node a.js:*");
-  });
-
   it("fires onOpen on each OPEN edge only (the parent's refresh trigger)", () => {
     const onOpen = vi.fn();
-    renderWithLocale(<CardMenu {...rulesProps} rules={[]} onOpen={onOpen} />);
+    renderWithLocale(<CardMenu {...menuProps} onOpen={onOpen} />);
     const btn = screen.getByLabelText("device card info");
     expect(onOpen).toHaveBeenCalledTimes(0); // closed at mount → no fetch
     fireEvent.click(btn);
@@ -401,8 +343,6 @@ describe("CardMenu", () => {
       onResetWorkspace: vi.fn(),
       review: { on: false, explicit: null, isDefaultWorkspace: false },
       onSetAutoReview: vi.fn(),
-      rules: ["node a.js:*"],
-      onRemoveRule: vi.fn(),
     };
 
     it("moves focus to the first action when the menu opens", () => {
@@ -420,9 +360,6 @@ describe("CardMenu", () => {
       const review = screen.getByRole("button", {
         name: "Turn on auto-review",
       });
-      const remove = screen.getByRole("button", {
-        name: "Remove rule node a.js:*",
-      });
       const down = (): void => {
         fireEvent.keyDown(document.activeElement as Element, {
           key: "ArrowDown",
@@ -432,8 +369,6 @@ describe("CardMenu", () => {
       down();
       expect(document.activeElement).toBe(review); // Reset (disabled) skipped
       down();
-      expect(document.activeElement).toBe(remove);
-      down();
       // Wraps to the top: the path's copy icon, above the items.
       expect(document.activeElement).toBe(copy);
       down();
@@ -441,7 +376,7 @@ describe("CardMenu", () => {
       fireEvent.keyDown(set, { key: "ArrowUp" });
       expect(document.activeElement).toBe(copy);
       fireEvent.keyDown(copy, { key: "ArrowUp" });
-      expect(document.activeElement).toBe(remove); // and to the bottom
+      expect(document.activeElement).toBe(review); // and to the bottom
     });
 
     it("hands focus back to ⋯ when Escape closes the menu", async () => {

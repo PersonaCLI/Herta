@@ -330,8 +330,8 @@ describe("classifyShellCommand — allow tier", () => {
     expect(kind(cmd)).toBe("allow");
     // A heredoc FED TO a shell is code: the consumer asks — and a bare
     // shell is `command_ask_opaque` (ADR 0075 step 1): what it runs is its
-    // input, which the harness does not read, and no project rule can ever
-    // pre-approve it.
+    // input, which the harness does not read, and no standing grant can
+    // ever pre-approve it.
     expect(ask("bash <<'EOF'\ncurl https://x\nEOF").code).toBe(
       "command_ask_opaque",
     );
@@ -377,7 +377,7 @@ describe("classifyShellCommand — ask tier", () => {
     expect(kind("cd src && cd ../..")).toBe("ask");
   });
 
-  it("asks for opaque builtins and interpreters, with the interpreter code ADR 0030 rules key on", () => {
+  it("asks for opaque builtins and interpreters, with the interpreter code", () => {
     expect(ask("source ./env.sh").code).toBe("command_ask_interpreter");
     // eval names no script a rule could key on: opaque (ADR 0075 step 1).
     expect(ask('eval "$cmd"').code).toBe("command_ask_opaque");
@@ -483,7 +483,7 @@ describe("classifyShellCommand — ask tier", () => {
   });
 });
 
-describe("singleProgramArgv (approval cache + ADR 0030 rules for bash)", () => {
+describe("singleProgramArgv (the approval cache scope for bash)", () => {
   const one = (cmd: string) => singleProgramArgv(cmd, opts);
   it("one program, optionally behind the model's cd-to-workspace-root prefix", () => {
     expect(one("git commit -m 'x y'")).toEqual(["git", "commit", "-m", "x y"]);

@@ -1,9 +1,9 @@
 import type {
-  ProjectCommandRuleStore,
   SessionApprovalCache,
   TerminalRecord,
   ToolRegistry,
   V2RecordPersister,
+  WorkspacePermissions,
 } from "@herta/core";
 import { errorMessage, isAbortError } from "@herta/core";
 import type { PromptLang, V2ActorDriver } from "@herta/herta";
@@ -25,8 +25,8 @@ export interface ReplDeps {
    *  wire token `@板砖` before dispatch. Default "zh" (no translation). */
   lang?: PromptLang;
   approvalCache?: SessionApprovalCache;
-  /** Threaded into SlashContext for /permissions (project rules, ADR 0030). */
-  commandRules?: ProjectCommandRuleStore;
+  /** Threaded into SlashContext for `/permissions auto-review`. */
+  workspacePermissions?: WorkspacePermissions;
   /** Threaded into SlashContext for /resume (ADR 0069 §3). */
   rebindSession?: (sessionId: string, record: TerminalRecord) => Promise<void>;
   /** Threaded into SlashContext for /resume. */
@@ -72,7 +72,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
         style: deps.style,
         lang: deps.lang,
         approvalCache: deps.approvalCache,
-        commandRules: deps.commandRules,
+        workspacePermissions: deps.workspacePermissions,
         driver: deps.actor,
         ...(deps.rebindSession !== undefined
           ? { rebindSession: deps.rebindSession }
@@ -97,6 +97,10 @@ export async function repl(deps: ReplDeps): Promise<void> {
       const wireText = aliasBrickInput(trimmed, deps.lang ?? "zh");
       deps.autoReview?.begin(wireText);
       const record = await deps.actor.runTurn(wireText, controller.signal);
+      // A beat — or, with the supervisor off, the whole reply — may still be
+      // revealing at its paced cadence: let it finish before the prompt.
+      // (Optional call: test doubles of the renderer omit it.)
+      await deps.renderer.settled?.();
       deps.renderer.update(record);
     } catch (err) {
       // Slice 9: if we crashed mid-stream, the renderer may be in

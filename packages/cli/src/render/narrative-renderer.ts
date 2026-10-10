@@ -11,6 +11,7 @@ import {
   humanizedCharDelay,
   type PacingMode,
   type PromptLang,
+  type RevealDriver,
   type SlowStreamController,
 } from "@herta/herta";
 import { aliasBanzhuanDisplay, aliasBanzhuanPlain } from "./banzhuan-alias.js";
@@ -222,9 +223,82 @@ export class NarrativeRenderer implements ActorStreamingSink {
    */
   private pendingBrickTail = "";
 
+  /**
+   * The raw lane's paced reveal on a TTY (owner 2026-10-10: a beat "pops up
+   * without streaming"). In-turn beats — and the whole reply when the
+   * supervisor is off — arrive as DeepSeek generates them, a line in about a
+   * second, while the supervised reply reads at the paced cadence. On a TTY
+   * the chunks now go through the shared reveal driver at that cadence:
+   * `beatReveal` while the actor is still streaming into it, `revealing`
+   * once `endHertaStream` has handed it the last chunk and the actor has
+   * moved on. Non-TTY output keeps the raw writes.
+   */
+  private beatReveal: RevealDriver | null = null;
+  private revealing: RevealDriver | null = null;
+  /** A record update that arrived while a finished beat was still revealing:
+   *  the rows behind it print when it ends, so they never cut into its line. */
+  private deferredRecord: TerminalRecord | null = null;
+
+  /**
+   * Resolves once the raw lane's reveal (if any) has finished at its own
+   * pace. The REPL awaits it before printing the prompt, so a beat — or an
+   * unsupervised reply — is never cut short at turn end.
+   */
+  async settled(): Promise<void> {
+    for (;;) {
+      const d = this.revealing ?? this.beatReveal;
+      if (d === null) return;
+      await d.done.catch(() => undefined);
+    }
+  }
+
+  /** Land a reveal still running — its tail at once, its newline, and the
+   *  rows held behind it — before anything else is written. */
+  private landReveal(): void {
+    (this.beatReveal ?? this.revealing)?.flushTail();
+  }
+
+  private makeBeatReveal(): RevealDriver {
+    const driver = createRevealDriver({
+      mode: this.mode,
+      baseMs: SLOW_STREAM_BASE_DELAY_MS,
+      random: this.random,
+      maxRevealMs: Number.POSITIVE_INFINITY,
+      fences: false,
+      completionTick: false,
+      firstDelayMs: this.computeFirstDelay(),
+      emitRange: (chunk) => this.writeSpeechChunk(chunk),
+      onBegin: () => undefined,
+      onFinish: (begun) => {
+        if (begun && this.streamingSurface === "speech") this.out.write("\n");
+        if (this.beatReveal === driver) {
+          // Landed before the actor ended it (an error mid-beat): the
+          // actor's own end/cancel follows and must find no open stream.
+          this.beatReveal = null;
+        }
+        if (this.revealing === driver) this.revealing = null;
+        this.streamingSurface = null;
+        const deferred = this.deferredRecord;
+        this.deferredRecord = null;
+        if (deferred !== null) this.update(deferred);
+      },
+    });
+    return driver;
+  }
+
   // -- ActorStreamingSink methods ------------------------------------------
 
   beginHertaStream(surface: "speech" | "thought"): void {
+    this.openStream(surface);
+    if (surface === "speech" && this.isTTY) {
+      this.beatReveal = this.makeBeatReveal();
+    }
+  }
+
+  /** The stream bookkeeping every lane shares; the paced controller opens
+   *  through here without starting a second reveal of its own. */
+  private openStream(surface: "speech" | "thought"): void {
+    this.landReveal();
     // Defensive: a new stream must never inherit a prior stream's held tail
     // (every real path flushes on end/cancel; this guards an unbalanced edge).
     this.pendingBrickTail = "";
@@ -264,6 +338,7 @@ export class NarrativeRenderer implements ActorStreamingSink {
     // Raw-provider-chunk lane (unsupervised speech / in-turn beats): apply
     // the 板砖→Brick alias with a one-char cross-chunk
     // hold, since a chunk can end mid-token (…板 | 砖…). EN only; zh writes raw.
+    let chunk = text;
     if (this.lang === "en") {
       let s = this.pendingBrickTail + text;
       this.pendingBrickTail = "";
@@ -271,10 +346,11 @@ export class NarrativeRenderer implements ActorStreamingSink {
         this.pendingBrickTail = "板"; // hold a possibly-splitting trailing 板
         s = s.slice(0, -1);
       }
-      this.writeSpeechChunk(aliasBanzhuanPlain(s, this.lang));
-      return;
+      chunk = aliasBanzhuanPlain(s, this.lang);
     }
-    this.writeSpeechChunk(text);
+    // On a TTY the chunk joins the paced reveal; elsewhere it is written now.
+    if (this.beatReveal !== null) this.beatReveal.pushToken(chunk);
+    else this.writeSpeechChunk(chunk);
   }
 
   /** Write and clear any held cross-chunk `板` — a genuine standalone 板 that
@@ -293,6 +369,21 @@ export class NarrativeRenderer implements ActorStreamingSink {
       this.out.write(CLEAR_LINE);
       this.streamingSurface = null;
       this.rendered += 1;
+      return;
+    }
+    if (this.beatReveal !== null) {
+      // The actor is done with this line; the reveal is not. A held 板 joins
+      // it, the block is counted now (the sink contract), and the newline
+      // and any rows behind it wait for the reveal's own finish.
+      const driver = this.beatReveal;
+      this.beatReveal = null;
+      if (this.pendingBrickTail.length > 0) {
+        driver.pushToken(this.pendingBrickTail);
+        this.pendingBrickTail = "";
+      }
+      this.revealing = driver;
+      this.rendered += 1;
+      driver.finishInput();
       return;
     }
     if (this.streamingSurface === "speech") {
@@ -329,6 +420,8 @@ export class NarrativeRenderer implements ActorStreamingSink {
     // stays verbatim, like the GUI's code-exempt tokenizer.
     const aliasedText = aliasBanzhuanDisplay(text, this.lang);
     const mode = this.mode;
+    // A beat still revealing lands before this reply's first glyph.
+    this.landReveal();
     const chars = Array.from(stripDisplayUnsafe(aliasedText));
     // Per-char base cadence: a voiced stream overrides it to match its clip;
     // otherwise the read-along default. (No CLI audio today, so it's unset here,
@@ -458,7 +551,9 @@ export class NarrativeRenderer implements ActorStreamingSink {
           emittedChars.push({ ch, width: charWidth(ch) });
         }
       },
-      onBegin: () => this.beginHertaStream("speech"),
+      // openStream, not beginHertaStream: this driver IS the pacing, and the
+      // raw lane's reveal must not open under it.
+      onBegin: () => this.openStream("speech"),
       onFinish: (begun) => {
         // Empty-text case: nothing was emitted, so endHertaStream must not
         // be called (it would write `\n` and advance the block cursor).
@@ -630,6 +725,14 @@ export class NarrativeRenderer implements ActorStreamingSink {
   // -- Mid-stream recovery -------------------------------------------------
 
   cancelStream(): void {
+    // A reveal lands whole first (its own newline included): what the actor
+    // already handed over stays on screen, as raw writes did.
+    if (this.beatReveal !== null || this.revealing !== null) {
+      this.landReveal();
+      this.pendingBrickTail = "";
+      this.streamingSurface = null;
+      return;
+    }
     if (this.streamingSurface === "thought") {
       this.out.write(CLEAR_LINE);
     } else if (this.streamingSurface === "speech") {
@@ -642,6 +745,11 @@ export class NarrativeRenderer implements ActorStreamingSink {
   // -- Differential block rendering ----------------------------------------
 
   update(record: TerminalRecord): void {
+    // A finished beat still revealing: its rows print when it ends.
+    if (this.revealing !== null) {
+      this.deferredRecord = record;
+      return;
+    }
     while (this.rendered < record.length) {
       const block = record[this.rendered];
       if (block !== undefined) this.renderBlock(block);

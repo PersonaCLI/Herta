@@ -223,13 +223,10 @@ export interface ResolveApprovalOpts {
   readonly requestId: string;
   readonly decision: "allow" | "deny";
   /** "session" → task-scoped remember (ADR 0026, cleared when the brief
-   *  ends). "always" → persist the derived PROJECT command rule (ADR 0030,
-   *  `.herta/permissions.json`); no-ops when the pending request derives no
-   *  rule — the GUI only offers it when `projectRule` is present.
-   *  "auto_review" → turn automatic review on for this workspace (ADR 0064
+   *  ends). "auto_review" → turn automatic review on for this workspace (ADR 0064
    *  amendment 2026-10-10); no-ops unless it would answer the pending
    *  request — the GUI only offers it when `offerAutoReview` is present. */
-  readonly persistence?: "once" | "session" | "always" | "auto_review";
+  readonly persistence?: "once" | "session" | "auto_review";
 }
 
 /** Automatic review as the session sees it (ADR 0075, which replaced
@@ -792,12 +789,6 @@ export interface Session {
    *  Optional: only the GUI SessionImpl implements it. */
   resyncRecord?(): void;
   resolveApproval(opts: ResolveApprovalOpts): Promise<ApprovalResult>;
-  /** Project command allow rules (ADR 0030) for the CURRENT effective
-   *  workspace, as display strings (`node src/index.mjs:*`) — the Settings
-   *  management list. Optional: only the GUI SessionImpl implements them. */
-  listCommandRules?(): Promise<readonly string[]>;
-  /** Removes one rule by its display form. False when nothing matched. */
-  removeCommandRule?(display: string): Promise<boolean>;
   /** Automatic review (ADR 0075) for the CURRENT effective workspace.
    *  Optional: only the GUI SessionImpl implements the pair. */
   getAutoReview?(): Promise<AutoReviewState>;

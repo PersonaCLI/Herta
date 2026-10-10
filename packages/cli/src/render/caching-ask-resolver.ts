@@ -8,8 +8,8 @@ import {
   type AskAnswer,
   type AskResolver,
   type PermissionRequest,
-  type ProjectCommandRuleStore,
   type SessionApprovalCache,
+  type WorkspacePermissions,
 } from "@herta/core";
 import type { CliAskResolver } from "./permission-prompt.js";
 import type { Style } from "./style.js";
@@ -17,10 +17,9 @@ import type { Style } from "./style.js";
 /**
  * AskResolver wrapper that short-circuits permission prompts when the
  * (tool, risk, scope) tuple was previously approved with "yes-and-remember"
- * (the 'a' option) in this task, or when a persisted PROJECT command rule
- * covers the argv (the 'p' option, ADR 0030). On either hit, returns
- * "allow" immediately and writes a dim auto-allow marker so the user can
- * see their earlier choice is still in effect.
+ * (the 'a' option) in this task, or when automatic review is on and undo can
+ * take the request back. On either hit, returns "allow" immediately and
+ * writes a dim auto-allow marker so the user can see why it did not ask.
  *
  * The policy itself — what counts as covered, which choices to offer, what
  * a grant writes back — is `@herta/core`'s `ApprovalPolicy`, shared with the
@@ -41,12 +40,12 @@ export class CachingAskResolver implements AskResolver {
     cache: SessionApprovalCache,
     private readonly stdout: NodeJS.WritableStream,
     private readonly style: Style,
-    rules?: ProjectCommandRuleStore,
+    permissions?: WorkspacePermissions,
     private readonly review?: ReviewDeps,
   ) {
     this.policy = new ApprovalPolicy(
       cache,
-      rules,
+      permissions,
       review !== undefined ? { reviewable: reviewTakes } : {},
     );
   }
@@ -68,9 +67,7 @@ export class CachingAskResolver implements AskResolver {
       const note =
         pre.via === "cache"
           ? `${pre.scope === undefined ? `${tool} ${risk}` : `${tool} ${pre.scope} ${risk}`} (cached for this task)`
-          : pre.via === "project_rule"
-            ? `project rule covers ${(pre.argv ?? []).join(" ")}`
-            : `${tool} ${risk} (a write undo can take back)`;
+          : `${tool} ${risk} (a write undo can take back)`;
       this.stdout.write(this.style.dim(`  auto-allow: ${note}\n`));
       return "allow";
     }
@@ -81,17 +78,10 @@ export class CachingAskResolver implements AskResolver {
 
     const outcome = await this.inner.presentDetailed(request, signal, {
       showRemember: pre.showRemember,
-      ...(pre.projectRule !== undefined
-        ? { projectRule: pre.projectRule }
-        : {}),
       ...(pre.showAutoReview ? { showAutoReview: true } : {}),
     });
     if (outcome === "allow_remember") {
       this.policy.commit(request, "session");
-      return "allow";
-    }
-    if (outcome === "allow_project") {
-      this.policy.commit(request, "always");
       return "allow";
     }
     if (outcome === "allow_auto_review") {

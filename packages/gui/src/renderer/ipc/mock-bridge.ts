@@ -74,10 +74,6 @@ export interface MockHertaBridgeOpts {
   readonly openSessionResult?: SessionSnapshot | SessionOpenFailure;
   readonly createSessionResult?: SessionSnapshot;
   readonly resolveApprovalResult?: ApprovalResult;
-  /** Seed for listCommandRules (Settings → Coprocessor, ADR 0030). The list
-   *  is mutated by removeCommandRule so tests observe the round-trip.
-   *  Default []. */
-  readonly commandRules?: readonly string[];
   /** Seed for getAutoReview (ADR 0075); setAutoReview mutates it so tests
    *  observe the round-trip. Default: a real project, off. */
   readonly autoReview?: AutoReviewState;
@@ -222,8 +218,6 @@ export interface MockHertaBridge {
     createSession: CreateSessionOpts[];
     deleteSession: string[];
     resolveApproval: ResolveApprovalOpts[];
-    listCommandRules: number;
-    removeCommandRule: string[];
     getAutoReview: number;
     setAutoReview: Array<boolean | null>;
     resyncRecord: number;
@@ -367,8 +361,6 @@ export function createMockHertaBridge(
     createSession: [],
     deleteSession: [],
     resolveApproval: [],
-    listCommandRules: 0,
-    removeCommandRule: [],
     getAutoReview: 0,
     setAutoReview: [],
     resyncRecord: 0,
@@ -438,9 +430,6 @@ export function createMockHertaBridge(
   let interactionLanguage: InteractionLanguageChoice =
     opts.interactionLanguageResult ?? "follow";
 
-  // Live project command rules (ADR 0030), seeded then mutated by
-  // removeCommandRule so tests observe the round-trip.
-  const commandRules: string[] = [...(opts.commandRules ?? [])];
   // Live automatic review (ADR 0075), seeded then mutated by setAutoReview.
   let autoReview: AutoReviewState = opts.autoReview ?? {
     on: false,
@@ -636,17 +625,6 @@ export function createMockHertaBridge(
     resolveApproval: async (o) => {
       calls.resolveApproval.push(o);
       return opts.resolveApprovalResult ?? { ok: true };
-    },
-    listCommandRules: async () => {
-      calls.listCommandRules += 1;
-      return commandRules;
-    },
-    removeCommandRule: async (display) => {
-      calls.removeCommandRule.push(display);
-      const i = commandRules.indexOf(display);
-      if (i === -1) return false;
-      commandRules.splice(i, 1);
-      return true;
     },
     getAutoReview: async () => {
       calls.getAutoReview += 1;

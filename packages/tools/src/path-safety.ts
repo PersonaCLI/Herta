@@ -353,8 +353,8 @@ export function gitInternalsWrite(
  * Denial message when a COMMAND would write into the harness's own state —
  * `.herta` anywhere beneath the workspace — else null (2026-09-30).
  *
- * `.herta/permissions.json` holds the project's command allow rules AND the
- * workspace's trust choice (ADR 0030, ADR 0064); beside it sit memory, logs
+ * `.herta/permissions.json` holds the workspace's automatic-review choice
+ * (once also ADR 0030's command rules and ADR 0064's trust); beside it sit memory, logs
  * and attachments. The editors could never write there (the structural
  * denial in {@link resolveSafePath}), but a shell could: a redirect, `tee`,
  * `cp`, `rm` were classes the trust tier answered with no card, so one line in

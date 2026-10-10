@@ -1197,7 +1197,7 @@ describe("git shapes that discard work or rewrite history (2026-08-25)", () => {
     }
   });
 
-  it("the everyday shapes stay vcs, so ADR 0030 rules still derive", () => {
+  it("the everyday shapes stay vcs", () => {
     for (const argv of [
       ["git", "add", "-A"],
       ["git", "commit", "-m", "x"],

@@ -2,10 +2,10 @@ import type { EventBus } from "./event-bus.js";
 import type { RiskLevel } from "./permission-engine.js";
 import {
   binaryBasename,
-  deriveProjectCommandRule,
-  NEVER_RULABLE,
+  pinnedScript,
+  RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,
-} from "./project-command-rules.js";
+} from "./program-identity.js";
 import type { AgentEvent, PermissionRequest } from "./types/events.js";
 
 /**
@@ -132,11 +132,11 @@ export function wireTaskScopedApprovalCache(
  * cacheable → every invocation re-prompts). Compared by argv[0] BASENAME
  * (dir + `.exe` stripped, lowercased).
  *
- * UNIONED with the project-rule sets (audit 2026-08-05, S5) rather than
- * hand-listed. This set and `NEVER_RULABLE` were maintained separately under
- * identical reasoning and drifted: the WRAPPERS — `timeout`, `time`, `sudo`,
- * `doas`, `pkexec`, `nice`, `nohup`, `xargs`, `stdbuf` — were in
- * NEVER_RULABLE but not here, so approving a benign `timeout 600 npm run
+ * UNIONED with the shared program sets (audit 2026-08-05, S5) rather than
+ * hand-listed. This set and `RUNS_ITS_ARGUMENTS` (then ADR 0030's
+ * `NEVER_RULABLE`) were maintained separately under identical reasoning
+ * and drifted: the WRAPPERS — `timeout`, `time`, `sudo`, `doas`,
+ * `pkexec`, `nice`, `nohup`, `xargs`, `stdbuf` — were there but not here, so approving a benign `timeout 600 npm run
  * build` silently covered `timeout 5 node -e '<payload>'` with no overlay for
  * the remainder of the task. Neither set is a superset of the other, so the
  * union is taken and the drift cannot recur.
@@ -145,9 +145,9 @@ export function wireTaskScopedApprovalCache(
  * and `timeout 5 X` differ at argv[1], which both fails to constrain the real
  * command and re-prompts noisily. */
 const UNCACHEABLE_INTERPRETERS: ReadonlySet<string> = new Set([
-  ...NEVER_RULABLE,
+  ...RUNS_ITS_ARGUMENTS,
   ...SCRIPT_INTERPRETERS,
-  // Extras this set carried that the rule sets do not need: shells and
+  // Extras this set carried that the shared sets do not need: shells and
   // runtimes that are never a stable identity for what they execute.
   "zsh",
   "nodejs",
@@ -221,26 +221,16 @@ export function permissionCacheScope(
 
 /**
  * The one interpreter shape the task cache MAY scope: the pinned
- * `<interp> <workspace-script>` — `node scripts/stats.mjs` — exactly the
- * shape ADR 0030 project rules derive, and for the same reason: the script
- * path constrains what runs to a file the record's diffs track, where bare
- * `node` would cover `node -e '<anything>'`. Permission lab 2026-08-17: the
+ * `<interp> <workspace-script>` — `node scripts/stats.mjs` (`pinnedScript`):
+ * the script path constrains what runs to a file the record's diffs track,
+ * where bare `node` would cover `node -e '<anything>'`. Permission lab 2026-08-17: the
  * model re-ran `node scripts/stats.mjs` three times in one brief and the
  * user was asked three times, with nothing between the asks that changed
  * what would run. Flag operands, out-of-workspace scripts, shells and
  * wrappers still yield no scope (undefined → not cacheable).
  */
 function pinnedInterpreterScope(argv: readonly unknown[]): string | undefined {
-  if (!argv.every((a): a is string => typeof a === "string")) return undefined;
-  const a0 = argv[0];
-  if (a0 === undefined || !SCRIPT_INTERPRETERS.has(binaryBasename(a0))) {
-    return undefined;
-  }
-  const rule = deriveProjectCommandRule(argv);
-  if (rule === null || !rule.anyArgs || rule.argvPrefix.length !== 2) {
-    return undefined;
-  }
-  return rule.argvPrefix.join(" ");
+  return pinnedScript(argv)?.join(" ");
 }
 
 /** For rules that derive their own scope: is this program identity a safe

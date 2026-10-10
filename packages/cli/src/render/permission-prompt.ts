@@ -28,16 +28,11 @@ type StdinLike = Readable & {
 export type CliPromptOutcome =
   | "allow"
   | "allow_remember"
-  | "allow_project"
   | "allow_auto_review"
   | "deny";
 
 export interface PresentDetailedOptions {
   showRemember: boolean;
-  /** Display form of the project rule a [p] choice would persist (ADR 0030).
-   *  Absent → the [p] option is neither shown nor accepted — never offer a
-   *  choice that would silently no-op (the showRemember contract). */
-  projectRule?: string;
   /** Offer [r] — turn automatic review on for this workspace (ADR 0064
    *  amendment 2026-10-10): it is off, and it would answer this request.
    *  Same contract. */
@@ -139,15 +134,6 @@ export class CliAskResolver implements AskResolver {
         this.style.dim(`  files: ${request.files.join(", ")}\n`),
       );
     }
-    if (opts.projectRule !== undefined) {
-      // Spell out the exact grant before offering [p] (ADR 0030) — same
-      // inspect-before-commit contract as the GUI's dim rule caption.
-      this.stdout.write(
-        this.style.dim(
-          `  [p] remembers in this project: ${opts.projectRule}\n`,
-        ),
-      );
-    }
     if (opts.showAutoReview === true) {
       this.stdout.write(
         this.style.dim(
@@ -156,8 +142,8 @@ export class CliAskResolver implements AskResolver {
       );
     }
     const keys = `y${opts.showRemember ? "/a" : ""}${
-      opts.projectRule !== undefined ? "/p" : ""
-    }${opts.showAutoReview === true ? "/r" : ""}/N`;
+      opts.showAutoReview === true ? "/r" : ""
+    }/N`;
     this.stdout.write(`  ${this.style.bold(`[${keys}]`)} `);
   }
 
@@ -184,11 +170,6 @@ export class CliAskResolver implements AskResolver {
           settle("allow", "y");
         } else if (opts.showRemember && (ch === "a" || ch === "A")) {
           settle("allow_remember", "a");
-        } else if (
-          opts.projectRule !== undefined &&
-          (ch === "p" || ch === "P")
-        ) {
-          settle("allow_project", "p");
         } else if (opts.showAutoReview === true && (ch === "r" || ch === "R")) {
           settle("allow_auto_review", "r");
         } else {

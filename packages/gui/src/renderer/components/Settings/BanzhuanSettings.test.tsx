@@ -270,15 +270,4 @@ describe("BanzhuanSettings", () => {
       expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
   });
-
-  it("has NO command-rule section — rules moved to the device card's ⋯ menu (owner 2026-08-04)", async () => {
-    const { container } = renderPane(
-      createMockHertaBridge({ commandRules: ["node src/index.mjs:*"] }),
-    );
-    await waitFor(() =>
-      expect(screen.getByLabelText("Thinking effort")).toBeTruthy(),
-    );
-    expect(container.querySelector(".settings-bz-rules")).toBeNull();
-    expect(screen.queryByText("node src/index.mjs:*")).toBeNull();
-  });
 });

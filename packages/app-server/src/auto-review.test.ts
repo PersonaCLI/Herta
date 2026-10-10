@@ -4,8 +4,8 @@ import { join } from "node:path";
 import {
   type PendingPermissionApproval,
   type PermissionRequest,
-  ProjectCommandRuleStore,
   type SessionApprovalCache,
+  WorkspacePermissions,
 } from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -260,7 +260,7 @@ describe("OverlayAskResolver with a reviewer (ADR 0075)", () => {
         isCacheable: () => false,
       } as unknown as SessionApprovalCache,
       // A store to record a choice in; the host's default decides until then.
-      rules: new ProjectCommandRuleStore(() => root),
+      permissions: new WorkspacePermissions(() => root),
       defaultAutoReview: () => enabled,
       review: {
         reviewer: new AutoReviewer(model),

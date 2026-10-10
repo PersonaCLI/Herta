@@ -39,12 +39,12 @@ import {
   InMemoryEventBus,
   InMemoryToolRegistry,
   narrativeDirFor,
-  ProjectCommandRuleStore,
   type ProviderAdapter,
   RulePermissionEngine,
   SessionApprovalCache,
   type TerminalRecord,
   type TerminalRecordBlock,
+  WorkspacePermissions,
   windowsBackendHostNote,
   wireTaskScopedApprovalCache,
 } from "@herta/core";
@@ -271,11 +271,12 @@ export interface BackendStackOpts {
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
    *  bash by construction). */
   readonly platform?: NodeJS.Platform;
-  /** Builds the front-end's ask resolver once the cache and rule store it
-   *  consults exist. The returned resolver is the permission engine's. */
+  /** Builds the front-end's ask resolver once the cache and the
+   *  workspace's permission choices it consults exist. The returned
+   *  resolver is the permission engine's. */
   readonly makeAsk: (deps: {
     readonly cache: SessionApprovalCache;
-    readonly rules: ProjectCommandRuleStore;
+    readonly workspacePermissions: WorkspacePermissions;
   }) => AskResolver;
   /** The steer source (ADR 0063) every dispatch's runtime drains at its
    *  loop head — the session's `SteerChannel`. Absent (the CLI): no steer. */
@@ -301,7 +302,7 @@ export interface BackendStack {
   /** Single shared bus across actor, backend, renderer and permission rules. */
   readonly bus: EventBus<AgentEvent>;
   readonly approvalCache: SessionApprovalCache;
-  readonly commandRules: ProjectCommandRuleStore;
+  readonly workspacePermissions: WorkspacePermissions;
   readonly permissions: RulePermissionEngine;
   readonly backendTools: InMemoryToolRegistry;
   readonly backendBuilder: BackendContextBuilder;
@@ -358,13 +359,14 @@ export function hostNoteFor(
 export function createBackendStack(opts: BackendStackOpts): BackendStack {
   const { wsHolder, lang } = opts;
 
-  // Approval cache + project rules first: the ask resolver consults them.
+  // Approval cache + the workspace's permission choices first: the ask
+  // resolver consults them.
   const approvalCache = new SessionApprovalCache();
-  // Project-scoped command allow rules (ADR 0030) — persisted under the
+  // Whether automatic review is on (ADR 0075) — persisted under the
   // EFFECTIVE workspace's .herta/permissions.json. Reads the holder so a
-  // mid-session workspace change re-anchors the rules with the workspace.
-  const commandRules = new ProjectCommandRuleStore(() => wsHolder.current);
-  const ask = opts.makeAsk({ cache: approvalCache, rules: commandRules });
+  // mid-session workspace change re-anchors the choice with the workspace.
+  const workspacePermissions = new WorkspacePermissions(() => wsHolder.current);
+  const ask = opts.makeAsk({ cache: approvalCache, workspacePermissions });
   const permissions = new RulePermissionEngine({ ask });
 
   const memory = new FileMemoryManager({ workspaceRoot: opts.workspaceRoot });
@@ -512,7 +514,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     bashPath,
     bus,
     approvalCache,
-    commandRules,
+    workspacePermissions,
     permissions,
     backendTools,
     backendBuilder,

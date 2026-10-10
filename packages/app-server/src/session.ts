@@ -22,14 +22,12 @@ import {
   type EventBus,
   isAbortError,
   type LastTurnEnd,
-  type ProjectCommandRuleStore,
   type ProviderAdapter,
   type RepoContextSnapshot,
   readDispatchJournal,
   readUndoIndex,
   restoreUndo,
   resumableRun,
-  ruleDisplay,
   type SessionTopic,
   type SystemBlock,
   type TerminalRecord,
@@ -40,6 +38,7 @@ import {
   undoSegments,
   undoStoreDir,
   type V2RecordPersister,
+  type WorkspacePermissions,
 } from "@herta/core";
 import {
   type MetaThinkCorpus,
@@ -394,9 +393,9 @@ export class SessionImpl implements Session {
   // resolveApproval() can call resolveExternal().
   private readonly overlayResolver: OverlayAskResolver;
 
-  // Project command allow rules (ADR 0030) — held for the Settings
-  // management surface (list/remove); the resolver consults it directly.
-  private readonly commandRules: ProjectCommandRuleStore;
+  // The workspace's permission choices — held for the automatic-review
+  // switch; the resolver consults it directly.
+  private readonly workspacePermissions: WorkspacePermissions;
 
   // The narrative-completion actor driver — owns the growing TerminalRecord,
   // mood routing, the supervisor, and (via its persister) block persistence.
@@ -531,7 +530,7 @@ export class SessionImpl implements Session {
     sink: BusActorStreamingSink;
     projector: SessionEventProjector;
     overlayResolver: OverlayAskResolver;
-    commandRules: ProjectCommandRuleStore;
+    workspacePermissions: WorkspacePermissions;
     transcriptDir: string;
     titler: SessionTitler;
     pendingOpening: TerminalRecordBlock | null;
@@ -580,7 +579,7 @@ export class SessionImpl implements Session {
     this._record = opts.driver.getRecord();
     this.projector = opts.projector;
     this.overlayResolver = opts.overlayResolver;
-    this.commandRules = opts.commandRules;
+    this.workspacePermissions = opts.workspacePermissions;
     this.transcriptDir = opts.transcriptDir;
     this.titler = opts.titler;
     this.pendingOpening = opts.pendingOpening;
@@ -680,6 +679,9 @@ export class SessionImpl implements Session {
       // streaming bubble out from under it. In the shared runner rather than
       // one caller, so a regenerated reply (D2) settles the same way a
       // submitted one does; the opening is unvoiced and this is a no-op there.
+      // A text reveal (a beat, or the whole reply with the supervisor off)
+      // finishes at its own pace first: landing it would flash its tail.
+      await this.sink.textRevealsDone();
       this.sink.settleVoice();
       this._record = this.driver.getRecord();
       hooks.onFinished?.();
@@ -1491,23 +1493,12 @@ export class SessionImpl implements Session {
     }
   }
 
-  /** Display forms of the project command allow rules (ADR 0030) for the
-   *  CURRENT effective workspace — the Settings management list. */
-  async listCommandRules(): Promise<readonly string[]> {
-    return this.commandRules.list().map(ruleDisplay);
-  }
-
-  /** Removes one rule by its display form. False when nothing matched. */
-  async removeCommandRule(display: string): Promise<boolean> {
-    return this.commandRules.remove(display);
-  }
-
   /** Automatic review (ADR 0075) for the CURRENT effective workspace —
    *  read through the resolver's policy so the card and the menu agree. */
   async getAutoReview(): Promise<AutoReviewState> {
     return {
       on: this.overlayResolver.autoReviewOn,
-      explicit: this.commandRules.autoReview(),
+      explicit: this.workspacePermissions.autoReview(),
       isDefaultWorkspace: this.backendWorkspaceIsDefault,
     };
   }
@@ -1515,7 +1506,7 @@ export class SessionImpl implements Session {
   /** The owner's choice for the CURRENT workspace, in the file no command
    *  may write; null clears it back to the default. */
   async setAutoReview(on: boolean | null): Promise<AutoReviewState> {
-    this.commandRules.setAutoReview(on);
+    this.workspacePermissions.setAutoReview(on);
     return this.getAutoReview();
   }
 
@@ -2036,10 +2027,10 @@ export class SessionImpl implements Session {
           : deps.providerOverrides === undefined
             ? defaultDigestModel(apiKey, baseUrl)
             : null,
-      makeAsk: ({ cache, rules }) => {
+      makeAsk: ({ cache, workspacePermissions }) => {
         overlayResolver = new OverlayAskResolver({
           cache,
-          rules,
+          permissions: workspacePermissions,
           // Automatic review is on by default in the managed sandbox (ADR 0064
           // amendment 2026-10-10): a new session's workspace under
           // ~/.herta/workspaces holds nothing of the user's. A provider —
@@ -2108,7 +2099,7 @@ export class SessionImpl implements Session {
         "[herta] backendContract=minimal requested but no bash found (install Git for Windows or set HERTA_BASH); running the standard contract",
       );
     }
-    const { bus, commandRules, runtimeFactory } = backend;
+    const { bus, workspacePermissions, runtimeFactory } = backend;
 
     // 1a. Event projector — subscribes to the bus so agent events fan-out
     //     to all SessionAgentEvent consumers automatically.
@@ -2344,7 +2335,7 @@ export class SessionImpl implements Session {
       sink,
       projector,
       overlayResolver,
-      commandRules,
+      workspacePermissions,
       transcriptDir: config.transcriptDir,
       titler: new SessionTitler({
         sessionId,

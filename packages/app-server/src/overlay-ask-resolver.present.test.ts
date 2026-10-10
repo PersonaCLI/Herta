@@ -4,8 +4,7 @@ import { join } from "node:path";
 import {
   type PendingPermissionApproval,
   type PermissionRequest,
-  ProjectCommandRuleStore,
-  ruleDisplay,
+  WorkspacePermissions,
 } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
@@ -21,7 +20,7 @@ function makeRequest(over: Partial<PermissionRequest> = {}): PermissionRequest {
 }
 
 function makeResolver(
-  opts: { cacheable?: boolean; rules?: ProjectCommandRuleStore } = {},
+  opts: { cacheable?: boolean; permissions?: WorkspacePermissions } = {},
 ): {
   resolver: OverlayAskResolver;
   pending: PendingPermissionApproval[];
@@ -40,7 +39,9 @@ function makeResolver(
       size: () => 0,
       list: () => [],
     } as unknown as import("@herta/core").SessionApprovalCache,
-    ...(opts.rules !== undefined ? { rules: opts.rules } : {}),
+    ...(opts.permissions !== undefined
+      ? { permissions: opts.permissions }
+      : {}),
   });
   return { resolver, pending, cleared };
 }
@@ -73,11 +74,11 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
     expect(pending[0]?.command).toBe("npm install left-pad");
   });
 
-  it("minimal contract (ADR 0040): bash asks carry the command line verbatim, and rule-eligible ones the derived project rule", () => {
+  it("minimal contract (ADR 0040): bash asks carry the command line verbatim", () => {
     const dir = mkdtempSync(join(tmpdir(), "herta-oar-bash-"));
     try {
-      const rules = new ProjectCommandRuleStore(() => dir);
-      const { resolver, pending } = makeResolver({ rules });
+      const permissions = new WorkspacePermissions(() => dir);
+      const { resolver, pending } = makeResolver({ permissions });
       void resolver.present(
         makeRequest({
           call: {
@@ -94,13 +95,9 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
       expect(pending[0]?.command).toBe(
         "cd /e/ws && node scripts/check.mjs --all",
       );
-      expect(pending[0]?.projectRule).toBe(
-        ruleDisplay({
-          argvPrefix: ["node", "scripts/check.mjs"],
-          anyArgs: true,
-        }),
-      );
-      // A multi-program line carries no argv → no rule offered, command still shown.
+      // ADR 0030's project rules are gone (2026-10-10): nothing to offer.
+      expect(pending[0]).not.toHaveProperty("projectRule");
+      // A multi-program line: the command is still shown whole.
       void resolver.present(
         makeRequest({
           call: {
@@ -113,7 +110,6 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
         new AbortController().signal,
       );
       expect(pending[1]?.command).toBe("git add -A && git commit -m x");
-      expect(pending[1]?.projectRule).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -186,183 +182,6 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
   });
 });
 
-describe("OverlayAskResolver — project command rules (ADR 0030)", () => {
-  function withStore(
-    fn: (s: ProjectCommandRuleStore, root: string) => void,
-  ): void {
-    const root = mkdtempSync(join(tmpdir(), "herta-oar-rules-"));
-    try {
-      fn(new ProjectCommandRuleStore(() => root), root);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }
-
-  function nodeRequest(
-    over: Partial<PermissionRequest> = {},
-  ): PermissionRequest {
-    return makeRequest({
-      call: {
-        id: "c",
-        tool: "run_command",
-        input: { argv: ["node", "src/index.mjs", "sample.txt"] },
-      },
-      code: "command_ask_interpreter",
-      ...over,
-    });
-  }
-
-  it("carries projectRule (display form) for a derivable eligible ask", () => {
-    withStore((rules) => {
-      const { resolver, pending } = makeResolver({ rules });
-      void resolver.present(nodeRequest(), new AbortController().signal);
-      expect(pending[0]?.projectRule).toBe("node src/index.mjs:*");
-    });
-  });
-
-  it("omits projectRule for non-eligible codes and non-derivable shapes", () => {
-    withStore((rules) => {
-      // Destructive ask class — never rule-eligible, whatever the argv.
-      const destructive = makeResolver({ rules });
-      void destructive.resolver.present(
-        nodeRequest({ code: "command_ask_destructive" }),
-        new AbortController().signal,
-      );
-      expect(destructive.pending[0]?.projectRule).toBeUndefined();
-
-      // Eligible code but underivable shape (interpreter eval flag).
-      const evalFlag = makeResolver({ rules });
-      void evalFlag.resolver.present(
-        nodeRequest({
-          call: {
-            id: "c",
-            tool: "run_command",
-            input: { argv: ["node", "-e", "x"] },
-          },
-        }),
-        new AbortController().signal,
-      );
-      expect(evalFlag.pending[0]?.projectRule).toBeUndefined();
-
-      // No store wired (pre-0030 resolvers) — never offered.
-      const noStore = makeResolver();
-      void noStore.resolver.present(
-        nodeRequest(),
-        new AbortController().signal,
-      );
-      expect(noStore.pending[0]?.projectRule).toBeUndefined();
-    });
-  });
-
-  it("persistence 'always' saves the re-derived rule; later asks auto-allow silently", async () => {
-    const root = mkdtempSync(join(tmpdir(), "herta-oar-rules-"));
-    try {
-      const rules = new ProjectCommandRuleStore(() => root);
-      const first = makeResolver({ rules });
-      const p1 = first.resolver.present(
-        nodeRequest(),
-        new AbortController().signal,
-      );
-      expect(
-        first.resolver.resolveExternal({
-          requestId: "req-1",
-          decision: "allow",
-          persistence: "always",
-        }),
-      ).toEqual({ ok: true });
-      await expect(p1).resolves.toBe("allow");
-      expect(rules.list().map(ruleDisplay)).toEqual(["node src/index.mjs:*"]);
-
-      // Same script, DIFFERENT args: silent allow, no overlay surfaced.
-      const second = makeResolver({ rules });
-      const d2 = await second.resolver.present(
-        makeRequest({
-          call: {
-            id: "c2",
-            tool: "run_command",
-            input: { argv: ["node", "src/index.mjs", "other.txt"] },
-          },
-          code: "command_ask_interpreter",
-        }),
-        new AbortController().signal,
-      );
-      expect(d2).toBe("allow");
-      expect(second.pending).toHaveLength(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("a matching rule NEVER short-circuits a non-eligible ask class", () => {
-    withStore((rules) => {
-      rules.add({ argvPrefix: ["node", "src/index.mjs"], anyArgs: true });
-      // Same argv, but the live classifier said destructive (hypothetically —
-      // e.g. a hand-edited rules file trying to cover a different tier).
-      const { resolver, pending } = makeResolver({ rules });
-      void resolver.present(
-        nodeRequest({ code: "command_ask_destructive" }),
-        new AbortController().signal,
-      );
-      // Overlay surfaced — the rule did not auto-allow.
-      expect(pending).toHaveLength(1);
-    });
-  });
-
-  it("persistence 'always' on an underivable request no-ops (nothing persisted)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "herta-oar-rules-"));
-    try {
-      const rules = new ProjectCommandRuleStore(() => root);
-      const { resolver } = makeResolver({ rules });
-      const p = resolver.present(
-        nodeRequest({
-          call: {
-            id: "c",
-            tool: "run_command",
-            input: { argv: ["node", "-e", "x"] },
-          },
-        }),
-        new AbortController().signal,
-      );
-      resolver.resolveExternal({
-        requestId: "req-1",
-        decision: "allow",
-        persistence: "always",
-      });
-      await expect(p).resolves.toBe("allow"); // the one-time allow still stands
-      expect(rules.list()).toEqual([]); // but nothing was persisted
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("persistence 'always' no longer writes the session cache", () => {
-    withStore((rules) => {
-      const added: string[] = [];
-      const pending: PendingPermissionApproval[] = [];
-      const resolver = new OverlayAskResolver({
-        setPendingOverlay: (o) => pending.push(o),
-        clearOverlay: () => {},
-        cache: {
-          has: () => false,
-          add: (tool: string) => added.push(tool),
-          isCacheable: () => true,
-          clear: () => {},
-          size: () => 0,
-          list: () => [],
-        } as unknown as import("@herta/core").SessionApprovalCache,
-        rules,
-      });
-      void resolver.present(nodeRequest(), new AbortController().signal);
-      resolver.resolveExternal({
-        requestId: "req-1",
-        decision: "allow",
-        persistence: "always",
-      });
-      expect(added).toEqual([]); // project persist ≠ task cache write
-    });
-  });
-});
-
 describe("OverlayAskResolver.present — interrupt during a pending gate (audit finding 4)", () => {
   // Pressing Stop while the ApprovalPanel is up is an ABORT, not a decision.
   // This used to resolve "deny", fabricating a user denial that entered the
@@ -432,8 +251,8 @@ describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 
   it("offers 「开启自动审核」 on an undoable write, and an 'auto_review' resolution turns it on for the workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
     try {
-      const rules = new ProjectCommandRuleStore(() => root);
-      const { resolver, pending } = makeResolver({ rules });
+      const permissions = new WorkspacePermissions(() => root);
+      const { resolver, pending } = makeResolver({ permissions });
       expect(resolver.autoReviewOn).toBe(false);
       const p1 = resolver.present(writeRequest(), new AbortController().signal);
       expect(pending[0]?.offerAutoReview).toBe(true);
@@ -444,7 +263,7 @@ describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 
       });
       expect(r).toEqual({ ok: true });
       await expect(p1).resolves.toBe("allow");
-      expect(rules.autoReview()).toBe(true);
+      expect(permissions.autoReview()).toBe(true);
       expect(resolver.autoReviewOn).toBe(true);
       // The next undoable write runs — no card, no review.
       await expect(
@@ -464,8 +283,8 @@ describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 
   it("without a reviewer, a command's card does not offer it — it would change nothing there", () => {
     const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
     try {
-      const rules = new ProjectCommandRuleStore(() => root);
-      const { resolver, pending } = makeResolver({ rules });
+      const permissions = new WorkspacePermissions(() => root);
+      const { resolver, pending } = makeResolver({ permissions });
       void resolver.present(vcsRequest(), new AbortController().signal);
       expect(pending[0]?.offerAutoReview).toBeUndefined();
     } finally {
@@ -476,7 +295,7 @@ describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 
   it("the host's default turns it on in the managed sandbox until the owner chooses", async () => {
     const root = mkdtempSync(join(tmpdir(), "herta-overlay-review-"));
     try {
-      const rules = new ProjectCommandRuleStore(() => root);
+      const permissions = new WorkspacePermissions(() => root);
       let sandbox = true;
       const pending: PendingPermissionApproval[] = [];
       const resolver = new OverlayAskResolver({
@@ -490,7 +309,7 @@ describe("OverlayAskResolver — automatic review replaces workspace trust (ADR 
           size: () => 0,
           list: () => [],
         } as unknown as import("@herta/core").SessionApprovalCache,
-        rules,
+        permissions,
         defaultAutoReview: () => sandbox,
       });
       await expect(

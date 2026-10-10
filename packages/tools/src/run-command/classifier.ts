@@ -1742,8 +1742,8 @@ function containerShape(
  *
  * Deliberately NOT here, and pinned by tests that say so: `git stash pop`
  * (RESTORES work), `git branch -d` (refuses an unmerged branch), and the
- * everyday `add`/`commit`/`merge`/`fetch`/`pull`/`mv`/`rm`/`checkout -b`,
- * so ADR 0030's `git commit:*` rules still derive exactly as before.
+ * everyday `add`/`commit`/`merge`/`fetch`/`pull`/`mv`/`rm`/`checkout -b`
+ * — ordinary work the card should not call destructive.
  */
 function destructiveGitShape(
   argv: readonly string[],
@@ -1779,10 +1779,10 @@ function destructiveGitShape(
     // A SINGLE operand stays ordinary, deliberately: `git checkout main` and
     // `git checkout main.ts` are the same string shape, and git itself decides
     // by asking whether the name resolves as a ref — which this classifier
-    // cannot do. Guessing either way is wrong, so the residue is handled where
-    // it can be handled honestly: `deriveProjectCommandRule` refuses to hand
-    // `checkout`/`switch`/`restore` a `:*` wildcard, so an ambiguous operand
-    // asks every time instead of riding a grant earned by a different one.
+    // cannot do. Guessing either way is wrong, so the operand asks, and no
+    // standing grant earned by a different one covers it (ADR 0030's project
+    // rules refused these a `:*` wildcard; the rules are gone since
+    // 2026-10-10, and a review reads each operand on its own).
     return null;
   }
   if (sub === "restore") {
@@ -2712,9 +2712,9 @@ function classifyCommandTiers(
   //
   // The replay found obfuscated execution, downloads, persistence and
   // destruction all filed as `command_ask_unknown`: asked, so nothing ran
-  // unseen, but the card read 「未识别的命令」, a project rule could be
-  // offered, and a reviewer of the unknown class would have been handed
-  // them. Three looks, each only ever ESCALATING:
+  // unseen, but the card read 「未识别的命令」, a project rule could then be
+  // offered (ADR 0030, removed 2026-10-10), and a reviewer of the unknown
+  // class would have been handed them. Three looks, each only ever ESCALATING:
   //   - a command whose text the harness cannot read at all is opaque;
   //   - a wrapper's command and a shell body are classified in their own
   //     right, and a dangerous class found there is the line's class;
@@ -3186,9 +3186,8 @@ function classifyCommandTiers(
   // (commit, add, checkout, switch, merge, rebase, mv, rm, tag, push, pull,
   // fetch, cherry-pick, revert, apply, restore, …). The harness KNOWS it is
   // git; 「未识别的命令」 read as ignorance on the card (permission lab
-  // 2026-08-17: git lines were 3 of the 14 unknowns). Same tier, same
-  // rule-eligibility as unknown (`git commit:*` project rules still derive),
-  // an honest class. Network-touching subcommands are still git (the remote
+  // 2026-08-17: git lines were 3 of the 14 unknowns). Same tier as
+  // unknown, an honest class. Network-touching subcommands are still git (the remote
   // is the repo's own); the destructive shapes were classified above.
   // The subcommands that reach the REMOTE are the network, not the working
   // tree (ADR 0064 L1): a push that leaves the machine is not a change the
@@ -3296,8 +3295,7 @@ function classifyCommandTiers(
   // fallback (owner 2026-08-04): `node src/index.mjs` is not "unrecognized" —
   // the harness knows exactly what it is, and asks because an interpreter
   // executes code the argv only names indirectly. The distinct code lets the
-  // approval surface say so (and gates project-rule derivation, ADR 0030)
-  // instead of the prompt reading as ignorance. Same ask tier, same risk —
+  // approval surface say so instead of the prompt reading as ignorance. Same ask tier, same risk —
   // only the classification is more truthful.
   //
   // Three shapes since ADR 0064, because the trust tier covers only the

@@ -197,7 +197,6 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.renameSession,
   CMD.saveSessionExport,
   CMD.resolveApproval,
-  CMD.removeCommandRule,
   CMD.setAutoReview,
   CMD.pickWorkspace,
   CMD.setWorkspace,
@@ -936,16 +935,6 @@ export function createSessionService(
     handle(CMD.resolveApproval, (_e, opts) =>
       host?.activeSession?.resolveApproval(opts),
     );
-    // Project command allow rules (ADR 0030) — scoped to the ACTIVE session's
-    // effective workspace. No session → empty list / no-op remove.
-    handle(
-      CMD.listCommandRules,
-      async () => (await host?.activeSession?.listCommandRules?.()) ?? [],
-    );
-    handle(CMD.removeCommandRule, async (_e, display: string) => {
-      if (typeof display !== "string" || display.length === 0) return false;
-      return (await host?.activeSession?.removeCommandRule?.(display)) ?? false;
-    });
     // Automatic review (ADR 0075, which replaced workspace trust) — the
     // ACTIVE session's effective workspace. No session → a real project,
     // off (the honest default).

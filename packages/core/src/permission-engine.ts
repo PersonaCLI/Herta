@@ -42,8 +42,8 @@ export type RuleVerdict =
        *  model's `cd <workspace> &&` prefix) — `["git","commit","-m","x"]` —
        *  or nothing when the line runs several programs, an interpreter body
        *  or a redirect outside the workspace. The approval cache scopes by
-       *  its argv[0] and ADR 0030 project rules derive from it, exactly as
-       *  they do from run_command's argv. Absent for every other tool. */
+       *  its argv[0], exactly as it does from run_command's argv. Absent for
+       *  every other tool. */
       argv?: readonly string[];
       /** The distinct programs a multi-segment shell line runs (ADR 0040),
        *  readers/builtins excluded — for the task-scoped approval CACHE only

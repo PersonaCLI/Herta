@@ -2,13 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ApprovalPolicy, commandArgv, commandCwd } from "./approval-policy.js";
-import {
-  ProjectCommandRuleStore,
-  ruleDisplay,
-} from "./project-command-rules.js";
+import { ApprovalPolicy } from "./approval-policy.js";
 import { SessionApprovalCache } from "./session-approval-cache.js";
 import type { PermissionRequest } from "./types/events.js";
+import { WorkspacePermissions } from "./workspace-permissions.js";
 
 function writeReq(
   overrides: Partial<PermissionRequest> = {},
@@ -38,10 +35,10 @@ function cmdReq(
 }
 
 const tmpDirs: string[] = [];
-function mkRules(): ProjectCommandRuleStore {
+function mkPermissions(): WorkspacePermissions {
   const dir = mkdtempSync(join(tmpdir(), "herta-approval-policy-"));
   tmpDirs.push(dir);
-  return new ProjectCommandRuleStore(() => dir);
+  return new WorkspacePermissions(() => dir);
 }
 afterEach(() => {
   for (const d of tmpDirs.splice(0))
@@ -55,7 +52,6 @@ describe("ApprovalPolicy.preflight", () => {
     expect(pre.kind).toBe("ask");
     if (pre.kind !== "ask") throw new Error("unreachable");
     expect(pre.showRemember).toBe(true);
-    expect(pre.projectRule).toBeUndefined();
   });
 
   it("does not offer remember for a destructive risk", () => {
@@ -82,114 +78,14 @@ describe("ApprovalPolicy.preflight", () => {
     expect(policy.preflight(writeReq()).kind).toBe("ask");
   });
 
-  it("offers the project rule only when one is derivable and a store exists", () => {
-    const noRules = new ApprovalPolicy(new SessionApprovalCache());
-    const pre1 = noRules.preflight(cmdReq(["npm", "run", "build"]));
-    if (pre1.kind !== "ask") throw new Error("unreachable");
-    expect(pre1.projectRule).toBeUndefined();
-
-    const withRules = new ApprovalPolicy(new SessionApprovalCache(), mkRules());
-    const pre2 = withRules.preflight(cmdReq(["npm", "run", "build"]));
-    if (pre2.kind !== "ask") throw new Error("unreachable");
-    expect(pre2.projectRule).toBe("npm run:*");
-  });
-
-  it("an 'always' commit persists the rule, cwd-scoped, and later matches", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    policy.commit(
-      cmdReq(["node", "scripts/x.mjs"], {
-        call: {
-          id: "c3",
-          tool: "run_command",
-          input: { argv: ["node", "scripts/x.mjs"], cwd: "sub" },
-        },
-      }),
-      "always",
+  it("a remembered command no longer outlives the task: there is no project rule (ADR 0030 removed, 2026-10-10)", () => {
+    const policy = new ApprovalPolicy(
+      new SessionApprovalCache(),
+      mkPermissions(),
     );
-    const sameCwd = policy.preflight(
-      cmdReq(["node", "scripts/x.mjs", "--flag"], {
-        call: {
-          id: "c4",
-          tool: "run_command",
-          input: { argv: ["node", "scripts/x.mjs", "--flag"], cwd: "sub" },
-        },
-      }),
-    );
-    expect(sameCwd).toMatchObject({ kind: "auto", via: "project_rule" });
-    // Audit BL15: the grant is scoped to the directory it was granted in.
-    const otherCwd = policy.preflight(cmdReq(["node", "scripts/x.mjs"]));
-    expect(otherCwd.kind).toBe("ask");
-  });
-
-  it("never lets a rule cover a non-rule-eligible ask code", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    policy.commit(cmdReq(["npm", "run", "build"]), "always");
-    expect(policy.preflight(cmdReq(["npm", "run", "build"]))).toMatchObject({
-      kind: "auto",
-      via: "project_rule",
-    });
-    const networkAsk = policy.preflight(
-      cmdReq(["npm", "run", "build"], {
-        code: "command_ask_network",
-        risk: "network",
-      }),
-    );
-    expect(networkAsk.kind).toBe("ask");
-    // And an "always" on an ineligible code writes nothing.
-    policy.commit(
-      cmdReq(["curl", "http://x"], { code: "command_ask_network" }),
-      "always",
-    );
-    expect(rules.list().map((r) => ruleDisplay(r))).toEqual(["npm run:*"]);
-  });
-
-  it("bash (minimal contract) uses the rule-derived argv", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
-    const bashReq: PermissionRequest = {
-      id: "p5",
-      call: { id: "c5", tool: "bash", input: { command: "npm run build" } },
-      reason: "unknown command",
-      risk: "workspace_write",
-      code: "command_ask_unknown",
-      argv: ["npm", "run", "build"],
-    };
-    const pre = policy.preflight(bashReq);
-    if (pre.kind !== "ask") throw new Error("unreachable");
-    expect(pre.projectRule).toBe("npm run:*");
-    policy.commit(bashReq, "always");
-    expect(policy.preflight(bashReq)).toMatchObject({
-      kind: "auto",
-      via: "project_rule",
-    });
-  });
-});
-
-describe("commandArgv / commandCwd", () => {
-  it("reads run_command argv and cwd, fail-closed on bad shapes", () => {
-    expect(commandArgv(cmdReq(["git", "status"]))).toEqual(["git", "status"]);
-    expect(
-      commandArgv(
-        cmdReq([], {
-          call: { id: "c", tool: "run_command", input: { argv: ["a", 1] } },
-        }),
-      ),
-    ).toBeNull();
-    expect(commandArgv(writeReq())).toBeNull();
-    expect(
-      commandCwd(
-        cmdReq([], {
-          call: {
-            id: "c",
-            tool: "run_command",
-            input: { argv: ["a"], cwd: "d" },
-          },
-        }),
-      ),
-    ).toBe("d");
-    expect(commandCwd(cmdReq(["a"]))).toBeUndefined();
+    const pre = policy.preflight(cmdReq(["npm", "run", "build"]));
+    expect(pre.kind).toBe("ask");
+    expect(pre).not.toHaveProperty("projectRule");
   });
 });
 
@@ -201,8 +97,8 @@ describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", 
     cmdReq(["git", "commit", "-m", "x"], { code, ...over });
 
   it("is off by default; an undoable write then asks and offers turning it on", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
+    const permissions = mkPermissions();
+    const policy = new ApprovalPolicy(new SessionApprovalCache(), permissions);
     expect(policy.autoReviewOn()).toBe(false);
     const pre = policy.preflight(undoable());
     expect(pre.kind).toBe("ask");
@@ -220,8 +116,8 @@ describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", 
   });
 
   it("with a reviewer, offers it on whatever the reviewer would take", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules, {
+    const permissions = mkPermissions();
+    const policy = new ApprovalPolicy(new SessionApprovalCache(), permissions, {
       reviewable: (r) => r.code !== "command_ask_harness_state",
     });
     const vcs = policy.preflight(cmd("command_ask_vcs"));
@@ -232,16 +128,16 @@ describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", 
     expect(owner.showAutoReview).toBe(false);
     // Committing on a request no review answers writes nothing.
     policy.commit(cmd("command_ask_harness_state"), "auto_review");
-    expect(rules.autoReview()).toBeNull();
+    expect(permissions.autoReview()).toBeNull();
     policy.commit(cmd("command_ask_vcs"), "auto_review");
-    expect(rules.autoReview()).toBe(true);
+    expect(permissions.autoReview()).toBe(true);
   });
 
   it("on: only an undoable write skips the review; everything trust used to cover asks", () => {
-    const rules = mkRules();
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules);
+    const permissions = mkPermissions();
+    const policy = new ApprovalPolicy(new SessionApprovalCache(), permissions);
     policy.commit(undoable(), "auto_review");
-    expect(rules.autoReview()).toBe(true);
+    expect(permissions.autoReview()).toBe(true);
     expect(policy.autoReviewOn()).toBe(true);
     expect(policy.preflight(undoable())).toMatchObject({
       kind: "auto",
@@ -297,9 +193,9 @@ describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", 
   });
 
   it("the host's default applies until the owner chooses; an explicit choice beats it either way", () => {
-    const rules = mkRules();
+    const permissions = mkPermissions();
     let sandbox = true;
-    const policy = new ApprovalPolicy(new SessionApprovalCache(), rules, {
+    const policy = new ApprovalPolicy(new SessionApprovalCache(), permissions, {
       defaultAutoReview: () => sandbox,
     });
     expect(policy.autoReviewOn()).toBe(true);
@@ -312,12 +208,12 @@ describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", 
     expect(policy.autoReviewOn()).toBe(false);
     // The owner turned it OFF on the sandbox: explicit wins.
     sandbox = true;
-    rules.setAutoReview(false);
+    permissions.setAutoReview(false);
     expect(policy.autoReviewOn()).toBe(false);
     const pre = policy.preflight(undoable());
     if (pre.kind !== "ask") throw new Error("unreachable");
     expect(pre.showAutoReview).toBe(true);
-    rules.setAutoReview(null);
+    permissions.setAutoReview(null);
     expect(policy.autoReviewOn()).toBe(true);
   });
 });

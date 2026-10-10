@@ -125,21 +125,16 @@ export interface CardMenuProps {
    *  the path as plain text (the bridge cannot open it — the demo). */
   readonly onOpenWorkspace?: () => void;
   readonly errorText?: string;
-  /** Project command allow rules (ADR 0030) as display strings. PRESENTATIONAL,
-   *  like everything else here: DeviceCard owns the bridge and passes these
-   *  down. `undefined` → the section is not rendered at all (the bridge lacks
-   *  the surface, or the parent doesn't manage rules) — that keeps this
-   *  component renderable with no HertaBridgeProvider, which its own test file
-   *  relies on and which a first cut broke (CI 2026-08-04). */
-  readonly rules?: readonly string[];
-  readonly onRemoveRule?: (display: string) => void;
-  /** Automatic review (ADR 0075, which replaced workspace trust) —
-   *  presentational like `rules`: `undefined` hides the row (the bridge
-   *  lacks the surface). */
+  /** Automatic review (ADR 0075, which replaced workspace trust).
+   *  PRESENTATIONAL, like everything else here: DeviceCard owns the bridge
+   *  and passes it down. `undefined` hides the row (the bridge lacks the
+   *  surface) — that keeps this component renderable with no
+   *  HertaBridgeProvider, which its own test file relies on (CI 2026-08-04). */
   readonly review?: AutoReviewState;
   readonly onSetAutoReview?: (on: boolean) => void;
-  /** Fired when the menu OPENS — DeviceCard re-fetches rules on it, so a rule
-   *  granted mid-commission shows up without a remount. */
+  /** Fired when the menu OPENS — DeviceCard re-fetches the review state on
+   *  it, so a choice made on a card mid-commission shows up without a
+   *  remount. */
   readonly onOpen?: () => void;
 }
 
@@ -151,7 +146,8 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
   const buttonRef = useRef<HTMLButtonElement>(null);
   // The menu itself lives OUTSIDE the card (2026-09-17): `.device-card`
   // clips its overflow for the frost and the scene, and once a switch row
-  // joined the rules the menu ran past the card's bottom edge and was cut
+  // and the then-rules list joined it, the menu ran past the card's bottom
+  // edge and was cut
   // off. It is rendered through a portal at the body, fixed at the ⋯
   // button's bottom-right corner, so the card's clip never reaches it.
   const menuRef = useRef<HTMLDivElement>(null);
@@ -173,11 +169,6 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
     return () => window.removeEventListener("resize", place);
   }, [mounted]);
 
-  // Project command allow rules (ADR 0030) live in THIS menu rather than
-  // Settings (owner 2026-08-04): they're session-workspace-scoped, and the
-  // workspace they bind to is displayed right above them. The DATA, though,
-  // belongs to DeviceCard — see CardMenuProps.rules.
-  const rules = props.rules;
   // Tell the parent to refresh on open. Deliberately keyed on `open` alone:
   // onOpen is called for the open EDGE, and a parent that re-creates the
   // callback each render must not re-trigger a fetch.
@@ -374,42 +365,6 @@ export function CardMenu(props: CardMenuProps): JSX.Element {
                         ? t("card.autoReviewDisable")
                         : t("card.autoReviewEnable")}
                     </button>
-                  </div>
-                </>
-              )}
-              {rules !== undefined && (
-                <>
-                  <div className="card-menu-divider" />
-                  <div className="card-menu-rules">
-                    <span className="card-menu-label">{t("card.rules")}</span>
-                    {rules.length === 0 ? (
-                      <span className="card-menu-rules-empty">
-                        {t("card.rulesEmpty")}
-                      </span>
-                    ) : (
-                      <ul className="card-menu-rules-list">
-                        {rules.map((r) => (
-                          <li className="card-menu-rule" key={r}>
-                            <code
-                              className="card-menu-rule-text"
-                              // The app's tip, only for a rule the row cut
-                              // off (owner 2026-10-08).
-                              {...hoverTipProps(r, { whenClipped: true })}
-                            >
-                              {r}
-                            </code>
-                            <button
-                              type="button"
-                              className="card-menu-rule-remove"
-                              aria-label={t("card.rulesRemove", { rule: r })}
-                              onClick={() => props.onRemoveRule?.(r)}
-                            >
-                              ✕
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
                   </div>
                 </>
               )}

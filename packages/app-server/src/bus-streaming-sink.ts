@@ -135,12 +135,24 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    */
   private beatVoice: VoicedReveal | null = null;
   /**
-   * Record-stream gate for voiced beats: the bridge commits a beat block
-   * and flushes it the instant the beat's tokens are in — but its audio
-   * (and audio-paced reveal) is still running, and the committed block
-   * would snap the streaming bubble to the full text mid-sentence. While a
-   * voiced beat is unsettled, block events queue here (persisted at once,
-   * mirrored at once — only the EMIT waits) and drain in order when it ends.
+   * The BEAT lane's text reveal, when no synthesizer is available: tokens
+   * route into it and it reveals at the main reply's read-along pace. Beats
+   * went to the bus as generated (owner 2026-10-10: a beat "pops up without
+   * streaming, it almost shows the whole content in a flash") — DeepSeek
+   * writes a one-line beat in about a second, and the committed block then
+   * snapped the bubble to the full text.
+   */
+  private beatText: RevealLike | null = null;
+  /** Text beat reveals not yet finished — landed at turn end, at the stop
+   *  click, and when the next stream opens. */
+  private readonly liveBeatText = new Set<RevealLike>();
+  /**
+   * Record-stream gate for paced beats, voiced or text: the bridge commits a
+   * beat block and flushes it the instant the beat's tokens are in — but its
+   * reveal is still running, and the committed block would snap the
+   * streaming bubble to the full text mid-sentence. While a beat is
+   * unsettled, block events queue here (persisted at once, mirrored at once
+   * — only the EMIT waits) and drain in order when it ends.
    */
   private beatGate: Promise<void> | null = null;
   private readonly queuedRecord: RecordEvent[] = [];
@@ -289,9 +301,54 @@ export class BusActorStreamingSink implements ActorStreamingSink {
       if (opts?.interrupt === true && lane === "controller") d.silence();
       else d.flushTail();
     }
+    // A text beat lands like a voiced one: it has no audio to stop.
+    for (const d of this.liveBeatText) d.flushTail();
+    this.liveBeatText.clear();
     this.beatVoice = null;
+    this.beatText = null;
     this.lastVetoed = null;
     this.drainQueuedRecord();
+  }
+
+  /**
+   * A new stream is opening: a text beat still revealing lands now, and the
+   * blocks it held — its own block among them — reach the renderer first.
+   * The renderer keeps ONE streaming bubble and clears it on a herta block,
+   * so two utterances must never interleave there. A voiced beat keeps its
+   * own order: the voice lane already makes the next voiced stream wait.
+   */
+  private landTextBeats(): void {
+    if (this.liveBeatText.size === 0) return;
+    for (const d of this.liveBeatText) d.flushTail();
+    this.liveBeatText.clear();
+    this.beatText = null;
+    const voicedBeat = [...this.liveVoiced.values()].includes("beat");
+    if (!voicedBeat) this.drainQueuedRecord();
+  }
+
+  /** The text reveal a beat rides when it is not voiced: the main reply's
+   *  cadence, unsupervised (no front-gate, no ramp, no hold). */
+  private makeTextBeatDriver(): RevealLike {
+    const driver = createRevealDriver({
+      mode: this.mode,
+      baseMs: SLOW_MS_PER_CHAR,
+      random: this.random,
+      maxRevealMs: resolveMaxRevealMs(),
+      fences: true,
+      completionTick: false,
+      emitRange: (text) => {
+        publishWithLayer(this.bus, "actor", { type: "assistant.delta", text });
+      },
+      onBegin: () => undefined,
+      onFinish: () => undefined,
+    });
+    this.liveBeatText.add(driver);
+    const settled = driver.done.then(
+      () => undefined,
+      () => undefined,
+    );
+    void settled.then(() => this.liveBeatText.delete(driver));
+    return driver;
   }
 
   private gateRecordOn(done: Promise<void>): void {
@@ -426,17 +483,30 @@ export class BusActorStreamingSink implements ActorStreamingSink {
   /**
    * The actor's raw stream lane — how in-turn BEATS reach the sink (the
    * primary speech goes through the paced controllers below, which open and
-   * close the surface themselves via `openSurface`/`closeSurface`). With a
-   * synthesizer available a beat is voiced too: a driver opens here, the
-   * tokens route into it, and `endHertaStream` finishes its input — the
-   * reveal then runs at the audio's pace after the actor has moved on, with
-   * the record-stream gate holding the committed block until it ends.
+   * close the surface themselves via `openSurface`/`closeSurface`). A beat
+   * is paced like the primary speech: a driver opens here, the tokens route
+   * into it, and `endHertaStream` finishes its input — the reveal then runs
+   * on after the actor has moved on, with the record-stream gate holding the
+   * committed block until it ends. With a synthesizer available the driver
+   * is voiced and the audio sets the pace; without one it is the text
+   * reveal at the read-along cadence.
    */
   beginHertaStream(surface: "speech" | "thought"): void {
     this.surface = surface;
-    if (surface !== "speech" || this.beatVoice !== null) return;
+    if (
+      surface !== "speech" ||
+      this.beatVoice !== null ||
+      this.beatText !== null
+    )
+      return;
     const voice = this.voiceFor();
-    if (voice === null) return;
+    if (voice === null) {
+      this.landTextBeats();
+      const driver = this.makeTextBeatDriver();
+      this.beatText = driver;
+      this.gateRecordOn(driver.done);
+      return;
+    }
     const driver = this.makeVoicedDriver(voice, "beat", {
       onBegin: () => undefined,
       onFinish: () => undefined,
@@ -451,6 +521,10 @@ export class BusActorStreamingSink implements ActorStreamingSink {
       this.beatVoice.pushToken(text);
       return;
     }
+    if (this.beatText !== null) {
+      this.beatText.pushToken(text);
+      return;
+    }
     if (this.surface !== "speech") return;
     publishWithLayer(this.bus, "actor", { type: "assistant.delta", text });
   }
@@ -460,6 +534,11 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     if (this.beatVoice !== null) {
       const driver = this.beatVoice;
       this.beatVoice = null;
+      driver.finishInput();
+    }
+    if (this.beatText !== null) {
+      const driver = this.beatText;
+      this.beatText = null;
       driver.finishInput();
     }
   }
@@ -528,6 +607,8 @@ export class BusActorStreamingSink implements ActorStreamingSink {
     // reveal spans ≈ its clip; otherwise the read-along default. Jitter and
     // punctuation breaths ride on top either way.
     const baseMs = opts?.baseMsOverride ?? SLOW_MS_PER_CHAR;
+    // A beat still revealing lands before the reply's first glyph.
+    this.landTextBeats();
     let begun = false;
     const onBegin = (): void => {
       begun = true;

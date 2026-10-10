@@ -1082,3 +1082,98 @@ describe("BusActorStreamingSink — EN word reveal (lang 'en')", () => {
     vi.useRealTimers();
   });
 });
+
+describe("BusActorStreamingSink — a text beat is paced like the reply (owner 2026-10-10)", () => {
+  // The bridge's order: begin at the first safe token, tokens, end, then the
+  // beat's block committed and flushed at once — with the backend's next
+  // rows behind it.
+  function setup() {
+    vi.useFakeTimers();
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const deltas: string[] = [];
+    bus.on("assistant.delta", (e) => deltas.push((e as { text: string }).text));
+    const emitted: RecordEvent[] = [];
+    const sink = new BusActorStreamingSink(
+      bus,
+      () => undefined,
+      (ev) => emitted.push(ev),
+      () => 0.5,
+    );
+    const kinds = (): string[] =>
+      emitted.map((e) => (e.kind === "block" ? e.block.kind : e.kind));
+    return { sink, deltas, kinds };
+  }
+  const BEAT = "结构不算糟，先让测试兜住再说。";
+  const record = (beat: string): TerminalRecordBlock[] => [
+    { kind: "user", text: "@板砖 写个五子棋" },
+    { kind: "herta", surface: "speech", text: beat },
+    { kind: "system", label: "差分协处理器", body: "Running node --test" },
+  ];
+  function fireBeat(sink: BusActorStreamingSink, text: string): void {
+    sink.beginHertaStream("speech");
+    sink.streamHertaToken(text);
+    sink.endHertaStream();
+  }
+
+  it("reveals at the read-along cadence, and holds its block and the rows behind it until the reveal ends", async () => {
+    const { sink, deltas, kinds } = setup();
+    sink.seedEmittedCount(1);
+    fireBeat(sink, BEAT);
+    sink.flushBlocks(record(BEAT));
+    // Generated in one go, but on screen one glyph at a time.
+    expect(deltas.join("")).toBe("");
+    await vi.advanceTimersByTimeAsync(SLOW_MS_PER_CHAR * 3);
+    const early = deltas.join("");
+    expect(early.length).toBeGreaterThan(0);
+    expect(early.length).toBeLessThan(BEAT.length);
+    expect(kinds()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(deltas.join("")).toBe(BEAT);
+    expect(kinds()).toEqual(["herta", "system"]);
+    vi.useRealTimers();
+  });
+
+  it("the next stream lands a beat still revealing first: its text, then its block, then the new stream", async () => {
+    const { sink, deltas, kinds } = setup();
+    sink.seedEmittedCount(1);
+    fireBeat(sink, BEAT);
+    sink.flushBlocks(record(BEAT));
+    await vi.advanceTimersByTimeAsync(SLOW_MS_PER_CHAR * 2);
+    // The reply opens: the beat's tail and its held blocks go out at once.
+    const reply = sink.slowStreamSpeechLive();
+    expect(deltas.join("")).toBe(BEAT);
+    expect(kinds()).toEqual(["herta", "system"]);
+    reply.pushToken("好。");
+    reply.finishInput();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await reply.done;
+    expect(deltas.join("")).toBe(`${BEAT}好。`);
+    vi.useRealTimers();
+  });
+
+  it("a second beat lands the first before its own first glyph", async () => {
+    const { sink, deltas, kinds } = setup();
+    sink.seedEmittedCount(1);
+    fireBeat(sink, BEAT);
+    sink.flushBlocks(record(BEAT));
+    await vi.advanceTimersByTimeAsync(SLOW_MS_PER_CHAR);
+    fireBeat(sink, "跑完了。");
+    expect(deltas.join("")).toBe(BEAT);
+    expect(kinds()).toEqual(["herta", "system"]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(deltas.join("")).toBe(`${BEAT}跑完了。`);
+    vi.useRealTimers();
+  });
+
+  it("turn end and the stop click land it in one emit", async () => {
+    const { sink, deltas, kinds } = setup();
+    sink.seedEmittedCount(1);
+    fireBeat(sink, BEAT);
+    sink.flushBlocks(record(BEAT));
+    await vi.advanceTimersByTimeAsync(SLOW_MS_PER_CHAR);
+    sink.settleVoice({ interrupt: true });
+    expect(deltas.join("")).toBe(BEAT);
+    expect(kinds()).toEqual(["herta", "system"]);
+    vi.useRealTimers();
+  });
+});

@@ -40,8 +40,8 @@ import { serializeBlock } from "./serialize.js";
  * the request it has not been told.
  *
  * THE VOICE (owner 2026-10-10: "should sounds like 开拓者 talking to 大黑塔")
- * is described from the game's own scripts (data/plot_html, scanned
- * 2026-10-11) — see `VOICE` — not quoted from them.
+ * is the owner's own description, and the frame says who the two are to
+ * each other — see `VOICE` and `RELATION`.
  *
  * WHAT IT NEVER DOES. The prediction is user-side composer chrome (D7): it
  * never enters the record, and Herta never sees it unless the user sends it,
@@ -51,35 +51,44 @@ import { serializeBlock } from "./serialize.js";
 /** Which prompt a window gets: `work` when 板砖 is in it, `chat` when not. */
 export type PredictionMode = "work" | "chat";
 
+/**
+ * Who they are to each other (owner 2026-10-11: "we can also describe the
+ * relationship between 大黑塔 and 开拓者"), from her own bio's chapter on the
+ * Trailblazer (第六章：关于开拓者): the 「小鬼」 she calls a sample who always
+ * stirs up something new just as she loses interest, who keeps coming back
+ * to be tested, and whom she bails out when it goes wrong. The bond only —
+ * no event of the lore, which the line could take for something that
+ * happened (the first build's bio was where its inventions came from).
+ */
+const RELATION: Record<PromptLang, string> = {
+  zh: "大黑塔是天才俱乐部的天才，向来嫌人笨、爱使唤人；开拓者是她嘴里的「小鬼」，一个每当她快要失去兴趣时总能折腾出新花样的研究样本。两人很熟：她嘴上不饶人，真出了事会来捞人；开拓者敬她的本事，却从不捧着她，常回来找她帮忙，也常被她拉去测东西。",
+  en: 'The Herta is a genius of the Genius Society who finds most people dull and orders them about; the Trailblazer is her "kid", a research sample who always stirs up something new just as she is losing interest. They know each other well: she never spares them a sharp word, yet steps in when things go wrong; the Trailblazer respects her ability without ever fawning over her, often comes to her for help, and is often roped into testing her things.',
+};
+
 /** Who is who, before the recent turns. NEVER persisted. */
 export const PREDICTION_FRAME: Record<
   PredictionMode,
   Record<PromptLang, string>
 > = {
   work: {
-    zh: "〔下面是开拓者和大黑塔在终端里最近几轮的对话：（开拓者 说）是开拓者打的话，（我 说）是大黑塔说的话，→ 差分协处理器 是板砖干活的摘要。开拓者要板砖动手干活时，会在话里写 @板砖。〕",
-    en: "〔Below are the last few turns between the Trailblazer and the Herta in the terminal: （开拓者 说） is what the Trailblazer typed, （我 说） is what the Herta said, and → 差分协处理器 is a digest of what 板砖 did. When the Trailblazer wants 板砖 to do the work, they write @板砖 in the line.〕",
+    zh: `〔${RELATION.zh}下面是两人在终端里最近几轮的对话：（开拓者 说）是开拓者打的话，（我 说）是大黑塔说的话，→ 差分协处理器 是板砖干活的摘要。开拓者要板砖动手干活时，会在话里写 @板砖。〕`,
+    en: `〔${RELATION.en} Below are their last few turns in the terminal: （开拓者 说） is what the Trailblazer typed, （我 说） is what the Herta said, and → 差分协处理器 is a digest of what 板砖 did. When the Trailblazer wants 板砖 to do the work, they write @板砖 in the line.〕`,
   },
   chat: {
-    zh: "〔下面是开拓者和大黑塔在终端里最近几轮的对话：（开拓者 说）是开拓者打的话，（我 说）是大黑塔说的话。〕",
-    en: "〔Below are the last few turns between the Trailblazer and the Herta in the terminal: （开拓者 说） is what the Trailblazer typed, and （我 说） is what the Herta said.〕",
+    zh: `〔${RELATION.zh}下面是两人在终端里最近几轮的对话：（开拓者 说）是开拓者打的话，（我 说）是大黑塔说的话。〕`,
+    en: `〔${RELATION.en} Below are their last few turns in the terminal: （开拓者 说） is what the Trailblazer typed, and （我 说） is what the Herta said.〕`,
   },
 };
 
 /**
- * How the Trailblazer talks to her, described from the game's scripts
- * (data/plot_html, scanned 2026-10-11): ~20 700 dialogue choices and 2 588
- * spoken lines, median 9 characters, a quarter of them questions and an
- * eighth trailing off in 「…」. The 247 distinct lines said to 黑塔 echo a
- * word of hers back as a question, deadpan a jab or puncture her boasting,
- * fake-flatter her as 「黑塔大人」, blurt something absurd, or angle for a
- * reward — and call her plain 「黑塔」, or nothing; 「黑塔女士」 is how
- * others speak of her, and 「大黑塔」 never comes up. Fans read the same:
- * dry wit in sudden moments, the blunt 「啊？」, sarcasm toward the pompous.
+ * How the Trailblazer talks — the owner's own words (2026-10-11). A note
+ * written from the game's dialogue choices (questions, echoes, jabs; median
+ * 9 characters) made every line read like a choice in the game, "weird for
+ * conversation"; the scan stays in ADR 0076.
  */
 const VOICE: Record<PromptLang, string> = {
-  zh: "开拓者话少，常常就是个问句：抓住她话里的一个词反问回去，面无表情地呛她一句、拆她的台，偶尔假意捧一声「黑塔大人」，偶尔冒出一句不着边际的怪话，或者顺手讨点好处。叫她就叫「黑塔」，多数时候不带称呼。",
-  en: 'The Trailblazer says little, often just a question: they pick a word out of what she said and throw it back, deadpan a jab or puncture her boasting, now and then fake-flatter her, blurt out something absurd, or angle for a reward. They call her "Herta", and mostly use no address at all.',
+  zh: "开拓者说话随性，有时冷不丁来句玩笑或调侃，有时会称呼她为「黑塔」或「黑塔女士」。",
+  en: 'The Trailblazer talks casually, now and then with a sudden joke or a tease, and sometimes calls her "Herta" or "Madam Herta".',
 };
 
 /** What the line is for, per prompt. */
@@ -89,8 +98,8 @@ const LEAD: Record<PredictionMode, Record<PromptLang, string>> = {
     en: "What follows is the Trailblazer's next line to the Herta, typed into the terminal: one line. Most likely the next step for 板砖 (they write @板砖 as usual and say what to do), or an answer to her last line; mention only files, commands and results that actually appear above, and invent nothing that did not happen.",
   },
   chat: {
-    zh: "接下来是开拓者在终端里打给大黑塔的下一句，一句，十来个字。多半是接她刚才那句：顺着问一句、随口答一句，或者呛她一句；只接上面聊过的话，不编造没发生过的事。",
-    en: "What follows is the Trailblazer's next line to the Herta, typed into the terminal: one line, about ten words. Most likely it picks up her last line: a follow-up question, an offhand answer, or a jab; keep to what was said above, and invent nothing that did not happen.",
+    zh: "接下来是开拓者在终端里打给大黑塔的下一句，一句，二十来个字以内。多半是接着她刚才那句往下说；只接上面聊过的话，不编造没发生过的事。",
+    en: "What follows is the Trailblazer's next line to the Herta, typed into the terminal: one line, about fifteen words at most. Most likely it carries on from her last line; keep to what was said above, and invent nothing that did not happen.",
   },
 };
 

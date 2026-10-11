@@ -77,6 +77,8 @@ export {
   PREDICTION_FRAME,
   PREDICTION_HINT,
   type PredictionDeps,
+  type PredictionMode,
+  type PredictionPrompt,
   predictionPrompt,
   predictNextUserMessage,
   RECENT_TURNS,

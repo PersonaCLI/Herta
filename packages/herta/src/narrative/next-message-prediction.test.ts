@@ -25,6 +25,14 @@ const RECORD: TerminalRecord = [
   { kind: "herta", surface: "speech", text: "写好了，测试也兜住了。" },
 ];
 
+// Plain talk: two exchanges, no 板砖 anywhere.
+const CHAT: TerminalRecord = [
+  { kind: "user", text: "在吗？" },
+  { kind: "herta", surface: "speech", text: "在。说吧。" },
+  { kind: "user", text: "你今天在研究什么？" },
+  { kind: "herta", surface: "speech", text: "模拟宇宙的新位面，你不会懂的。" },
+];
+
 function provider(
   reply: string | Error,
 ): CompletionProviderAdapter & { requests: CompletionRequest[] } {
@@ -42,25 +50,25 @@ function provider(
   };
 }
 
-const deps = (p: CompletionProviderAdapter) => ({
+const deps = (p: CompletionProviderAdapter, record = RECORD) => ({
   provider: p,
   model: "m",
-  record: RECORD,
+  record,
   lang: "zh" as const,
 });
 const signal = () => new AbortController().signal;
 
 describe("predictNextUserMessage (composer predictions, owner 2026-10-10)", () => {
   it("opens the Trailblazer's next block after the record, with the voice note right before it", async () => {
-    const p = provider("大黑塔，再给 AI 加一档「地狱」难度？");
+    const p = provider("再给 AI 加一档「地狱」难度？");
     const text = await predictNextUserMessage(deps(p), signal());
-    expect(text).toBe("大黑塔，再给 AI 加一档「地狱」难度？");
+    expect(text).toBe("再给 AI 加一档「地狱」难度？");
     const req = p.requests[0];
-    expect(req?.prompt.endsWith(`${PREDICTION_HINT.zh}\n（开拓者 说）\n`)).toBe(
-      true,
-    );
+    expect(
+      req?.prompt.endsWith(`${PREDICTION_HINT.work.zh}\n（开拓者 说）\n`),
+    ).toBe(true);
     // The frame, then the recent turns in the record's own grammar.
-    expect(req?.prompt.startsWith(PREDICTION_FRAME.zh)).toBe(true);
+    expect(req?.prompt.startsWith(PREDICTION_FRAME.work.zh)).toBe(true);
     expect(req?.prompt).toContain(
       "（我 说）\n写好了，测试也兜住了。\n（/我 说）",
     );
@@ -72,6 +80,14 @@ describe("predictNextUserMessage (composer predictions, owner 2026-10-10)", () =
     const p = provider(`@${ZWSP}板砖 把悔棋也补个测试`);
     expect(await predictNextUserMessage(deps(p), signal())).toBe(
       "@板砖 把悔棋也补个测试",
+    );
+  });
+
+  it("in plain talk, a line that calls 板砖 is no prediction", async () => {
+    const p = provider("@板砖 把新位面跑一遍");
+    expect(await predictNextUserMessage(deps(p, CHAT), signal())).toBeNull();
+    expect(p.requests[0]?.prompt.startsWith(PREDICTION_FRAME.chat.zh)).toBe(
+      true,
     );
   });
 
@@ -96,7 +112,11 @@ describe("predictNextUserMessage (composer predictions, owner 2026-10-10)", () =
 
 describe("acceptPrediction", () => {
   it("keeps one short typed line", () => {
-    expect(acceptPrediction("  行，先这样。  ", RECORD)).toBe("行，先这样。");
+    expect(acceptPrediction("  行，先这样。  ", RECORD, "work")).toBe(
+      "行，先这样。",
+    );
+    for (const short of ["哈哈哈", "ok", "啊？"])
+      expect(acceptPrediction(short, RECORD, "work")).toBe(short);
   });
 
   it("drops what no user would type", () => {
@@ -108,16 +128,55 @@ describe("acceptPrediction", () => {
       "〔提示〕好的",
       "（展示照片）",
       "[沉默]",
+      "xxx",
+      "……",
+      "？！",
       "@板砖 帮我写个五子棋吧", // the last thing already said
     ]) {
-      expect(acceptPrediction(raw, RECORD), JSON.stringify(raw)).toBeNull();
+      expect(
+        acceptPrediction(raw, RECORD, "work"),
+        JSON.stringify(raw),
+      ).toBeNull();
     }
+  });
+
+  it("drops a message the window already holds, with or without its call", () => {
+    const record: TerminalRecord = [
+      { kind: "user", text: "@板砖 帮我写个 hello.mjs" },
+      { kind: "system", label: "差分协处理器", body: "Writing hello.mjs" },
+      { kind: "herta", surface: "speech", text: "写好了。" },
+      { kind: "user", text: "你觉得写得怎么样？" },
+      { kind: "herta", surface: "speech", text: "能跑。" },
+    ];
+    for (const raw of [
+      "帮我写个 hello.mjs",
+      `@${ZWSP}板砖  帮我写个 hello.mjs`,
+      "你觉得写得怎么样？",
+    ])
+      expect(acceptPrediction(raw, record, "work"), raw).toBeNull();
+    expect(acceptPrediction("@板砖 再写个 hello.py", record, "work")).toBe(
+      "@板砖 再写个 hello.py",
+    );
   });
 
   it("cuts at a tag the provider streamed past", () => {
     expect(
-      acceptPrediction("跑一下全部测试（/开拓者 说）\n（我 说）", RECORD),
+      acceptPrediction(
+        "跑一下全部测试（/开拓者 说）\n（我 说）",
+        RECORD,
+        "work",
+      ),
     ).toBe("跑一下全部测试");
+  });
+
+  it("calls 板砖 only where 板砖 is at work — a quoted one is no call", () => {
+    expect(acceptPrediction("@板砖 再跑一遍", CHAT, "work")).toBe(
+      "@板砖 再跑一遍",
+    );
+    expect(acceptPrediction("@板砖 再跑一遍", CHAT, "chat")).toBeNull();
+    expect(acceptPrediction("`@板砖` 是谁？", CHAT, "chat")).toBe(
+      "`@板砖` 是谁？",
+    );
   });
 });
 
@@ -137,7 +196,9 @@ describe("predictionPrompt — the last few turns, 板砖's runs folded, with gu
       { kind: "user", text: "第四句" },
       { kind: "herta", surface: "speech", text: "回四" },
     ];
-    const prompt = predictionPrompt(record, "zh") ?? "";
+    const prompt = predictionPrompt(record, "zh");
+    expect(prompt?.mode).toBe("work");
+    const text = prompt?.text ?? "";
     for (const kept of [
       "跑一下测试",
       "回二",
@@ -147,17 +208,17 @@ describe("predictionPrompt — the last few turns, 板砖's runs folded, with gu
       "回四",
       "npm test",
     ])
-      expect(prompt, kept).toContain(kept);
+      expect(text, kept).toContain(kept);
     for (const dropped of ["开场白", "第一句", "回一", "内心独白"])
-      expect(prompt, dropped).not.toContain(dropped);
+      expect(text, dropped).not.toContain(dropped);
     // The two rows are ONE digest block, under the compaction header.
     // (The frame names the label once itself.)
     expect(
-      prompt.slice(PREDICTION_FRAME.zh.length).split("→ 差分协处理器"),
+      text.slice(PREDICTION_FRAME.work.zh.length).split("→ 差分协处理器"),
     ).toHaveLength(2);
-    expect(prompt).toContain("历史已压缩");
-    expect(prompt.startsWith(PREDICTION_FRAME.zh)).toBe(true);
-    expect(prompt.endsWith(`${PREDICTION_HINT.zh}\n（开拓者 说）\n`)).toBe(
+    expect(text).toContain("历史已压缩");
+    expect(text.startsWith(PREDICTION_FRAME.work.zh)).toBe(true);
+    expect(text.endsWith(`${PREDICTION_HINT.work.zh}\n（开拓者 说）\n`)).toBe(
       true,
     );
   });
@@ -172,7 +233,7 @@ describe("predictionPrompt — the last few turns, 板砖's runs folded, with gu
         body: `Running step-${i}.sh`,
       }),
     );
-    const prompt =
+    const text =
       predictionPrompt(
         [
           { kind: "user", text: "@板砖 说说看" },
@@ -180,11 +241,11 @@ describe("predictionPrompt — the last few turns, 板砖's runs folded, with gu
           { kind: "herta", surface: "speech", text: long },
         ],
         "zh",
-      ) ?? "";
-    expect(prompt).toContain("结尾。");
-    expect(prompt).not.toContain("开头");
-    expect(prompt).toContain(`step-${MAX_RUN_LINES * 2 - 1}.sh`);
-    expect(prompt).not.toContain("step-0.sh");
+      )?.text ?? "";
+    expect(text).toContain("结尾。");
+    expect(text).not.toContain("开头");
+    expect(text).toContain(`step-${MAX_RUN_LINES * 2 - 1}.sh`);
+    expect(text).not.toContain("step-0.sh");
   });
 
   it("with nothing to continue from — one message, no work of 板砖's — there is no prompt", () => {
@@ -214,5 +275,42 @@ describe("predictionPrompt — the last few turns, 板砖's runs folded, with gu
         "zh",
       ),
     ).not.toBeNull();
+  });
+});
+
+describe("predictionPrompt — 板砖's prompt or plain talk (owner 2026-10-11)", () => {
+  it("plain talk never names 板砖", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const prompt = predictionPrompt(CHAT, lang);
+      expect(prompt?.mode).toBe("chat");
+      expect(prompt?.text, lang).not.toContain("板砖");
+      expect(prompt?.text, lang).not.toContain("差分协处理器");
+    }
+    // The work prompt does — it is how the Trailblazer puts 板砖 to work.
+    expect(PREDICTION_HINT.work.zh).toContain("@板砖");
+    expect(PREDICTION_FRAME.work.en).toContain("@板砖");
+  });
+
+  it("a message that called 板砖 is work even before a row of his lands", () => {
+    expect(
+      predictionPrompt(
+        [...CHAT, { kind: "user", text: "@板砖 看看 src" }],
+        "zh",
+      )?.mode,
+    ).toBe("work");
+  });
+
+  it("work that has scrolled out of the window is plain talk again", () => {
+    const record: TerminalRecord = [
+      { kind: "user", text: "@板砖 写个 hello.mjs" },
+      { kind: "system", label: "差分协处理器", body: "Writing hello.mjs" },
+      { kind: "herta", surface: "speech", text: "写好了。" },
+      ...CHAT,
+      { kind: "user", text: "听起来挺无聊的。" },
+      { kind: "herta", surface: "speech", text: "那是你的问题。" },
+    ];
+    const prompt = predictionPrompt(record, "zh");
+    expect(prompt?.mode).toBe("chat");
+    expect(prompt?.text).not.toContain("hello.mjs");
   });
 });

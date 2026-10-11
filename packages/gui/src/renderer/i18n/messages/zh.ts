@@ -51,8 +51,7 @@ export const zh = {
   "window.keepAwake": "运行时保持唤醒",
   "window.keepAwakeDesc": "板砖运行期间阻止电脑睡眠；显示器仍可关闭。",
   "window.predictions": "输入预测",
-  "window.predictionsDesc":
-    "黑塔说完后，输入框里会给出你可能想说的下一句。按 Tab 填入，不会自动发送；每次回复多一次很小的调用。",
+  "window.predictionsDesc": "输入框里会给出你可能想说的下一句。",
   "window.minimize": "最小化",
   "window.maximize": "最大化",
   "window.restore": "还原",

@@ -2465,7 +2465,7 @@ describe("V2ActorDriver.predictNextUserMessage (composer predictions, owner 2026
         { type: "finish", reason: "stop" },
       ],
       [
-        { type: "text-delta", text: "@板砖 再跑一遍测试（/开拓者 说）" },
+        { type: "text-delta", text: "这么快？给我看看。（/开拓者 说）" },
         { type: "finish", reason: "stop" },
       ],
     ]);
@@ -2491,7 +2491,7 @@ describe("V2ActorDriver.predictNextUserMessage (composer predictions, owner 2026
     const predicted = await driver.predictNextUserMessage(
       new AbortController().signal,
     );
-    expect(predicted).toBe("@板砖 再跑一遍测试");
+    expect(predicted).toBe("这么快？给我看看。");
     const prediction = prompts.at(-1) ?? "";
     expect(prediction.endsWith("（开拓者 说）\n")).toBe(true);
     expect(prediction).toContain(

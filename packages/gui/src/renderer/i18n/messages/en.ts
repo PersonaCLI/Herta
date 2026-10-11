@@ -54,8 +54,7 @@ export const en = {
   "window.keepAwakeDesc":
     "Keeps the computer from sleeping while Brick runs; the display may still turn off.",
   "window.predictions": "Composer predictions",
-  "window.predictionsDesc":
-    "After Herta replies, the message box suggests what you might say next. Tab fills it in and nothing is sent on its own; each reply costs one small extra call.",
+  "window.predictionsDesc": "The message box suggests what you might say next.",
   "window.minimize": "Minimize",
   "window.maximize": "Maximize",
   "window.restore": "Restore",

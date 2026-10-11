@@ -21,7 +21,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileAtomicSync } from "@herta/core";
+import { trailblazerNotesFileName, writeFileAtomicSync } from "@herta/core";
 import { stripDisplayUnsafe } from "@herta/core/text-sanitize";
 import type { DeepSeekClient } from "../llm/types.js";
 import {
@@ -42,16 +42,18 @@ export interface EvictedFeianText {
   readonly body: string;
 }
 
-/** The overlay's filename, per interaction language (ADR 0017 follow-up). The
+/** The overlay's filename, per interaction language (ADR 0017 follow-up),
+ *  defined once in core (`trailblazerNotesFileName`): composer predictions
+ *  find the page in the actor's prefix by its title (ADR 0076). The
  *  `### 记录` prefix is CN STRUCTURAL and stays in BOTH languages — it is what
  *  the actor's static-prefix loader matches (NARRATIVE_FILE_PREFIXES); only the
  *  title localizes, mirroring the `### 废案_NN：<title>` corpus. Each language's
  *  page lives in its OWN narrative dir (narrative / narrative-en), so the two
  *  never collide. Keep these stable — renaming orphans the page. */
-export const TRAILBLAZER_NOTES_FILE = "### 记录：关于开拓者.txt";
-export const TRAILBLAZER_NOTES_FILE_EN = "### 记录：About the Trailblazer.txt";
+export const TRAILBLAZER_NOTES_FILE = trailblazerNotesFileName("zh");
+export const TRAILBLAZER_NOTES_FILE_EN = trailblazerNotesFileName("en");
 function notesFileFor(lang: PromptLang): string {
-  return lang === "en" ? TRAILBLAZER_NOTES_FILE_EN : TRAILBLAZER_NOTES_FILE;
+  return trailblazerNotesFileName(lang);
 }
 
 /** Fixed in-world frame; the model only ever writes the body below it. The

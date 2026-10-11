@@ -36,6 +36,20 @@ export function narrativeDirName(lang: "zh" | "en"): string {
   return lang === "en" ? "narrative-en" : "narrative";
 }
 
+/** The filename of Herta's page on the Trailblazer in the narrative dir: the
+ *  continuation of her bio's 第六章 that the dream pass rewrites as old 废案
+ *  fade (knowledge `semanticize.ts`). Its title line is the name minus
+ *  `.txt`. SINGLE SOURCE OF TRUTH — the dream pass writes the page, the actor
+ *  prefix loads it as a `### 记录` file, and composer predictions read it back
+ *  out of that prefix. The `### 记录` prefix is CN structural in both
+ *  languages; only the title localizes. Keep it stable: renaming orphans
+ *  every workspace's page. */
+export function trailblazerNotesFileName(lang: "zh" | "en"): string {
+  return lang === "en"
+    ? "### 记录：About the Trailblazer.txt"
+    : "### 记录：关于开拓者.txt";
+}
+
 /** The per-language dream bookkeeping dir (manifest + archive + lock), sibling
  *  of the narrative dir: `<workspaceRoot>/.herta/dream[-en]`. */
 export function dreamDirFor(workspaceRoot: string, lang: "zh" | "en"): string {

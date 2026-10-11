@@ -25,7 +25,10 @@ import {
   type MoodState,
   resolveMetaThink,
 } from "./meta-think.js";
-import { predictNextUserMessage } from "./next-message-prediction.js";
+import {
+  predictNextUserMessage,
+  trailblazerNotesOf,
+} from "./next-message-prediction.js";
 import type { PromptLang } from "./prompt-lang.js";
 import {
   type PreparedRecap,
@@ -961,12 +964,17 @@ export class V2ActorDriver {
       last.surface !== "speech"
     )
       return null;
+    const lang = this.deps.lang ?? "zh";
+    // Her page on the Trailblazer from the prefix she reads — refreshed
+    // with it after a dream pass (ADR 0076).
+    const notes = trailblazerNotesOf(this.staticPrefix.fewShots, lang);
     return predictNextUserMessage(
       {
         provider: this.deps.provider,
         model: this.deps.model,
         record: this.record,
-        lang: this.deps.lang ?? "zh",
+        lang,
+        ...(notes !== undefined ? { notes } : {}),
       },
       signal,
     );

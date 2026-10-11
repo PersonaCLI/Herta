@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   CompletionEvent,
   CompletionProviderAdapter,
@@ -13,7 +14,9 @@ import {
   PREDICTION_HINT,
   predictionPrompt,
   predictNextUserMessage,
+  trailblazerNotesOf,
 } from "./next-message-prediction.js";
+import { promptAssetsFor } from "./prompt-assets.js";
 
 /** The zero-width space the serializer breaks `@板砖` with. */
 const ZWSP = String.fromCodePoint(0x200b);
@@ -312,5 +315,67 @@ describe("predictionPrompt — 板砖's prompt or plain talk (owner 2026-10-11)"
     const prompt = predictionPrompt(record, "zh");
     expect(prompt?.mode).toBe("chat");
     expect(prompt?.text).not.toContain("hello.mjs");
+  });
+});
+
+describe("her page on the Trailblazer (owner 2026-10-11)", () => {
+  const PAGE =
+    "### 记录：关于开拓者\n\n有些夜晚的细节我已经不记得了，但关于这位开拓者，有几件事沉了下来：\n\n这小鬼总在深夜来，开口先问在吗。";
+  const FEIAN = "### 废案_00：终端外侧的噪声\n\n正文";
+
+  it("is read out of the prefix by its title, without the title line", () => {
+    expect(trailblazerNotesOf([FEIAN, PAGE], "zh")).toBe(
+      "有些夜晚的细节我已经不记得了，但关于这位开拓者，有几件事沉了下来：\n\n这小鬼总在深夜来，开口先问在吗。",
+    );
+    expect(trailblazerNotesOf([FEIAN], "zh")).toBeUndefined();
+    // A page the prefix could not read is a placeholder, not a page.
+    expect(
+      trailblazerNotesOf(["[### 记录：关于开拓者.txt 读取失败]"], "zh"),
+    ).toBeUndefined();
+    // Each language reads its own page.
+    expect(trailblazerNotesOf([PAGE], "en")).toBeUndefined();
+    expect(
+      trailblazerNotesOf(
+        ["### 记录：About the Trailblazer\n\nThey come late."],
+        "en",
+      ),
+    ).toBe("They come late.");
+  });
+
+  it("sits between the frame and the turns, word for word — and is absent when there is none", () => {
+    const notes = "这小鬼总在深夜来。";
+    expect(predictionPrompt(RECORD, "zh", notes)?.text).toContain(
+      `${PREDICTION_FRAME.work.zh}\n\n〔大黑塔在自己的记录里写过：\n${notes}〕\n\n（开拓者 说）`,
+    );
+    expect(predictionPrompt(RECORD, "zh")?.text).not.toContain("记录里写过");
+  });
+
+  it("the bond line follows her bio's 第六章 — an edit there fails here until RELATION is re-read from it", () => {
+    const chapter = (bio: string, from: string, to: string): string => {
+      const at = bio.indexOf(from);
+      expect(at, from).toBeGreaterThanOrEqual(0);
+      return bio.slice(at, bio.indexOf(to, at));
+    };
+    const sha = (text: string): string =>
+      createHash("sha256").update(text).digest("hex").slice(0, 16);
+    expect(
+      {
+        zh: sha(
+          chapter(
+            promptAssetsFor("zh").hertaBio,
+            "第六章：关于开拓者",
+            "\n第七章：",
+          ),
+        ),
+        en: sha(
+          chapter(
+            promptAssetsFor("en").hertaBio,
+            "Chapter 6: About the Trailblazer",
+            "\nChapter 7:",
+          ),
+        ),
+      },
+      "HertaBio's 第六章 changed: re-read RELATION in next-message-prediction.ts against it, then update these hashes",
+    ).toEqual({ zh: "1b2a13ed33abf787", en: "cf25f9690a18918f" });
   });
 });

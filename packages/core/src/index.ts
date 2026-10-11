@@ -218,6 +218,7 @@ export {
   narrativeDirFor,
   narrativeDirName,
   resolveEffectiveWorkspace,
+  trailblazerNotesFileName,
   workspacesBaseDir,
 } from "./session-io/workspace-paths.js";
 export {

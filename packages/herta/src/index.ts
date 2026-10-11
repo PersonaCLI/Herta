@@ -82,6 +82,7 @@ export {
   predictionPrompt,
   predictNextUserMessage,
   RECENT_TURNS,
+  trailblazerNotesOf,
 } from "./narrative/next-message-prediction.js";
 export {
   extractBand,

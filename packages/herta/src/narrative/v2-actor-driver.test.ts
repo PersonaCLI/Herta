@@ -112,6 +112,7 @@ function mkEmptyCorpusForHelper(): MetaThinkCorpus {
 function mkDriver(
   provider: CompletionProviderAdapter,
   persister?: V2RecordPersister,
+  fewShots: readonly string[] = [],
 ): V2ActorDriver {
   const noopRuntime: CodingAgentRuntime = {
     runBrief: async (brief: HertaToAgentBrief) => ({
@@ -127,7 +128,7 @@ function mkDriver(
   return new V2ActorDriver({
     provider,
     model: "test-model",
-    staticPrefix: { bio: "[prefix]", env: "", fewShots: [] },
+    staticPrefix: { bio: "[prefix]", env: "", fewShots },
     bus: new InMemoryEventBus<AgentEvent>(),
     runtimeFactory: () => noopRuntime,
     routerProvider: mkNoopRouter(),
@@ -2508,6 +2509,39 @@ describe("V2ActorDriver.predictNextUserMessage (composer predictions, owner 2026
       kind: "herta",
       surface: "speech",
     });
+  });
+
+  it("carries her page on the Trailblazer from the prefix she reads (owner 2026-10-11)", async () => {
+    const prompts: string[] = [];
+    const base = mkProvider([
+      [
+        { type: "text-delta", text: "说吧。（/我 说）" },
+        { type: "finish", reason: "stop" },
+      ],
+      [
+        { type: "text-delta", text: "写好了。（/我 说）" },
+        { type: "finish", reason: "stop" },
+      ],
+      [
+        { type: "text-delta", text: "这么快？给我看看。（/开拓者 说）" },
+        { type: "finish", reason: "stop" },
+      ],
+    ]);
+    const provider: CompletionProviderAdapter = {
+      streamCompletion(req, signal) {
+        prompts.push(req.prompt);
+        return base.streamCompletion(req, signal);
+      },
+    };
+    const driver = mkDriver(provider, undefined, [
+      "### 记录：关于开拓者\n\n这小鬼总在深夜来，开口先问在吗。",
+    ]);
+    await driver.runTurn("在吗", new AbortController().signal);
+    await driver.runTurn("帮我写个小工具", new AbortController().signal);
+    await driver.predictNextUserMessage(new AbortController().signal);
+    expect(prompts.at(-1)).toContain(
+      "〔大黑塔在自己的记录里写过：\n这小鬼总在深夜来，开口先问在吗。〕",
+    );
   });
 
   it("offers nothing once the record has moved on or been replaced", async () => {

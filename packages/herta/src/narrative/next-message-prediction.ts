@@ -1,8 +1,9 @@
-import type {
-  CompletionProviderAdapter,
-  SystemBlock,
-  TerminalRecord,
-  TerminalRecordBlock,
+import {
+  type CompletionProviderAdapter,
+  type SystemBlock,
+  type TerminalRecord,
+  type TerminalRecordBlock,
+  trailblazerNotesFileName,
 } from "@herta/core";
 import { STOP_CLOSER_USER, STOP_OPENER_USER } from "./actor-turn-stream.js";
 import { buildCompactionBody } from "./compact-record.js";
@@ -42,6 +43,15 @@ import { serializeBlock } from "./serialize.js";
  * THE VOICE (owner 2026-10-10: "should sounds like 开拓者 talking to 大黑塔")
  * is the owner's own description, and the frame says who the two are to
  * each other — see `VOICE` and `RELATION`.
+ *
+ * HER NOTES ON THIS TRAILBLAZER (owner 2026-10-11: "when this chapter is
+ * updated, we should also update the relationship part in this prompt
+ * automatically"). The bio's 第六章 is compiled in and never changes at
+ * runtime; what the memory system updates is her page continuing it, which
+ * the dream pass rewrites as old 废案 fade. When the workspace has one, it
+ * sits between the frame and the turns, word for word, taken from the prefix
+ * her session holds (`trailblazerNotesOf`) — the same text she reads,
+ * refreshed when hers is, with no file read and no model call of its own.
  *
  * WHAT IT NEVER DOES. The prediction is user-side composer chrome (D7): it
  * never enters the record, and Herta never sees it unless the user sends it,
@@ -144,6 +154,29 @@ export interface PredictionDeps {
   /** The record as the turn left it, ending on Herta's speech. */
   readonly record: TerminalRecord;
   readonly lang: PromptLang;
+  /** Her page on this Trailblazer (`trailblazerNotesOf`), when there is one. */
+  readonly notes?: string;
+}
+
+/** What introduces her page on the Trailblazer. NEVER persisted. */
+const NOTES_LEAD: Record<PromptLang, string> = {
+  zh: "大黑塔在自己的记录里写过：",
+  en: "The Herta wrote in her own notes:",
+};
+
+/**
+ * Her page on the Trailblazer as her prefix carries it, without its title
+ * line — or undefined when the workspace has none yet (or it failed the
+ * prefix's own gate, and she does not read it either). Pure.
+ */
+export function trailblazerNotesOf(
+  fewShots: readonly string[],
+  lang: PromptLang,
+): string | undefined {
+  const title = trailblazerNotesFileName(lang).replace(/\.txt$/, "");
+  const page = fewShots.find((text) => text.startsWith(`${title}\n`));
+  const notes = page?.slice(title.length).trim();
+  return notes === undefined || notes.length === 0 ? undefined : notes;
 }
 
 /** `text` cut to its last `max` characters, marked as cut. */
@@ -159,11 +192,13 @@ export interface PredictionPrompt {
 
 /**
  * The prediction's whole prompt and which one it is, or null when the
- * record holds nothing to go on. Pure.
+ * record holds nothing to go on. `notes` is her page on the Trailblazer,
+ * when the workspace has one. Pure.
  */
 export function predictionPrompt(
   record: TerminalRecord,
   lang: PromptLang,
+  notes?: string,
 ): PredictionPrompt | null {
   // The window opens at the Trailblazer's RECENT_TURNS-th last message.
   let start = -1;
@@ -211,9 +246,11 @@ export function predictionPrompt(
   if (messages < 2 && runs === 0) return null;
   const mode: PredictionMode = runs > 0 || called ? "work" : "chat";
   const turns = picked.map((b) => serializeBlock(b)).join("\n\n");
+  const page =
+    notes === undefined ? "" : `〔${NOTES_LEAD[lang]}\n${notes}〕\n\n`;
   return {
     mode,
-    text: `${PREDICTION_FRAME[mode][lang]}\n\n${turns}\n\n${PREDICTION_HINT[mode][lang]}\n${STOP_OPENER_USER}\n`,
+    text: `${PREDICTION_FRAME[mode][lang]}\n\n${page}${turns}\n\n${PREDICTION_HINT[mode][lang]}\n${STOP_OPENER_USER}\n`,
   };
 }
 
@@ -227,7 +264,7 @@ export async function predictNextUserMessage(
   deps: PredictionDeps,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const prompt = predictionPrompt(deps.record, deps.lang);
+  const prompt = predictionPrompt(deps.record, deps.lang, deps.notes);
   if (prompt === null) return null;
   let text = "";
   try {

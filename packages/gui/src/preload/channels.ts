@@ -72,6 +72,7 @@ export const CMD = {
   setMiniMaxKey: "settings:setMiniMaxKey",
   clearMiniMaxKey: "settings:clearMiniMaxKey",
   openExternal: "shell:openExternal",
+  openWebPage: "session:openWebPage",
   getMiniMaxPlanKeyStatus: "settings:getMiniMaxPlanKeyStatus",
   setMiniMaxPlanKey: "settings:setMiniMaxPlanKey",
   clearMiniMaxPlanKey: "settings:clearMiniMaxPlanKey",

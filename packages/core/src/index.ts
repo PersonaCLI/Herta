@@ -282,5 +282,13 @@ export {
   setUsageNoteSink,
   type UsageNote,
   type UsageNoteSink,
+  type WebNote,
 } from "./usage-note.js";
+export {
+  type WebClient,
+  WebClientError,
+  type WebFailure,
+  type WebPage,
+  type WebSearchHit,
+} from "./web-client.js";
 export { WorkspacePermissions } from "./workspace-permissions.js";

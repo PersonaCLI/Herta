@@ -210,6 +210,53 @@ describe("createBackendStack", () => {
     expect(isVisionModel("deepseek-v4-pro")).toBe(false);
   });
 
+  it("mounts web_search / web_fetch with a web client, and lets them run without asking (ADR 0080)", async () => {
+    const webClient = {
+      search: async () => [],
+      fetchPage: async () => ({ title: "", markdown: "" }),
+    };
+    let asked = 0;
+    const build = (client: typeof webClient | null) =>
+      createBackendStack({
+        wsHolder: { current: mkWorkspace() },
+        workspaceRoot: mkWorkspace(),
+        lang: "zh",
+        wantMinimal: false,
+        backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: "deepseek-v4-pro",
+        digestModel: null,
+        webClient: client,
+        makeAsk: () => ({
+          present: async () => {
+            asked += 1;
+            return "deny" as const;
+          },
+        }),
+      });
+    const withWeb = build(webClient);
+    const names = withWeb.backendTools.list().map((t) => t.name);
+    expect(names).toContain("web_search");
+    expect(names).toContain("web_fetch");
+    const ctx = {
+      sessionId: "s",
+      signal: new AbortController().signal,
+      workspaceRoot: mkWorkspace(),
+    } as unknown as Parameters<typeof withWeb.permissions.check>[1];
+    for (const tool of ["web_search", "web_fetch"]) {
+      const d = await withWeb.permissions.check(
+        { id: "1", tool, input: {} },
+        ctx,
+      );
+      expect(d.kind).toBe("allow");
+    }
+    expect(asked).toBe(0);
+    const without = build(null)
+      .backendTools.list()
+      .map((t) => t.name);
+    expect(without).not.toContain("web_search");
+    expect(without).not.toContain("web_fetch");
+  });
+
   // ADR 0044: the standard contract on a Windows host carries the host note
   // (what the machine is, where the Unix habits go); other platforms and the
   // minimal contract never do. Platform injected — these run everywhere.

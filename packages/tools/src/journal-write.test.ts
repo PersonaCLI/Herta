@@ -465,9 +465,10 @@ describe("no tool replaces a file unrecorded", () => {
   });
 
   it("only the harness's own files are written by plain writeFile", () => {
-    // A command's log, a document's digest, a test fixture: none of them is
-    // the user's workspace. A new plain write anywhere else is a write the
-    // journal cannot decide after a crash.
+    // A command's log, a document's digest, a fetched web page (ADR 0080,
+    // under `.herta/web/`), a test fixture: none of them is the user's
+    // workspace. A new plain write anywhere else is a write the journal
+    // cannot decide after a crash.
     const plain = toolSources()
       .filter((s) => /\bwriteFile(Sync)?\(/.test(s.text))
       .map((s) => s.file)
@@ -476,6 +477,7 @@ describe("no tool replaces a file unrecorded", () => {
       "digest-document/index.ts",
       "run-command/logger.ts",
       "testing/tmp-workspace.ts",
+      "web/index.ts",
     ]);
   });
 });

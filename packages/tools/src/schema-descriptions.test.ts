@@ -35,9 +35,21 @@ function fieldDescriptions(
   }
 }
 
+/** The web tools mount only with a client (ADR 0080); a stub that never
+ *  answers is enough for their schemas. */
+const webClient = {
+  search: async () => [],
+  fetchPage: async () => ({ title: "", markdown: "" }),
+};
+
 describe("every tool schema describes every field", () => {
   const tools = [
-    ...createMvpTools({ digestModel: null, vision: true, lang: "zh" }),
+    ...createMvpTools({
+      digestModel: null,
+      vision: true,
+      lang: "zh",
+      webClient,
+    }),
     // The minimal contract's tools. A non-existent bash is fine here: the
     // schema builder only spells example paths with it, and shellPathsFor
     // falls back to an identity mapping when the probe cannot run.
@@ -47,6 +59,7 @@ describe("every tool schema describes every field", () => {
       digestModel: null,
       vision: true,
       lang: "zh",
+      webClient,
     }),
   ];
 
@@ -56,6 +69,8 @@ describe("every tool schema describes every field", () => {
     expect(names).toContain("str_replace_editor");
     expect(names).toContain("edit_file");
     expect(names).toContain("show_excerpt");
+    expect(names).toContain("web_search");
+    expect(names).toContain("web_fetch");
   });
 
   for (const tool of tools) {

@@ -69,7 +69,17 @@ export interface ReviewNote {
   readonly ms?: number;
 }
 
-export type UsageNote = BackendRunNote | ActorTurnNote | ReviewNote;
+/** One web call 板砖 made (ADR 0080): billed per successful call, no
+ *  tokens, so the line counts calls rather than sizes. */
+export interface WebNote {
+  readonly kind: "web";
+  readonly endpoint: "search" | "fetch";
+  readonly ok: boolean;
+  /** Wall time, retries included. */
+  readonly ms: number;
+}
+
+export type UsageNote = BackendRunNote | ActorTurnNote | ReviewNote | WebNote;
 
 export type UsageNoteSink = (note: UsageNote) => void;
 

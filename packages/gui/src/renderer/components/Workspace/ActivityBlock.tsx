@@ -60,6 +60,9 @@ interface RowView {
   readonly removeLabel: string | undefined;
   readonly file: ActivityStepProps["file"];
   readonly links: ActivityStepProps["links"];
+  /** A web row's URLs in its detail pane, each opening in the OS browser
+   *  (ADR 0080 §5). */
+  readonly detailLinks: ActivityStepProps["detailLinks"];
   /** A placeholder of the attach in flight (2026-10-01). */
   readonly progress: ActivityStepProps["progress"];
   /** A real row that just replaced a placeholder. */
@@ -99,6 +102,13 @@ export interface ActivityBlockProps {
    * historical group re-render on unrelated store churn.
    */
   readonly onRemoveAttachment?: (path: string) => () => void;
+  /**
+   * Open a web page the session's record names in the OS browser (ADR 0080
+   * §5): a web row's URLs become links in its detail pane. A prop for the
+   * same reason as `onRemoveAttachment`; absent (the demo, bare tests), the
+   * URLs stay plain text.
+   */
+  readonly onOpenWebPage?: (url: string) => void;
   /**
    * The 撤销 chip (ADR 0074 §4) — only on the latest turn's last finished
    * 板砖 card, and only the user's: nothing of it is in the record. `offer`
@@ -207,6 +217,7 @@ export const ActivityBlock = memo(function ActivityBlock(
   const { blocks, active, turnStartedAt, backendStartedAt, lang } = props;
   const inFlightCount = props.inFlightCount ?? 1;
   const onRemoveAttachment = props.onRemoveAttachment;
+  const onOpenWebPage = props.onOpenWebPage;
   const t = useMemo(() => makeT(lang), [lang]);
   // A placeholder row's count (2026-10-01), in the session's language like
   // every string in the row. One function per language, so the rows' views
@@ -528,32 +539,44 @@ export const ActivityBlock = memo(function ActivityBlock(
                     // live, 2026-08-31). `name` stays the verbatim arg — it is
                     // what the row displays.
                     opTarget(b.digest.arg)
-                  : b.digest?.kind === "attachment" &&
-                      b.digest.image === undefined &&
-                      b.digest.unreadable !== "removed" &&
-                      // The ORIGINAL document when the ingest kept one (ADR 0038
-                      // amendment): the viewer draws the PDF / Word /
-                      // spreadsheet / deck itself (ADR 0054), even when no text
-                      // came out of it. Otherwise the stored text: `too_large`
-                      // means STORED but no head excerpt taken — the viewer's
-                      // own bounded read is exactly the remedy, so it stays
-                      // clickable; genuinely dead states (read_error / denied /
-                      // …) stay plain.
-                      (b.digest.source !== undefined ||
-                        (b.digest.path.length > 0 &&
-                          (b.digest.unreadable === undefined ||
-                            b.digest.unreadable === "too_large")))
+                  : // A fetched page (ADR 0080 §5): its host opens the
+                    // stored copy — the reader view; the URL in the detail
+                    // pane goes to the OS browser.
+                    b.digest?.kind === "web-fetch" && b.digest.path.length > 0
                     ? {
-                        path: b.digest.source ?? b.digest.path,
-                        // The row DISPLAYS the middle-truncated name (long names
-                        // wrapped the row, owner 2026-08-10) — split on what is
-                        // actually on screen or a long name silently loses its
-                        // click affordance. The panel breadcrumb gets the WHOLE
-                        // name.
-                        name: middleTruncateName(b.digest.name),
-                        label: b.digest.name,
+                        path: b.digest.path,
+                        name: b.digest.host,
+                        label:
+                          b.digest.title !== ""
+                            ? b.digest.title
+                            : b.digest.host,
                       }
-                    : null;
+                    : b.digest?.kind === "attachment" &&
+                        b.digest.image === undefined &&
+                        b.digest.unreadable !== "removed" &&
+                        // The ORIGINAL document when the ingest kept one (ADR 0038
+                        // amendment): the viewer draws the PDF / Word /
+                        // spreadsheet / deck itself (ADR 0054), even when no text
+                        // came out of it. Otherwise the stored text: `too_large`
+                        // means STORED but no head excerpt taken — the viewer's
+                        // own bounded read is exactly the remedy, so it stays
+                        // clickable; genuinely dead states (read_error / denied /
+                        // …) stay plain.
+                        (b.digest.source !== undefined ||
+                          (b.digest.path.length > 0 &&
+                            (b.digest.unreadable === undefined ||
+                              b.digest.unreadable === "too_large")))
+                      ? {
+                          path: b.digest.source ?? b.digest.path,
+                          // The row DISPLAYS the middle-truncated name (long names
+                          // wrapped the row, owner 2026-08-10) — split on what is
+                          // actually on screen or a long name silently loses its
+                          // click affordance. The panel breadcrumb gets the WHOLE
+                          // name.
+                          name: middleTruncateName(b.digest.name),
+                          label: b.digest.name,
+                        }
+                      : null;
             const file: ActivityStepProps["file"] =
               fileTarget !== null && openFile !== null
                 ? {
@@ -597,6 +620,25 @@ export const ActivityBlock = memo(function ActivityBlock(
                     ];
                   })
                 : undefined;
+            // A web row's URLs (ADR 0080 §5), from the STRUCTURED sections —
+            // they appear verbatim in the detail pane, so the wrap lands on
+            // what is shown.
+            const detailLinks: ActivityStepProps["detailLinks"] =
+              onOpenWebPage === undefined
+                ? undefined
+                : (b.evidence ?? []).flatMap((s): FileLinkTarget[] => {
+                    const urls =
+                      s.kind === "web-page"
+                        ? [s.url]
+                        : s.kind === "web-results"
+                          ? s.items.map((i) => i.url)
+                          : [];
+                    return urls.map((url) => ({
+                      text: url,
+                      onOpen: () => onOpenWebPage(url),
+                      ariaLabel: `${t("activity.web.openAria")} ${url}`,
+                    }));
+                  });
             // Take-back, offered only where it can actually work: a stored
             // attachment (a path to delete), not already removed. Mid-turn the
             // control hides by CSS (`.conversation-flow.is-busy`) and the handler
@@ -666,9 +708,21 @@ export const ActivityBlock = memo(function ActivityBlock(
                   : undefined,
               file,
               links,
+              detailLinks:
+                detailLinks !== undefined && detailLinks.length > 0
+                  ? detailLinks
+                  : undefined,
             };
           }),
-    [rows, t, openFile, onRemoveAttachment, rowsMounted, progressLabel],
+    [
+      rows,
+      t,
+      openFile,
+      onRemoveAttachment,
+      onOpenWebPage,
+      rowsMounted,
+      progressLabel,
+    ],
   );
 
   // Animated reveal of the history (bug 2). The panel is always mounted (when
@@ -914,6 +968,9 @@ export const ActivityBlock = memo(function ActivityBlock(
                     removeLabel={rv.removeLabel}
                     file={rv.file}
                     links={rv.links}
+                    {...(rv.detailLinks !== undefined
+                      ? { detailLinks: rv.detailLinks }
+                      : {})}
                     {...(rv.progress !== undefined
                       ? { progress: rv.progress }
                       : {})}

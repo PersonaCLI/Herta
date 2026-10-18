@@ -825,6 +825,12 @@ export interface HertaBridge {
    *  Anything else is refused by main. OPTIONAL — fakes and the website
    *  demo omit it, and the links then do not render. */
   openExternal?(url: string): Promise<void>;
+  /** Open a web page the session's record names (ADR 0080 §5) — a page
+   *  板砖 fetched or a search result it was shown — in the OS browser. Main
+   *  checks the URL against that session's own web rows; false when it is
+   *  not there. OPTIONAL — fakes and the demo omit it, and the links then
+   *  stay plain text. */
+  openWebPage?(sessionId: string, url: string): Promise<boolean>;
   /** The token-plan key (ADR 0062 §1.8), stored and checked like the
    *  pay-as-you-go one. Optional alongside it. */
   getMiniMaxPlanKeyStatus?(): Promise<DeepSeekKeyStatus>;

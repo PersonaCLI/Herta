@@ -97,8 +97,13 @@ const HARNESS_READ_PREFIXES = [".herta/logs/", ".herta/tool-results/"];
  * strictly beneath the prefix; skips only the structural `.herta` denial, so
  * the credential-basename and credential-directory checks still run over
  * whatever the user handed us.
+ *
+ * `.herta/web/` rides the same flag (ADR 0080): the pages `web_fetch` stored,
+ * redacted at write. Content brought into the session rather than harness
+ * internals — 板砖 reads the rest of a page there, quotes it back with
+ * `show_excerpt`, and cites it in `report_finding`.
  */
-const ATTACHMENT_READ_PREFIXES = [".herta/attachments/"];
+const ATTACHMENT_READ_PREFIXES = [".herta/attachments/", ".herta/web/"];
 
 /**
  * Shell-output evidence the model may EXCERPT back to the user (ADR 0036,

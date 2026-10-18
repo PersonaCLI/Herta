@@ -58,6 +58,8 @@ export const VERB_KEY: Record<string, MessageKey> = {
   Searching: "activity.verb.searching",
   Stopping: "activity.verb.stopping",
   Digesting: "activity.verb.digesting",
+  "Searching the web": "activity.verb.searchingWeb",
+  "Reading web page": "activity.verb.readingWeb",
 };
 
 /**
@@ -227,6 +229,20 @@ export function stepDisplayBody(
         d.format !== undefined ? [t("activity.attachment.extracted")] : [];
       return [head, ...extracted, lines, chars, ...outline].join(" · ");
     }
+    case "web-search":
+      // "↳ web results: 8" → "↳ 8 条结果" (ADR 0080). The titles are in the
+      // detail pane.
+      return d.results.length === 0
+        ? `↳ ${t("activity.result.webNone")}`
+        : `↳ ${d.results.length} ${t("activity.result.webResults")}`;
+    case "web-fetch":
+      // The host is the click target that opens the stored page; the title
+      // is the page's own words, verbatim.
+      return [
+        `↳ ${t("activity.result.page")} ${d.host}`,
+        ...(d.title !== "" ? [d.title] : []),
+        `${d.chars.toLocaleString()} ${t("activity.attachment.chars")}`,
+      ].join(" · ");
     case "digest":
       // "↳ digest <path> · 27 chunks (cached)" → localized chrome; the path is
       // data (ADR 0043).
@@ -340,6 +356,14 @@ export function stepDisplayDetail(
               : "";
           return `↳ ${t("evidence.matches")} /${s.pattern}/:\n${s.items.join("\n")}${more}`;
         }
+        case "web-results":
+          // Each result's URL on its own line, where the row makes it a
+          // link to the OS browser (ADR 0080 §5).
+          return `↳ ${t("evidence.webResults")}:\n${s.items
+            .map((i) => `- ${i.title}（${i.site}）\n  ${i.url}`)
+            .join("\n")}`;
+        case "web-page":
+          return `↳ ${t("evidence.webPage")} ${s.title}\n${s.url}\n${s.text}`;
         case "error":
           return `↳ ${t("evidence.error")}: ${s.message}`;
         case "hint":

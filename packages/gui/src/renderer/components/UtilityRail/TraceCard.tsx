@@ -480,6 +480,22 @@ export function segmentSummary(segment: TraceSegment, t: T): string {
     if (n === 0) return;
     parts.push(n === 1 ? t(one) : t(many, { n: String(n) }));
   };
+  counted(
+    tally.webSearches,
+    "trace.sum.webSearchOne",
+    "trace.sum.webSearchMany",
+  );
+  const [firstPage] = tally.pages;
+  if (firstPage !== undefined) {
+    parts.push(
+      tally.pages.length === 1
+        ? t("trace.sum.webReadOne", { host: firstPage })
+        : t("trace.sum.webReadMany", {
+            host: firstPage,
+            n: String(tally.pages.length),
+          }),
+    );
+  }
   counted(tally.digests, "trace.sum.digestOne", "trace.sum.digestMany");
   counted(tally.memories, "trace.sum.memoryOne", "trace.sum.memoryMany");
   counted(tally.stops, "trace.sum.stopOne", "trace.sum.stopMany");

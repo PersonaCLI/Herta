@@ -384,6 +384,22 @@ describe("tallySegment", () => {
       digests: 0,
       memories: 0,
       stops: 0,
+      webSearches: 0,
+      pages: [],
     });
+  });
+
+  it("counts web searches and the sites of the pages read (ADR 0080)", () => {
+    const ops = opsOf([
+      user(),
+      op("Searching the web", "vitest update flag"),
+      op("Reading web page", "https://vitest.dev/config/update"),
+      op("Reading web page", "https://vitest.dev/guide/snapshot"),
+      op("Reading web page", "https://github.com/vitest-dev/vitest/issues/1"),
+    ]);
+    const tally = tallySegment(ops);
+    expect(tally.webSearches).toBe(1);
+    expect(tally.pages).toEqual(["vitest.dev", "github.com"]);
+    expect(tally.reads).toEqual([]);
   });
 });

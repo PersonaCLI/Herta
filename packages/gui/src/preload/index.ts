@@ -126,6 +126,8 @@ const bridge: HertaBridge = {
   setMiniMaxKey: (key) => ipcRenderer.invoke(CMD.setMiniMaxKey, key),
   clearMiniMaxKey: () => ipcRenderer.invoke(CMD.clearMiniMaxKey),
   openExternal: (url) => ipcRenderer.invoke(CMD.openExternal, url),
+  openWebPage: (sessionId, url) =>
+    ipcRenderer.invoke(CMD.openWebPage, sessionId, url),
   getMiniMaxPlanKeyStatus: () =>
     ipcRenderer.invoke(CMD.getMiniMaxPlanKeyStatus),
   setMiniMaxPlanKey: (key) => ipcRenderer.invoke(CMD.setMiniMaxPlanKey, key),

@@ -43,6 +43,7 @@ import type {
   SessionSnapshot,
 } from "../renderer/ipc/bridge-types.js";
 import { slimAgentEventForRenderer } from "../shared/agent-event-wire.js";
+import { isRecordedWebUrl } from "../shared/links.js";
 import { createLiveToolFeed } from "../shared/live-tool-feed.js";
 import type { VoiceEngine } from "./app-global-settings.js";
 import {
@@ -1184,6 +1185,17 @@ export function createSessionService(
       return branches === null
         ? { ok: false as const, reason: "not_found" as const }
         : { ok: true as const, branches };
+    });
+    // A web page the session's record names (ADR 0080 §5): opened in the OS
+    // browser only when it appears in THIS session's web rows — the
+    // renderer is not trusted with an "open any URL" door.
+    handle(CMD.openWebPage, async (_e, sessionId: string, url: unknown) => {
+      const s = host?.activeSession ?? null;
+      if (s === null || s.sessionId !== sessionId) return false;
+      if (typeof url !== "string" || !isRecordedWebUrl(url, s.record))
+        return false;
+      await shell.openExternal(url);
+      return true;
     });
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never

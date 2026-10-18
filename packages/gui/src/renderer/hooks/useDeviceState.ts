@@ -55,6 +55,8 @@ function fineWorkingState(record: TerminalRecord): BanzhuanDeviceState {
       case "Inspecting":
       case "Searching":
       case "Digesting":
+      case "Searching the web":
+      case "Reading web page":
         return "reading";
       case "Writing":
         return "writing";

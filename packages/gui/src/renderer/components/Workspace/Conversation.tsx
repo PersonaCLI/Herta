@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useRef } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useActiveSession } from "../../hooks/useActiveSession.js";
 import { useBackendThinking } from "../../hooks/useBackendThinking.js";
@@ -213,6 +213,15 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     sessionStore,
     t,
   });
+  // A web row's URL to the OS browser (ADR 0080 §5); main checks it against
+  // this session's own record. Stable per session, like the removal factory.
+  const openWebPage = useMemo(() => {
+    const open = bridge.openWebPage;
+    if (sessionId === null || open === undefined) return undefined;
+    return (url: string): void => {
+      void open(sessionId, url);
+    };
+  }, [sessionId, bridge]);
   const backendThinking = useBackendThinking();
   const { items, rows } = useConversationRows({
     // The attach in flight shows as placeholder rows after the record's last
@@ -228,6 +237,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     backendThinking,
     handleRewind,
     removeAttachmentFactory,
+    openWebPage,
     undoable,
     undoBusy,
     handleUndo,

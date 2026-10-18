@@ -47,6 +47,10 @@ export const ATTACHMENT_SEARCH_MAX_BYTES = 64 * 1024 * 1024;
  *  the run_command capture cap, so the ordinary size gate applies. */
 const EVIDENCE_LOG_ROOT = ".herta/logs";
 
+/** The pages `web_fetch` stored (ADR 0080) — bounded by the fetch, so the
+ *  ordinary size gate applies. */
+const WEB_PAGE_PREFIX = ".herta/web/";
+
 /** Whether a canonical workspace-relative search root is inside the
  *  attachment subtree. Exported for the lockstep test. */
 export function isAttachmentSearchRoot(rel: string): boolean {
@@ -64,6 +68,8 @@ export function isAttachmentSearchRoot(rel: string): boolean {
 export function isHertaCarveOutSearchRoot(rel: string): boolean {
   return (
     isAttachmentSearchRoot(rel) ||
+    // The stored web pages (ADR 0080), admitted by the attachment flag.
+    rel.startsWith(WEB_PAGE_PREFIX) ||
     rel === EVIDENCE_LOG_ROOT ||
     rel.startsWith(`${EVIDENCE_LOG_ROOT}/`)
   );

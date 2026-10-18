@@ -73,7 +73,7 @@ function hintFor(candidate: string, code: string): string {
   if (code !== "path_denied") return "";
   const normalized = candidate.replace(/\\/g, "/");
   if (!/(^|\/)\.herta(\/|$)/.test(normalized)) return "";
-  return " (listing .herta is denied; an attachment under .herta/attachments/<session>/ is readable directly by its full path)";
+  return " (listing .herta is denied; an attachment under .herta/attachments/<session>/, or a page web_fetch saved under .herta/web/, is readable directly by its full path)";
 }
 
 export async function checkReaderArgvPaths(

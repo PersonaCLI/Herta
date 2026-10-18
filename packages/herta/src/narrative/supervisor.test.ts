@@ -485,7 +485,9 @@ describe("buildSupervisorPrompt", () => {
     // Names the out-of-scope categories the model misuses.
     expect(sys).toContain("查别人的喜好");
     expect(sys).toContain("礼物建议");
-    expect(sys).toContain("在线搜索");
+    // Going online off the work stays out; technical lookups are in (ADR 0080).
+    expect(sys).toContain("和代码 / 研究无关的上网");
+    expect(sys).toContain("查技术资料");
     expect(sys).toContain("私事");
     // Veto-reason templates.
     expect(sys).toContain("@板砖 不查那种事");

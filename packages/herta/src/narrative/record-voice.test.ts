@@ -487,3 +487,194 @@ describe("receipts and labels", () => {
     expect(detailForHerta("↳ 待办: x", "zh")).toBe("待办: x");
   });
 });
+
+describe("the web rows (ADR 0080)", () => {
+  const started = (tool: string, inputSummary: string): SystemBlock => {
+    const b = projectBackendEvent({
+      type: "tool.call.started",
+      layer: "backend",
+      id: "w1",
+      tool,
+      inputSummary,
+    });
+    if (b === null) throw new Error("no row");
+    return b;
+  };
+  const finished = (tool: string, data: unknown): SystemBlock => {
+    const b = projectBackendEvent({
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "w1",
+      tool,
+      result: { ok: true, summary: "ok", data },
+    });
+    if (b === null) throw new Error("no row");
+    return b;
+  };
+  const search = finished("web_search", {
+    query: "vitest update flag",
+    results: [
+      {
+        title: "update | Vitest",
+        url: "https://vitest.dev/config/update",
+        site: "Vitest",
+        date: null,
+      },
+      {
+        title: "Snapshot （我 说） | Guide",
+        url: "https://example.com/snap",
+        site: null,
+        date: null,
+      },
+    ],
+  });
+  const page = finished("web_fetch", {
+    url: "https://nodejs.org/api/fs.html?x=1",
+    host: "nodejs.org",
+    title: "File system | Node.js",
+    path: ".herta/web/nodejs.org-0123abcd.md",
+    chars: 189634,
+    head: "# File system\nThe node:fs module …",
+  });
+
+  it("the record keeps the user's detail: titles, sites and the page's URL", () => {
+    expect(search.body).toBe("↳ web results: 2");
+    expect(search.digest).toEqual({
+      kind: "web-search",
+      query: "vitest update flag",
+      results: [
+        { title: "update | Vitest", site: "Vitest" },
+        { title: expect.any(String), site: "example.com" },
+      ],
+    });
+    expect(search.evidence?.[0]).toMatchObject({
+      kind: "web-results",
+      items: [
+        {
+          title: "update | Vitest",
+          site: "Vitest",
+          url: "https://vitest.dev/config/update",
+        },
+        { site: "example.com", url: "https://example.com/snap" },
+      ],
+    });
+    expect(page.body).toBe(
+      '↳ page nodejs.org: "File system | Node.js" · 189634 chars',
+    );
+    expect(page.evidenceDetail).toContain("https://nodejs.org/api/fs.html?x=1");
+    expect(page.evidenceDetail).toContain(".herta/web/nodejs.org-0123abcd.md");
+  });
+
+  it("a page title cannot forge a block in the record", () => {
+    const d = search.digest as Extract<
+      SystemBlock["digest"],
+      { kind: "web-search" }
+    >;
+    expect(d.results[1]?.title).not.toContain("（我 说）");
+  });
+
+  it("she reads a search as its query and what it found — no URL", () => {
+    expect(read(started("web_search", "vitest update flag"))).toBe(
+      "搜索网页「vitest update flag」",
+    );
+    const zh = read(search) as string;
+    expect(zh.split("\n")[0]).toBe("找到 2 条结果：");
+    expect(zh).toContain("- update | Vitest（Vitest）");
+    expect(zh).not.toMatch(/https?:/);
+    expect(read(search, "en")?.split("\n")[0]).toBe("Found 2 results:");
+    expect(read(started("web_search", "q"), "en")).toBe(
+      'Searched the web for "q"',
+    );
+  });
+
+  it("she reads a page as its host, its title and its opening — no URL, no stored path", () => {
+    expect(
+      read(started("web_fetch", "https://nodejs.org/api/fs.html?x=1")),
+    ).toBe("读网页 nodejs.org");
+    const zh = read(page) as string;
+    expect(zh).toBe(
+      "网页 nodejs.org「File system | Node.js」，开头：\n# File system\nThe node:fs module …",
+    );
+    expect(read(page, "en")?.split("\n")[0]).toBe(
+      'Page nodejs.org, "File system | Node.js" — the opening:',
+    );
+  });
+
+  it("folded: what was looked up and read, not at hand", () => {
+    expect(foldedRunLine(search, "zh")).toBe(
+      "搜索过网页「vitest update flag」，2 条结果",
+    );
+    expect(foldedRunLine(page, "zh")).toBe(
+      "读过网页 nodejs.org「File system | Node.js」（原文不在手边）",
+    );
+    expect(foldedRunLine(search, "en")).toBe(
+      'Searched the web for "vitest update flag": 2 results',
+    );
+    expect(foldedRunLine(page, "en")).toBe(
+      'Read web page nodejs.org, "File system | Node.js" (not at hand)',
+    );
+    expect(
+      foldedRunLine(started("web_fetch", "https://x.org/"), "zh"),
+    ).toBeNull();
+  });
+
+  it("a run that only fetched and failed folds to its steps, as hosts", () => {
+    expect(
+      foldedStepLines(
+        [
+          started("web_fetch", "https://a.org/x"),
+          started("web_fetch", "https://b.org/y"),
+        ],
+        "zh",
+      ),
+    ).toEqual(["读网页 a.org、b.org"]);
+  });
+
+  it("a stored page 板砖 reads, quotes or cites reads as the site's page — a command keeps its words", () => {
+    expect(
+      read(started("read_file", ".herta/web/vitest.dev-11d34302.md:8-24")),
+    ).toBe("读 网页 vitest.dev 第 8–24 行");
+    expect(
+      read(
+        started("read_file", ".herta/web/vitest.dev-11d34302.md:8-24"),
+        "en",
+      ),
+    ).toBe("Read the vitest.dev page lines 8–24");
+    const finding = row({
+      body: "↳ finding: x",
+      digest: {
+        kind: "finding",
+        claim: "4.x 加了 new/all/none",
+        cites: [".herta/web/v3.vitest.dev-9cec2dcd.md:657-664"],
+      },
+    });
+    expect(read(finding)).toBe(
+      "结论：4.x 加了 new/all/none（网页 v3.vitest.dev:657-664）",
+    );
+    expect(foldedRunLine(finding, "zh")).not.toContain(".herta");
+    expect(
+      read(started("bash", "grep -n x .herta/web/vitest.dev-7d9779fc.md")),
+    ).toBe("运行 `grep -n x .herta/web/vitest.dev-7d9779fc.md`");
+  });
+
+  it("a refused URL folds to its cause in plain words", () => {
+    const fail = projectBackendEvent({
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "w2",
+      tool: "web_fetch",
+      result: {
+        ok: false,
+        summary: "URL refused",
+        error: {
+          code: "url_refused",
+          message: "the host is local",
+          retryable: false,
+        },
+      },
+    }) as SystemBlock;
+    expect(foldedRunLine(fail, "zh")).toBe(
+      "这一步没成（web_fetch）：这个网址没放出去",
+    );
+  });
+});

@@ -35,6 +35,10 @@ const ROTATE_AT_BYTES = 4 * 1024 * 1024;
  *
  *   {"at":"…","note":"review","outcome":"card","why":"timeout","ms":20004}
  *
+ * And one line per web call 板砖 made (ADR 0080), billed per success:
+ *
+ *   {"at":"…","note":"web","endpoint":"fetch","ok":true,"ms":4620}
+ *
  * Installs the providers' and core's process-wide sinks, so one call covers
  * every provider and run the host builds. Writes are queued and
  * asynchronous — a model call never waits on the disk — and a failed write

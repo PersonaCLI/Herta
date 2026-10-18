@@ -232,7 +232,11 @@ export type SystemBlockDigest =
         /** digest_document (ADR 0043): a side-model pass over a whole
          *  attached document — neither a read nor a run, and worth its own
          *  word because it spends model tokens. */
-        | "Digesting";
+        | "Digesting"
+        /** web_search (ADR 0080): the arg is the query. */
+        | "Searching the web"
+        /** web_fetch (ADR 0080): the arg is the URL. */
+        | "Reading web page";
       readonly arg: string;
       /** The command runs tests — recognised at dispatch from the WHOLE
        *  input (`arg` is the 80-char header, which can cut the test run off),
@@ -466,6 +470,35 @@ export type SystemBlockDigest =
       readonly truncated: boolean;
     }
   | {
+      /** A web_search result (ADR 0080). The titles ride `evidenceDetail`
+       *  (the two-state lane, like a search_text hit list); the digest keeps
+       *  the query and what came back, so a later turn knows a search
+       *  happened and what it found without re-paying for the list. */
+      readonly kind: "web-search";
+      /** The query as the model wrote it (sanitized). */
+      readonly query: string;
+      readonly results: readonly {
+        readonly title: string;
+        /** The site's own name, or the URL's host when it gave none. */
+        readonly site: string;
+      }[];
+    }
+  | {
+      /** A web_fetch result (ADR 0080). The page's opening rides
+       *  `evidenceDetail`; the digest keeps the CITATION — which page, where
+       *  the stored copy sits — so a later turn can send 板砖 back to the
+       *  stored page rather than fetch again. `url` is display-only: Herta's
+       *  prompt names the host and the title (ADR 0080 §5). */
+      readonly kind: "web-fetch";
+      readonly url: string;
+      readonly host: string;
+      /** Empty when the page has none. */
+      readonly title: string;
+      /** The stored page, workspace-relative (`.herta/web/…`). */
+      readonly path: string;
+      readonly chars: number;
+    }
+  | {
       /** A conclusion the backend recorded via `report_finding` (ADR 0039).
        *  Unlike excerpt/search this is NOT two-state: the claim IS the
        *  deliverable, short by schema, and it survives compaction whole —
@@ -636,6 +669,25 @@ export type EvidenceSection =
       readonly pattern: string;
       readonly items: readonly string[];
       readonly omitted: number;
+    }
+  | {
+      /** A web_search result list (`↳ 网页结果:`), ADR 0080: each result's
+       *  title, site and URL, in the order the search ranked them. */
+      readonly kind: "web-results";
+      readonly items: readonly {
+        readonly title: string;
+        readonly site: string;
+        readonly url: string;
+      }[];
+    }
+  | {
+      /** A fetched page's opening (`↳ 网页`), ADR 0080 — text from the web,
+       *  bounded by the bridge; the whole page is at `path`. */
+      readonly kind: "web-page";
+      readonly url: string;
+      readonly title: string;
+      readonly path: string;
+      readonly text: string;
     }
   | {
       /** A failed tool call's own `suggestion` (`↳ 提示:`), 2026-08-17 — the

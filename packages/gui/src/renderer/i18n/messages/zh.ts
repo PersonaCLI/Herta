@@ -448,6 +448,12 @@ export const zh = {
   "activity.verb.stopping": "停止",
   /** digest_document (ADR 0043): a side-model pass over a whole document. */
   "activity.verb.digesting": "摘要",
+  "activity.verb.searchingWeb": "搜索网页",
+  "activity.verb.readingWeb": "读取网页",
+  "activity.result.webResults": "条结果",
+  "activity.result.webNone": "没有搜到结果",
+  "activity.result.page": "网页",
+  "activity.web.openAria": "在浏览器中打开",
   "activity.result.digest": "摘要",
   "activity.result.chunks": "段",
   "activity.result.cached": "已有",
@@ -585,6 +591,10 @@ export const zh = {
   "trace.sum.writeMany": "修改 {name} 等 {n} 个文件",
   "trace.sum.runOne": "运行 {cmd}",
   "trace.sum.runMany": "运行 {n} 条命令",
+  "trace.sum.webSearchOne": "搜索网页 1 次",
+  "trace.sum.webSearchMany": "搜索网页 {n} 次",
+  "trace.sum.webReadOne": "读取 {host} 的网页",
+  "trace.sum.webReadMany": "读取 {host} 等 {n} 个网站的网页",
   "trace.sum.digestOne": "摘要 1 份文档",
   "trace.sum.digestMany": "摘要 {n} 份文档",
   "trace.sum.memoryOne": "保存 1 条记忆",
@@ -639,6 +649,8 @@ export const zh = {
   "evidence.outline.shown": "（前 {n} 条）",
   /** The search-hit pane (2026-08-17): `↳ 匹配 /pattern/:` + one line per hit. */
   "evidence.matches": "匹配",
+  "evidence.webResults": "网页结果",
+  "evidence.webPage": "网页",
   "evidence.matches.omitted": "（另有 {n} 处未列出）",
   /** The digest overview pane (ADR 0043); "模型生成" is part of the evidence. */
   "evidence.digest": "摘要 {source}（模型生成，共 {n} 段，分段摘要见 {path}）",

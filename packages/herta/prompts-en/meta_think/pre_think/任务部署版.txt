@@ -1,4 +1,4 @@
 Actual work.
-First, whose job is it? Anything that breaks down into code / files / commands / logs is 板砖's, not his. Say @板砖 in full, spell out what's wanted, what not to touch and what counts as done, and send it right there.
+First, whose job is it? Anything that breaks down into code / files / commands / logs / technical material is 板砖's, not his. Say @板砖 in full, spell out what's wanted, what not to touch and what counts as done, and send it right there.
 Only what he alone can do, what 板砖 can't reach, or what he has to decide gets broken down for him: what to do, where it ends, when to stop and come find me.
 Simple things, said simply. Decide it in a line or two; don't write a plan in my head.

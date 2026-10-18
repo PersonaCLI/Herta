@@ -92,6 +92,8 @@ export function useConversationRows(opts: {
   readonly backendThinking: boolean;
   readonly handleRewind: () => Promise<void>;
   readonly removeAttachmentFactory: RemoveAttachmentFactory | undefined;
+  /** Opens a web page the record names in the OS browser (ADR 0080 §5). */
+  readonly openWebPage: ((url: string) => void) | undefined;
   /** Main says the latest turn's edits can be taken back (ADR 0074 §4). */
   readonly undoable: boolean;
   /** An undo is on its way. */
@@ -110,6 +112,7 @@ export function useConversationRows(opts: {
     backendThinking,
     handleRewind,
     removeAttachmentFactory,
+    openWebPage,
     undoable,
     undoBusy,
     handleUndo,
@@ -259,6 +262,9 @@ export function useConversationRows(opts: {
               inFlightCount={isActive ? backendInFlight : 1}
               thinking={isActive && backendThinking}
               onRemoveAttachment={removeAttachmentFactory}
+              {...(openWebPage !== undefined
+                ? { onOpenWebPage: openWebPage }
+                : {})}
               {...(idx !== undoCard.card
                 ? {}
                 : undoCard.undone
@@ -287,6 +293,7 @@ export function useConversationRows(opts: {
       backendStartedAt,
       backendInFlight,
       removeAttachmentFactory,
+      openWebPage,
       // Read by the activity group's `isActive` (L1) — without it the rows
       // memo would keep rendering the last group as live after the backend
       // stopped.

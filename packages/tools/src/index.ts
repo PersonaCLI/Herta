@@ -3,6 +3,7 @@ import type {
   EventBus,
   HertaTool,
   RulePermissionEngine,
+  WebClient,
 } from "@herta/core";
 import { bashTool, registerBashRule, shellPathsFor } from "./bash/index.js";
 import {
@@ -28,6 +29,7 @@ import {
   strReplaceEditorTool,
 } from "./str-replace-editor/index.js";
 import { viewImageTool } from "./view-image/index.js";
+import { webTools } from "./web/index.js";
 import { writeNewFileTool } from "./write-new-file/index.js";
 
 export {
@@ -233,6 +235,22 @@ export {
   viewImageTool,
 } from "./view-image/index.js";
 export type { ViewImageInput } from "./view-image/schema.js";
+export {
+  checkFetchUrl,
+  isLocalHost,
+  MAX_FETCH_URL_CHARS,
+  PAGE_HEAD_CHARS,
+  registerWebRules,
+  WEB_PAGE_DIR,
+  type WebFetchData,
+  type WebFetchInput,
+  type WebSearchData,
+  type WebSearchInput,
+  webFetchTool,
+  webPageFileName,
+  webSearchTool,
+  webTools,
+} from "./web/index.js";
 export type {
   WriteNewFileData,
   WriteNewFileRuleDeps,
@@ -276,6 +294,12 @@ export interface DigestToolsOpts {
    * it when the workspace moves (ADR 0067).
    */
   readonly gitTools?: boolean;
+  /**
+   * The web seam (ADR 0080). Mounts `web_search` and `web_fetch` on either
+   * contract when given; absent or null leaves them out. The wiring passes
+   * one whenever the session has a DeepSeek key (§4).
+   */
+  readonly webClient?: WebClient | null;
 }
 
 /**
@@ -353,6 +377,8 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
     // and lossy, and a visual question that outruns it deserves a RE-LOOK
     // rather than a longer guess.
     ...(opts.vision === true ? [viewImageTool({ mapPath })] : []),
+    // The web (ADR 0080): search and page fetch through the provider.
+    ...(opts.webClient != null ? webTools(opts.webClient) : []),
   ];
 }
 
@@ -403,6 +429,8 @@ export function createMvpTools(
       : []),
     // Vision-capable models only (ADR 0048 §5) — see createMinimalTools.
     ...(opts.vision === true ? [viewImageTool()] : []),
+    // The web (ADR 0080) — see createMinimalTools.
+    ...(opts.webClient != null ? webTools(opts.webClient) : []),
   ];
 }
 

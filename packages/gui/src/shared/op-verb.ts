@@ -7,7 +7,9 @@ export type LiveOpVerb =
   | "Saving memory"
   | "Searching"
   | "Stopping"
-  | "Digesting";
+  | "Digesting"
+  | "Searching the web"
+  | "Reading web page";
 
 /**
  * The verb of the op row a call becomes — `workflowLabel` in the record
@@ -46,6 +48,10 @@ export function opVerbOf(tool: string, viewing: boolean): LiveOpVerb | null {
       return "Saving memory";
     case "digest_document":
       return "Digesting";
+    case "web_search":
+      return "Searching the web";
+    case "web_fetch":
+      return "Reading web page";
     default:
       return null;
   }

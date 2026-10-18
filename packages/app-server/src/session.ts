@@ -97,6 +97,7 @@ import {
   createBackendProvider,
   createBackendStack,
   defaultDigestModel,
+  defaultWebClient,
   digestModelFrom,
   prepareBackendStack,
 } from "./session-wiring.js";
@@ -2120,6 +2121,13 @@ export class SessionImpl implements Session {
           : deps.providerOverrides === undefined
             ? defaultDigestModel(apiKey, baseUrl)
             : null,
+      // The web tools (ADR 0080 §4): on whenever the session has the key —
+      // which it always has here. A test with provider overrides never
+      // reaches the network, so it gets none.
+      webClient:
+        deps.providerOverrides === undefined
+          ? defaultWebClient(apiKey, baseUrl)
+          : null,
       makeAsk: ({ cache, workspacePermissions }) => {
         overlayResolver = new OverlayAskResolver({
           cache,

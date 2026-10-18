@@ -828,3 +828,105 @@ describe("latestOpStep", () => {
     expect(latestOpStep(steps)?.body).toBe("↳ exit 1 · 0 lines");
   });
 });
+
+describe("web rows (ADR 0080)", () => {
+  const T = (key: MessageKey): string => zh[key] ?? key;
+  const TE = (key: MessageKey): string => en[key] ?? key;
+  const search: SystemBlock = {
+    kind: "system",
+    label: "差分协处理器",
+    body: "↳ web results: 2",
+    digest: {
+      kind: "web-search",
+      query: "vitest update",
+      results: [
+        { title: "update | Vitest", site: "Vitest" },
+        { title: "Snapshot", site: "example.com" },
+      ],
+    },
+    evidenceDetail:
+      "↳ 网页结果:\n- update | Vitest（Vitest）\n- Snapshot（example.com）",
+    evidence: [
+      {
+        kind: "web-results",
+        items: [
+          {
+            title: "update | Vitest",
+            site: "Vitest",
+            url: "https://vitest.dev/config/update",
+          },
+          {
+            title: "Snapshot",
+            site: "example.com",
+            url: "https://example.com/snap",
+          },
+        ],
+      },
+    ],
+  };
+  const page: SystemBlock = {
+    kind: "system",
+    label: "差分协处理器",
+    body: '↳ page nodejs.org: "File system" · 189634 chars',
+    digest: {
+      kind: "web-fetch",
+      url: "https://nodejs.org/api/fs.html",
+      host: "nodejs.org",
+      title: "File system",
+      path: ".herta/web/nodejs.org-0123abcd.md",
+      chars: 189634,
+    },
+    evidence: [
+      {
+        kind: "web-page",
+        url: "https://nodejs.org/api/fs.html",
+        title: "File system",
+        path: ".herta/web/nodejs.org-0123abcd.md",
+        text: "# File system",
+      },
+    ],
+  };
+  const op = (
+    verb: "Searching the web" | "Reading web page",
+    arg: string,
+  ): SystemBlock => ({
+    kind: "system",
+    label: "差分协处理器",
+    body: `${verb} ${arg}`,
+    digest: { kind: "op", verb, arg },
+  });
+
+  it("names the steps in the session's language", () => {
+    expect(stepDisplayBody(op("Searching the web", "vitest update"), T)).toBe(
+      "搜索网页 vitest update",
+    );
+    expect(
+      stepDisplayBody(op("Reading web page", "https://nodejs.org/x"), TE),
+    ).toBe("Reading web page https://nodejs.org/x");
+  });
+
+  it("states a search's count and a page's site, title and size", () => {
+    expect(stepDisplayBody(search, T)).toBe("↳ 2 条结果");
+    expect(
+      stepDisplayBody(
+        {
+          ...search,
+          digest: { ...search.digest, results: [] } as SystemBlock["digest"],
+        },
+        T,
+      ),
+    ).toBe("↳ 没有搜到结果");
+    expect(stepDisplayBody(page, T)).toBe(
+      `↳ 网页 nodejs.org · File system · ${(189634).toLocaleString()} 字`,
+    );
+  });
+
+  it("lists each result's URL in the detail pane, where the row makes it a link", () => {
+    expect(stepDisplayDetail(search, TE)).toBe(
+      "↳ web results:\n- update | Vitest（Vitest）\n  https://vitest.dev/config/update\n- Snapshot（example.com）\n  https://example.com/snap",
+    );
+    expect(stepDisplayDetail(page, T)).toBe(
+      "↳ 网页 File system\nhttps://nodejs.org/api/fs.html\n# File system",
+    );
+  });
+});

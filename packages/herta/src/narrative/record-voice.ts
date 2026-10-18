@@ -41,6 +41,12 @@ type Texts = {
   readonly toolFail: (tool: string, message: string) => string;
   readonly bg: (id: string, state: string, exit?: number | null) => string;
   readonly digest: (name: string, chunks: number, cached: boolean) => string;
+  /** web_search's op arg, the query (ADR 0080). */
+  readonly query: (q: string) => string;
+  readonly webResults: (n: number) => string;
+  readonly webPage: (host: string, title: string) => string;
+  readonly webSearched: (q: string, n: number) => string;
+  readonly webRead: (host: string, title: string) => string;
   readonly noop: string;
   readonly done: (m: DoneMarkerSummary) => string;
   readonly labels: Record<string, string>;
@@ -76,6 +82,8 @@ const TEXTS: Record<PromptLang, Texts> = {
       Searching: "搜索",
       Stopping: "停下",
       Digesting: "通读",
+      "Searching the web": "搜索网页",
+      "Reading web page": "读网页",
       // The remembered row says what was saved; its kind is bookkeeping.
       "Saving memory": null,
       Planning: null,
@@ -119,6 +127,14 @@ const TEXTS: Record<PromptLang, Texts> = {
             : `后台命令 ${id} 结束，退出码 ${exit}`,
     digest: (name, chunks, cached) =>
       `通读了 ${name}，共 ${chunks} 段${cached ? "，用的上回的摘要" : ""}`,
+    query: (q) => `「${q}」`,
+    webResults: (n) => (n === 0 ? "没搜到结果" : `找到 ${n} 条结果：`),
+    webPage: (host, title) =>
+      `网页 ${host}${title !== "" ? `「${title}」` : ""}，开头：`,
+    webSearched: (q, n) =>
+      `搜索过网页「${q}」，${n === 0 ? "没搜到" : `${n} 条结果`}`,
+    webRead: (host, title) =>
+      `读过网页 ${host}${title !== "" ? `「${title}」` : ""}`,
     noop: "板砖这次什么也没动。",
     done: (m) => {
       const parts: string[] = [];
@@ -170,6 +186,8 @@ const TEXTS: Record<PromptLang, Texts> = {
       Searching: "Searched",
       Stopping: "Stopped",
       Digesting: "Read through",
+      "Searching the web": "Searched the web for",
+      "Reading web page": "Read web page",
       "Saving memory": null,
       Planning: null,
     },
@@ -210,6 +228,15 @@ const TEXTS: Record<PromptLang, Texts> = {
             : `Background command ${id} exited with code ${exit}`,
     digest: (name, chunks, cached) =>
       `Read through ${name}, ${chunks} parts${cached ? ", from the last summary" : ""}`,
+    query: (q) => `"${q}"`,
+    webResults: (n) =>
+      n === 0 ? "No results" : `Found ${n} result${n === 1 ? "" : "s"}:`,
+    webPage: (host, title) =>
+      `Page ${host}${title !== "" ? `, "${title}"` : ""} — the opening:`,
+    webSearched: (q, n) =>
+      `Searched the web for "${q}": ${n === 0 ? "nothing found" : `${n} result${n === 1 ? "" : "s"}`}`,
+    webRead: (host, title) =>
+      `Read web page ${host}${title !== "" ? `, "${title}"` : ""}`,
     noop: "板砖 did nothing this time.",
     done: (m) => {
       const parts: string[] = [];
@@ -308,7 +335,10 @@ export function detailForHerta(
   const t = TEXTS[lang];
   const items = (kind: "evidence" | "findings" | "risks"): string[] | null => {
     const s = sections.find((e) => e.kind === kind);
-    return s !== undefined && "items" in s ? [...s.items] : null;
+    return s !== undefined &&
+      (s.kind === "evidence" || s.kind === "findings" || s.kind === "risks")
+      ? [...s.items]
+      : null;
   };
   const sep = lang === "en" ? "; " : "；";
   return detail
@@ -436,9 +466,8 @@ export function systemRowForHerta(
     case "op": {
       const verb = t.verb[d.verb];
       if (verb === null) return null;
-      const arg =
-        d.verb === "Running" ? `\`${d.arg}\`` : citeRanges(d.arg, lang);
-      return withDetail(`${verb ?? d.verb} ${arg}`.trim());
+      const arg = opArg(d.verb, d.arg, lang);
+      return withDetail(joinStep(verb ?? d.verb, arg));
     }
     case "text": {
       if (d.exitCode !== undefined) {
@@ -467,10 +496,10 @@ export function systemRowForHerta(
     case "excerpt":
       // The detail opens with its own header; the body only repeated it.
       return detail !== undefined
-        ? { ...rest, body: detail }
-        : { ...rest, body: t.excerpt(d.path, d.from, d.to) };
+        ? { ...rest, body: namePages(detail, lang) }
+        : { ...rest, body: namePages(t.excerpt(d.path, d.from, d.to), lang) };
     case "finding":
-      return withDetail(t.finding(d.claim, d.cites));
+      return withDetail(namePages(t.finding(d.claim, d.cites), lang));
     case "search": {
       // The detail opens `↳ 匹配 /p/:`, which the body now says.
       const lines = (detail ?? "").split("\n");
@@ -488,8 +517,65 @@ export function systemRowForHerta(
       return withDetail(t.bg(d.id, d.state, d.exitCode));
     case "digest":
       return withDetail(t.digest(docName(d.source), d.chunks, d.cached));
+    case "web-search": {
+      // Rebuilt from the structured list: the detail line names no URL, and
+      // her view never does.
+      const items = d.results.map((r) => `- ${r.title}${t.aside(r.site)}`);
+      return {
+        ...rest,
+        body: [t.webResults(d.results.length), ...items].join("\n"),
+      };
+    }
+    case "web-fetch": {
+      // The opening without the detail's header line, which names the URL
+      // and the stored path — bookkeeping in her notes.
+      const page = block.evidence?.find((e) => e.kind === "web-page");
+      const text = page?.kind === "web-page" ? page.text : "";
+      return {
+        ...rest,
+        body: [t.webPage(d.host, d.title), ...(text !== "" ? [text] : [])].join(
+          "\n",
+        ),
+      };
+    }
     default:
       return block;
+  }
+}
+
+/** A step's argument as she reads it: a command in backticks, a query
+ *  quoted, a page as its host — never a URL (ADR 0080 §5) — and a range in
+ *  words. */
+function opArg(verb: string, arg: string, lang: PromptLang): string {
+  if (verb === "Running") return `\`${arg}\``;
+  if (verb === "Searching the web") return TEXTS[lang].query(arg);
+  if (verb === "Reading web page") return hostOf(arg);
+  return namePages(citeRanges(arg, lang), lang);
+}
+
+/** A page `web_fetch` stored (`.herta/web/<host>-<hash>.md`), named as the
+ *  site's page — the stored path is bookkeeping in her notes (ADR 0080 §5).
+ *  A command keeps its words: it is quoted as 板砖 ran it. */
+const STORED_PAGE = /\.herta[\\/]web[\\/]([a-z0-9.-]+?)-[0-9a-f]{8}\.md/gu;
+
+function namePages(text: string, lang: PromptLang): string {
+  return text.replace(STORED_PAGE, (_m, host: string) =>
+    lang === "en" ? `the ${host} page` : `网页 ${host}`,
+  );
+}
+
+/** A verb and its argument; a 「quoted」 argument sits against the verb, as
+ *  Chinese writes it. */
+function joinStep(verb: string, arg: string): string {
+  return `${verb}${arg.startsWith("「") ? "" : " "}${arg}`.trim();
+}
+
+/** A URL's host, or the text itself when it does not parse. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
   }
 }
 
@@ -514,6 +600,11 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     not_a_repo: "不是 git 仓库",
     invalid_pattern: "搜索模式写错了",
     stale_read: "文件读过之后又被改了",
+    url_refused: "这个网址没放出去",
+    web_rejected: "网站那边不让读",
+    web_unavailable: "联网服务没回应",
+    web_balance: "DeepSeek 账户没余额了",
+    web_auth: "DeepSeek 的密钥被拒了",
   },
   en: {
     invalid_input: "bad arguments",
@@ -533,6 +624,11 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     not_a_repo: "not a git repository",
     invalid_pattern: "a bad search pattern",
     stale_read: "the file changed after it was read",
+    url_refused: "the URL was not sent",
+    web_rejected: "the site would not be read",
+    web_unavailable: "the web service did not answer",
+    web_balance: "the DeepSeek account is out of credit",
+    web_auth: "the DeepSeek key was refused",
   },
 };
 
@@ -601,11 +697,14 @@ export function foldedRunLine(
     case "patch":
       return t.change(d.files.join(t.listJoin), d.add, d.del);
     case "excerpt":
-      return lang === "en"
-        ? `Was shown ${t.cite(d.path, d.from, d.to)}${t.aside(gone.text)}`
-        : `看过 ${t.cite(d.path, d.from, d.to)}${t.aside(gone.text)}`;
+      return namePages(
+        lang === "en"
+          ? `Was shown ${t.cite(d.path, d.from, d.to)}${t.aside(gone.text)}`
+          : `看过 ${t.cite(d.path, d.from, d.to)}${t.aside(gone.text)}`,
+        lang,
+      );
     case "finding":
-      return t.finding(d.claim, d.cites);
+      return namePages(t.finding(d.claim, d.cites), lang);
     case "search":
       return `${t.search(d.pattern, d.matches, d.files)}${t.aside(gone.text)}`;
     case "tool-fail":
@@ -615,6 +714,10 @@ export function foldedRunLine(
       return t.bg(d.id, d.state, d.exitCode);
     case "digest":
       return `${t.digest(docName(d.source), d.chunks, d.cached)}${t.aside(gone.summary)}`;
+    case "web-search":
+      return t.webSearched(d.query, d.results.length);
+    case "web-fetch":
+      return `${t.webRead(d.host, d.title)}${t.aside(gone.text)}`;
     case "undo": {
       const back = d.files
         .filter((f) => f.result === "restored" || f.result === "deleted")
@@ -699,7 +802,7 @@ export function foldedStepLines(
     if (d?.kind !== "op") continue;
     const verb = t.verb[d.verb];
     if (verb === null || verb === undefined) continue;
-    const arg = d.verb === "Running" ? `\`${d.arg}\`` : citeRanges(d.arg, lang);
+    const arg = opArg(d.verb, d.arg, lang);
     const last = steps[steps.length - 1];
     if (last !== undefined && last.verb === verb && d.verb !== "Running") {
       last.args.push(arg);
@@ -707,7 +810,7 @@ export function foldedStepLines(
       steps.push({ verb, args: [arg] });
     }
   }
-  return steps.map((s) => `${s.verb} ${s.args.join(t.listJoin)}`);
+  return steps.map((s) => joinStep(s.verb, s.args.join(t.listJoin)));
 }
 
 /** The note the compaction appends to a row whose detail it dropped. */

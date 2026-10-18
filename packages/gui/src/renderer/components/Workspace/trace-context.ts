@@ -399,6 +399,10 @@ export interface SegmentTally {
   readonly digests: number;
   readonly memories: number;
   readonly stops: number;
+  /** Web searches (ADR 0080). */
+  readonly webSearches: number;
+  /** Hosts of the pages read, in first-read order. */
+  readonly pages: readonly string[];
 }
 
 export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
@@ -410,6 +414,8 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
   let digests = 0;
   let memories = 0;
   let stops = 0;
+  let webSearches = 0;
+  const pages: string[] = [];
   for (const op of ops) {
     switch (op.verb) {
       case "Reading":
@@ -436,9 +442,37 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
       case "Stopping":
         stops += 1;
         break;
+      case "Searching the web":
+        webSearches += 1;
+        break;
+      case "Reading web page": {
+        const host = hostOf(op.arg);
+        if (!pages.includes(host)) pages.push(host);
+        break;
+      }
       default:
         break;
     }
   }
-  return { reads, searches, inspects, writes, runs, digests, memories, stops };
+  return {
+    reads,
+    searches,
+    inspects,
+    writes,
+    runs,
+    digests,
+    memories,
+    stops,
+    webSearches,
+    pages,
+  };
+}
+
+/** A URL's host — a page reads by its site on the card. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }

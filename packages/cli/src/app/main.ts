@@ -8,6 +8,7 @@ import {
   createBackendStack,
   defaultDigestModel,
   defaultReviewModel,
+  defaultWebClient,
   installUsageLog,
   prepareBackendStack,
 } from "@herta/app-server/wiring";
@@ -295,6 +296,8 @@ export async function main(
     // The digest tool's side model (ADR 0043) — the same flash sidecar the
     // GUI host builds.
     digestModel: defaultDigestModel(apiKey, baseUrl),
+    // The web tools (ADR 0080 §4) — the same seam the GUI host mounts.
+    webClient: defaultWebClient(apiKey, baseUrl),
     makeAsk: ({ cache, workspacePermissions }) =>
       new CachingAskResolver(
         new CliAskResolver(stdin as NodeJS.ReadStream, stdout, style),

@@ -14,6 +14,11 @@ export type { DeepseekProviderOpts } from "./deepseek/factory.js";
 export { deepseekProvider } from "./deepseek/factory.js";
 export type { DeepseekVisionOpts } from "./deepseek/vision-factory.js";
 export { deepseekVisionCaptioner } from "./deepseek/vision-factory.js";
+export type { DeepseekWebClientOpts } from "./deepseek/web-client.js";
+export {
+  deepseekWebClient,
+  unescapeFetchedMarkdown,
+} from "./deepseek/web-client.js";
 export type { ProviderErrorCode, ProviderErrorInit } from "./errors.js";
 export { ProviderError } from "./errors.js";
 export type { ApiKey } from "./openai-compat/api-key.js";

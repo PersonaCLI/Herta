@@ -227,6 +227,7 @@ export interface MockHertaBridge {
     checkForUpdate: number;
     restartAndInstall: number;
     openExternal: string[];
+    openWebPage: Array<[string, string]>;
     listSessions: number;
     searchSessions: string[];
     recordSlice: Array<[string, number, number]>;
@@ -371,6 +372,7 @@ export function createMockHertaBridge(
     checkForUpdate: 0,
     restartAndInstall: 0,
     openExternal: [],
+    openWebPage: [],
     listSessions: 0,
     searchSessions: [],
     recordSlice: [],
@@ -655,6 +657,10 @@ export function createMockHertaBridge(
     },
     openExternal: async (url) => {
       calls.openExternal.push(url);
+    },
+    openWebPage: async (sessionId, url) => {
+      calls.openWebPage.push([sessionId, url]);
+      return true;
     },
     getUpdateState: async () => opts.updateState ?? { phase: "idle" },
     getAppVersion: async () => opts.appVersion ?? "0.1.0",

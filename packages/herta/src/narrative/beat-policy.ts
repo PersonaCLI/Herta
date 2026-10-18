@@ -50,6 +50,10 @@ export function workflowKindForBeat(tool: string): string | null {
       return "inspect";
     case "memory_save":
       return "save_memory";
+    // The web (ADR 0080): one bucket, so a run of failed fetches is one beat.
+    case "web_search":
+    case "web_fetch":
+      return "web";
     default:
       return null;
   }

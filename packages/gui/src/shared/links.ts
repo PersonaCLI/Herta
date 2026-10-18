@@ -27,3 +27,54 @@ export function isAllowedExternalUrl(url: string): boolean {
   }
   return parsed.protocol === "https:" && EXTERNAL_HOSTS.has(parsed.hostname);
 }
+
+/**
+ * The web pages a session's record names (ADR 0080 §5): every page 板砖
+ * fetched and every search result it was shown. The second door to the OS
+ * browser, beside the four hosts above — narrower than "any URL": main opens
+ * a URL only when it appears in THIS session's own web rows, so the renderer
+ * still cannot hand the shell an arbitrary link. Pure.
+ */
+export function recordedWebUrls(
+  record: readonly {
+    readonly kind: string;
+    readonly digest?: { readonly kind: string; readonly url?: string };
+    readonly evidence?: readonly {
+      readonly kind: string;
+      readonly url?: string;
+      readonly items?: readonly unknown[];
+    }[];
+  }[],
+): Set<string> {
+  const urls = new Set<string>();
+  for (const b of record) {
+    if (b.kind !== "system") continue;
+    if (b.digest?.kind === "web-fetch" && typeof b.digest.url === "string")
+      urls.add(b.digest.url);
+    for (const s of b.evidence ?? []) {
+      if (s.kind === "web-page" && typeof s.url === "string") urls.add(s.url);
+      if (s.kind === "web-results") {
+        for (const item of s.items ?? []) {
+          const url = (item as { url?: unknown }).url;
+          if (typeof url === "string") urls.add(url);
+        }
+      }
+    }
+  }
+  return urls;
+}
+
+/** True when `url` is an http(s) link the session's record names. Pure. */
+export function isRecordedWebUrl(
+  url: string,
+  record: Parameters<typeof recordedWebUrls>[0],
+): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+  return recordedWebUrls(record).has(url);
+}

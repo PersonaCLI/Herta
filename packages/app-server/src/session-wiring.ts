@@ -44,6 +44,7 @@ import {
   SessionApprovalCache,
   type TerminalRecord,
   type TerminalRecordBlock,
+  type WebClient,
   WorkspacePermissions,
   windowsBackendHostNote,
   wireTaskScopedApprovalCache,
@@ -81,6 +82,7 @@ import {
   type ApiKey,
   deepseekCompletionProvider,
   deepseekProvider,
+  deepseekWebClient,
 } from "@herta/providers";
 import {
   createMinimalTools,
@@ -98,6 +100,7 @@ import {
   registerEditFileRule,
   registerMinimalRules,
   registerRunCommandRule,
+  registerWebRules,
   registerWriteNewFileRule,
   shellWorkspaceHint,
 } from "@herta/tools";
@@ -228,6 +231,15 @@ export function digestModelFrom(provider: ProviderAdapter): DigestModel {
   };
 }
 
+/** The web seam as both hosts mount it (ADR 0080): DeepSeek's Search and
+ *  Fetch over the same key and base URL as everything else. */
+export function defaultWebClient(
+  apiKey: ApiKey,
+  baseUrl: { baseUrl?: string } = {},
+): WebClient {
+  return deepseekWebClient({ apiKey, ...baseUrl });
+}
+
 export function makeDigestProvider(
   apiKey: ApiKey,
   baseUrl: { baseUrl?: string } = {},
@@ -265,6 +277,11 @@ export interface BackendStackOpts {
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
+  /** The web seam (ADR 0080): mounts `web_search` / `web_fetch` on either
+   *  contract. A host passes one whenever the session has a DeepSeek key
+   *  (§4 — the environment decides, never a preference); absent or null
+   *  leaves the tools out (tests, labs). */
+  readonly webClient?: WebClient | null;
   /** Test seam for the host-note decision (ADR 0044); defaults to
    *  `process.platform`. On "win32" the STANDARD contract carries
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
@@ -405,6 +422,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       lang,
       vision,
       digest: false,
+      webClient: opts.webClient ?? null,
     }))
       backendTools.register(t);
   } else {
@@ -414,6 +432,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       vision,
       digest: false,
       gitTools: hasGitDir(wsHolder.current),
+      webClient: opts.webClient ?? null,
     }))
       backendTools.register(t);
   }
@@ -463,6 +482,8 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     registerWriteNewFileRule(permissions, { bus });
     registerRunCommandRule(permissions);
   }
+  // Neither web tool asks (ADR 0080 §3); the rule says so explicitly.
+  if (opts.webClient != null) registerWebRules(permissions);
 
   const runtimeFactory = (): CodingAgentRuntime =>
     new CodingAgentRuntime({

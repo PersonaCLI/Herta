@@ -112,6 +112,26 @@ export function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
         source: cleanBody(digest.source),
         path: cleanBody(digest.path),
       };
+    case "web-search":
+      // The query is model-authored; the titles and sites come from pages
+      // anyone can write (ADR 0080) — the least trusted strings after an
+      // attachment's.
+      return {
+        ...digest,
+        query: cleanBody(digest.query),
+        results: digest.results.map((r) => ({
+          title: cleanBody(r.title),
+          site: cleanBody(r.site),
+        })),
+      };
+    case "web-fetch":
+      return {
+        ...digest,
+        url: cleanBody(digest.url),
+        host: cleanBody(digest.host),
+        title: cleanBody(digest.title),
+        path: cleanBody(digest.path),
+      };
     case "undo":
       // Paths 板砖 wrote, or its commands touched (ADR 0074): backend-derived
       // like every path here. The results and flags are harness-made.
@@ -190,6 +210,25 @@ export function sanitizeSection(s: EvidenceSection): EvidenceSection {
       };
     case "error":
       return { ...s, message: cleanBody(s.message) };
+    case "web-results":
+      // Titles and sites from the web (ADR 0080): a planted （我 说） in a
+      // page title must not forge an actor block.
+      return {
+        ...s,
+        items: s.items.map((i) => ({
+          title: cleanBody(i.title),
+          site: cleanBody(i.site),
+          url: cleanBody(i.url),
+        })),
+      };
+    case "web-page":
+      return {
+        ...s,
+        url: cleanBody(s.url),
+        title: cleanBody(s.title),
+        path: cleanBody(s.path),
+        text: cleanBody(s.text),
+      };
     case "hint":
       // Harness-authored in every shipped tool, but a tool is a plugin
       // seam — clean it like the rest.
@@ -290,6 +329,105 @@ export function projectSearchResult(data: SearchTextData): SystemBlock {
     ...block,
     evidenceDetail: detailLines.join("\n"),
     evidence: [{ kind: "matches", pattern: data.pattern, items, omitted }],
+  };
+}
+
+/** web_search's result data as the bridge reads it (`@herta/tools`'
+ *  `WebSearchData`; herta does not depend on tools). */
+interface WebSearchResultData {
+  readonly query: string;
+  readonly results: readonly {
+    readonly title: string;
+    readonly url: string;
+    readonly site: string | null;
+  }[];
+}
+
+/** web_fetch's result data (`@herta/tools`' `WebFetchData`). */
+interface WebFetchResultData {
+  readonly url: string;
+  readonly host: string;
+  readonly title: string;
+  readonly path: string;
+  readonly chars: number;
+  readonly head: string;
+}
+
+/** How much of a page's opening the record carries — what Herta reads in
+ *  the turn it was fetched and the user sees in the detail pane. 板砖 itself
+ *  read more (`PAGE_HEAD_CHARS`); the rest is in the stored file. */
+const WEB_PAGE_ROW_CHARS = 2000;
+
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
+/** `↳ web: N results` with the titles in the two-state lane (ADR 0080). */
+export function projectWebSearchResult(data: WebSearchResultData): SystemBlock {
+  const items = data.results.map((r) => ({
+    title: r.title.replace(/\s+/g, " ").trim(),
+    site: r.site ?? hostOf(r.url),
+    url: r.url,
+  }));
+  const block: SystemBlock = {
+    kind: "system",
+    label: "差分协处理器",
+    body: `↳ web results: ${items.length}`,
+    digest: {
+      kind: "web-search",
+      query: data.query,
+      results: items.map(({ title, site }) => ({ title, site })),
+    },
+  };
+  if (items.length === 0) return block;
+  return {
+    ...block,
+    evidenceDetail: [
+      "↳ 网页结果:",
+      ...items.map((i) => `- ${i.title}（${i.site}）`),
+    ].join("\n"),
+    evidence: [{ kind: "web-results", items }],
+  };
+}
+
+/** `↳ page <host>: "<title>"` with the opening in the two-state lane. */
+export function projectWebFetchResult(data: WebFetchResultData): SystemBlock {
+  const title = data.title.replace(/\s+/g, " ").trim();
+  const head = data.head.trim();
+  const text =
+    head.length > WEB_PAGE_ROW_CHARS
+      ? `${head.slice(0, WEB_PAGE_ROW_CHARS).trimEnd()} …`
+      : head;
+  return {
+    kind: "system",
+    label: "差分协处理器",
+    body: `↳ page ${data.host}${title !== "" ? `: "${title}"` : ""} · ${data.chars} chars`,
+    digest: {
+      kind: "web-fetch",
+      url: data.url,
+      host: data.host,
+      title,
+      path: data.path,
+      chars: data.chars,
+    },
+    ...(text.length > 0
+      ? {
+          evidenceDetail: `↳ 网页 ${title !== "" ? `「${title}」` : data.host}（${data.url}，存于 ${data.path}）\n${text}`,
+          evidence: [
+            {
+              kind: "web-page" as const,
+              url: data.url,
+              title,
+              path: data.path,
+              text,
+            },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -425,6 +563,24 @@ export function projectBackendEventUnsanitized(
           const data = event.result.data as SearchTextData | undefined;
           if (data === undefined || !Array.isArray(data.matches)) return null;
           return projectSearchResult(data);
+        }
+        // The web (ADR 0080): what a search found and what a page says ride
+        // the two-state lane like a search_text hit list or an excerpt — in
+        // front of Herta this turn, a citation after.
+        if (event.tool === "web_search") {
+          const data = event.result.data as WebSearchResultData | undefined;
+          if (data === undefined || !Array.isArray(data.results)) return null;
+          return projectWebSearchResult(data);
+        }
+        if (event.tool === "web_fetch") {
+          const data = event.result.data as WebFetchResultData | undefined;
+          if (
+            data === undefined ||
+            typeof data.url !== "string" ||
+            typeof data.path !== "string"
+          )
+            return null;
+          return projectWebFetchResult(data);
         }
         // digest_document (ADR 0043): the overview rides the two-state lane
         // like an excerpt — in front of Herta this turn, a citation after —
@@ -734,6 +890,10 @@ export function workflowLabel(
       return "Saving memory";
     case "digest_document":
       return "Digesting";
+    case "web_search":
+      return "Searching the web";
+    case "web_fetch":
+      return "Reading web page";
     default:
       return null;
   }

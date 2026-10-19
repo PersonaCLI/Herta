@@ -309,14 +309,15 @@ export function webFetchTool(opts: { readonly client: WebClient }): HertaTool {
       const title = redactSecrets(page.title);
       const markdown = redactSecrets(page.markdown);
       const rel = `${WEB_PAGE_DIR}/${webPageFileName(url)}`;
+      // One paragraph per line: the viewer renders the stored page as
+      // Markdown, which ran adjacent lines into one (live check 2026-10-19).
       const header = [
         `URL: ${url.href}`,
         ...(title !== "" ? [`Title: ${title}`] : []),
         `Fetched: ${new Date().toISOString()}`,
-        "",
         "---",
         "",
-      ].join("\n");
+      ].join("\n\n");
       try {
         await mkdir(join(ctx.workspaceRoot, WEB_PAGE_DIR), { recursive: true });
         await writeFile(

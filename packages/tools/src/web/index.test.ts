@@ -219,7 +219,7 @@ describe("web_fetch", () => {
     expect(r.data?.head.length).toBe(PAGE_HEAD_CHARS);
     const stored = await readFile(join(ws.root, rel), "utf8");
     expect(stored).toMatch(
-      /^URL: https:\/\/nodejs\.org\/api\/fs\.html\nTitle: File system\nFetched: /,
+      /^URL: https:\/\/nodejs\.org\/api\/fs\.html\n\nTitle: File system\n\nFetched: [^\n]+\n\n---\n\n/,
     );
     expect(stored.endsWith(body)).toBe(true);
     expect(r.modelText).toContain(

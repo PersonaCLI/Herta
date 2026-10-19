@@ -168,7 +168,7 @@ export function webSearchTool(opts: { readonly client: WebClient }): HertaTool {
       return {
         name: "web_search",
         description:
-          "Search the web for technical material the workspace cannot answer: documentation, an error message, a library's current version or flags, release notes. Returns up to 8 results, each with its title, site, date, URL and a summary of the page. Read a result in full with web_fetch. Search before fetching a URL you have not seen.",
+          "Search the web for technical material the workspace cannot answer: documentation, an error message, a library's current version or flags, release notes. Returns up to 8 results, each with its title, site, date, URL and a summary of the page. Read a result in full with web_fetch. Search before fetching a URL you have not seen. For anything on the public web use these two tools, not curl or wget: they run without an approval card and return readable text.",
         inputSchema: webSearchJsonSchema,
       };
     },
@@ -267,7 +267,7 @@ export function webFetchTool(opts: { readonly client: WebClient }): HertaTool {
     schema(): ToolSchema {
       return {
         name: "web_fetch",
-        description: `Read one web page as Markdown. The page is saved under ${WEB_PAGE_DIR}/ and you get its title, the saved path and the first ${PAGE_HEAD_CHARS} characters; read further in the saved file and cite it like a workspace file. Code blocks lose their fences. Fetch URLs from web_search results or from the user's message. Pages on this machine or its network (localhost, private addresses) are not reachable — use curl for those. PDFs are not read.`,
+        description: `Read one web page as Markdown. The page is saved under ${WEB_PAGE_DIR}/ and you get its title, the saved path and the first ${PAGE_HEAD_CHARS} characters; read further in the saved file and cite it like a workspace file. Code blocks lose their fences. Fetch URLs from web_search results or from the user's message. Use it instead of curl or wget for a public page: it runs without an approval card. Pages on this machine or its network (localhost, private addresses) are not reachable — use curl for those. PDFs are not read.`,
         inputSchema: webFetchJsonSchema,
       };
     },

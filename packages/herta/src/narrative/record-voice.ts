@@ -839,3 +839,33 @@ export function elidedRowForHerta(
     ? { ...rest, body: `${line}${TEXTS[lang].aside(NOT_AT_HAND[lang].detail)}` }
     : { ...rest, body: line };
 }
+
+/**
+ * A user message as Herta reads it (ADR 0072 amendment 2026-10-20): each path
+ * the user mentioned with the composer's `@` by its file or folder name —
+ * the chip the user saw, never the path. 板砖 reads the message as written
+ * (`backend-user-history.ts`), so the path still reaches the one who opens
+ * the file. A backticked path (one with whitespace) keeps its ticks.
+ */
+export function nameMentionedPaths(
+  text: string,
+  mentions: readonly string[] | undefined,
+): string {
+  if (mentions === undefined || mentions.length === 0) return text;
+  let out = text;
+  // Longest first, so `a/b.ts` never cuts into `a/b.ts.map`'s mention.
+  for (const path of [...mentions].sort((a, b) => b.length - a.length)) {
+    const name = path.replace(/\/+$/u, "").split("/").pop() ?? path;
+    if (name === path || name.length === 0) continue;
+    out = out.split(`\`${path}\``).join(`\`${name}\``);
+    out = out.replace(
+      new RegExp(`(^|[^\\w./-])${escapeRegExp(path)}(?![\\w./-])`, "gu"),
+      (_m, lead: string) => `${lead}${name}`,
+    );
+  }
+  return out;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}

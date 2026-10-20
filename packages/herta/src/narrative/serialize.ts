@@ -16,7 +16,7 @@ import {
 } from "./diff-collapse.js";
 import { escapeUserText } from "./escape.js";
 import type { PromptLang } from "./prompt-lang.js";
-import { systemRowForHerta } from "./record-voice.js";
+import { nameMentionedPaths, systemRowForHerta } from "./record-voice.js";
 
 /**
  * Serializer options for the prompt-side projection of a TerminalRecord.
@@ -117,7 +117,9 @@ export function serializeBlock(
 ): string {
   switch (block.kind) {
     case "user":
-      return `（开拓者 说）\n${escapeUserText(block.text)}\n（/开拓者 说）`;
+      // A path mentioned with the composer's `@` reads as its name (ADR
+      // 0072 amendment 2026-10-20): the chip the user saw.
+      return `（开拓者 说）\n${escapeUserText(nameMentionedPaths(block.text, block.mentions))}\n（/开拓者 说）`;
     case "herta": {
       const [openTag, closeTag] =
         block.surface === "thought"

@@ -501,6 +501,9 @@ export interface HertaBridge {
   submitText(
     text: string,
     stagedImageIds?: readonly string[],
+    /** Paths mentioned with the composer's `@` (ADR 0072 amendment
+     *  2026-10-20), recorded on the user block. */
+    mentions?: readonly string[],
   ): Promise<SubmitTextResult>;
   interrupt(turnId?: string): Promise<{ readonly ok: boolean }>;
   /** A message while 板砖 works (ADR 0063): `accepted` means the text is in
@@ -708,6 +711,9 @@ export interface HertaBridge {
   /** The viewer's 打开 button: open the jailed path with the OS default
    *  application (shell.openPath). False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;
+  /** A file chip's 在资源管理器中显示 (ADR 0072 amendment 2026-10-20): show
+   *  the jailed path in the OS file manager. False when refused/missing. */
+  revealWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;
   /** The real filesystem path of a dropped `File`. Electron 43 removed
    *  `File.path`, so only the preload can answer this — the renderer never
    *  holds a File beyond the drop handler. */

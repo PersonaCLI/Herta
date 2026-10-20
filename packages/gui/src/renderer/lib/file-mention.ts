@@ -38,13 +38,14 @@ export function brickComplete(query: string, lang: "zh" | "en"): boolean {
   return query === "板砖" || (lang === "en" && query.toLowerCase() === "brick");
 }
 
-/** How many matches the list shows. */
-export const MENTION_LIMIT = 8;
+/** How many matches the list shows — more than fit, so it scrolls under
+ *  its faded edges (ADR 0072 amendment 2026-10-20). */
+export const MENTION_LIMIT = 12;
 
 /** One row of the list: the delegation token, or a workspace file. */
 export type MentionItem =
   | { readonly kind: "brick" }
-  | { readonly kind: "file"; readonly path: string };
+  | { readonly kind: "file"; readonly path: string; readonly dir?: true };
 
 /**
  * What the list offers for the `@query` (owner 2026-10-08: the list
@@ -66,11 +67,25 @@ export function mentionItems(
   const items: MentionItem[] = [];
   if (brickAhead(query, lang)) items.push({ kind: "brick" });
   if (files !== null) {
+    // Folders beside the files (ADR 0072 amendment 2026-10-20): a bare `@`
+    // offers the top-level ones after the files being worked on; a query
+    // ranks every folder with the files.
+    const folders = listedFolders(files);
+    const isFolder = new Set(folders);
     const paths =
       query.length === 0
-        ? openingPaths(files, changed)
-        : rankPaths(files, query);
-    for (const path of paths) items.push({ kind: "file", path });
+        ? openingPaths(
+            [...folders.filter((d) => !d.includes("/")), ...files],
+            changed,
+          )
+        : rankPaths([...folders, ...files], query);
+    for (const path of paths) {
+      items.push(
+        isFolder.has(path)
+          ? { kind: "file", path, dir: true }
+          : { kind: "file", path },
+      );
+    }
   }
   return items;
 }
@@ -158,20 +173,206 @@ export function insertBrick(
   };
 }
 
-/** The text with `@query` (from `start` to the caret) replaced by the path
- *  and one space, and where the caret goes. A path with whitespace in it
- *  goes in backticks, so where it ends is not left to the reader (review
- *  2026-09-30: `docs/design notes.md` read as `docs/design`); the preview
- *  surfaces strip inline ticks as they do for any code span. */
-export function insertMention(
+// ── File chips (ADR 0072 amendment 2026-10-20) ─────────────────────────────
+//
+// A picked file is a CHIP in the composer: the text holds a short token,
+// `@<name>`, and the highlight layer draws it as a chip (the type icon over
+// the `@`, the name after it), so the textarea keeps every glyph's width and
+// the caret stays where it is drawn. The chip stands for its path: on send
+// each token becomes the path (`expandChips`), and the user block records the
+// paths it mentions, so Herta's prompt can name each by its file name while
+// 板砖 reads the path.
+
+/** One chip in the composer: the token's name and the path it stands for. */
+export interface FileChip {
+  readonly name: string;
+  readonly path: string;
+  /** A folder: the icon says so, and the path is sent with a `/`. */
+  readonly dir?: true;
+}
+
+/** Where a chip's token sits in the text (`end` exclusive). */
+export interface ChipSpan {
+  readonly start: number;
+  readonly end: number;
+  readonly chip: FileChip;
+}
+
+/** The name a path's chip shows: its last segment. */
+export function chipName(path: string): string {
+  const trimmed = path.replace(/\/+$/u, "");
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || trimmed;
+}
+
+/** A character that would continue a file name — a token followed by one is
+ *  not the token (`@a.ts` is not in `@a.tsx`). ASCII only: Chinese runs on
+ *  from a token without a space, and must not swallow it. */
+const NAME_CHAR = /[A-Za-z0-9_.\-/]/;
+
+/**
+ * The chips' tokens in the text, left to right. A token is `@<name>` with no
+ * name character before the `@` or after the name. Two chips with the same
+ * name are matched to their tokens in the order they were inserted.
+ */
+export function findChipSpans(
+  text: string,
+  chips: readonly FileChip[],
+): ChipSpan[] {
+  if (chips.length === 0) return [];
+  const byName = new Map<string, FileChip[]>();
+  for (const c of chips) {
+    const list = byName.get(c.name) ?? [];
+    list.push(c);
+    byName.set(c.name, list);
+  }
+  const names = [...byName.keys()].sort((a, b) => b.length - a.length);
+  const used = new Map<string, number>();
+  const spans: ChipSpan[] = [];
+  let i = text.indexOf("@");
+  while (i !== -1) {
+    const before = i > 0 ? (text[i - 1] as string) : "";
+    let matched: ChipSpan | null = null;
+    if (before === "" || !NAME_CHAR.test(before)) {
+      for (const name of names) {
+        if (!text.startsWith(name, i + 1)) continue;
+        const end = i + 1 + name.length;
+        const after = text[end];
+        if (after !== undefined && NAME_CHAR.test(after)) continue;
+        const list = byName.get(name) as FileChip[];
+        const k = used.get(name) ?? 0;
+        if (k >= list.length) continue;
+        used.set(name, k + 1);
+        matched = { start: i, end, chip: list[k] as FileChip };
+        break;
+      }
+    }
+    if (matched !== null) {
+      spans.push(matched);
+      i = text.indexOf("@", matched.end);
+    } else {
+      i = text.indexOf("@", i + 1);
+    }
+  }
+  return spans;
+}
+
+/** The chips whose tokens the text still holds — an edited-away chip goes. */
+export function pruneChips(
+  text: string,
+  chips: readonly FileChip[],
+): readonly FileChip[] {
+  if (chips.length === 0) return chips;
+  const kept = findChipSpans(text, chips).map((s) => s.chip);
+  return kept.length === chips.length ? chips : kept;
+}
+
+/** The chip whose token the caret is strictly inside, or ends at. */
+export function chipAt(
+  spans: readonly ChipSpan[],
+  caret: number,
+): ChipSpan | null {
+  for (const s of spans) if (caret > s.start && caret <= s.end) return s;
+  return null;
+}
+
+/** A chip's path as the message spells it: a folder with its `/`, a path
+ *  with whitespace in backticks (as a picked path always was). */
+function spelledPath(chip: FileChip): string {
+  const path =
+    chip.dir === true ? `${chip.path.replace(/\/+$/u, "")}/` : chip.path;
+  return /\s/.test(path) ? `\`${path}\`` : path;
+}
+
+/** The message to send: each token replaced by the path it stands for, and
+ *  the paths it mentions (as they appear, folders with their `/`). */
+export function expandChips(
+  text: string,
+  chips: readonly FileChip[],
+): { readonly text: string; readonly mentions: readonly string[] } {
+  const spans = findChipSpans(text, chips);
+  if (spans.length === 0) return { text, mentions: [] };
+  let out = "";
+  let at = 0;
+  const mentions: string[] = [];
+  for (const s of spans) {
+    out += text.slice(at, s.start) + spelledPath(s.chip);
+    at = s.end;
+    const path =
+      s.chip.dir === true
+        ? `${s.chip.path.replace(/\/+$/u, "")}/`
+        : s.chip.path;
+    if (!mentions.includes(path)) mentions.push(path);
+  }
+  return { text: out + text.slice(at), mentions };
+}
+
+/** A sent message back as chips (the ↑ recall): each mentioned path's
+ *  occurrence becomes its token. */
+export function chipify(
+  text: string,
+  mentions: readonly string[] | undefined,
+): { readonly text: string; readonly chips: readonly FileChip[] } {
+  if (mentions === undefined || mentions.length === 0)
+    return { text, chips: [] };
+  let out = text;
+  const chips: FileChip[] = [];
+  for (const raw of [...mentions].sort((a, b) => b.length - a.length)) {
+    const dir = raw.endsWith("/");
+    const path = raw.replace(/\/+$/u, "");
+    const name = chipName(path);
+    const spelled = [`\`${raw}\``, raw];
+    for (const s of spelled) {
+      if (!out.includes(s)) continue;
+      out = out.split(s).join(`@${name}`);
+      chips.push({ name, path, ...(dir ? { dir: true as const } : {}) });
+      break;
+    }
+  }
+  return { text: out, chips };
+}
+
+/** The `@<name>` token a picked path becomes, and the chip that draws it,
+ *  replacing `@query` (from `start` to the caret) with one space after. */
+export function insertChip(
   value: string,
   start: number,
   caret: number,
   path: string,
-): { readonly text: string; readonly caret: number } {
-  const spelled = /\s/.test(path) ? `\`${path}\`` : path;
+  dir: boolean,
+): {
+  readonly text: string;
+  readonly caret: number;
+  readonly chip: FileChip;
+} {
+  const chip: FileChip = {
+    name: chipName(path),
+    path: path.replace(/\/+$/u, ""),
+    ...(dir ? { dir: true as const } : {}),
+  };
+  const token = `@${chip.name}`;
   const after = value.slice(caret);
   const sep = after.startsWith(" ") ? "" : " ";
-  const text = `${value.slice(0, start)}${spelled}${sep}${after}`;
-  return { text, caret: start + spelled.length + 1 };
+  return {
+    text: `${value.slice(0, start)}${token}${sep}${after}`,
+    caret: start + token.length + 1,
+    chip,
+  };
+}
+
+/** The folders of a file listing, shallowest first then by name — what the
+ *  list offers beside the files. */
+export function listedFolders(files: readonly string[]): string[] {
+  const dirs = new Set<string>();
+  for (const f of files) {
+    let cut = f.lastIndexOf("/");
+    while (cut > 0) {
+      const d = f.slice(0, cut);
+      if (dirs.has(d)) break;
+      dirs.add(d);
+      cut = d.lastIndexOf("/");
+    }
+  }
+  return [...dirs].sort(
+    (a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b),
+  );
 }

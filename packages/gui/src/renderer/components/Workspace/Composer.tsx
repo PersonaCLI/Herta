@@ -17,18 +17,28 @@ import {
 import { useT } from "../../i18n/LocaleProvider.js";
 import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
+import { FileTypeIcon } from "../../lib/file-icons.js";
 import {
   brickComplete,
+  type ChipSpan,
+  chipAt,
+  chipify,
+  expandChips,
+  type FileChip,
+  findChipSpans,
   findMentionQuery,
   insertBrick,
-  insertMention,
+  insertChip,
   type MentionItem,
   mentionItems,
+  pruneChips,
 } from "../../lib/file-mention.js";
 import { composeQuotedMessage, quoteLabel } from "../../lib/quote-format.js";
-import { recallLastMessage } from "../../lib/recall-last-message.js";
+import { recallLastUserMessage } from "../../lib/recall-last-message.js";
 import { submitMessage } from "../../lib/submit-message.js";
 import { stopAllVoice } from "../../voice/play-voice.js";
+import { armHoverTip, hideHoverTip } from "../common/hover-tip.js";
+import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { AuraVisual } from "../UtilityRail/AuraVisual.js";
 import { useLightbox } from "./ImageLightbox.js";
@@ -87,6 +97,134 @@ const MENTION_FILES_TTL_MS = 10_000;
 function pasteName(mime: string): string {
   const sub = mime.split("/")[1] ?? "png";
   return `image.${sub === "jpeg" ? "jpg" : sub.replace(/[^a-z0-9]/gi, "")}`;
+}
+
+/**
+ * The highlight layer's text with its chips drawn (ADR 0072 amendment
+ * 2026-10-20). A chip keeps its token's glyphs — the `@` turns invisible and
+ * the type icon sits over it, the name keeps its letters — so every
+ * character holds the width the textarea gives it and the caret stays put.
+ */
+function renderWithChips(
+  text: string,
+  spans: readonly ChipSpan[],
+  lang: "zh" | "en",
+): JSX.Element[] | ReturnType<typeof renderBanzhuanText> {
+  if (spans.length === 0) return renderBanzhuanText(text, "composer", lang);
+  const out: JSX.Element[] = [];
+  let at = 0;
+  spans.forEach((s, i) => {
+    if (s.start > at) {
+      out.push(
+        <Fragment key={`t${at}`}>
+          {renderBanzhuanText(text.slice(at, s.start), "composer", lang)}
+        </Fragment>,
+      );
+    }
+    out.push(
+      <span key={`c${s.start}`} className="composer-chip" data-chip={i}>
+        <span className="composer-chip__at">
+          @
+          <FileTypeIcon
+            path={s.chip.path}
+            dir={s.chip.dir === true}
+            className="composer-chip__icon"
+          />
+        </span>
+        {text.slice(s.start + 1, s.end)}
+      </span>,
+    );
+    at = s.end;
+  });
+  if (at < text.length) {
+    out.push(
+      <Fragment key={`t${at}`}>
+        {renderBanzhuanText(text.slice(at), "composer", lang)}
+      </Fragment>,
+    );
+  }
+  return out;
+}
+
+/** A file chip's menu (ADR 0072 amendment 2026-10-20): copy its path three
+ *  ways, open it, show it in the file manager, or take it out. It opens
+ *  above the chip — the composer sits at the window's bottom edge. Pressing
+ *  an item keeps the caret where it was. */
+function ChipMenu(props: {
+  readonly chip: FileChip;
+  readonly left: number;
+  readonly bottom: number;
+  readonly copyOpen: boolean;
+  readonly onCopyOpen: (open: boolean) => void;
+  readonly t: ReturnType<typeof useT>;
+  readonly onCopyRelative: () => void;
+  readonly onCopyAbsolute: () => void;
+  readonly onCopyName: () => void;
+  readonly onOpenViewer?: () => void;
+  readonly onOpenDefault?: () => void;
+  readonly onReveal?: () => void;
+  readonly onRemove: () => void;
+}): JSX.Element {
+  const { t } = props;
+  const item = (label: string, onPick: () => void, extra = ""): JSX.Element => (
+    <button
+      type="button"
+      role="menuitem"
+      className={`composer-chip-menu__item${extra}`}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onPick}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      className="composer-chip-menu"
+      role="menu"
+      aria-label={props.chip.name}
+      style={{ left: props.left, bottom: props.bottom }}
+    >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: hover only opens the submenu; the Copy button inside is its keyboard and click control. */}
+      <div
+        className="composer-chip-menu__sub-wrap"
+        onMouseEnter={() => props.onCopyOpen(true)}
+        onMouseLeave={() => props.onCopyOpen(false)}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          aria-haspopup="menu"
+          aria-expanded={props.copyOpen}
+          className="composer-chip-menu__item has-sub"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => props.onCopyOpen(!props.copyOpen)}
+        >
+          {t("composer.chip.copy")}
+          <span className="composer-chip-menu__chevron" aria-hidden="true">
+            ›
+          </span>
+        </button>
+        {props.copyOpen && (
+          <div
+            className="composer-chip-menu composer-chip-menu--sub"
+            role="menu"
+          >
+            {item(t("composer.chip.copyRelative"), props.onCopyRelative)}
+            {item(t("composer.chip.copyAbsolute"), props.onCopyAbsolute)}
+            {item(t("composer.chip.copyName"), props.onCopyName)}
+          </div>
+        )}
+      </div>
+      {props.onOpenViewer !== undefined &&
+        item(t("composer.chip.openViewer"), props.onOpenViewer)}
+      {props.onOpenDefault !== undefined &&
+        item(t("composer.chip.openDefault"), props.onOpenDefault)}
+      {props.onReveal !== undefined &&
+        item(t("composer.chip.reveal"), props.onReveal)}
+      <div className="composer-chip-menu__sep" aria-hidden="true" />
+      {item(t("composer.chip.remove"), props.onRemove, " is-danger")}
+    </div>
+  );
 }
 
 export function Composer(): JSX.Element {
@@ -183,6 +321,29 @@ export function Composer(): JSX.Element {
     readonly sessionId: string;
     readonly at: number;
   } | null>(null);
+  // File chips (ADR 0072 amendment 2026-10-20): each picked file is an
+  // `@<name>` token the highlight layer draws as a chip; the registry says
+  // which path each token stands for. Read through a ref by the handlers,
+  // which see the text a keystroke made before React does.
+  const [chips, setChips] = useState<readonly FileChip[]>([]);
+  const chipsRef = useRef(chips);
+  chipsRef.current = chips;
+  const chipSpans = useMemo(() => findChipSpans(text, chips), [text, chips]);
+  /** The chip menu: which chip, and where it opens (over the chip). */
+  const [chipMenu, setChipMenu] = useState<{
+    readonly span: ChipSpan;
+    readonly left: number;
+    readonly bottom: number;
+  } | null>(null);
+  const [chipCopyOpen, setChipCopyOpen] = useState(false);
+  const hoverChip = useRef(-1);
+  /** The caret before the last selection change — which way a caret that
+   *  lands inside a chip is pushed out. */
+  const lastCaret = useRef(0);
+  const openFile = useFileViewerOpen();
+  useEffect(() => {
+    setChips((c) => pruneChips(text, c));
+  }, [text]);
   const busy = status !== "idle";
   const suppressed = overlay?.kind === "pending-permission";
   // Composer predictions (owner 2026-10-10): the Trailblazer's likely next
@@ -289,14 +450,20 @@ export function Composer(): JSX.Element {
       // the @brick alias is applied when the hold is delivered or steered,
       // so an edit puts back exactly what was typed.
       if (!holding) return;
-      const pending = text.trim();
+      // The chips go as the paths they stand for (ADR 0072 amendment
+      // 2026-10-20): a held message is plain text from here on.
+      const pending = expandChips(text, chips).text.trim();
       if (pending.length === 0) return;
       sessionStore.holdMessage(pending);
       setText("");
+      setChips([]);
       setHintActive(false);
       return;
     }
-    const trimmed = text.trim();
+    // Each chip becomes its path; the user block records the paths, so the
+    // bubble draws them as chips and Herta reads their names.
+    const expanded = expandChips(text, chips);
+    const trimmed = expanded.text.trim();
     // Quotes alone are a message (ADR 0078 §6): the source is what was said.
     if (trimmed.length === 0 && composerQuotes.length === 0) {
       // Pictures need words (owner 2026-08-27, reversing the first cut): an
@@ -337,8 +504,12 @@ export function Composer(): JSX.Element {
       sessionStore,
       dispatched,
       staged.length > 0 ? staged : undefined,
+      undefined,
+      expanded.mentions.length > 0 ? expanded.mentions : undefined,
     );
     setText("");
+    setChips([]);
+    setChipMenu(null);
     sessionStore.clearComposerQuotes();
     // The rewind file-edit notice persists through editing; clear it once the
     // (re-)send actually goes out (a session switch clears it via onReset).
@@ -528,6 +699,8 @@ export function Composer(): JSX.Element {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset is keyed on sessionId; the setters/ref are stable
   useEffect(() => {
     setText("");
+    setChips([]);
+    setChipMenu(null);
     setHintActive(false);
     escDismissed.current = -1;
     setMention(null);
@@ -544,7 +717,11 @@ export function Composer(): JSX.Element {
   // re-list; where the bridge cannot list them, the list offers `@板砖`
   // alone.
   const updateMention = (value: string, caret: number | null): void => {
-    const mq = findMentionQuery(value, caret);
+    // A chip's own token is not a query: the caret at its end offers nothing.
+    const onChip =
+      caret !== null &&
+      chipAt(findChipSpans(value, chipsRef.current), caret) !== null;
+    const mq = onChip ? null : findMentionQuery(value, caret);
     if (mq === null) mentionDismissed.current = -1;
     if (
       mq === null ||
@@ -601,20 +778,129 @@ export function Composer(): JSX.Element {
   const pickMention = (item: MentionItem): void => {
     if (mention === null) return;
     const caret = taRef.current?.selectionStart ?? text.length;
-    const next =
-      item.kind === "brick"
-        ? insertBrick(
-            text,
-            mention.start,
-            caret,
-            lang === "en" ? "brick" : "板砖",
-          )
-        : insertMention(text, mention.start, caret, item.path);
+    if (item.kind === "file") {
+      const next = insertChip(
+        text,
+        mention.start,
+        caret,
+        item.path,
+        item.dir === true,
+      );
+      pendingCaret.current = next.caret;
+      setChips((c) => [...c, next.chip]);
+      setText(next.text);
+      setMention(null);
+      setHintActive(false);
+      taRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    const next = insertBrick(
+      text,
+      mention.start,
+      caret,
+      lang === "en" ? "brick" : "板砖",
+    );
     pendingCaret.current = next.caret;
     setText(next.text);
     setMention(null);
     setHintActive(false);
     taRef.current?.focus({ preventScroll: true });
+  };
+
+  // The chip under a pointer: the highlight layer's chip boxes (it takes no
+  // pointer events itself), read at the moment of the event.
+  const chipUnder = (
+    x: number,
+    y: number,
+  ): { readonly index: number; readonly el: HTMLElement } | null => {
+    const layer = taRef.current?.previousElementSibling;
+    if (!(layer instanceof HTMLElement)) return null;
+    for (const el of layer.querySelectorAll<HTMLElement>("[data-chip]")) {
+      for (const r of el.getClientRects()) {
+        if (
+          x >= r.left - 2 &&
+          x <= r.right + 2 &&
+          y >= r.top - 1 &&
+          y <= r.bottom + 1
+        ) {
+          return { index: Number(el.dataset.chip), el };
+        }
+      }
+    }
+    return null;
+  };
+  const openChipMenu = (index: number, el: HTMLElement): void => {
+    const span = chipSpans[index];
+    const wrap = taRef.current?.parentElement;
+    if (span === undefined || wrap == null) return;
+    const w = wrap.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    hideHoverTip();
+    setChipCopyOpen(false);
+    setChipMenu({
+      span,
+      left: Math.max(0, r.left - w.left),
+      bottom: w.bottom - r.top + 6,
+    });
+  };
+  /** Take a chip's token out of the text, with the space after it. */
+  const removeChip = (span: ChipSpan): void => {
+    const end = text[span.end] === " " ? span.end + 1 : span.end;
+    pendingCaret.current = span.start;
+    setText(`${text.slice(0, span.start)}${text.slice(end)}`);
+    setChipMenu(null);
+    taRef.current?.focus({ preventScroll: true });
+  };
+  const copyText = (value: string): void => {
+    void navigator.clipboard?.writeText(value).catch(() => undefined);
+    setChipMenu(null);
+    taRef.current?.focus({ preventScroll: true });
+  };
+  /** The chip's path on this machine: the session's workspace joined in its
+   *  own separator. */
+  const absolutePath = (path: string): string => {
+    const root = sessionStore.getSnapshot().backendWorkspace;
+    if (root === null) return path;
+    const sep = root.includes("\\") ? "\\" : "/";
+    return `${root.replace(/[\\/]+$/u, "")}${sep}${path.split("/").join(sep)}`;
+  };
+  // The menu closes on Esc and on any press outside it.
+  useEffect(() => {
+    if (chipMenu === null) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setChipMenu(null);
+    };
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target;
+      if (t instanceof Element && t.closest(".composer-chip-menu") !== null)
+        return;
+      // A press in the textarea is the textarea's own: on a chip it opens
+      // or toggles the menu — the press that opened it reaches this listener
+      // too, added while it was still on its way up.
+      if (t === taRef.current) return;
+      setChipMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [chipMenu]);
+  // The highlighted row stays in view as the arrows move it (the list
+  // scrolls now — it holds more rows than fit).
+  useEffect(() => {
+    if (mention === null) return;
+    document
+      .getElementById(`composer-mention-${mentionIndex}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [mentionIndex, mention]);
+  // Fade the list's edges only where there is more to scroll to.
+  const fadeEdges = (el: HTMLElement | null): void => {
+    if (el === null) return;
+    el.dataset.above = el.scrollTop > 1 ? "1" : "0";
+    el.dataset.below =
+      el.scrollTop + el.clientHeight < el.scrollHeight - 1 ? "1" : "0";
   };
 
   useEffect(() => {
@@ -1144,73 +1430,86 @@ export function Composer(): JSX.Element {
             role="listbox"
             aria-label={t("composer.mentions.aria")}
           >
-            {mentionMatches.map((item, i) => {
-              const active = item === mentionActive;
-              const firstFile =
-                item.kind === "file" && mentionMatches[i - 1]?.kind !== "file";
-              const option = (children: JSX.Element): JSX.Element => (
-                <button
-                  key={item.kind === "brick" ? "@brick" : item.path}
-                  id={`composer-mention-${i}`}
-                  type="button"
-                  role="option"
-                  // The caret stays in the textarea; the keys it takes move
-                  // the highlight, so an option is never tabbed to.
-                  tabIndex={-1}
-                  aria-selected={active}
-                  className={`composer-mentions__item${item.kind === "brick" ? " is-brick" : ""}${active ? " is-active" : ""}`}
-                  // mousedown, not click: the textarea keeps the caret.
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    pickMention(item);
-                  }}
-                  onMouseEnter={() => setMentionIndex(i)}
-                >
-                  {children}
-                </button>
-              );
-              if (item.kind === "brick") {
-                return option(
-                  <>
-                    <span className="composer-mentions__name">
-                      {lang === "en" ? "@brick" : "@板砖"}
-                    </span>
-                    <span className="composer-mentions__desc">
-                      {t("composer.mentions.brick")}
-                    </span>
-                  </>,
+            <div
+              className="composer-mentions__scroll"
+              ref={fadeEdges}
+              onScroll={(e) => fadeEdges(e.currentTarget)}
+            >
+              {mentionMatches.map((item, i) => {
+                const active = item === mentionActive;
+                const firstFile =
+                  item.kind === "file" &&
+                  mentionMatches[i - 1]?.kind !== "file";
+                const option = (children: JSX.Element): JSX.Element => (
+                  <button
+                    key={item.kind === "brick" ? "@brick" : item.path}
+                    id={`composer-mention-${i}`}
+                    type="button"
+                    role="option"
+                    // The caret stays in the textarea; the keys it takes move
+                    // the highlight, so an option is never tabbed to.
+                    tabIndex={-1}
+                    aria-selected={active}
+                    className={`composer-mentions__item${item.kind === "brick" ? " is-brick" : ""}${active ? " is-active" : ""}`}
+                    // mousedown, not click: the textarea keeps the caret.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pickMention(item);
+                    }}
+                    onMouseEnter={() => setMentionIndex(i)}
+                  >
+                    {children}
+                  </button>
                 );
-              }
-              const cut = item.path.lastIndexOf("/");
-              const name = item.path.slice(cut + 1);
-              const dir = cut >= 0 ? item.path.slice(0, cut) : "";
-              return (
-                <Fragment key={item.path}>
-                  {firstFile && (
-                    // What the rows below are — the list says so itself.
-                    <div
-                      className="composer-mentions__section"
-                      aria-hidden="true"
-                    >
-                      {t("composer.mentions.files")}
-                    </div>
-                  )}
-                  {option(
+                if (item.kind === "brick") {
+                  return option(
                     <>
-                      <span className="composer-mentions__name">{name}</span>
-                      {dir.length > 0 && (
-                        <span className="composer-mentions__dir">{dir}</span>
-                      )}
+                      <span className="composer-mentions__name">
+                        {lang === "en" ? "@brick" : "@板砖"}
+                      </span>
+                      <span className="composer-mentions__desc">
+                        {t("composer.mentions.brick")}
+                      </span>
                     </>,
-                  )}
-                </Fragment>
-              );
-            })}
+                  );
+                }
+                const cut = item.path.lastIndexOf("/");
+                const name = item.path.slice(cut + 1);
+                const dir = cut >= 0 ? item.path.slice(0, cut) : "";
+                const folder = item.dir === true;
+                return (
+                  <Fragment key={item.path}>
+                    {firstFile && (
+                      // What the rows below are — the list says so itself.
+                      <div
+                        className="composer-mentions__section"
+                        aria-hidden="true"
+                      >
+                        {t("composer.mentions.files")}
+                      </div>
+                    )}
+                    {option(
+                      <>
+                        <FileTypeIcon
+                          path={item.path}
+                          dir={folder}
+                          className="composer-mentions__icon"
+                        />
+                        <span className="composer-mentions__name">{name}</span>
+                        {dir.length > 0 && (
+                          <span className="composer-mentions__dir">{dir}</span>
+                        )}
+                      </>,
+                    )}
+                  </Fragment>
+                );
+              })}
+            </div>
           </div>
         )}
         <div className="composer-input-wrap">
           <div className="composer-highlight" aria-hidden="true">
-            {renderBanzhuanText(text, "composer", lang)}
+            {renderWithChips(text, chipSpans, lang)}
             {/* The ghost previews the token while its row is the one Tab
                 or Enter would take — not once the highlight is on a file. */}
             {hintActive && (mentionActive?.kind ?? "brick") === "brick" && (
@@ -1255,6 +1554,23 @@ export function Composer(): JSX.Element {
               updateMention(e.target.value, e.target.selectionStart);
             }}
             onSelect={(e) => {
+              // A chip is one piece: a caret that lands inside its token is
+              // pushed out, the way it was travelling.
+              const ta = e.currentTarget;
+              const caret = ta.selectionStart;
+              if (caret !== null && caret === ta.selectionEnd) {
+                const inside = chipSpans.find(
+                  (s) => s.start < caret && caret < s.end,
+                );
+                if (inside !== undefined) {
+                  const to =
+                    caret < lastCaret.current ? inside.start : inside.end;
+                  ta.setSelectionRange(to, to);
+                  lastCaret.current = to;
+                  return;
+                }
+                lastCaret.current = caret;
+              }
               setHintActive(
                 shouldHint(
                   e.currentTarget.value,
@@ -1268,7 +1584,72 @@ export function Composer(): JSX.Element {
               );
             }}
             onBlur={() => setMention(null)}
+            onMouseDown={(e) => {
+              // A chip is a control, not text: a press opens its menu.
+              if (e.button !== 0) return;
+              const hit = chipUnder(e.clientX, e.clientY);
+              if (hit === null) {
+                setChipMenu(null);
+                return;
+              }
+              e.preventDefault();
+              if (chipMenu?.span.start === chipSpans[hit.index]?.start) {
+                setChipMenu(null);
+                return;
+              }
+              openChipMenu(hit.index, hit.el);
+            }}
+            onContextMenu={(e) => {
+              const hit = chipUnder(e.clientX, e.clientY);
+              if (hit === null) return;
+              e.preventDefault();
+              openChipMenu(hit.index, hit.el);
+            }}
+            onMouseMove={(e) => {
+              const hit = chipUnder(e.clientX, e.clientY);
+              const index = hit?.index ?? -1;
+              e.currentTarget.style.cursor = hit !== null ? "pointer" : "";
+              if (index === hoverChip.current) return;
+              hoverChip.current = index;
+              hideHoverTip();
+              const span = hit !== null ? chipSpans[index] : undefined;
+              if (hit !== null && span !== undefined && chipMenu === null) {
+                armHoverTip(
+                  hit.el,
+                  span.chip.dir === true
+                    ? `${span.chip.path}/`
+                    : span.chip.path,
+                );
+              }
+            }}
+            onMouseLeave={(e) => {
+              hoverChip.current = -1;
+              e.currentTarget.style.cursor = "";
+              hideHoverTip();
+            }}
             onKeyDown={(e) => {
+              // A chip goes whole (ADR 0072 amendment 2026-10-20): Backspace
+              // at its end, Delete at its start.
+              if (
+                (e.key === "Backspace" || e.key === "Delete") &&
+                !(e.nativeEvent.isComposing || e.keyCode === 229)
+              ) {
+                const ta = e.currentTarget;
+                const caret = ta.selectionStart;
+                if (caret !== null && caret === ta.selectionEnd) {
+                  const span = chipSpans.find((s) =>
+                    e.key === "Backspace" ? s.end === caret : s.start === caret,
+                  );
+                  if (span !== undefined) {
+                    e.preventDefault();
+                    pendingCaret.current = span.start;
+                    setText(
+                      `${text.slice(0, span.start)}${text.slice(span.end)}`,
+                    );
+                    return;
+                  }
+                }
+              }
               // The @-mention list, while it is open (ADR 0072 §2): arrows
               // move, Enter or Tab inserts the row, Esc dismisses it — and
               // the ghost with it. An IME's pre-edit keeps every key: its
@@ -1315,14 +1696,17 @@ export function Composer(): JSX.Element {
                 // empty while composing: ↑ then moves its candidate, not the
                 // history (review 2026-09-30).
                 if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                const last = recallLastMessage(
+                const last = recallLastUserMessage(
                   sessionStore.getSnapshot().record,
                   lang,
                 );
                 if (last !== null) {
                   e.preventDefault();
-                  setText(last);
-                  pendingCaret.current = last.length;
+                  // The chips it was sent with come back as chips.
+                  const back = chipify(last.text, last.mentions);
+                  setChips(back.chips);
+                  setText(back.text);
+                  pendingCaret.current = back.text.length;
                 }
                 return;
               }
@@ -1386,6 +1770,61 @@ export function Composer(): JSX.Element {
             <span className="composer-prediction-key" aria-hidden="true">
               Tab
             </span>
+          )}
+          {chipMenu !== null && (
+            <ChipMenu
+              chip={chipMenu.span.chip}
+              left={chipMenu.left}
+              bottom={chipMenu.bottom}
+              copyOpen={chipCopyOpen}
+              onCopyOpen={setChipCopyOpen}
+              t={t}
+              onCopyRelative={() =>
+                copyText(
+                  chipMenu.span.chip.dir === true
+                    ? `${chipMenu.span.chip.path}/`
+                    : chipMenu.span.chip.path,
+                )
+              }
+              onCopyAbsolute={() =>
+                copyText(absolutePath(chipMenu.span.chip.path))
+              }
+              onCopyName={() => copyText(chipMenu.span.chip.name)}
+              {...(openFile !== null && chipMenu.span.chip.dir !== true
+                ? {
+                    onOpenViewer: () => {
+                      openFile(chipMenu.span.chip.path, {});
+                      setChipMenu(null);
+                    },
+                  }
+                : {})}
+              {...(bridge.openWorkspaceFile !== undefined &&
+              sessionId !== null &&
+              chipMenu.span.chip.dir !== true
+                ? {
+                    onOpenDefault: () => {
+                      void bridge.openWorkspaceFile?.(
+                        sessionId,
+                        chipMenu.span.chip.path,
+                      );
+                      setChipMenu(null);
+                    },
+                  }
+                : {})}
+              {...(bridge.revealWorkspaceFile !== undefined &&
+              sessionId !== null
+                ? {
+                    onReveal: () => {
+                      void bridge.revealWorkspaceFile?.(
+                        sessionId,
+                        chipMenu.span.chip.path,
+                      );
+                      setChipMenu(null);
+                    },
+                  }
+                : {})}
+              onRemove={() => removeChip(chipMenu.span)}
+            />
           )}
         </div>
         {/* ONE persistent button that morphs between SEND (↑) and STOP (■).

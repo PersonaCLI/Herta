@@ -73,6 +73,9 @@ export interface ActorTurnDeps {
    * not sanitize at read, so construction is the only gate.
    */
   readonly userAttachments?: readonly SystemBlock[];
+  /** The paths the user mentioned with the composer's `@` (ADR 0072
+   *  amendment 2026-10-20): recorded on the user block. */
+  readonly userMentions?: readonly string[];
   /**
    * A 继续 turn (ADR 0071 §1.4): the user block is marked `resume`, and the
    * harness continues the interrupted 板砖 run (the bridge's `resume`) before

@@ -65,6 +65,9 @@ function renderBlock(
           text={block.text}
           at={block.at}
           lang={lang}
+          {...(block.mentions !== undefined
+            ? { mentions: block.mentions }
+            : {})}
           {...(onRewind !== undefined ? { onRewind } : {})}
           {...(imageViews.length > 0 ? { images: imageViews } : {})}
         />

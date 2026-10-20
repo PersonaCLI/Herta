@@ -482,7 +482,12 @@ export class V2ActorDriver {
     userAttachments: readonly SystemBlock[] = [],
     // A 继续 turn (ADR 0071 §1.4): the interrupted 板砖 run continues before
     // Herta speaks, like a typed `@板砖` — no router, no speculative thought.
-    opts: { readonly resume?: true } = {},
+    opts: {
+      readonly resume?: true;
+      /** The paths mentioned with the composer's `@` (ADR 0072 amendment
+       *  2026-10-20), recorded on the user block. */
+      readonly mentions?: readonly string[];
+    } = {},
   ): Promise<TerminalRecord> {
     const prevLen = this.record.length;
     // One model for the whole turn (ADR 0081): a Settings change lands at
@@ -696,6 +701,9 @@ export class V2ActorDriver {
         signal,
         precomputedRecap,
         ...(userAttachments.length > 0 ? { userAttachments } : {}),
+        ...(opts.mentions !== undefined && opts.mentions.length > 0
+          ? { userMentions: opts.mentions }
+          : {}),
         ...(opts.resume === true ? { resume: true as const } : {}),
         lang: this.deps.lang ?? "zh",
         intentState: this.currentIntentState,

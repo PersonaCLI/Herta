@@ -324,6 +324,19 @@ describe("serializeTerminalRecord", () => {
     );
   });
 
+  it("names a path the user mentioned by its file name, as the chip showed it (ADR 0072 amendment 2026-10-20)", () => {
+    const record: TerminalRecord = [
+      {
+        kind: "user",
+        text: "看看 packages/herta/src/narrative/record-voice.ts 里的 opArg",
+        mentions: ["packages/herta/src/narrative/record-voice.ts"],
+      },
+    ];
+    expect(serializeTerminalRecord(record)).toBe(
+      "（开拓者 说）\n看看 record-voice.ts 里的 opArg\n（/开拓者 说）",
+    );
+  });
+
   it("joins multiple blocks with a single blank line between them", () => {
     const record: TerminalRecord = [
       { kind: "user", text: "看看 foo.ts" },

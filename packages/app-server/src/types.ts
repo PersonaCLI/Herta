@@ -740,7 +740,12 @@ export interface Session {
    *  blocks land right after the user block, inside this turn's span. */
   submitText(
     text: string,
-    opts?: { readonly stagedImageIds?: readonly string[] },
+    opts?: {
+      readonly stagedImageIds?: readonly string[];
+      /** Paths mentioned with the composer's `@` (ADR 0072 amendment
+       *  2026-10-20), recorded on the user block. */
+      readonly mentions?: readonly string[];
+    },
   ): Promise<SubmitTextResult>;
   /**
    * D2 (resume recovery): if this session ends on an ORPHANED user message — a

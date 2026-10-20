@@ -46,6 +46,12 @@ export interface UserBlock {
    *  regenerate after a crash re-runs it as a resume, not as chat. Never
    *  enters the prompt (the serializer reads `text`). */
   readonly resume?: true;
+  /** The workspace paths the user mentioned with the composer's `@` (ADR
+   *  0072 amendment 2026-10-20), as they appear in `text`. The text keeps the
+   *  paths — 板砖, the title and the search read them as written — and this
+   *  lets Herta's prompt name each by its file name and the bubble draw it
+   *  as a chip. Absent when nothing was mentioned. */
+  readonly mentions?: readonly string[];
   /** Wall-clock ISO time the block was emitted/persisted. Optional for
    *  backward compat (pre-timestamp sessions lack it). Stamped at the output
    *  boundaries (live sink emit + JSONL persist), never at construction — the

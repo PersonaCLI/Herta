@@ -606,6 +606,9 @@ async function runTurn(
       kind: "user",
       text: userText,
       ...(deps.resume === true ? { resume: true as const } : {}),
+      ...(deps.userMentions !== undefined && deps.userMentions.length > 0
+        ? { mentions: deps.userMentions }
+        : {}),
     },
     ...(deps.userAttachments ?? []),
   ];

@@ -1641,6 +1641,141 @@ button,
 .composer-ghost {
   color: rgba(77, 134, 255, 0.55);
 }
+/* A file chip (ADR 0072 amendment 2026-10-20): the token `@<name>` drawn as
+   a chip WITHOUT changing a glyph's width — the textarea above holds the
+   same characters, so any padding would walk the caret off its letters.
+   The tint's spread shadow is the chip's visible padding; the `@` goes
+   transparent and the type icon sits centred over it. */
+.composer-chip {
+  background: rgba(77, 134, 255, 0.13);
+  color: var(--mention-ink);
+  border-radius: 5px;
+  box-shadow: 0 0 0 2px rgba(77, 134, 255, 0.13);
+}
+.composer-chip__at {
+  position: relative;
+  color: transparent;
+}
+.composer-chip__icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -52%);
+}
+/* The chip's menu: the app's menu card, opening above the chip. */
+.composer-chip-menu {
+  position: absolute;
+  z-index: 8;
+  min-width: 172px;
+  padding: 4px;
+  border: 1px solid var(--ink-a10);
+  border-radius: 10px;
+  background: var(--card-solid);
+  box-shadow: 0 10px 28px var(--shadow-pop);
+  animation: mentions-in 140ms var(--ease-pop) both;
+}
+.composer-chip-menu--sub {
+  left: 100%;
+  top: -5px;
+  margin-left: 4px;
+  animation: none;
+}
+.composer-chip-menu__sub-wrap {
+  position: relative;
+}
+.composer-chip-menu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--ink);
+  cursor: pointer;
+}
+.composer-chip-menu__item:hover,
+.composer-chip-menu__item[aria-expanded="true"] {
+  background: var(--ink-a06);
+}
+.composer-chip-menu__item.is-danger {
+  color: var(--danger, #d9534f);
+}
+.composer-chip-menu__chevron {
+  margin-left: auto;
+  padding-left: 14px;
+  color: var(--muted-slate);
+}
+.composer-chip-menu__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--ink-a10);
+}
+/* The same chip in a sent bubble — a real element there, so it pads. */
+.message-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 1px;
+  padding: 0 6px 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(77, 134, 255, 0.13);
+  color: var(--mention-ink);
+  font: inherit;
+  line-height: 1.45;
+  vertical-align: baseline;
+  cursor: default;
+}
+button.message-chip {
+  cursor: pointer;
+}
+button.message-chip:hover {
+  background: rgba(77, 134, 255, 0.2);
+}
+.message-chip__icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+/* File-type glyph colours (the @ list, the chips). A badge's letters are
+   drawing, not text: they never ride a selection. */
+.file-icon { color: var(--muted-slate); user-select: none; }
+.file-icon--folder { color: #6f7f92; }
+.file-icon--ts { color: #2f74c0; }
+.file-icon--js { color: #b7860f; }
+.file-icon--md { color: #3b8a46; }
+.file-icon--json { color: #b06a14; }
+.file-icon--config { color: #7a5fc0; }
+.file-icon--git { color: #d2582c; }
+.file-icon--image { color: #158f7b; }
+.file-icon--pdf { color: #c9342f; }
+.file-icon--web { color: #d2582c; }
+.file-icon--py { color: #3572a5; }
+:root[data-theme="dark"] .file-icon--folder { color: #9aa8b8; }
+:root[data-theme="dark"] .file-icon--ts { color: #6ea8f0; }
+:root[data-theme="dark"] .file-icon--js { color: #e2c057; }
+:root[data-theme="dark"] .file-icon--md { color: #7cc486; }
+:root[data-theme="dark"] .file-icon--json { color: #e3a960; }
+:root[data-theme="dark"] .file-icon--config { color: #ab96ea; }
+:root[data-theme="dark"] .file-icon--git { color: #f08a62; }
+:root[data-theme="dark"] .file-icon--image { color: #4cc7b0; }
+:root[data-theme="dark"] .file-icon--pdf { color: #f07a76; }
+:root[data-theme="dark"] .file-icon--web { color: #f08a62; }
+:root[data-theme="dark"] .file-icon--py { color: #79a8d8; }
+/* In a chip the glyph takes the chip's ink, as the name does — named, not
+   inherited, in the composer: the `@` it sits over is transparent. */
+.composer-chip .composer-chip__icon,
+.message-chip .file-icon {
+  color: var(--mention-ink);
+}
 .composer-input::placeholder {
   color: var(--muted-4);
 }
@@ -3164,10 +3299,9 @@ button.agent-preview {
   left: 12px;
   bottom: 100%;
   width: min(520px, calc(100% - 24px));
-  max-height: 296px;
-  overflow-y: auto;
+  overflow: hidden;
   margin: 0 0 10px;
-  padding: 5px;
+  padding: 5px 0 5px 5px;
   border: 1px solid var(--ink-a10);
   border-radius: 12px;
   background: var(--card-solid);
@@ -3176,10 +3310,63 @@ button.agent-preview {
   z-index: 7;
   animation: mentions-in 160ms var(--ease-pop) both;
 }
+/* The rows scroll inside the card (ADR 0072 amendment 2026-10-20): the
+   card's edge stays whole while the rows fade at whichever edge has more
+   behind it — a hard cut read as a broken list. The scrollbar is the app's
+   slim pill, as in the conversation and the composer. */
+.composer-mentions__scroll {
+  max-height: 286px;
+  overflow-y: auto;
+  padding-right: 5px;
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+.composer-mentions__scroll[data-above="1"] {
+  --fade-top: 26px;
+}
+.composer-mentions__scroll[data-below="1"] {
+  --fade-bottom: 26px;
+}
+.composer-mentions__scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.composer-mentions__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.composer-mentions__scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-a13);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.composer-mentions__scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-a22);
+  background-clip: padding-box;
+}
+.composer-mentions__icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  align-self: center;
+}
 .composer-mentions__item {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
   padding: 6px 10px;
   border: 0;

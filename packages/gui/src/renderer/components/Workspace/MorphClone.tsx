@@ -2,6 +2,7 @@ import { forwardRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
+import { renderMentionText } from "../../lib/mention-text.js";
 import type { UserImageView } from "./UserBubble.js";
 
 export interface MorphCloneProps {
@@ -22,6 +23,8 @@ export interface MorphCloneProps {
    *  like the one it swaps for (a max-content strip laid three pictures in
    *  one oversized line while the row wrapped them into two). */
   readonly imagesWidthPx?: number;
+  /** Mentioned paths, drawn as chips like the row it lands on. */
+  readonly mentions?: readonly string[];
 }
 
 /** A floating bubble copy rendered into the workspace morph overlay,
@@ -68,7 +71,9 @@ export const MorphClone = forwardRef<HTMLDivElement, MorphCloneProps>(
           </div>
         )}
         <div className="message-text">
-          {renderBanzhuanText(props.text, "bubble", props.lang)}
+          {renderMentionText(props.text, props.mentions, (segment) =>
+            renderBanzhuanText(segment, "bubble", props.lang),
+          )}
         </div>
       </div>,
       props.overlay.current,

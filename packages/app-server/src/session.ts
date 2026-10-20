@@ -1120,7 +1120,10 @@ export class SessionImpl implements Session {
 
   async submitText(
     text: string,
-    opts: { readonly stagedImageIds?: readonly string[] } = {},
+    opts: {
+      readonly stagedImageIds?: readonly string[];
+      readonly mentions?: readonly string[];
+    } = {},
   ): Promise<{ readonly turnId: string } | { readonly needsKey: true }> {
     // No DeepSeek key yet (first run, or it was cleared): don't run the turn —
     // signal the renderer to prompt for one. The opening (no LLM call) already
@@ -1174,7 +1177,18 @@ export class SessionImpl implements Session {
         // snapshot. The driver persists each new block to JSONL inside
         // runTurn; nothing to re-persist here. See
         // docs/superpowers/specs/2026-06-01-gui-record-stream-ordering-design.md.
-        await this.driver.runTurn(text, signal, true, userAttachments);
+        // Only the paths the text still holds (ADR 0072 amendment
+        // 2026-10-20): a stale or forged list names nothing.
+        const mentions = (opts.mentions ?? []).filter(
+          (p) => typeof p === "string" && p.length > 0 && text.includes(p),
+        );
+        await this.driver.runTurn(
+          text,
+          signal,
+          true,
+          userAttachments,
+          mentions.length > 0 ? { mentions } : {},
+        );
       },
       {
         onFinished: () => this.recordTurnEnd("completed"),

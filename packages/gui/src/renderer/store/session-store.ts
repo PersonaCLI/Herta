@@ -73,6 +73,10 @@ export interface SessionSnapshotView {
    *  clears it with its carrier, whichever of the many clearing sites
    *  fired. */
   readonly pendingUserImages: readonly StagedImageInfo[] | null;
+  /** The paths the echoed message mentions with the composer's `@` (ADR 0072
+   *  amendment 2026-10-20): the echo draws them as chips, as the record's
+   *  user block will. Cleared with `pendingUser`. */
+  readonly pendingUserMentions: readonly string[] | null;
   /** True while the supervisor-veto retract morph is in flight:
    *  streamingText holds the vetoed candidate (the morph's shrink source)
    *  and retryText buffers the retry's deltas. Cleared when the finalized
@@ -252,6 +256,7 @@ const INITIAL: SessionSnapshotView = {
   error: null,
   pendingUser: null,
   pendingUserImages: null,
+  pendingUserMentions: null,
   retracting: false,
   retryText: null,
   retractKeepLen: null,
@@ -509,12 +514,18 @@ export class SessionStore {
    *  when the turn ends / a reset replaces the session. `images` are the
    *  staged pictures riding this message (ADR 0048 §4), so the echo and its
    *  flying clone show them from the first frame. */
-  markPendingUser(text: string, images?: readonly StagedImageInfo[]): void {
+  markPendingUser(
+    text: string,
+    images?: readonly StagedImageInfo[],
+    mentions?: readonly string[],
+  ): void {
     this.emit({
       ...this.snapshot,
       pendingUser: text,
       pendingUserImages:
         images !== undefined && images.length > 0 ? images : null,
+      pendingUserMentions:
+        mentions !== undefined && mentions.length > 0 ? mentions : null,
     });
   }
 
@@ -781,6 +792,9 @@ export class SessionStore {
     if (next.pendingUser === null && next.pendingUserImages !== null) {
       next = { ...next, pendingUserImages: null };
     }
+    if (next.pendingUser === null && next.pendingUserMentions !== null) {
+      next = { ...next, pendingUserMentions: null };
+    }
     if (next.composerDraft === null && next.composerDraftImages !== null) {
       next = { ...next, composerDraftImages: null };
     }
@@ -837,6 +851,7 @@ export class SessionStore {
       error: null,
       pendingUser: null,
       pendingUserImages: null,
+      pendingUserMentions: null,
       retracting: false,
       retryText: null,
       retractKeepLen: null,

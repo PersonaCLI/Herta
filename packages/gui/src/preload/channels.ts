@@ -40,6 +40,7 @@ export const CMD = {
   readWorkspaceLog: "session:readWorkspaceLog",
   readWorkspaceBranches: "session:readWorkspaceBranches",
   openWorkspaceFile: "session:openWorkspaceFile",
+  revealWorkspaceFile: "session:revealWorkspaceFile",
   getDreamConfig: "settings:getDreamConfig",
   setDreamConfig: "settings:setDreamConfig",
   getBackendConfig: "settings:getBackendConfig",

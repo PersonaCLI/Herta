@@ -744,7 +744,17 @@ export function createSessionService(
     handlersRegistered = true;
     handle(
       CMD.submitText,
-      async (_e, text: string, stagedImageIds?: readonly string[]) => {
+      async (
+        _e,
+        text: string,
+        stagedImageIds?: readonly string[],
+        rawMentions?: unknown,
+      ) => {
+        // The `@` mentions (ADR 0072 amendment 2026-10-20): strings only —
+        // the session keeps the ones the text still holds.
+        const mentions = Array.isArray(rawMentions)
+          ? rawMentions.filter((m): m is string => typeof m === "string")
+          : [];
         // Length only — chat content must not land in terminal/log capture
         // (audit 2026-07-13 T1.5; mirrors the repo's memory discipline). The
         // staged COUNT is safe for the same reason a file count is.
@@ -762,12 +772,12 @@ export function createSessionService(
         }
         try {
           const before = active.record.length;
-          const result = await active.submitText(
-            text,
-            stagedImageIds !== undefined && stagedImageIds.length > 0
+          const result = await active.submitText(text, {
+            ...(stagedImageIds !== undefined && stagedImageIds.length > 0
               ? { stagedImageIds }
-              : {},
-          );
+              : {}),
+            ...(mentions.length > 0 ? { mentions } : {}),
+          });
           if ("needsKey" in result) {
             console.log("[herta] submitText deferred — no DeepSeek key set");
           } else {
@@ -1191,6 +1201,20 @@ export function createSessionService(
       await shell.openExternal(url);
       return true;
     });
+    // A file chip's 在资源管理器中显示 (ADR 0072 amendment 2026-10-20): the
+    // same jail as the viewer's 打开 — an outside-resolving name never
+    // reaches the shell.
+    handle(
+      CMD.revealWorkspaceFile,
+      async (_e, sessionId: string, path: string) => {
+        const s = host?.activeSession ?? null;
+        if (s === null || s.sessionId !== sessionId) return false;
+        const r = await resolveInsideWorkspace(s.backendWorkspace, path);
+        if (r.kind !== "ok") return false;
+        shell.showItemInFolder(r.abs);
+        return true;
+      },
+    );
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
     // reaches shell.openPath.

@@ -15,8 +15,8 @@ function subscribe<T>(channel: string, cb: (e: T) => void): () => void {
 
 const bridge: HertaBridge = {
   platform: process.platform,
-  submitText: (text, stagedImageIds) =>
-    ipcRenderer.invoke(CMD.submitText, text, stagedImageIds),
+  submitText: (text, stagedImageIds, mentions) =>
+    ipcRenderer.invoke(CMD.submitText, text, stagedImageIds, mentions),
   interrupt: (turnId) => ipcRenderer.invoke(CMD.interrupt, turnId),
   steerText: (text) => ipcRenderer.invoke(CMD.steerText, text),
   continueInterrupted: () => ipcRenderer.invoke(CMD.continueInterrupted),
@@ -79,6 +79,8 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.readWorkspaceBranches, sessionId),
   openWorkspaceFile: (sessionId, path) =>
     ipcRenderer.invoke(CMD.openWorkspaceFile, sessionId, path),
+  revealWorkspaceFile: (sessionId, path) =>
+    ipcRenderer.invoke(CMD.revealWorkspaceFile, sessionId, path),
   // Electron 43 removed `File.path`, and this preload is CJS + sandboxed
   // (main/index.ts:266 records why it must stay that way), so a dropped
   // file's real path is only reachable through webUtils here. The renderer

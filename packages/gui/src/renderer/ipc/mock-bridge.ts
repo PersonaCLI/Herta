@@ -205,6 +205,8 @@ export interface MockHertaBridge {
   readonly bridge: HertaBridge;
   readonly calls: {
     submitText: string[];
+    /** The `@` mentions sent with each submitText, positionally paired. */
+    submitTextMentions: Array<readonly string[] | undefined>;
     /** The staged-image ids sent WITH each submitText, positionally paired
      *  with `submitText` (ADR 0048 §4). */
     submitTextStaged: Array<readonly string[] | undefined>;
@@ -355,6 +357,7 @@ export function createMockHertaBridge(
 
   const calls: MockHertaBridge["calls"] = {
     submitText: [],
+    submitTextMentions: [],
     submitTextStaged: [],
     interrupt: [],
     steerText: [],
@@ -573,9 +576,10 @@ export function createMockHertaBridge(
     windowIsFullScreen: async () => opts.windowIsFullScreenResult ?? false,
     onWindowFullScreen: (cb) => sub(windowFullScreenCbs, cb),
     onOpenSettings: (cb) => sub(openSettingsCbs, cb),
-    submitText: async (text, stagedImageIds) => {
+    submitText: async (text, stagedImageIds, mentions) => {
       calls.submitText.push(text);
       calls.submitTextStaged.push(stagedImageIds);
+      calls.submitTextMentions.push(mentions);
       return opts.submitTextResult ?? { turnId: "mock-turn" };
     },
     interrupt: async (turnId) => {

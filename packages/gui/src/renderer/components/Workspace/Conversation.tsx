@@ -72,6 +72,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     retryText,
     pendingUser,
     pendingUserImages,
+    pendingUserMentions,
     retracting,
     retractKeepLen,
     turnStartedAt,
@@ -314,6 +315,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 // minute), so the label stays stable.
                 at={pendingUserAt}
                 hidden={hidePendingUser}
+                {...(pendingUserMentions !== null
+                  ? { mentions: pendingUserMentions }
+                  : {})}
                 bubbleRef={pendingUserBubbleRef}
                 {...(pendingEchoImages.length > 0
                   ? { images: pendingEchoImages }
@@ -330,6 +334,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 variant="user"
                 text={outgoingClone.text}
                 lang={lang}
+                {...(pendingUserMentions !== null
+                  ? { mentions: pendingUserMentions }
+                  : {})}
                 {...(outgoingClone.images.length > 0
                   ? { images: outgoingClone.images }
                   : {})}

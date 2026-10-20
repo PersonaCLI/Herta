@@ -6,6 +6,7 @@ import {
   elisionNote,
   foldedRunLine,
   foldedStepLines,
+  nameMentionedPaths,
   receiptForHerta,
   shownExcerptLine,
   systemRowForHerta,
@@ -676,5 +677,35 @@ describe("the web rows (ADR 0080)", () => {
     expect(foldedRunLine(fail, "zh")).toBe(
       "这一步没成（web_fetch）：这个网址没放出去",
     );
+  });
+});
+
+describe("a mentioned path, as Herta reads it (ADR 0072 amendment 2026-10-20)", () => {
+  it("names each mentioned path by its file or folder name", () => {
+    expect(
+      nameMentionedPaths(
+        "看看 packages/herta/src/narrative/record-voice.ts 里的 opArg，再翻 packages/gui 目录",
+        ["packages/herta/src/narrative/record-voice.ts", "packages/gui"],
+      ),
+    ).toBe("看看 record-voice.ts 里的 opArg，再翻 gui 目录");
+  });
+
+  it("keeps a backticked path's ticks, and leaves a path nobody mentioned as written", () => {
+    expect(
+      nameMentionedPaths("读 `docs/design notes.md` 和 src/a.ts", [
+        "docs/design notes.md",
+      ]),
+    ).toBe("读 `design notes.md` 和 src/a.ts");
+  });
+
+  it("never cuts into a longer path that only starts with a mentioned one", () => {
+    expect(nameMentionedPaths("src/a.ts 和 src/a.ts.map", ["src/a.ts"])).toBe(
+      "a.ts 和 src/a.ts.map",
+    );
+  });
+
+  it("a top-level file and no mentions are left as they are", () => {
+    expect(nameMentionedPaths("README.md", ["README.md"])).toBe("README.md");
+    expect(nameMentionedPaths("src/a.ts", undefined)).toBe("src/a.ts");
   });
 });

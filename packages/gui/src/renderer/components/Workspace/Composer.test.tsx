@@ -1824,14 +1824,18 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
       fireEvent.change(input, {
         target: { value, selectionStart: value.length },
       });
+    // A row's words, its name and folder, without the type icon's badge.
     const options = () =>
-      [...document.querySelectorAll(".composer-mentions__item")].map(
-        (li) => li.textContent,
+      [...document.querySelectorAll(".composer-mentions__item")].map((li) =>
+        [...li.children]
+          .filter((c) => c.tagName.toLowerCase() !== "svg")
+          .map((c) => c.textContent)
+          .join(""),
       );
     return { ...r, mock, input, type, options };
   }
 
-  it("lists the matching workspace files and inserts the plain path, replacing @query", async () => {
+  it("lists the matching workspace files and inserts a chip, replacing @query (ADR 0072 amendment 2026-10-20)", async () => {
     const { input, type, options, mock } = mentionComposer();
     type("看看 @pars");
     await waitFor(() =>
@@ -1840,10 +1844,21 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     expect(mock.calls.listWorkspaceFiles).toBe(1);
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(input.value).toBe("看看 docs/parsers.md ");
+    // The text holds the chip's token; the highlight draws it as a chip.
+    expect(input.value).toBe("看看 @parsers.md ");
+    expect(document.querySelector(".composer-chip")?.textContent).toBe(
+      "@parsers.md",
+    );
     expect(document.querySelector(".composer-mentions")).toBeNull();
     // Enter picked; it did not send.
     expect(mock.calls.submitText).toHaveLength(0);
+    // Sent, the chip is its path, and the path rides along as a mention.
+    fireEvent.change(input, {
+      target: { value: "看看 @parsers.md 的结构", selectionStart: 18 },
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(mock.calls.submitText).toEqual(["看看 docs/parsers.md 的结构"]);
+    expect(mock.calls.submitTextMentions).toEqual([["docs/parsers.md"]]);
   });
 
   it("the highlight survives the selection React re-reports after a key (live check 2026-09-29)", async () => {
@@ -1857,7 +1872,7 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
       document.querySelector(".composer-mentions__item.is-active")?.textContent,
     ).toBe("parsers.mddocs");
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(input.value).toBe("看看 docs/parsers.md ");
+    expect(input.value).toBe("看看 @parsers.md ");
   });
 
   it("Tab inserts too, and the list is fetched once while typing", async () => {
@@ -1868,7 +1883,7 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     type("@par");
     await waitFor(() => expect(options()[0]).toBe("parser.tssrc"));
     fireEvent.keyDown(input, { key: "Tab" });
-    expect(input.value).toBe("src/parser.ts ");
+    expect(input.value).toBe("@parser.ts ");
     expect(mock.calls.listWorkspaceFiles).toBe(1);
   });
 
@@ -1892,6 +1907,10 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     await waitFor(() =>
       expect(options()).toEqual([
         "@板砖Delegate to the coprocessor",
+        // The top-level folders, then the files (ADR 0072 amendment
+        // 2026-10-20).
+        "docs",
+        "src",
         "README.md",
         "parser.tssrc",
         "parsers.mddocs",
@@ -1917,17 +1936,18 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
   it("a highlight moved onto a file hides the ghost, and Tab takes the file", async () => {
     const { input, type, options } = mentionComposer();
     type("@");
-    await waitFor(() => expect(options().length).toBe(5));
+    await waitFor(() => expect(options().length).toBe(7));
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(document.querySelector(".composer-ghost")).toBeNull();
     fireEvent.keyDown(input, { key: "Tab" });
-    expect(input.value).toBe("README.md ");
+    // The first row after the token is a folder now: it goes in as a chip.
+    expect(input.value).toBe("@docs ");
   });
 
   it("Esc at a bare @ dismisses the list and the ghost together", async () => {
     const { input, type, options } = mentionComposer();
     type("hi @");
-    await waitFor(() => expect(options().length).toBe(5));
+    await waitFor(() => expect(options().length).toBe(7));
     fireEvent.keyDown(input, { key: "Escape" });
     expect(document.querySelector(".composer-mentions")).toBeNull();
     expect(document.querySelector(".composer-ghost")).toBeNull();
@@ -1971,8 +1991,8 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
       }),
     );
     type("@");
-    await waitFor(() => expect(options().length).toBe(5));
-    expect(options().slice(1, 3)).toEqual(["build.ts", "README.md"]);
+    await waitFor(() => expect(options().length).toBe(7));
+    expect(options().slice(1, 3)).toEqual(["build.ts", "docs"]);
   });
 
   it("a query that can still be @板砖 / @brick offers the token first, then its files; typed out, nothing", async () => {
@@ -2003,11 +2023,68 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
   it("an IME's pre-edit keeps its keys: the arrows walk its candidates, not the list", async () => {
     const { input, type, options } = mentionComposer();
     type("@");
-    await waitFor(() => expect(options().length).toBe(5));
+    await waitFor(() => expect(options().length).toBe(7));
     fireEvent.keyDown(input, { key: "ArrowDown", keyCode: 229 });
     expect(
       document.querySelector(".composer-mentions__item.is-active")?.textContent,
     ).toBe("@板砖Delegate to the coprocessor");
+  });
+
+  it("a chip goes whole: Backspace at its end takes the token, and the mention with it", async () => {
+    const { input, type, options, mock } = mentionComposer();
+    type("看看 @pars");
+    await waitFor(() => expect(options().length).toBe(2));
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input.value).toBe("看看 @parser.ts ");
+    // The caret right after the token (the space removed by hand first).
+    fireEvent.change(input, {
+      target: { value: "看看 @parser.ts", selectionStart: 13 },
+    });
+    input.setSelectionRange(13, 13);
+    fireEvent.keyDown(input, { key: "Backspace" });
+    expect(input.value).toBe("看看 ");
+    expect(document.querySelector(".composer-chip")).toBeNull();
+    fireEvent.change(input, {
+      target: { value: "看看 parser", selectionStart: 9 },
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(mock.calls.submitTextMentions).toEqual([undefined]);
+  });
+
+  it("a press on a chip opens its menu; Remove takes the chip out", async () => {
+    const { input, type, options } = mentionComposer();
+    type("看看 @pars");
+    await waitFor(() => expect(options().length).toBe(2));
+    fireEvent.keyDown(input, { key: "Enter" });
+    const chip = document.querySelector(".composer-chip") as HTMLElement;
+    // jsdom lays nothing out: give the chip the box a browser would.
+    chip.getClientRects = () =>
+      [{ left: 40, right: 120, top: 10, bottom: 30 }] as unknown as DOMRectList;
+    chip.getBoundingClientRect = () =>
+      ({ left: 40, right: 120, top: 10, bottom: 30 }) as DOMRect;
+    fireEvent.mouseDown(input, { button: 0, clientX: 60, clientY: 20 });
+    expect(document.querySelector(".composer-chip-menu")).not.toBeNull();
+    const labels = [
+      ...document.querySelectorAll(".composer-chip-menu__item"),
+    ].map((b) => b.textContent);
+    expect(labels[0]).toContain("Copy");
+    expect(labels).toContain("Remove");
+    // Copy opens its three choices.
+    fireEvent.mouseEnter(
+      document.querySelector(".composer-chip-menu__sub-wrap") as Element,
+    );
+    expect(
+      [...document.querySelectorAll(".composer-chip-menu--sub button")].map(
+        (b) => b.textContent,
+      ),
+    ).toEqual(["Relative path", "Absolute path", "File name"]);
+    fireEvent.click(
+      [...document.querySelectorAll(".composer-chip-menu__item")].find(
+        (b) => b.textContent === "Remove",
+      ) as Element,
+    );
+    expect(input.value).toBe("看看 ");
+    expect(document.querySelector(".composer-chip-menu")).toBeNull();
   });
 
   it("without a file listing on the bridge, @ offers @板砖 alone", async () => {

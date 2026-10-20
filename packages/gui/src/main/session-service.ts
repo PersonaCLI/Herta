@@ -59,9 +59,8 @@ import {
 } from "./app-global-settings.js";
 import {
   dreamEnabled,
+  effectiveModels,
   isBackendContract,
-  isBackendThinking,
-  normalizeModelChoice,
   readAppSettings,
 } from "./app-settings.js";
 import { createAttachProgressRelay } from "./attach-progress-relay.js";
@@ -301,7 +300,9 @@ export async function buildConfig(
   // Dream: read the persisted enable flag (Settings → Dream). Restart-to-apply —
   // this is the whole apply path; the trigger reads config.dream at bootstrap.
   const settings = await readAppSettings(cwd);
-  const backendThinking = settings.backend?.thinking;
+  // The models and 板砖's effort, resolved the one way the live apply
+  // resolves them too (ADR 0081; `effectiveModels`).
+  const live = effectiveModels(settings);
   return {
     workspaceRoot: cwd,
     ...dirs,
@@ -333,24 +334,17 @@ export async function buildConfig(
       // the vision flash has been the default since 2026-08-28 (owner, ADR
       // 0048 §5a) so 板砖 can re-look at a picture without the user opting
       // in, and V4.1 Flash is that model under its current name.
-      actorModel:
-        process.env.HERTA_ACTOR_MODEL ??
-        normalizeModelChoice(settings.models?.actor) ??
-        "deepseek-v4-pro",
-      backendModel:
-        process.env.HERTA_BACKEND_MODEL ??
-        normalizeModelChoice(settings.models?.backend) ??
-        "deepseek-flash",
+      actorModel: live.actorModel,
+      backendModel: live.backendModel,
       routerModel: "deepseek-flash",
       ...(devBaseUrl !== undefined && devBaseUrl !== ""
         ? { baseUrl: devBaseUrl }
         : {}),
     },
-    // Backend reasoning effort (Settings → Coprocessor, restart-to-apply like
-    // dream above — this read at bootstrap IS the apply path). Default "high".
-    // isBackendThinking guards a hand-edited settings.json: an off-enum value
-    // falls back to the default instead of reaching the API.
-    thinking: isBackendThinking(backendThinking) ? backendThinking : "high",
+    // Backend reasoning effort (Settings → Coprocessor). Default "high"; an
+    // off-enum value in a hand-edited settings.json falls back to it. Live
+    // since ADR 0081: a change also reaches the running host (settings-ipc).
+    thinking: live.thinking,
     // 板砖's tool contract (ADR 0040): env (dev/lab knob) > Settings →
     // 差分协处理器 → 工具契约 > MINIMAL (owner default flip 2026-08-17,
     // after the permission lab + card fixes — ~½ prompt tokens, ~⅒

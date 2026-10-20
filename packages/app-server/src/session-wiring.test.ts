@@ -210,6 +210,40 @@ describe("createBackendStack", () => {
     expect(isVisionModel("deepseek-v4-pro")).toBe(false);
   });
 
+  it("resolves 板砖's provider and the vision tool when a dispatch starts, from the live model (ADR 0081)", () => {
+    let model = "deepseek-v4-pro";
+    const providers: string[] = [];
+    const providerFor = (m: string): FakeProvider => {
+      providers.push(m);
+      return new FakeProvider({ turns: [] });
+    };
+    const stack = createBackendStack({
+      wsHolder: { current: mkWorkspace() },
+      workspaceRoot: mkWorkspace(),
+      lang: "zh",
+      wantMinimal: false,
+      backendProvider: () => providerFor(model),
+      backendModel: () => model,
+      digestModel: null,
+      makeAsk: () => noAsk,
+    });
+    const names = (): string[] => stack.backendTools.list().map((t) => t.name);
+    // Built on pro: no eyes, and no provider asked for yet.
+    expect(names()).not.toContain("view_image");
+    expect(providers).toEqual([]);
+    // Settings switches to the flash: nothing changes until a dispatch.
+    model = "deepseek-flash";
+    expect(names()).not.toContain("view_image");
+    stack.runtimeFactory();
+    expect(providers).toEqual(["deepseek-flash"]);
+    expect(names()).toContain("view_image");
+    // And back: the next dispatch drops the tool again.
+    model = "deepseek-v4-pro";
+    stack.runtimeFactory();
+    expect(providers).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
+    expect(names()).not.toContain("view_image");
+  });
+
   it("mounts web_search / web_fetch with a web client, and lets them run without asking (ADR 0080)", async () => {
     const webClient = {
       search: async () => [],

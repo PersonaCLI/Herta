@@ -101,6 +101,34 @@ export interface AppSettings {
 }
 
 /**
+ * The models and 板砖's effort the app runs with (ADR 0081): an env override
+ * (the dev/lab knob) over Settings over the built-in default. One resolver
+ * for the bootstrap and the live apply, so a change in Settings and a fresh
+ * start can never disagree.
+ */
+export function effectiveModels(
+  settings: AppSettings,
+  env: NodeJS.ProcessEnv = process.env,
+): {
+  readonly actorModel: string;
+  readonly backendModel: string;
+  readonly thinking: BackendThinking;
+} {
+  const thinking = settings.backend?.thinking;
+  return {
+    actorModel:
+      env.HERTA_ACTOR_MODEL ??
+      normalizeModelChoice(settings.models?.actor) ??
+      "deepseek-v4-pro",
+    backendModel:
+      env.HERTA_BACKEND_MODEL ??
+      normalizeModelChoice(settings.models?.backend) ??
+      "deepseek-flash",
+    thinking: isBackendThinking(thinking) ? thinking : "high",
+  };
+}
+
+/**
  * Whether Dream's automatic pass is on. OPT-IN (owner 2026-09-21): it runs
  * while the user is away, on their API key, so a file that never recorded a
  * choice means OFF — the default used to be on, and someone who had never

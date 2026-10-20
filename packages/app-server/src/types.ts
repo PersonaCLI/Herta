@@ -583,6 +583,14 @@ export type RenameSessionResult =
 
 // ───── SessionHost / Session interfaces ─────
 
+/** The live model choice (ADR 0081): seeded from `AppServerConfig`, changed
+ *  by `SessionHost.setModels`. */
+export interface SessionModels {
+  readonly actorModel: string;
+  readonly backendModel: string;
+  readonly thinking?: "low" | "high" | "max" | "off";
+}
+
 export interface SessionHost {
   createSession(opts: CreateSessionOpts): Promise<Session>;
   openSession(opts: OpenSessionOpts): Promise<Session>;
@@ -632,6 +640,11 @@ export interface SessionHost {
    *  finished turn, in any session, reads it — no restart. On until set.
    *  Persistence is the caller's job. */
   setComposerPredictions(enabled: boolean): void;
+  /** Update the models and 板砖's effort live (ADR 0081): Herta's model
+   *  applies from the next turn, 板砖's model and effort from the next
+   *  dispatch — in this session or any later one. A field left out keeps its
+   *  value. Persistence is the caller's job. */
+  setModels(models: Partial<SessionModels>): void;
   /** The user did something in the window that is not a turn (a rewind, an
    *  attachment, a search, a file opened in the viewer): it counts as
    *  activity for the dream trigger, and a running pass steps aside at its

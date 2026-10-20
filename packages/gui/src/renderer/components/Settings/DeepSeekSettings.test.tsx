@@ -88,7 +88,7 @@ describe("DeepSeekSettings", () => {
       ]);
       // The restart fact lives in the intro (static), like the thinking row.
       expect(queryByText("Restart to apply")).toBeNull();
-      expect(queryByText(/apply after a restart/)).toBeTruthy();
+      expect(queryByText(/apply from your next message/)).toBeTruthy();
     });
 
     it("a failed write snaps back and shows the error note", async () => {

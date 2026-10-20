@@ -193,12 +193,12 @@ export const zh = {
   "deepseek.unverified":
     "已保存，但无法连接 DeepSeek 验证——若黑塔没有回应，请检查网络。",
   "deepseek.unencrypted": "已明文存储——此设备没有可用的安全密钥链。",
-  // Per-stage model choice (2026-08-17, owner: API prices rose). Restart-to-
-  // apply. Since the 2026-09 API (`deepseek-flash` = V4.1 Flash, which reads
+  // Per-stage model choice (2026-08-17, owner: API prices rose). Live since
+  // ADR 0081: Herta's next turn, 板砖's next dispatch. Since the 2026-09 API (`deepseek-flash` = V4.1 Flash, which reads
   // images; V4 Pro retires 2026-09-14) both rows offer the same two names —
   // the 板砖-only "Flash 视觉版" row is gone (ADR 0048 §5b).
   "deepseek.models.intro":
-    "模型选择：Flash 更快、更省，能直接看图片；Pro 成本较高。改动重启后生效。",
+    "模型选择：Flash 更快、更省，能直接看图片；Pro 成本较高。改动从下一条消息起生效。",
   "deepseek.model.actor": "对话模型",
   "deepseek.model.actorDesc": "与黑塔交流时使用的模型。",
   "deepseek.model.backend": "协处理器模型",
@@ -234,7 +234,7 @@ export const zh = {
     "差分协处理器，我叫它板砖：代码上的粗活，归它。委派须写全 @板砖，少了 @，它不会动。正面那圈光，是它此刻的状态：",
   "banzhuan.thinking": "思考强度",
   "banzhuan.thinkingDesc":
-    "动手前想多久：越高越周全，也越慢、越贵。下次启动生效。",
+    "动手前想多久：越高越周全，也越慢、越贵。下次委派生效。",
   "banzhuan.thinking.low": "低",
   "banzhuan.thinking.high": "高",
   "banzhuan.thinking.max": "最高",

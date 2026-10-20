@@ -42,6 +42,9 @@ export interface SlashContext {
   /** ADR 0075: an automatic reviewer is mounted — `/permissions
    *  auto-review on|off` switches it for this workspace. */
   autoReviewAvailable?: boolean;
+  /** The live models and effort for `/model` and `/effort` (ADR 0081).
+   *  Wired by main.ts; absent → both report "not available". */
+  models?: CliModels;
   /**
    * Optional /resume dependencies. Wired by main.ts; tests may omit. When
    * any is undefined, /resume prints "/resume not available in this build"
@@ -71,6 +74,26 @@ export interface SlashContext {
   sessionId?: string;
 }
 
+/**
+ * The CLI's live model choice (ADR 0081): seeded from the env, changed by
+ * `/model` and `/effort` for this run only. Herta reads her model at a turn's
+ * start, 板砖 its model and effort at a dispatch's.
+ */
+export interface CliModels {
+  actorModel: string;
+  backendModel: string;
+  /** Absent = the provider's default ("high"); false = thinking off. */
+  thinking?: false | "low" | "high" | "max";
+}
+
+/** The names `/model` accepts, short or full (the two the API takes). */
+const MODEL_NAMES: Readonly<Record<string, string>> = {
+  pro: "deepseek-v4-pro",
+  flash: "deepseek-flash",
+  "deepseek-v4-pro": "deepseek-v4-pro",
+  "deepseek-flash": "deepseek-flash",
+};
+
 export interface SlashResult {
   action: "continue" | "quit";
 }
@@ -80,6 +103,8 @@ const HELP_LINES: readonly [string, string][] = [
   ["/compact", "force older history into the recap"],
   ["/tools", "list registered tools"],
   ["/permissions", "list session approvals (subs: clear, auto-review on|off)"],
+  ["/model", "show or switch a model (subs: actor|backend pro|flash)"],
+  ["/effort", "show or switch 板砖's thinking effort (subs: low|high|max|off)"],
   ["/workspace", "show/set/reset the backend workspace (subs: set/reset)"],
   ["/resume", "list & resume prior sessions (subs: latest/all/<prefix>)"],
   ["/quit  /exit", "end session"],
@@ -107,6 +132,12 @@ export async function handleSlashCommand(
     case "workspace":
       handleWorkspace(ctx, parts.slice(1));
       return { action: "continue" };
+    case "model":
+      handleModel(ctx, parts.slice(1));
+      return { action: "continue" };
+    case "effort":
+      handleEffort(ctx, parts.slice(1));
+      return { action: "continue" };
     case "resume":
       await handleResume(ctx, parts[1]);
       return { action: "continue" };
@@ -118,6 +149,75 @@ export async function handleSlashCommand(
       ctx.out.write(`${ctx.style.dim("type /help for the command list")}\n`);
       return { action: "continue" };
   }
+}
+
+/** How an effort reads: the provider's default when unset. */
+function effortText(thinking: CliModels["thinking"]): string {
+  return thinking === false ? "off" : (thinking ?? "high");
+}
+
+/**
+ * `/model` (ADR 0081): show both models, or switch one for this run —
+ * Herta's from the next turn, 板砖's from the next dispatch.
+ */
+function handleModel(ctx: SlashContext, args: readonly string[]): void {
+  const m = ctx.models;
+  if (m === undefined) {
+    ctx.out.write(`${ctx.style.dim("/model: not available in this build")}\n`);
+    return;
+  }
+  const [stage, raw] = args;
+  if (stage === undefined) {
+    ctx.out.write(
+      `actor ${ctx.style.cyan(m.actorModel)} · backend ${ctx.style.cyan(m.backendModel)}\n`,
+    );
+    return;
+  }
+  const name = raw !== undefined ? MODEL_NAMES[raw.toLowerCase()] : undefined;
+  if ((stage !== "actor" && stage !== "backend") || name === undefined) {
+    ctx.out.write(
+      `${ctx.style.dim("usage: /model actor|backend pro|flash")}\n`,
+    );
+    return;
+  }
+  if (stage === "actor") {
+    m.actorModel = name;
+    ctx.out.write(
+      `actor → ${ctx.style.cyan(name)} ${ctx.style.dim("(from the next turn)")}\n`,
+    );
+  } else {
+    m.backendModel = name;
+    ctx.out.write(
+      `backend → ${ctx.style.cyan(name)} ${ctx.style.dim("(from the next @板砖 dispatch)")}\n`,
+    );
+  }
+}
+
+/** `/effort` (ADR 0081): show or switch 板砖's thinking effort for this run,
+ *  from the next dispatch. */
+function handleEffort(ctx: SlashContext, args: readonly string[]): void {
+  const m = ctx.models;
+  if (m === undefined) {
+    ctx.out.write(`${ctx.style.dim("/effort: not available in this build")}\n`);
+    return;
+  }
+  const [raw] = args;
+  if (raw === undefined) {
+    ctx.out.write(`effort ${ctx.style.cyan(effortText(m.thinking))}\n`);
+    return;
+  }
+  const level = raw.toLowerCase();
+  if (level === "off" || level === "false") {
+    m.thinking = false;
+  } else if (level === "low" || level === "high" || level === "max") {
+    m.thinking = level;
+  } else {
+    ctx.out.write(`${ctx.style.dim("usage: /effort low|high|max|off")}\n`);
+    return;
+  }
+  ctx.out.write(
+    `effort → ${ctx.style.cyan(effortText(m.thinking))} ${ctx.style.dim("(from the next @板砖 dispatch)")}\n`,
+  );
 }
 
 function renderHelp(ctx: SlashContext): void {

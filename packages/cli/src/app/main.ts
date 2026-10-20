@@ -17,6 +17,7 @@ import {
   errorMessage,
   InMemoryToolRegistry,
   listSessions,
+  type ProviderAdapter,
   readSessionFile,
   resolveEffectiveWorkspace,
   SessionFileError,
@@ -31,6 +32,7 @@ import { CliAskResolver } from "../render/permission-prompt.js";
 import { makeStyle } from "../render/style.js";
 import { Input } from "../repl/input.js";
 import { repl } from "../repl/repl.js";
+import type { CliModels } from "../repl/slash-commands.js";
 import { V2RecordPersister } from "../repl/v2-record-persister.js";
 import {
   parseArgs,
@@ -232,12 +234,38 @@ export async function main(
   // accepts low/high/max/false; default "high"), the wiring supplies
   // everything the GUI session would spell the same.
   const thinking = parseThinking(process.env.HERTA_BACKEND_THINKING, stderr);
-  const backendProvider = createBackendProvider({
-    apiKey,
-    model: backendModel,
+  // The live choice (ADR 0081): the env seeds it, `/model` and `/effort`
+  // change it for this run. Herta reads her model at a turn's start, 板砖
+  // its model and effort at a dispatch's — never inside a call.
+  //
+  // The actor defaults to deepseek-v4-pro: the actor is the user's primary
+  // touchpoint with Herta — voice fidelity and Chinese nuance matter more
+  // here than per-turn latency. The completion endpoint accepts only
+  // `deepseek-flash` or `deepseek-v4-pro` (DeepSeek doc, 2026-09-10); any
+  // other name is a 400 "supported API model names are…".
+  const cliModels: CliModels = {
+    actorModel: process.env.HERTA_ACTOR_MODEL ?? "deepseek-v4-pro",
+    backendModel,
     ...(thinking !== undefined ? { thinking } : {}),
-    ...baseUrl,
-  });
+  };
+  // One provider per model and effort, built when a dispatch first needs it.
+  let backendProviderKey = "";
+  let backendProviderBuilt: ProviderAdapter | null = null;
+  const backendProvider = (): ProviderAdapter => {
+    const key = `${cliModels.backendModel}|${String(cliModels.thinking)}`;
+    if (backendProviderBuilt === null || key !== backendProviderKey) {
+      backendProviderBuilt = createBackendProvider({
+        apiKey,
+        model: cliModels.backendModel,
+        ...(cliModels.thinking !== undefined
+          ? { thinking: cliModels.thinking }
+          : {}),
+        ...baseUrl,
+      });
+      backendProviderKey = key;
+    }
+    return backendProviderBuilt;
+  };
   const isTty =
     typeof (stdout as { isTTY?: boolean }).isTTY === "boolean" &&
     (stdout as { isTTY?: boolean }).isTTY === true;
@@ -291,8 +319,8 @@ export async function main(
     // ADR 0048 §5: the stack mounts `view_image` only when this model can
     // actually see — one rule for both hosts (isVisionModel in the wiring);
     // without it an operator on the vision model would pay its latency and
-    // still be told it has no eyes.
-    backendModel,
+    // still be told it has no eyes. Read at each dispatch (ADR 0081).
+    backendModel: () => cliModels.backendModel,
     // The digest tool's side model (ADR 0043) — the same flash sidecar the
     // GUI host builds.
     digestModel: defaultDigestModel(apiKey, baseUrl),
@@ -397,20 +425,6 @@ export async function main(
     },
   });
 
-  // Default to deepseek-v4-pro for the v0.2 narrative-completion actor.
-  // The actor is the user's primary touchpoint with Herta — voice fidelity
-  // and Chinese nuance matter more here than per-turn latency. Operators
-  // can override via HERTA_ACTOR_MODEL=deepseek-flash to trade quality for
-  // speed and cost.
-  //
-  // NOTE: per the DeepSeek doc (2026-09-10) the completion endpoint accepts
-  // only `deepseek-flash` or `deepseek-v4-pro` (the retired
-  // `deepseek-v4-flash` is still served, as V4.1 Flash). Any other model
-  // identifier produces a 400 "supported API model names are..." error.
-  // DeepSeek retires V4 Pro on 2026-09-14: the name stays accepted, served
-  // by V4.1 Flash at the Flash price.
-  const model = process.env.HERTA_ACTOR_MODEL ?? "deepseek-v4-pro";
-
   // `lang` selects the reveal cadence (EN word-paced, zh per code point) and
   // the 板砖→Brick display alias — session-constant, so a constructor opt.
   const v2Renderer = new NarrativeRenderer(stdout, style, { lang });
@@ -429,7 +443,8 @@ export async function main(
 
   const driver = new V2ActorDriver({
     provider: actor.actorProvider,
-    model,
+    // Read at each turn's start (ADR 0081): `/model actor …` lands next turn.
+    model: () => cliModels.actorModel,
     staticPrefix: actor.staticPrefix,
     bus,
     runtimeFactory: backend.runtimeFactory,
@@ -488,6 +503,7 @@ export async function main(
     transcriptDir,
     currentWorkspaceRoot: workspaceRoot,
     workspaceHolder: wsHolder,
+    models: cliModels,
     persister,
     home: deps?.homedir ?? homedir(),
     sessionId: actorSessionId,

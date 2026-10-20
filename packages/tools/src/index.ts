@@ -320,6 +320,21 @@ export function digestToolFor(
   });
 }
 
+/**
+ * `view_image` as a stack mounts it later (ADR 0081): when the backend model
+ * switches to one that reads images. The same path mapping as the digest
+ * tool's.
+ */
+export function viewImageToolFor(opts: {
+  readonly bashPath: string | null;
+}): HertaTool {
+  if (opts.bashPath === null) return viewImageTool();
+  const paths = shellPathsFor(opts.bashPath);
+  return viewImageTool({
+    mapPath: (p: string): string => paths.toNative(p) ?? p,
+  });
+}
+
 export interface MinimalToolsOpts extends DigestToolsOpts {
   /** From `findBash()`; the minimal contract cannot run without one. */
   bashPath: string;

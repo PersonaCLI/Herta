@@ -51,8 +51,9 @@ export function DeepSeekSettings(): JSX.Element {
 
   // Per-stage model rows (2026-08-17). Optional bridge surface, same
   // contract and same optimistic / latest-wins / snap-back shape as the
-  // Coprocessor thinking row (BanzhuanSettings). Restart-to-apply: buildConfig
-  // reads the choice at the next bootstrap.
+  // Coprocessor thinking row (BanzhuanSettings). Live (ADR 0081): main hands
+  // the saved choice to the running host — Herta's next turn, 板砖's next
+  // dispatch.
   const modelsSupported = bridge.setModelConfig !== undefined;
   // Pre-load optimistic state = the real handler's defaults (actor Pro,
   // owner 2026-08-17; backend the flash — the vision-capable one since the

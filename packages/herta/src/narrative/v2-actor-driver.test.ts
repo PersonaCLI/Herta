@@ -137,6 +137,46 @@ function mkDriver(
   });
 }
 
+describe("V2ActorDriver — the live model (ADR 0081)", () => {
+  it("reads a model getter once per turn: every call of a turn uses the model it began with", async () => {
+    const seen: string[] = [];
+    let live = "deepseek-v4-pro";
+    const provider: CompletionProviderAdapter = {
+      streamCompletion(req: CompletionRequest): AsyncIterable<CompletionEvent> {
+        seen.push(req.model);
+        // A Settings change lands while this turn is still talking.
+        live = "deepseek-flash";
+        return streamOf<CompletionEvent>(
+          isThoughtPrompt(req)
+            ? [
+                { type: "text-delta", text: `${AUTO_THOUGHT}（/我 想）` },
+                { type: "finish", reason: "stop" },
+              ]
+            : [
+                { type: "text-delta", text: "好。" },
+                { type: "finish", reason: "stop" },
+              ],
+        );
+      },
+    };
+    const driver = new V2ActorDriver({
+      provider,
+      model: () => live,
+      staticPrefix: { bio: "[prefix]", env: "", fewShots: [] },
+      bus: new InMemoryEventBus<AgentEvent>(),
+      runtimeFactory: () => ({}) as unknown as CodingAgentRuntime,
+      routerProvider: mkNoopRouter(),
+      metaThinkCorpus: mkEmptyCorpusForHelper(),
+    });
+    await driver.runTurn("在吗", new AbortController().signal);
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(seen)).toEqual(new Set(["deepseek-v4-pro"]));
+    seen.length = 0;
+    await driver.runTurn("再来", new AbortController().signal);
+    expect(new Set(seen)).toEqual(new Set(["deepseek-flash"]));
+  });
+});
+
 describe("V2ActorDriver", () => {
   it("returns a record with user + thought + speech blocks after one turn", async () => {
     const provider = mkProvider([

@@ -88,9 +88,12 @@ describe("BanzhuanSettings", () => {
       fireEvent.click(screen.getByRole("option", { name: "Max" }));
       expect(mock.calls.setBackendConfig).toEqual([{ thinking: "max" }]);
       // No appearing note — it re-flowed the pane height (owner 2026-08-03);
-      // "Applies on the next launch" lives in the row description instead.
+      // when it applies lives in the row descriptions instead: the effort
+      // from the next delegation (ADR 0081), the contract at the next launch.
       expect(queryByText("Restart to apply")).toBeNull();
-      // (both the thinking and the tool-contract descriptions carry it)
+      expect(screen.queryAllByText(/next delegation/).length).toBeGreaterThan(
+        0,
+      );
       expect(screen.queryAllByText(/next launch/).length).toBeGreaterThan(0);
     });
 

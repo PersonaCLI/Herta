@@ -216,7 +216,7 @@ export const en = {
   "deepseek.unencrypted":
     "Stored unencrypted — this device has no secure keychain available.",
   "deepseek.models.intro":
-    "Model choice: Flash is faster and cheaper and can read images; Pro costs more. Changes apply after a restart.",
+    "Model choice: Flash is faster and cheaper and can read images; Pro costs more. Changes apply from your next message.",
   "deepseek.model.actor": "Conversation model",
   "deepseek.model.actorDesc": "The model used when talking with Herta.",
   "deepseek.model.backend": "Coprocessor model",
@@ -260,7 +260,7 @@ export const en = {
     "The Differential Coprocessor. I call it the Brick: the grunt work of code is its job. Delegate with the full @板砖; without the @, it does not move. The ring on its face is its state:",
   "banzhuan.thinking": "Thinking effort",
   "banzhuan.thinkingDesc":
-    "How long it thinks before acting: higher is more thorough, and slower and costlier. Applies on the next launch.",
+    "How long it thinks before acting: higher is more thorough, and slower and costlier. Applies from the next delegation.",
   "banzhuan.thinking.low": "Low",
   "banzhuan.thinking.high": "High",
   "banzhuan.thinking.max": "Max",

@@ -59,6 +59,7 @@ import type {
   SessionExportSource,
   SessionHost,
   SessionMetadata,
+  SessionModels,
 } from "./types.js";
 import { installUsageLog } from "./usage-log.js";
 
@@ -88,6 +89,9 @@ class SessionHostImpl implements SessionHost {
   private readonly pdfTranscriptsHolder = { current: true };
   /** Composer predictions (2026-10-10): on unless the user turned them off. */
   private readonly predictionsHolder = { current: true };
+  /** The models and 板砖's effort (ADR 0081), live the same way: seeded from
+   *  the config, read by each session at a turn's or a dispatch's start. */
+  private readonly modelsHolder: { current: SessionModels };
   /** Serializes create/open/delete/closeActive (audit 2026-07-10, finding
    *  11): each op awaits a long disk load and then assigns `_active`
    *  unconditionally, so two concurrent activations could leave `_active`
@@ -104,6 +108,13 @@ class SessionHostImpl implements SessionHost {
 
   constructor(private readonly config: AppServerConfig) {
     this.keyHolder = { current: config.providers.deepseekApiKey };
+    this.modelsHolder = {
+      current: {
+        actorModel: config.providers.actorModel,
+        backendModel: config.providers.backendModel,
+        ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+      },
+    };
     const dreamCfg = resolveDreamConfig(config.dream);
 
     this.dreamTrigger = new DreamTrigger({
@@ -383,6 +394,14 @@ class SessionHostImpl implements SessionHost {
     this.predictionsHolder.current = enabled;
   }
 
+  /** Update the models and 板砖's effort (ADR 0081). Herta's next turn and
+   *  板砖's next dispatch — in this session or any later one — read them; a
+   *  turn or a run in flight finishes on what it started with. Persistence
+   *  is the caller's job. */
+  setModels(models: Partial<SessionModels>): void {
+    this.modelsHolder.current = { ...this.modelsHolder.current, ...models };
+  }
+
   async reapOrphanedProcesses(): Promise<void> {
     try {
       const reaped = await reapOrphanedDispatches(
@@ -442,6 +461,7 @@ class SessionHostImpl implements SessionHost {
       deepSeekKey: () => this.keyHolder.current,
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
       composerPredictions: () => this.predictionsHolder.current,
+      models: () => this.modelsHolder.current,
       persister,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     });
@@ -516,6 +536,7 @@ class SessionHostImpl implements SessionHost {
       deepSeekKey: () => this.keyHolder.current,
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
       composerPredictions: () => this.predictionsHolder.current,
+      models: () => this.modelsHolder.current,
       persister,
       initialRecord: record,
       // How the last turn ENDED, when the file recorded it. Its absence is

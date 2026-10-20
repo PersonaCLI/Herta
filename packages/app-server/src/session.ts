@@ -119,6 +119,7 @@ import type {
   RewindResult,
   Session,
   SessionAgentEvent,
+  SessionModels,
   SpeechControlEvent,
   StageImagesResult,
   SteerTextResult,
@@ -2006,6 +2007,9 @@ export class SessionImpl implements Session {
      *  holder, 2026-10-10). Absent = off: a host that offers no switch
      *  (tests, the CLI) makes no prediction calls. */
     composerPredictions?: () => boolean;
+    /** Live getter for the models and 板砖's effort (from the host's holder,
+     *  ADR 0081). Absent = the config's, fixed (tests). */
+    models?: () => SessionModels;
     /** Interaction language (slice 4): threaded into every language-
      *  parameterized constructor below (static prefix, seeds, opening,
      *  meta-think, hints, recap, title) and into the V2ActorDriver. The
@@ -2055,18 +2059,39 @@ export class SessionImpl implements Session {
     // provider (offline-providers.ts) — and the same for the actor's roles
     // and the title below.
     const stubs = deps.providerOverrides;
-    const backendProvider =
-      stubs?.backend ??
-      (stubs !== undefined
-        ? offlineChatProvider("backend")
-        : createBackendProvider({
-            apiKey,
-            model: config.providers.backendModel,
-            ...(config.thinking !== undefined
-              ? { thinking: config.thinking }
-              : {}),
-            ...baseUrl,
-          }));
+    // The live choice (ADR 0081): Herta's model is read at each turn's
+    // start, 板砖's model and effort at each dispatch's — a change in
+    // Settings lands at the next one, never inside a call.
+    const models: () => SessionModels =
+      opts.models ??
+      (() => ({
+        actorModel: config.providers.actorModel,
+        backendModel: config.providers.backendModel,
+        ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+      }));
+    // One provider per model and effort, built when a dispatch first needs
+    // it; a run in flight keeps the one it started with.
+    let backendProviderKey = "";
+    let backendProviderBuilt: ProviderAdapter | null = null;
+    const backendProvider = (): ProviderAdapter => {
+      if (stubs?.backend !== undefined) return stubs.backend;
+      if (stubs !== undefined) {
+        backendProviderBuilt ??= offlineChatProvider("backend");
+        return backendProviderBuilt;
+      }
+      const m = models();
+      const key = `${m.backendModel}|${m.thinking ?? ""}`;
+      if (backendProviderBuilt === null || key !== backendProviderKey) {
+        backendProviderBuilt = createBackendProvider({
+          apiKey,
+          model: m.backendModel,
+          ...(m.thinking !== undefined ? { thinking: m.thinking } : {}),
+          ...baseUrl,
+        });
+        backendProviderKey = key;
+      }
+      return backendProviderBuilt;
+    };
 
     // 1. Backend stack (shared wiring — see session-wiring.ts). The
     //    OverlayAskResolver surfaces pending permission requests through the
@@ -2111,7 +2136,7 @@ export class SessionImpl implements Session {
       backendProvider,
       // ADR 0048 §5: the stack mounts `view_image` only when this model can
       // actually see (isVisionModel, one rule for both hosts).
-      backendModel: config.providers.backendModel,
+      backendModel: () => models().backendModel,
       // The digest tool's side model (ADR 0043): flash, thinking off. A test
       // override takes the place of the real provider; without one the tool
       // mounts as `unavailable` rather than reaching the network under test.
@@ -2355,7 +2380,7 @@ export class SessionImpl implements Session {
     //     submitText into driver.runTurn so interrupt() can cancel.
     const driver = new V2ActorDriver({
       provider: actor.actorProvider,
-      model: config.providers.actorModel,
+      model: () => models().actorModel,
       staticPrefix: actor.staticPrefix,
       bus,
       runtimeFactory,

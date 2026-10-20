@@ -103,6 +103,7 @@ import {
   registerWebRules,
   registerWriteNewFileRule,
   shellWorkspaceHint,
+  viewImageToolFor,
 } from "@herta/tools";
 import type { AppServerConfig } from "./types.js";
 
@@ -266,14 +267,16 @@ export interface BackendStackOpts {
    *  this machine; without one the stack runs `standard` and reports it via
    *  `contract` / `bashPath` so the caller can warn where it sees fit. */
   readonly wantMinimal: boolean;
-  readonly backendProvider: ProviderAdapter;
+  /** 板砖's provider, or a getter for the live one (ADR 0081): resolved when
+   *  each dispatch builds its runtime, so a run in flight keeps its own. */
+  readonly backendProvider: ProviderAdapter | (() => ProviderAdapter);
   /** The backend model's NAME, beside its provider: the stack derives from
    *  it whether the model can read images (ADR 0048 §5, `isVisionModel`) and
    *  mounts `view_image` accordingly — so a visual question can be answered
    *  by a RE-LOOK rather than by the attachment caption's one-shot reading.
    *  Was a caller-supplied `vision` flag until 2026-09-03; the two hosts
    *  had each derived it their own way. */
-  readonly backendModel: string;
+  readonly backendModel: string | (() => string);
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
@@ -409,7 +412,15 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // Whether the backend MODEL can read a picture (ADR 0048 §5). Mounts
   // `view_image` on either contract; false everywhere else, so a model
   // without vision is never told it can look.
-  const vision = isVisionModel(opts.backendModel);
+  const backendModelNow = (): string =>
+    typeof opts.backendModel === "function"
+      ? opts.backendModel()
+      : opts.backendModel;
+  const backendProviderNow = (): ProviderAdapter =>
+    typeof opts.backendProvider === "function"
+      ? opts.backendProvider()
+      : opts.backendProvider;
+  const vision = isVisionModel(backendModelNow());
   // The toolset follows the environment, per session (ADR 0067): the
   // digest tool waits for a document, the git tools for a repository. Both
   // decisions are made here and at the two events that change them —
@@ -485,10 +496,21 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // Neither web tool asks (ADR 0080 §3); the rule says so explicitly.
   if (opts.webClient != null) registerWebRules(permissions);
 
-  const runtimeFactory = (): CodingAgentRuntime =>
-    new CodingAgentRuntime({
+  // `view_image` follows the model (ADR 0048 §5), checked when a dispatch
+  // starts (ADR 0081) — a model switched in Settings mounts or drops it for
+  // the next run, never inside one.
+  const syncVisionTool = (): void => {
+    const want = isVisionModel(backendModelNow());
+    const have = backendTools.get("view_image") !== undefined;
+    if (want && !have) backendTools.register(viewImageToolFor({ bashPath }));
+    else if (!want && have) backendTools.unregister("view_image");
+  };
+
+  const runtimeFactory = (): CodingAgentRuntime => {
+    syncVisionTool();
+    return new CodingAgentRuntime({
       sessionId: randomUUID(),
-      provider: opts.backendProvider,
+      provider: backendProviderNow(),
       tools: backendTools,
       permissions,
       backendBuilder,
@@ -528,6 +550,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       ...(opts.undoDir !== undefined ? { undoDir: opts.undoDir } : {}),
       contract,
     });
+  };
 
   return {
     contract,

@@ -180,3 +180,82 @@ describe("settings IPC — attention (ADR 0072 §1)", () => {
     });
   });
 });
+
+describe("settings IPC — models and effort apply live (ADR 0081)", () => {
+  function setup(): {
+    handlers: Map<string, Handler>;
+    applied: unknown[];
+  } {
+    userData.dir = mkdtempSync(join(tmpdir(), "herta-settings-"));
+    const handlers = new Map<string, Handler>();
+    const applied: unknown[] = [];
+    registerSettingsHandlers({
+      handle: ((channel: string, fn: Handler) => {
+        handlers.set(channel, fn);
+      }) as never,
+      hooks: {},
+      host: () => ({ setModels: (m: unknown) => applied.push(m) }) as never,
+      workspaceRoot: () => userData.dir,
+      voice: {
+        synthesizer: null,
+        voiceModel: null,
+        minimaxVoice: null,
+        engine: "local",
+        realtimeEnabled: false,
+        minimaxFetch: (async () => new Response("")) as never,
+        anyMiniMaxKey: () => false,
+        minimaxRefusal: () => null,
+        stopSpeech: () => {},
+      },
+    });
+    return { handlers, applied };
+  }
+
+  it("a model pick is saved and reaches the running host at once", async () => {
+    const { handlers, applied } = setup();
+    await handlers.get(CMD.setModelConfig)?.(null, {
+      actor: "deepseek-flash",
+      backend: "deepseek-v4-pro",
+    });
+    expect(await handlers.get(CMD.getModelConfig)?.(null)).toEqual({
+      actor: "deepseek-flash",
+      backend: "deepseek-v4-pro",
+    });
+    expect(applied).toEqual([
+      { actorModel: "deepseek-flash", backendModel: "deepseek-v4-pro" },
+    ]);
+  });
+
+  it("an effort pick reaches the host; a contract pick alone does not (it waits for a restart)", async () => {
+    const { handlers, applied } = setup();
+    await handlers.get(CMD.setBackendConfig)?.(null, { thinking: "max" });
+    expect(applied).toEqual([{ thinking: "max" }]);
+    await handlers.get(CMD.setBackendConfig)?.(null, { contract: "standard" });
+    expect(applied).toEqual([{ thinking: "max" }]);
+  });
+
+  it("an env override still wins over a live pick, as at a fresh start", async () => {
+    const { handlers, applied } = setup();
+    vi.stubEnv("HERTA_ACTOR_MODEL", "deepseek-v4-pro");
+    try {
+      await handlers.get(CMD.setModelConfig)?.(null, {
+        actor: "deepseek-flash",
+        backend: "deepseek-flash",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(applied).toEqual([
+      { actorModel: "deepseek-v4-pro", backendModel: "deepseek-flash" },
+    ]);
+  });
+
+  it("an off-list model is refused and nothing reaches the host", async () => {
+    const { handlers, applied } = setup();
+    await handlers.get(CMD.setModelConfig)?.(null, {
+      actor: "gpt-9",
+      backend: "deepseek-flash",
+    });
+    expect(applied).toEqual([]);
+  });
+});

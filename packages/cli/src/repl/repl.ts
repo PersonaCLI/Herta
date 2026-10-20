@@ -12,7 +12,7 @@ import { aliasBrickInput } from "../render/banzhuan-alias.js";
 import type { NarrativeRenderer } from "../render/narrative-renderer.js";
 import type { Style } from "../render/style.js";
 import type { Input } from "./input.js";
-import { handleSlashCommand } from "./slash-commands.js";
+import { type CliModels, handleSlashCommand } from "./slash-commands.js";
 
 export interface ReplDeps {
   actor: V2ActorDriver;
@@ -35,6 +35,9 @@ export interface ReplDeps {
   currentWorkspaceRoot?: string;
   /** Mutable backend-workspace holder, threaded into SlashContext for /workspace. */
   workspaceHolder?: { current: string };
+  /** The live models and effort, threaded into SlashContext for /model and
+   *  /effort (ADR 0081). */
+  models?: CliModels;
   /** Threaded into SlashContext for /workspace (appends workspace_set lines). */
   persister?: V2RecordPersister;
   /** Threaded into SlashContext for /workspace set|reset. */
@@ -80,6 +83,7 @@ export async function repl(deps: ReplDeps): Promise<void> {
         transcriptDir: deps.transcriptDir,
         currentWorkspaceRoot: deps.currentWorkspaceRoot,
         workspaceHolder: deps.workspaceHolder,
+        ...(deps.models !== undefined ? { models: deps.models } : {}),
         persister: deps.persister,
         home: deps.home,
         sessionId: deps.sessionId,

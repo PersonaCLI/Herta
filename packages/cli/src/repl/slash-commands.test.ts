@@ -735,3 +735,64 @@ describe("handleSlashCommand", () => {
     });
   });
 });
+
+describe("/model and /effort (ADR 0081)", () => {
+  const mk = () => {
+    const out = new MockWritable();
+    const models = {
+      actorModel: "deepseek-v4-pro",
+      backendModel: "deepseek-flash",
+    } as {
+      actorModel: string;
+      backendModel: string;
+      thinking?: false | "low" | "high" | "max";
+    };
+    return { out, models, ctx: { ...mkCtx({ out }), models } };
+  };
+
+  it("/model shows both, and switches one stage for this run", async () => {
+    const { out, models, ctx } = mk();
+    await handleSlashCommand("/model", ctx);
+    expect(out.full()).toContain(
+      "actor deepseek-v4-pro · backend deepseek-flash",
+    );
+    await handleSlashCommand("/model actor flash", ctx);
+    expect(models.actorModel).toBe("deepseek-flash");
+    expect(out.full()).toContain("actor → deepseek-flash (from the next turn)");
+    await handleSlashCommand("/model backend deepseek-v4-pro", ctx);
+    expect(models.backendModel).toBe("deepseek-v4-pro");
+    expect(out.full()).toContain("(from the next @板砖 dispatch)");
+  });
+
+  it("/model refuses an unknown stage or name and changes nothing", async () => {
+    const { out, models, ctx } = mk();
+    await handleSlashCommand("/model actor gpt-9", ctx);
+    await handleSlashCommand("/model herta pro", ctx);
+    expect(models).toEqual({
+      actorModel: "deepseek-v4-pro",
+      backendModel: "deepseek-flash",
+    });
+    expect(out.full()).toContain("usage: /model actor|backend pro|flash");
+  });
+
+  it("/effort shows the default, and switches it for the next dispatch", async () => {
+    const { out, models, ctx } = mk();
+    await handleSlashCommand("/effort", ctx);
+    expect(out.full()).toContain("effort high");
+    await handleSlashCommand("/effort max", ctx);
+    expect(models.thinking).toBe("max");
+    await handleSlashCommand("/effort off", ctx);
+    expect(models.thinking).toBe(false);
+    await handleSlashCommand("/effort loud", ctx);
+    expect(models.thinking).toBe(false);
+    expect(out.full()).toContain("usage: /effort low|high|max|off");
+  });
+
+  it("without the live holder both say they are not available", async () => {
+    const out = new MockWritable();
+    await handleSlashCommand("/model", mkCtx({ out }));
+    await handleSlashCommand("/effort", mkCtx({ out }));
+    expect(out.full()).toContain("/model: not available in this build");
+    expect(out.full()).toContain("/effort: not available in this build");
+  });
+});

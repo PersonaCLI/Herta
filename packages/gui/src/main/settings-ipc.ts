@@ -37,7 +37,9 @@ import {
   updateGlobalSettings,
 } from "./app-global-settings.js";
 import {
+  type AppSettings,
   dreamEnabled,
+  effectiveModels,
   isBackendContract,
   isBackendThinking,
   isModelChoice,
@@ -194,14 +196,20 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
       if (thinking === undefined && contract === undefined) return;
       const ws = workspaceRoot();
       const s = await readAppSettings(ws);
-      await writeAppSettings(ws, {
+      const next: AppSettings = {
         ...s,
         backend: {
           ...s.backend,
           ...(thinking !== undefined ? { thinking } : {}),
           ...(contract !== undefined ? { contract } : {}),
         },
-      });
+      };
+      await writeAppSettings(ws, next);
+      // The effort applies from 板砖's next dispatch (ADR 0081); the tool
+      // contract still waits for a restart.
+      if (thinking !== undefined) {
+        deps.host()?.setModels({ thinking: effectiveModels(next).thinking });
+      }
     },
   );
   // Settings → DeepSeek → 模型: per-stage model (2026-08-17). Same
@@ -224,9 +232,17 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
       if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
       const ws = workspaceRoot();
       const s = await readAppSettings(ws);
-      await writeAppSettings(ws, {
+      const next: AppSettings = {
         ...s,
         models: { ...s.models, actor: cfg.actor, backend: cfg.backend },
+      };
+      await writeAppSettings(ws, next);
+      // Live (ADR 0081): Herta's next turn and 板砖's next dispatch use them.
+      // An env override still wins, as at a fresh start.
+      const live = effectiveModels(next);
+      deps.host()?.setModels({
+        actorModel: live.actorModel,
+        backendModel: live.backendModel,
       });
     },
   );

@@ -117,7 +117,10 @@ function corpusHasContent(corpus: MetaThinkCorpus): boolean {
 
 export interface V2ActorDriverDeps {
   readonly provider: CompletionProviderAdapter;
-  readonly model: string;
+  /** The completion model, or a getter for the live choice (ADR 0081): read
+   *  once at a turn's start, so every call of the turn — thought, speech,
+   *  beats, retries — uses the model the turn began with. */
+  readonly model: string | (() => string);
   /** Structured static Herta prefix. See `StaticHertaPrefix` in
    *  `@herta/herta`'s narrative/actor-prompt. */
   readonly staticPrefix: StaticHertaPrefix;
@@ -482,6 +485,9 @@ export class V2ActorDriver {
     opts: { readonly resume?: true } = {},
   ): Promise<TerminalRecord> {
     const prevLen = this.record.length;
+    // One model for the whole turn (ADR 0081): a Settings change lands at
+    // the next turn, never between this turn's calls.
+    const model = this.modelNow();
 
     // Slice 13: classify intent before the actor runs. Router failure
     // is non-fatal — we keep the prior state and proceed.
@@ -573,7 +579,7 @@ export class V2ActorDriver {
         ? startThoughtSpeculation({
             deps: {
               provider: this.deps.provider,
-              model: this.deps.model,
+              model,
               staticPrefix: this.staticPrefix,
               attachedMetaThink: corpusActive
                 ? this.planMetaThink(this.currentIntentState).attachment
@@ -675,7 +681,7 @@ export class V2ActorDriver {
     try {
       result = await runActorCompletionTurn({ record: this.record }, text, {
         provider: this.deps.provider,
-        model: this.deps.model,
+        model,
         staticPrefix: this.staticPrefix,
         bus: this.deps.bus,
         runtimeFactory: this.deps.runtimeFactory,
@@ -831,6 +837,12 @@ export class V2ActorDriver {
    * Call once, immediately after the session is pointed at (before any user
    * turn), so that invariant holds.
    */
+  /** The completion model as it stands now (ADR 0081). */
+  private modelNow(): string {
+    const m = this.deps.model;
+    return typeof m === "function" ? m() : m;
+  }
+
   async regenerateLastReply(signal: AbortSignal): Promise<TerminalRecord> {
     const last = this.record[this.record.length - 1];
     if (last === undefined || last.kind !== "user") return this.record;
@@ -971,7 +983,7 @@ export class V2ActorDriver {
     return predictNextUserMessage(
       {
         provider: this.deps.provider,
-        model: this.deps.model,
+        model: this.modelNow(),
         record: this.record,
         lang,
         ...(notes !== undefined ? { notes } : {}),

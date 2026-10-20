@@ -1521,6 +1521,12 @@ export function Composer(): JSX.Element {
           <textarea
             ref={taRef}
             className="composer-input"
+            // No spellcheck (owner 2026-10-20: a chip's name showed the red
+            // squiggle). A textarea checks all of its text or none, so a
+            // chip's token is flagged like any word; most English typed here
+            // is identifiers and file names, and the app offers no
+            // corrections to act on a squiggle.
+            spellCheck={false}
             placeholder={
               suggestion ??
               t(

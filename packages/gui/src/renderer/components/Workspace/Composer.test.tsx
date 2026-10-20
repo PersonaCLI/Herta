@@ -2056,6 +2056,9 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     type("看看 @pars");
     await waitFor(() => expect(options().length).toBe(2));
     fireEvent.keyDown(input, { key: "Enter" });
+    // No red squiggle under the chip's name (owner 2026-10-20): the
+    // textarea is not spellchecked.
+    expect(input.getAttribute("spellcheck")).toBe("false");
     const chip = document.querySelector(".composer-chip") as HTMLElement;
     // jsdom lays nothing out: give the chip the box a browser would.
     chip.getClientRects = () =>

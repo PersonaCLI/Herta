@@ -1529,6 +1529,15 @@ button,
 .session-item.is-active {
   background: var(--wash-2);
 }
+/* The app's ring, not the browser's (owner 2026-10-21: in dark mode the
+   default two-tone ring — the system accent outside, white inside — showed
+   a white sliver). The arrows and Ctrl+Shift+[ / ] (ADR 0082) put the focus
+   on cards often now. Inset: the scrolling list clips anything outside a
+   card's box. */
+.session-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
 /* Session separation (adopted D1, 2026-06-13, replacing the O1 outlines):
    a center-fading gradient crease between CONSECUTIVE cards within a group
    — group labels already separate across groups. Drawn in the inter-card
@@ -1706,8 +1715,14 @@ button,
   cursor: pointer;
 }
 .composer-chip-menu__item:hover,
+.composer-chip-menu__item:focus-visible,
 .composer-chip-menu__item[aria-expanded="true"] {
   background: var(--ink-a06);
+}
+/* Walked with the arrows (ADR 0082 §10): the row's tint is the focus sign,
+   as the hover's is, not the browser's ring. */
+.composer-chip-menu__item:focus-visible {
+  outline: none;
 }
 .composer-chip-menu__item.is-danger {
   color: var(--danger, #d9534f);

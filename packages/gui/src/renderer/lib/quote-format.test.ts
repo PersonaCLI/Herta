@@ -8,6 +8,7 @@ import {
   QUOTE_MAX_LINES,
   quotedMessagePreview,
   quoteLabel,
+  quotesBack,
 } from "./quote-format.js";
 
 const DIV: ComposerQuote = {
@@ -95,5 +96,40 @@ describe("quote-format (ADR 0078 §4–§7)", () => {
     // The stored preview, cut inside the fence: the label, not the source.
     const stored = `${composeQuotedMessage([DIV], "为什么不判零？", "zh").slice(0, 40)}…`;
     expect(quotedMessagePreview(stored)).toBe("〔src/calc.js:9–14〕");
+  });
+});
+
+describe("a quote never dispatches, and comes back as a chip (ADR 0078 amendment 2026-10-21)", () => {
+  it("a heading that names @板砖 or @brick goes into the header with the token broken", () => {
+    const header = formatQuote(
+      { ...DIV, title: "@板砖 委派 and @Brick" },
+      "zh",
+    ).split("\n")[0];
+    expect(header).not.toContain("@板砖");
+    expect(header).not.toMatch(/@brick/i);
+    expect(header).toContain("板砖 委派");
+  });
+
+  it("quotesBack: the leading quotes as composer quotes again, fence tag and all, and the rest", () => {
+    const message = composeQuotedMessage(
+      [DIV, { ...DIV, id: "q2", from: 20, to: 20, fence: undefined }],
+      "为什么不判零？",
+      "zh",
+    );
+    const back = quotesBack(message);
+    expect(back.rest).toBe("为什么不判零？");
+    expect(back.quotes.map((q) => [q.path, q.from, q.to, q.fence])).toEqual([
+      ["src/calc.js", 9, 14, "js"],
+      ["src/calc.js", 20, 20, undefined],
+    ]);
+    expect(back.quotes[0]?.text).toBe(DIV.text);
+    expect(new Set(back.quotes.map((q) => q.id)).size).toBe(2);
+  });
+
+  it("quotesBack leaves a message alone when it has no quotes", () => {
+    expect(quotesBack("just words")).toEqual({
+      quotes: [],
+      rest: "just words",
+    });
   });
 });

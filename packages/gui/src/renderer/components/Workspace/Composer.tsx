@@ -33,10 +33,16 @@ import {
   mentionItems,
   pruneChips,
 } from "../../lib/file-mention.js";
-import { composeQuotedMessage, quoteLabel } from "../../lib/quote-format.js";
+import {
+  composeQuotedMessage,
+  quotedMessagePreview,
+  quoteLabel,
+  quotesBack,
+} from "../../lib/quote-format.js";
 import { recallLastUserMessage } from "../../lib/recall-last-message.js";
 import { useEscapeStop, useShortcut } from "../../lib/shortcut-registry.js";
 import { submitMessage } from "../../lib/submit-message.js";
+import type { SessionStore } from "../../store/session-store.js";
 import { stopAllVoice } from "../../voice/play-voice.js";
 import { armHoverTip, hideHoverTip } from "../common/hover-tip.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
@@ -296,6 +302,15 @@ function ChipMenu(props: {
   );
 }
 
+/** A message coming back into the composer (an edited or returned hold,
+ *  ↑ recall, a rewind): its leading quotes become chips again, and the rest
+ *  is what goes into the field (ADR 0078 amendment 2026-10-21). */
+function takeBack(store: SessionStore, message: string): string {
+  const back = quotesBack(message);
+  for (const q of back.quotes) store.addComposerQuote(q);
+  return back.rest;
+}
+
 export function Composer(): JSX.Element {
   const t = useT();
   const { bridge, sessionStore } = useHertaBridge();
@@ -534,13 +549,21 @@ export function Composer(): JSX.Element {
       // so an edit puts back exactly what was typed.
       if (!holding) return;
       // The chips go as the paths they stand for (ADR 0072 amendment
-      // 2026-10-20): a held message is plain text from here on.
-      const pending = expandChips(text, chips).text.trim();
-      if (pending.length === 0) return;
+      // 2026-10-20): a held message is plain text from here on. Its quotes
+      // go with it, in front, as a send would carry them (ADR 0078
+      // amendment 2026-10-21) — they used to stay staged, and the words
+      // went without them. The alias at delivery skips fenced source.
+      const pending = composeQuotedMessage(
+        composerQuotes,
+        expandChips(text, chips).text.trim(),
+        lang,
+      );
+      if (pending.trim().length === 0) return;
       sessionStore.holdMessage(pending);
       setText("");
       setChips([]);
       setHintActive(false);
+      sessionStore.clearComposerQuotes();
       return;
     }
     // Each chip becomes its path; the user block records the paths, so the
@@ -647,10 +670,11 @@ export function Composer(): JSX.Element {
         (stopped || sessionStore.getSnapshot().turnFailed)
       ) {
         sessionStore.clearHeld();
+        const words = takeBack(sessionStore, pending);
         setText((prev) =>
-          prev.trim().length > 0 ? `${pending}\n\n${prev}` : pending,
+          prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
         );
-        pendingCaret.current = pending.length;
+        pendingCaret.current = words.length;
       } else if (pending !== null) {
         // The clone lifts off from the card, not the input: measure it
         // BEFORE the clear unmounts it.
@@ -730,7 +754,8 @@ export function Composer(): JSX.Element {
     const pending = held;
     if (pending === null) return;
     sessionStore.clearHeld();
-    setText((prev) => (prev.length > 0 ? `${pending}\n\n${prev}` : pending));
+    const words = takeBack(sessionStore, pending);
+    setText((prev) => (prev.length > 0 ? `${words}\n\n${prev}` : words));
     taRef.current?.focus({ preventScroll: true });
     setFocusWithin(true);
   };
@@ -1017,13 +1042,12 @@ export function Composer(): JSX.Element {
     if (composerDraft === null) return;
     // In FRONT of whatever is being typed, never over it — the same rule the
     // held card's Edit follows. A rewind replaced an unsent draft outright
-    // (UX review 2026-09-22, item 15).
-    setText((prev) =>
-      prev.trim().length > 0 ? `${composerDraft}\n\n${prev}` : composerDraft,
-    );
+    // (UX review 2026-09-22, item 15). Its quotes come back as chips.
+    const words = takeBack(sessionStore, composerDraft);
+    setText((prev) => (prev.trim().length > 0 ? `${words}\n\n${prev}` : words));
     if (composerDraftImages !== null) images.restore(composerDraftImages);
     setHintActive(false);
-    pendingCaret.current = composerDraft.length;
+    pendingCaret.current = words.length;
     taRef.current?.focus({ preventScroll: true });
     sessionStore.clearComposerDraft();
   }, [composerDraft]);
@@ -1303,7 +1327,9 @@ export function Composer(): JSX.Element {
               <path d="M7 4.2V7l1.9 1.4" />
             </svg>
           </span>
-          <span className="composer-held__text">{held}</span>
+          <span className="composer-held__text">
+            {quotedMessagePreview(held)}
+          </span>
           <span className="composer-held__actions">
             {canSteer && (
               <button
@@ -1838,8 +1864,14 @@ export function Composer(): JSX.Element {
                 );
                 if (last !== null) {
                   e.preventDefault();
-                  // The chips it was sent with come back as chips.
-                  const back = chipify(last.text, last.mentions);
+                  // The chips it was sent with come back as chips, and its
+                  // quotes as quote chips — unless quotes are staged, which
+                  // a recall must not double.
+                  const words =
+                    composerQuotes.length === 0
+                      ? takeBack(sessionStore, last.text)
+                      : quotesBack(last.text).rest;
+                  const back = chipify(words, last.mentions);
                   setChips(back.chips);
                   setText(back.text);
                   pendingCaret.current = back.text.length;

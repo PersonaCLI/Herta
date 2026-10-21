@@ -1,3 +1,5 @@
+import { mapOutsideQuotation, quotationRanges } from "@herta/core";
+
 /**
  * Structured view of a Herta-authored finalized block.
  *
@@ -21,36 +23,35 @@ export interface ParsedHertaBlock {
 const BANZHUAN_TRIGGER = "@板砖";
 
 /**
- * A `…` inline code span (single backticks, no inner backtick).
- * A `@板砖` inside such a span is quotation, not dispatch — this keeps
- * the supervisor §8 backtick exemption factually true (2026-06-11
- * trigger discipline). Unpaired backticks form no span, so the text
- * after them still counts as outside.
+ * A `@板砖` inside quotation is a mention, not a dispatch: a `…` inline
+ * code span (single backticks, no inner backtick) — this keeps the
+ * supervisor §8 backtick exemption factually true (2026-06-11 trigger
+ * discipline) — and, since 2026-10-21, a CLOSED fenced code block
+ * (`quotationRanges`, ADR 0078 amendment 2026-10-21): a quoted file
+ * passage holding `` `@板砖` `` dispatched 板砖 by itself, because inside a
+ * fence the span rule mis-paired. Unpaired backticks form no span and an
+ * unclosed fence quotes nothing, so the text after them still counts as
+ * outside.
  */
-const INLINE_CODE_SPAN = /`[^`]*`/g;
-
 export function parseHertaBlock(text: string): ParsedHertaBlock {
-  // Spans are replaced with a space, not deleted: deleting would splice
-  // the surrounding text and could fabricate a trigger that was never
-  // in the input (e.g. "@`x`板砖").
-  const hasBanzhuanTrigger = text
-    .replace(INLINE_CODE_SPAN, " ")
-    .includes(BANZHUAN_TRIGGER);
-  return { text, hasBanzhuanTrigger };
+  // Quotation is replaced with a space, not deleted: deleting would
+  // splice the surrounding text and could fabricate a trigger that was
+  // never in the input (e.g. "@`x`板砖").
+  let outside = "";
+  let last = 0;
+  for (const [s, e] of quotationRanges(text)) {
+    outside += `${text.slice(last, s)} `;
+    last = e;
+  }
+  outside += text.slice(last);
+  return { text, hasBanzhuanTrigger: outside.includes(BANZHUAN_TRIGGER) };
 }
 
-/** Replace every `@板砖` OUTSIDE inline code spans; spans pass through. */
+/** Replace every `@板砖` OUTSIDE quotation; quotation passes through. */
 function replaceBareTrigger(text: string, replacement: string): string {
-  let result = "";
-  let last = 0;
-  for (const match of text.matchAll(INLINE_CODE_SPAN)) {
-    result +=
-      text.slice(last, match.index).split(BANZHUAN_TRIGGER).join(replacement) +
-      match[0];
-    last = match.index + match[0].length;
-  }
-  result += text.slice(last).split(BANZHUAN_TRIGGER).join(replacement);
-  return result;
+  return mapOutsideQuotation(text, (seg) =>
+    seg.split(BANZHUAN_TRIGGER).join(replacement),
+  );
 }
 
 /**

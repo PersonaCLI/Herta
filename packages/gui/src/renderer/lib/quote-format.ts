@@ -77,10 +77,21 @@ function fenceFor(text: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
+/** A title (a quoted section's heading) sits on the header line, OUTSIDE the
+ *  fence that makes the source quotation (ADR 0078 amendment 2026-10-21): a
+ *  heading that names `@板砖` — or `@brick`, which an EN session's alias
+ *  turns into it — would dispatch 板砖 on the Trailblazer's behalf. A
+ *  zero-width space after the `@` keeps the words and breaks the token. */
+function inertTitle(title: string): string {
+  return title.replace(/@(?=板砖|brick)/giu, "@​");
+}
+
 /** One quote as the message carries it. */
 export function formatQuote(q: ComposerQuote, lang: "zh" | "en"): string {
   const title =
-    q.title !== undefined && q.title.length > 0 ? ` · ${q.title}` : "";
+    q.title !== undefined && q.title.length > 0
+      ? ` · ${inertTitle(q.title)}`
+      : "";
   const fence = fenceFor(q.text);
   return [
     `${OPEN}${headerWord(lang)} ${quoteLabel(q)}${title}${CLOSE}`,
@@ -109,6 +120,8 @@ export interface ParsedQuote {
   readonly to?: number;
   readonly title?: string;
   readonly text: string;
+  /** The fence's language tag, when it carried one. */
+  readonly fence?: string;
 }
 
 /**
@@ -124,9 +137,10 @@ export function parseLeadingQuotes(message: string): {
   let i = 0;
   for (;;) {
     const head = HEADER.exec(lines[i] ?? "");
-    const open = /^(`{3,})[^`]*$/.exec(lines[i + 1] ?? "");
+    const open = /^(`{3,})([^`]*)$/.exec(lines[i + 1] ?? "");
     if (head === null || open === null) break;
     const fence = open[1] as string;
+    const tag = (open[2] ?? "").trim();
     const close = lines.findIndex((l, k) => k > i + 1 && l === fence);
     if (close === -1) break;
     const label = head[1] as string;
@@ -142,12 +156,46 @@ export function parseLeadingQuotes(message: string): {
         : {}),
       ...(head[2] !== undefined ? { title: head[2] } : {}),
       text: lines.slice(i + 2, close).join("\n"),
+      ...(tag.length > 0 ? { fence: tag } : {}),
     });
     i = close + 1;
     while ((lines[i] ?? "").trim().length === 0 && i < lines.length) i += 1;
   }
   if (quotes.length === 0) return { quotes, rest: message };
   return { quotes, rest: lines.slice(i).join("\n") };
+}
+
+let backSeq = 0;
+
+/**
+ * A message coming back into the composer — the held card's Edit, a hold
+ * returned after Stop or a failure, ↑ recall, a rewind — with its leading
+ * quotes as chips again, not as header-and-fence text in the field (ADR 0078
+ * amendment 2026-10-21). Only when every quote names its source: a header
+ * the parser cannot place stays text, the whole message with it.
+ */
+export function quotesBack(message: string): {
+  readonly quotes: readonly ComposerQuote[];
+  readonly rest: string;
+} {
+  const parsed = parseLeadingQuotes(message);
+  if (parsed.quotes.length === 0) return { quotes: [], rest: message };
+  const quotes: ComposerQuote[] = [];
+  for (const q of parsed.quotes) {
+    if (q.path === undefined || q.from === undefined || q.to === undefined)
+      return { quotes: [], rest: message };
+    backSeq += 1;
+    quotes.push({
+      id: `qb${Date.now().toString(36)}-${backSeq}`,
+      path: q.path,
+      from: q.from,
+      to: q.to,
+      ...(q.title !== undefined ? { title: q.title } : {}),
+      text: q.text,
+      ...(q.fence !== undefined ? { fence: q.fence } : {}),
+    });
+  }
+  return { quotes, rest: parsed.rest };
 }
 
 /** A one-line stand-in for a quoted message (the sidebar card's preview):

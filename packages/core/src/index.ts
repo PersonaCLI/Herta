@@ -229,6 +229,8 @@ export {
   dealiasBrickDraft,
   INLINE_CODE_SPAN,
   mapOutsideInlineSpans,
+  mapOutsideQuotation,
+  quotationRanges,
 } from "./text/banzhuan-alias.js";
 export { countDiffLines, countDiffLinesFor } from "./text/diff-lines.js";
 export { estimatePromptTokens } from "./text/estimate-prompt-tokens.js";

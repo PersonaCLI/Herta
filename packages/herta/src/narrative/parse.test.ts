@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { userTextPreemptsDispatch } from "./actor-turn.js";
 import {
   neutralizeBanzhuanTrigger,
   type ParsedHertaBlock,
@@ -226,5 +227,56 @@ describe("parseHertaBlock — shape", () => {
     // The shape is intentionally minimal — no inlineCalls field as of
     // the 2026-05-23 inline-tool removal sweep.
     expect(Object.keys(parsed).sort()).toEqual(["hasBanzhuanTrigger", "text"]);
+  });
+});
+
+describe("parseHertaBlock — a closed fenced block is quotation (ADR 0078 amendment 2026-10-21)", () => {
+  const tick = "`";
+  const f3 = tick.repeat(3);
+  const f4 = tick.repeat(4);
+
+  it("a quoted passage holding an inline-code @板砖 is no trigger — the span rule alone mis-paired inside the fence", () => {
+    const text = `〔引用 CLAUDE.md:120–122〕\n${f3}md\nthe ${tick}@板砖${tick} delegation token\n${f3}\n\n讲讲这段`;
+    expect(parseHertaBlock(text).hasBanzhuanTrigger).toBe(false);
+    expect(userTextPreemptsDispatch(text)).toBe(false);
+  });
+
+  it("nor is a four-backtick fence (a quoted section that holds a code block)", () => {
+    const text = `〔引用 docs/x.md:1–9〕\n${f4}md\n${f3}ts\ncode\n${f3}\nwrite @板砖 to delegate\n${f4}\n\n讲讲这段`;
+    expect(parseHertaBlock(text).hasBanzhuanTrigger).toBe(false);
+    expect(userTextPreemptsDispatch(text)).toBe(false);
+  });
+
+  it("nor a tilde fence", () => {
+    expect(
+      parseHertaBlock("~~~\nask @板砖 for it\n~~~").hasBanzhuanTrigger,
+    ).toBe(false);
+  });
+
+  it("the Trailblazer's own @板砖 after a quote still dispatches, and the brief keeps the quote whole", () => {
+    const text = `〔引用 notes.md:3〕\n${f3}\nask @板砖 for it\n${f3}\n\n@板砖 按这段改`;
+    expect(userTextPreemptsDispatch(text)).toBe(true);
+    const brief = stripBanzhuanTrigger(text);
+    expect(brief).toContain("ask @板砖 for it");
+    expect(brief.endsWith(" 按这段改")).toBe(true);
+  });
+
+  it("an UNCLOSED fence quotes nothing — a stray fence never swallows a real @板砖", () => {
+    expect(parseHertaBlock(`${f3}\n@板砖 看看`).hasBanzhuanTrigger).toBe(true);
+    // A shorter or different closing line does not close it.
+    expect(
+      parseHertaBlock(`${f4}\nx\n${f3}\n@板砖 看看`).hasBanzhuanTrigger,
+    ).toBe(true);
+    expect(
+      parseHertaBlock(`${f3}\nx\n~~~\n@板砖 看看`).hasBanzhuanTrigger,
+    ).toBe(true);
+  });
+
+  it("neutralize leaves a fenced @板砖 as it was", () => {
+    const text = `${f3}\n@板砖 in code\n${f3}\n@板砖 live`;
+    const out = neutralizeBanzhuanTrigger(text);
+    expect(out).toContain("@板砖 in code");
+    expect(out).toContain(`${tick}@板砖${tick} live`);
+    expect(parseHertaBlock(out).hasBanzhuanTrigger).toBe(false);
   });
 });

@@ -263,6 +263,20 @@ describe("Settings shows where the cheat sheet is (ADR 0082 amendment 2026-10-21
     expect(document.querySelector(".settings-card")).toBeInTheDocument();
   });
 
+  it("a press on the sheet's empty backdrop closes the sheet alone — Settings under it stays open (owner 2026-10-21)", async () => {
+    await openSettings();
+    fireEvent.click(document.querySelector(".settings-nav-foot") as Element);
+    const backdrop = screen.getByTestId("shortcuts-sheet");
+    // Pins the intended behaviour. The bug itself needs the browser's
+    // timing — the sheet's close lands in React between the press's
+    // listeners, before it reaches the document where Settings listens —
+    // which a press dispatched in jsdom does not have; it was reproduced and
+    // checked with a real click in the dev renderer.
+    fireEvent.mouseDown(backdrop);
+    expect(screen.queryByTestId("shortcuts-sheet")).toBeNull();
+    expect(document.querySelector(".settings-card")).toBeInTheDocument();
+  });
+
   it("Ctrl+/ opens the sheet over Settings too", async () => {
     await openSettings();
     ctrl("/", { code: "Slash" });

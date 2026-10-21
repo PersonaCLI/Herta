@@ -7402,6 +7402,34 @@ button.commit-view__path:hover {
 }
 .settings-nav-item:hover { background: var(--ink-a05); }
 .settings-nav-item.is-active { background: rgba(77, 134, 255, .12); color: var(--accent-deep); }
+/* The nav is a column so the shortcuts row rests at its foot; the list
+   inside keeps block layout, so its margins collapse as they always did
+   (ADR 0082 amendment 2026-10-21, the owner's option A). */
+.settings-nav { display: flex; flex-direction: column; }
+.settings-nav-list { flex: 0 0 auto; }
+.settings-nav-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-micro) ease;
+}
+.settings-nav-foot:hover { background: var(--ink-a06); }
+.settings-nav-foot:focus-visible {
+  outline: 2px solid var(--banzhuan-led);
+  outline-offset: 1px;
+}
 .settings-nav-item:focus-visible {
   outline: 2px solid var(--banzhuan-led);
   outline-offset: 1px;

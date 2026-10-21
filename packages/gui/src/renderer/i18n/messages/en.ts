@@ -61,6 +61,7 @@ export const en = {
   "window.closeBtn": "Close",
   "settings.eyebrow": "Settings",
   "settings.closeAria": "Close settings",
+  "settings.shortcuts": "Shortcuts",
   "settings.sectionsAria": "Settings sections",
   "settings.dialogAria": "Settings",
   "settings.loadFailed":

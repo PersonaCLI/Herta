@@ -58,6 +58,7 @@ export const zh = {
   "window.closeBtn": "关闭",
   "settings.eyebrow": "设置",
   "settings.closeAria": "关闭设置",
+  "settings.shortcuts": "快捷键",
   "settings.sectionsAria": "设置分区",
   "settings.dialogAria": "设置",
   "settings.loadFailed": "设置读取失败——重新打开设置以重试",

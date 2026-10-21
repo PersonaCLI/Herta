@@ -234,3 +234,38 @@ describe("Escape stops the run (ADR 0082 §5)", () => {
     expect(mock.calls.interrupt).toHaveLength(0);
   });
 });
+
+describe("Settings shows where the cheat sheet is (ADR 0082 amendment 2026-10-21)", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  async function openSettings() {
+    const r = mountWithSession();
+    act(() => r.mock.emitOpenSettings());
+    await waitFor(() =>
+      expect(document.querySelector(".settings-nav-foot")).toBeInTheDocument(),
+    );
+    return r;
+  }
+
+  it("the nav's foot row names the keys and opens the sheet over Settings; a press inside the sheet leaves Settings open, and Escape closes the sheet alone", async () => {
+    await openSettings();
+    const foot = document.querySelector(".settings-nav-foot") as HTMLElement;
+    expect(foot.textContent).toContain("Shortcuts");
+    expect(
+      [...foot.querySelectorAll(".keycap")].map((k) => k.textContent),
+    ).toEqual(["Ctrl", "/"]);
+    fireEvent.click(foot);
+    const sheet = screen.getByTestId("shortcuts-sheet");
+    fireEvent.mouseDown(sheet.querySelector(".shortcuts-card") as Element);
+    expect(document.querySelector(".settings-card")).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    expect(screen.queryByTestId("shortcuts-sheet")).toBeNull();
+    expect(document.querySelector(".settings-card")).toBeInTheDocument();
+  });
+
+  it("Ctrl+/ opens the sheet over Settings too", async () => {
+    await openSettings();
+    ctrl("/", { code: "Slash" });
+    expect(screen.getByTestId("shortcuts-sheet")).toBeInTheDocument();
+  });
+});

@@ -64,10 +64,12 @@ export function runShortcut(id: ShortcutId): boolean {
  *  (the lowest layer) does not count — each command decides for itself, as
  *  its button does. */
 function keyboardOwned(id: ShortcutId): boolean {
+  // Ctrl+/ opens the sheet over any of them — it is above them all — and
+  // closes the sheet it opened (ADR 0082 amendment 2026-10-21: Settings'
+  // nav foot opens it over Settings, so the key does too).
+  if (id === "showShortcuts") return false;
   const z = topOverlayZ();
-  if (z === null || z <= OVERLAY_Z.approval) return false;
-  // Ctrl+/ closes the sheet it opened.
-  return !(id === "showShortcuts" && topOverlay() === "shortcuts");
+  return z !== null && z > OVERLAY_Z.approval;
 }
 
 /** The one window listener. Mounted once, by the workbench. */

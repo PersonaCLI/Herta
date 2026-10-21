@@ -174,7 +174,13 @@ export const UserBubble = memo(function UserBubble(
                   onClick={() =>
                     openFile(target, {
                       ...(q.from !== undefined
-                        ? { anchor: { from: q.from, to: q.to ?? q.from } }
+                        ? {
+                            anchor: {
+                              from: q.from,
+                              to: q.to ?? q.from,
+                              ...(q.unit !== undefined ? { unit: q.unit } : {}),
+                            },
+                          }
                         : {}),
                     })
                   }

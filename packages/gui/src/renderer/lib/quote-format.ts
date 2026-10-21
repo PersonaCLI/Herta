@@ -23,7 +23,10 @@ export interface ComposerQuote {
   readonly path: string;
   readonly from: number;
   readonly to: number;
-  /** A markdown section's heading. */
+  /** What `from` and `to` count: lines (absent), or a PDF's pages (ADR 0078
+   *  amendment 2026-10-21 — a PDF has no lines of its own). */
+  readonly unit?: "page";
+  /** A markdown section's heading; a PDF outline entry's title. */
   readonly title?: string;
   /** The source of those lines, bounded (`boundQuoteText`). */
   readonly text: string;
@@ -34,24 +37,88 @@ export interface ComposerQuote {
 export const QUOTE_MAX_LINES = 200;
 export const QUOTE_MAX_CHARS = 8_000;
 
+/** A PDF quote's pages as the message's own language writes them
+ *  (`quote.page` / `quote.pages` in the session-language catalogs). */
+const pagesWord = (lang: "zh" | "en", from: number, to: number): string =>
+  to > from
+    ? makeT(lang)("quote.pages", { from, to })
+    : makeT(lang)("quote.page", { n: from });
+
+/** The four page spellings as patterns, read from the catalogs: each
+ *  placeholder becomes a number group, the rest is literal. */
+const NUM_A = "";
+const NUM_B = "";
+const escapeRe = (s: string): string =>
+  s.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+const PAGE_SPELLINGS: readonly string[] = (["zh", "en"] as const).flatMap(
+  (lang) => [
+    escapeRe(makeT(lang)("quote.page", { n: NUM_A })).replace(NUM_A, "(\\d+)"),
+    escapeRe(makeT(lang)("quote.pages", { from: NUM_A, to: NUM_B }))
+      .replace(NUM_A, "(\\d+)")
+      .replace(NUM_B, "(\\d+)"),
+  ],
+);
+/** Any page spelling, numbers uncaptured — for the header's label part. */
+const PAGE_PART = `(?:${PAGE_SPELLINGS.map((p) => p.replaceAll("(\\d+)", "\\d+")).join("|")})`;
+/** `path · <pages>`, one pattern per spelling. */
+const PAGE_LABELS = PAGE_SPELLINGS.map((p) => new RegExp(`^(.+) · ${p}$`, "u"));
+
 /** The header's word is the message's own language, so it comes from the
  *  session-language catalogs (`makeT`), never the UI locale; the parser
  *  knows both. The brackets are structure, not copy: U+3014 / U+3015. */
 const OPEN = "\u3014";
 const CLOSE = "\u3015";
 const headerWord = (lang: "zh" | "en"): string => makeT(lang)("quote.header");
+// The label is lazy up to its optional page part, so a page label's own
+// " · " never reads as the title's.
 const HEADER = new RegExp(
-  `^${OPEN}(?:${headerWord("zh")}|${headerWord("en")}) (.+?)(?: · (.+))?${CLOSE}$`,
+  `^${OPEN}(?:${headerWord("zh")}|${headerWord("en")}) (.+?(?: · ${PAGE_PART})?)(?: · (.+))?${CLOSE}$`,
+  "u",
 );
 const LABEL = /^(.+):(\d+)(?:–(\d+))?$/;
 
-/** `path:from–to`, or `path:from` for one line. */
-export function quoteLabel(q: {
-  readonly path: string;
-  readonly from: number;
-  readonly to: number;
-}): string {
+/** `path:from–to`, or `path:from` for one line; a PDF's pages as
+ *  `path · 第 3 页` (zh) or `path · p. 3` (en), in the message's language. */
+export function quoteLabel(
+  q: {
+    readonly path: string;
+    readonly from: number;
+    readonly to: number;
+    readonly unit?: "page";
+  },
+  lang: "zh" | "en" = "zh",
+): string {
+  if (q.unit === "page") return `${q.path} · ${pagesWord(lang, q.from, q.to)}`;
   return q.to > q.from ? `${q.path}:${q.from}–${q.to}` : `${q.path}:${q.from}`;
+}
+
+/** A label read back: its path and range, and what the range counts. */
+function parseLabel(label: string):
+  | {
+      readonly path: string;
+      readonly from: number;
+      readonly to: number;
+      readonly unit?: "page";
+    }
+  | undefined {
+  for (const re of PAGE_LABELS) {
+    const page = re.exec(label);
+    if (page === null) continue;
+    const from = Number(page[2]);
+    return {
+      path: page[1] as string,
+      from,
+      to: Number(page[3] ?? from),
+      unit: "page",
+    };
+  }
+  const line = LABEL.exec(label);
+  if (line === null) return undefined;
+  return {
+    path: line[1] as string,
+    from: Number(line[2]),
+    to: Number(line[3] ?? line[2]),
+  };
 }
 
 /** A quote's source held to the bounds, with a note of what was left out. */
@@ -94,7 +161,7 @@ export function formatQuote(q: ComposerQuote, lang: "zh" | "en"): string {
       : "";
   const fence = fenceFor(q.text);
   return [
-    `${OPEN}${headerWord(lang)} ${quoteLabel(q)}${title}${CLOSE}`,
+    `${OPEN}${headerWord(lang)} ${quoteLabel(q, lang)}${title}${CLOSE}`,
     `${fence}${q.fence ?? ""}`,
     q.text,
     fence,
@@ -118,6 +185,8 @@ export interface ParsedQuote {
   readonly path?: string;
   readonly from?: number;
   readonly to?: number;
+  /** The range counts a PDF's pages. */
+  readonly unit?: "page";
   readonly title?: string;
   readonly text: string;
   /** The fence's language tag, when it carried one. */
@@ -144,16 +213,10 @@ export function parseLeadingQuotes(message: string): {
     const close = lines.findIndex((l, k) => k > i + 1 && l === fence);
     if (close === -1) break;
     const label = head[1] as string;
-    const at = LABEL.exec(label);
+    const at = parseLabel(label);
     quotes.push({
       label,
-      ...(at !== null
-        ? {
-            path: at[1] as string,
-            from: Number(at[2]),
-            to: Number(at[3] ?? at[2]),
-          }
-        : {}),
+      ...(at ?? {}),
       ...(head[2] !== undefined ? { title: head[2] } : {}),
       text: lines.slice(i + 2, close).join("\n"),
       ...(tag.length > 0 ? { fence: tag } : {}),
@@ -190,6 +253,7 @@ export function quotesBack(message: string): {
       path: q.path,
       from: q.from,
       to: q.to,
+      ...(q.unit !== undefined ? { unit: q.unit } : {}),
       ...(q.title !== undefined ? { title: q.title } : {}),
       text: q.text,
       ...(q.fence !== undefined ? { fence: q.fence } : {}),

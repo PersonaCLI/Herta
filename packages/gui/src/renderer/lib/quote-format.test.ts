@@ -133,3 +133,62 @@ describe("a quote never dispatches, and comes back as a chip (ADR 0078 amendment
     });
   });
 });
+
+describe("a PDF quote counts pages (ADR 0078 amendment 2026-10-21)", () => {
+  const PAGE: ComposerQuote = {
+    id: "qp",
+    path: "docs/paper.pdf",
+    from: 3,
+    to: 4,
+    unit: "page",
+    title: "Method · Data",
+    text: "The data came from two sources.",
+  };
+
+  it("the label is the path and the pages, in the message's language", () => {
+    expect(quoteLabel(PAGE, "zh")).toBe("docs/paper.pdf · 第 3–4 页");
+    expect(quoteLabel(PAGE, "en")).toBe("docs/paper.pdf · pp. 3–4");
+    expect(quoteLabel({ ...PAGE, to: 3 }, "en")).toBe("docs/paper.pdf · p. 3");
+    expect(quoteLabel({ ...PAGE, to: 3 }, "zh")).toBe(
+      "docs/paper.pdf · 第 3 页",
+    );
+  });
+
+  it("the header reads back — page part and a title that holds its own ' · '", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const message = composeQuotedMessage([PAGE], "讲讲", lang);
+      expect(message.split("\n")[0]).toBe(
+        lang === "zh"
+          ? "〔引用 docs/paper.pdf · 第 3–4 页 · Method · Data〕"
+          : "〔Quote docs/paper.pdf · pp. 3–4 · Method · Data〕",
+      );
+      const [q] = parseLeadingQuotes(message).quotes;
+      expect(q).toMatchObject({
+        path: "docs/paper.pdf",
+        from: 3,
+        to: 4,
+        unit: "page",
+        title: "Method · Data",
+        text: PAGE.text,
+      });
+    }
+  });
+
+  it("comes back as a page quote", () => {
+    const back = quotesBack(composeQuotedMessage([PAGE], "", "en"));
+    expect(back.quotes[0]).toMatchObject({ unit: "page", from: 3, to: 4 });
+  });
+
+  it("a line quote still reads as lines", () => {
+    const [q] = parseLeadingQuotes(
+      composeQuotedMessage([{ ...DIV, title: "A · B" }], "", "zh"),
+    ).quotes;
+    expect(q).toMatchObject({
+      path: "src/calc.js",
+      from: 9,
+      to: 14,
+      title: "A · B",
+    });
+    expect(q?.unit).toBeUndefined();
+  });
+});

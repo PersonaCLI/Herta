@@ -6883,8 +6883,17 @@ button.commit-view__path:hover {
 .file-viewer__image-meta,
 .file-viewer__pdf-meta { padding-top: 6px; padding-bottom: 10px; font-variant-numeric: tabular-nums; }
 
-/* PDF pages: paper on the glass, one column, fit to width. */
-.file-viewer__pdf { padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+/* PDF pages: paper on the glass, one column, fit to width. The column is a
+   positioned host so the piece mask can lie over the pages and scroll with
+   them (ADR 0078 amendment 2026-10-21). */
+.file-viewer__pdf { padding: 16px; }
+.file-viewer__pdf-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
 .file-viewer__pdf-page {
   /* A flex item in a column of definite height SHRINKS to fit by default,
      and overflow:hidden lets it shrink to nothing: a 52-page PDF rendered

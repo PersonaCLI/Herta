@@ -343,18 +343,23 @@ export function FileViewerPanel(): JSX.Element | null {
         : load.kind === "diff"
           ? load.reply.diff.path
           : load.reply.relative;
-  // Piece quoting (ADR 0078): the code layout and rendered markdown only.
-  const piece: PieceQuoting | undefined =
-    load.kind === "text" && load.reply.ok && kindInfo.kind !== "csv"
-      ? {
-          enabled: pieceOn,
-          path: relative,
-          lang: sessionLang,
-          onQuote: (quotes) => {
-            for (const q of quotes) sessionStore.addComposerQuote(q);
-          },
-        }
-      : undefined;
+  // Piece quoting (ADR 0078): the code layout and rendered markdown, and a
+  // PDF's text (ADR 0078 amendment 2026-10-21).
+  const quotable =
+    (load.kind === "text" && load.reply.ok && kindInfo.kind !== "csv") ||
+    (load.kind === "bytes" && load.reply.ok && kindInfo.kind === "pdf");
+  const piece: PieceQuoting | undefined = quotable
+    ? {
+        enabled: pieceOn,
+        path: relative,
+        lang: sessionLang,
+        onQuote: (quotes) => {
+          for (const q of quotes) sessionStore.addComposerQuote(q);
+        },
+        onNoText: () =>
+          sessionStore.setComposerNotice(t("viewer.piece.noText")),
+      }
+    : undefined;
   const activeName = tabName(v.tabs[v.active] ?? { path });
   const modeKey = tabKey(target ?? { path });
   const mode: ViewMode =
@@ -789,7 +794,13 @@ function FileViewerBody({
         body = <ImageView bytes={bytes} path={path} />;
         break;
       case "pdf":
-        body = <PdfView bytes={bytes} />;
+        body = (
+          <PdfView
+            bytes={bytes}
+            piece={piece}
+            anchor={anchor?.unit === "page" ? anchor : undefined}
+          />
+        );
         break;
       case "docx":
         body = <DocxView bytes={bytes} />;

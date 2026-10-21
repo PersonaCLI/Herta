@@ -1526,7 +1526,9 @@ export function Composer(): JSX.Element {
                 >
                   <path d="M3 9.5c-.3-1.8.3-3.4 2-4.2M7.5 9.5c-.3-1.8.3-3.4 2-4.2" />
                 </svg>
-                <span className="composer-quote__label">{quoteLabel(q)}</span>
+                <span className="composer-quote__label">
+                  {quoteLabel(q, lang)}
+                </span>
                 <span className="composer-quote__preview">
                   {q.title ??
                     q.text.split("\n").find((l) => l.trim().length > 0) ??
@@ -1535,7 +1537,7 @@ export function Composer(): JSX.Element {
                 <button
                   type="button"
                   className="composer-quote__remove"
-                  aria-label={`${t("composer.quote.remove")} ${quoteLabel(q)}`}
+                  aria-label={`${t("composer.quote.remove")} ${quoteLabel(q, lang)}`}
                   onClick={() => sessionStore.removeComposerQuote(q.id)}
                 >
                   <svg

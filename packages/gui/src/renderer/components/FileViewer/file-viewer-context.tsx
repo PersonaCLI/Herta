@@ -28,6 +28,9 @@ import { useSessionScoped } from "../../hooks/useSessionScoped.js";
 export interface ViewerAnchor {
   readonly from: number;
   readonly to: number;
+  /** The range counts a PDF's pages, not lines (a PDF quote's label, ADR
+   *  0078 amendment 2026-10-21): the PDF view scrolls to the first. */
+  readonly unit?: "page";
 }
 
 /** One open file: the record-spelled path to read, plus an optional

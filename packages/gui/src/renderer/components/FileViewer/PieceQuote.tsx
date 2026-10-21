@@ -89,6 +89,9 @@ export interface PieceQuoting {
   readonly path: string;
   readonly lang: "zh" | "en";
   readonly onQuote: (quotes: readonly ComposerQuote[]) => void;
+  /** The picked pieces held no text to quote — a scanned PDF's pages
+   *  (ADR 0078 amendment 2026-10-21): say so, never do nothing. */
+  readonly onNoText?: () => void;
 }
 
 /** One piece of the mask: where it lies on the host, and what it quotes. */

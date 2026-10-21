@@ -7,6 +7,7 @@ import {
 } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { isRepeatClick } from "../../lib/repeat-click.js";
+import { useShortcut } from "../../lib/shortcut-registry.js";
 import { TitleText } from "../TitleText.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { NewSessionIcon, PanelToggleIcon, SearchIcon } from "./icons.js";
@@ -72,6 +73,33 @@ export function TopBar(props: TopBarProps): JSX.Element {
       setNewArmed(false);
     }, NEW_ARM_RESET_MS);
   };
+  /** The button's press, and Ctrl/⌘+N's (ADR 0082): the same guards. */
+  const newSession = (): void => {
+    if (creating.current || gatePending) return;
+    if (turnInFlight && !newArmed) {
+      armNew();
+      return;
+    }
+    if (newArmTimer.current !== null) {
+      window.clearTimeout(newArmTimer.current);
+      newArmTimer.current = null;
+    }
+    setNewArmed(false);
+    creating.current = true;
+    // A failed create answers null (main points the window at whatever the
+    // host has open); a rejected invoke is caught so it never surfaces as
+    // an unhandled rejection.
+    void bridge
+      .createSession({})
+      .catch(() => null)
+      .finally(() => {
+        creating.current = false;
+      });
+  };
+  useShortcut("newSession", () => {
+    newSession();
+    return true;
+  });
   // A tray "New Chat" was refused mid-turn (2026-07-13): main fronted the
   // window and signalled the refusal — arm the icon the way a first direct
   // click would, so the refusal explains itself here too.
@@ -97,7 +125,11 @@ export function TopBar(props: TopBarProps): JSX.Element {
   );
   return (
     <div className="topbar" data-testid="topbar">
-      <Tooltip label={t("topbar.toggleSidebar")} align="start">
+      <Tooltip
+        label={t("topbar.toggleSidebar")}
+        keys="toggleSidebar"
+        align="start"
+      >
         <button
           type="button"
           className="sidebar-header-icon"
@@ -108,7 +140,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
           <PanelToggleIcon />
         </button>
       </Tooltip>
-      <Tooltip label={t("topbar.search")} align="start">
+      <Tooltip label={t("topbar.search")} keys="searchSessions" align="start">
         <button
           ref={props.searchButtonRef}
           type="button"
@@ -127,6 +159,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
               ? t("session.switchInterrupts")
               : t("topbar.newSession")
         }
+        keys="newSession"
         align="start"
       >
         <button
@@ -135,30 +168,11 @@ export function TopBar(props: TopBarProps): JSX.Element {
           aria-label={t("topbar.newSession")}
           disabled={gatePending}
           onClick={(e) => {
-            if (creating.current) return;
             // The second click of a double-click is never the arm's confirm:
             // it interrupted the reply the arm exists to protect (UX review
             // 2026-09-22, item 3). A fresh click after the tint confirms.
             if (isRepeatClick(e)) return;
-            if (turnInFlight && !newArmed) {
-              armNew();
-              return;
-            }
-            if (newArmTimer.current !== null) {
-              window.clearTimeout(newArmTimer.current);
-              newArmTimer.current = null;
-            }
-            setNewArmed(false);
-            creating.current = true;
-            // A failed create answers null (main points the window at
-            // whatever the host has open); a rejected invoke is caught so it
-            // never surfaces as an unhandled rejection.
-            void bridge
-              .createSession({})
-              .catch(() => null)
-              .finally(() => {
-                creating.current = false;
-              });
+            newSession();
           }}
         >
           <NewSessionIcon />

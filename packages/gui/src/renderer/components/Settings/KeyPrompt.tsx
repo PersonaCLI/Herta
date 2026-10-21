@@ -160,6 +160,9 @@ export function KeyPrompt(): JSX.Element | null {
             setRejected(false);
           }}
           onKeyDown={(e) => {
+            // An IME's Enter confirms its candidate; it does not save
+            // (ADR 0082 §11).
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") {
               e.preventDefault();
               save();

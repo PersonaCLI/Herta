@@ -186,6 +186,20 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     if (bridge.onAttachProgress === undefined) return undefined;
     return bridge.onAttachProgress(reportAttachProgress);
   }, [bridge]);
+  // Sending disables the textarea for the turn, and the focus fell to
+  // nothing (ADR 0082 §11). It lands here instead: the arrows and PgUp/PgDn
+  // scroll the conversation, Escape still stops, Tab goes on from here, and
+  // the composer takes the caret back when it can (its `caretIsFree`).
+  const idle = status === "idle";
+  useEffect(() => {
+    if (idle) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body)
+        scroll.scrollRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [idle]);
   useTurnFollow({
     scroll,
     isFlightArmed: outgoing.isFlightArmed,
@@ -271,6 +285,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
             scroll.fog.bottom ? " has-fog-bottom" : ""
           }`}
           ref={scroll.scrollRef}
+          tabIndex={-1}
         >
           {/* Centered readable column (user feedback 2026-07-06): with the left
             sidebar hidden the pane widens and fixed-width bubbles hugging the

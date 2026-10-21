@@ -761,3 +761,100 @@ describe("ApprovalPanel — automatic review (ADR 0064 amendment 2026-10-10)", (
     ).toBeNull();
   });
 });
+
+describe("ApprovalPanel — number keys (ADR 0082 §6)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const panel = (): HTMLElement => screen.getByTestId("approval-panel");
+
+  it("1 / 2 / 3 press the allow buttons left to right — only once the keys arm", async () => {
+    vi.useFakeTimers();
+    const mock = setup();
+    await settle();
+    act(() => {
+      mock.emitOverlay({
+        kind: "pending",
+        overlay: {
+          kind: "pending-permission",
+          requestId: "req-k",
+          risk: "workspace_write",
+          tool: "bash",
+          summary: "git commit changes the repository",
+          command: "git commit -m x",
+          cacheable: true,
+          offerAutoReview: true,
+        },
+      });
+    });
+    // The keycaps say which digit: before each label, hidden from the
+    // buttons' names (the buttons carry aria-keyshortcuts instead).
+    expect(
+      screen.getByRole("button", { name: "Allow for this task" }),
+    ).toHaveAttribute("aria-keyshortcuts", "2");
+    expect(
+      screen.getByRole("button", { name: "Turn on auto-review" }),
+    ).toHaveAttribute("aria-keyshortcuts", "3");
+    expect(screen.getByRole("button", { name: "Deny" })).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Escape",
+    );
+    // Not armed yet: a digit is a key meant for something else.
+    fireEvent.keyDown(panel(), { key: "3" });
+    expect(mock.calls.resolveApproval).toEqual([]);
+    expect(panel().classList.contains("is-armed")).toBe(false);
+    act(() => vi.advanceTimersByTime(800));
+    expect(panel().classList.contains("is-armed")).toBe(true);
+    // A repeat never answers.
+    fireEvent.keyDown(panel(), { key: "3", repeat: true });
+    expect(mock.calls.resolveApproval).toEqual([]);
+    fireEvent.keyDown(panel(), { key: "3" });
+    expect(mock.calls.resolveApproval).toEqual([
+      { requestId: "req-k", decision: "allow", persistence: "auto_review" },
+    ]);
+  });
+
+  it("a digit counts only the buttons shown, works only in the panel, and never denies", async () => {
+    vi.useFakeTimers();
+    const mock = setup();
+    await settle();
+    emitPending(mock); // Allow, Allow for this task, Deny
+    act(() => vi.advanceTimersByTime(800));
+    // From outside the panel (a held message being typed): nothing.
+    const field = document.createElement("textarea");
+    document.body.append(field);
+    fireEvent.keyDown(field, { key: "1" });
+    field.remove();
+    // A third allow button is not there.
+    fireEvent.keyDown(panel(), { key: "3" });
+    expect(mock.calls.resolveApproval).toEqual([]);
+    fireEvent.keyDown(panel(), { key: "1" });
+    expect(mock.calls.resolveApproval).toEqual([
+      { requestId: "req-9", decision: "allow", persistence: "once" },
+    ]);
+  });
+
+  it("a fresh request arms again from zero", async () => {
+    vi.useFakeTimers();
+    const mock = setup();
+    await settle();
+    emitPending(mock);
+    act(() => vi.advanceTimersByTime(800));
+    act(() => {
+      mock.emitOverlay({
+        kind: "pending",
+        overlay: {
+          kind: "pending-permission",
+          requestId: "req-10",
+          risk: "network",
+          tool: "run_command",
+          summary: "fetch a page",
+          command: "curl https://example.com",
+          cacheable: false,
+        },
+      });
+    });
+    expect(panel().classList.contains("is-armed")).toBe(false);
+    fireEvent.keyDown(panel(), { key: "1" });
+    expect(mock.calls.resolveApproval).toEqual([]);
+  });
+});

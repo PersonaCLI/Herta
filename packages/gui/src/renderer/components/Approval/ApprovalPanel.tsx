@@ -4,6 +4,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { OVERLAY_Z, useModalOverlay } from "../../lib/overlay-stack.js";
+import { KeyCaps } from "../common/KeyCaps.js";
 import { DiffBody } from "../Workspace/DiffBody.js";
 import { countHeredocs, foldHeredocs } from "./fold-heredocs.js";
 import {
@@ -15,6 +16,21 @@ import {
 
 /** Exit-animation duration; must match .approval-panel.is-out in reference-ux.css. */
 const EXIT_MS = 200;
+
+/** How long a fresh request waits before its number keys answer (ADR 0082
+ *  §6): a key meant for something else must never approve unread. */
+export const APPROVAL_ARM_MS = 800;
+
+type AllowChoice = "once" | "session" | "auto_review";
+
+/** The allow buttons the request shows, left to right — what 1, 2, 3 press. */
+function allowChoices(p: PendingPermissionApproval): AllowChoice[] {
+  return [
+    "once",
+    ...(p.cacheable === true ? (["session"] as const) : []),
+    ...(p.offerAutoReview === true ? (["auto_review"] as const) : []),
+  ];
+}
 
 /**
  * User-only approval surface for backend (@板砖) permission gates. Reads the
@@ -133,6 +149,15 @@ export function ApprovalPanel(): JSX.Element | null {
     setResolving(false);
     setDiffOpen(false);
   }, [shownRequestId]);
+  // The number keys arm late (ADR 0082 §6), per request: their keycaps fade
+  // in as they do, so a cap is on screen exactly when its key works.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    setArmed(false);
+    if (shownRequestId === undefined) return;
+    const timer = window.setTimeout(() => setArmed(true), APPROVAL_ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [shownRequestId]);
 
   // +/− counts for the disclosure label, from the overlay's unified diff
   // (file headers excluded). Null when the request carries no diff.
@@ -214,6 +239,28 @@ export function ApprovalPanel(): JSX.Element | null {
   useEffect(() => {
     if (shown === null || leaving || !isTop) return;
     const onKey = (e: KeyboardEvent): void => {
+      // 1 / 2 / 3 press the allow buttons left to right (ADR 0082 §6) —
+      // only in the panel, where a fresh request puts the focus; never
+      // before the keys arm, on a repeat, mid-IME, with a modifier, or while
+      // the answer is in flight. A digit never denies.
+      if (/^[1-9]$/u.test(e.key)) {
+        if (!armed || resolving || e.repeat) return;
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const root = panelRef.current;
+        const target = e.target;
+        if (
+          root === null ||
+          !(target instanceof Node) ||
+          !root.contains(target)
+        )
+          return;
+        const choice = allowChoices(shown)[Number(e.key) - 1];
+        if (choice === undefined) return;
+        e.preventDefault();
+        resolve("allow", choice);
+        return;
+      }
       if (e.key === "Escape") {
         // Deny only when the Escape is OURS: it originated INSIDE the panel.
         // A surface that consumes Escape locally — the sidebar search field,
@@ -273,9 +320,20 @@ export function ApprovalPanel(): JSX.Element | null {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, leaving, isTop, resolving]);
+  }, [shown, leaving, isTop, resolving, armed]);
 
   if (shown === null) return null;
+
+  // Each allow button's digit, before its label (ADR 0082 §6).
+  const choices = allowChoices(shown);
+  const digit = (choice: AllowChoice): JSX.Element => {
+    const n = String(choices.indexOf(choice) + 1);
+    return (
+      <KeyCaps keys={[{ key: n }]} className="keycaps--digit" decorative />
+    );
+  };
+  const digitShortcut = (choice: AllowChoice): string =>
+    String(choices.indexOf(choice) + 1);
 
   // Localize the summary by ask-class code; unknown/absent codes fall back
   // to the raw (neutral-English) rule reason. See REASON_KEY.
@@ -298,7 +356,7 @@ export function ApprovalPanel(): JSX.Element | null {
   return (
     <div
       ref={panelRef}
-      className={`approval-panel${leaving ? " is-out" : ""}`}
+      className={`approval-panel${leaving ? " is-out" : ""}${armed ? " is-armed" : ""}`}
       data-testid="approval-panel"
       role="dialog"
       // The one place in the product where D4 puts the decision in the user's
@@ -416,18 +474,22 @@ export function ApprovalPanel(): JSX.Element | null {
           type="button"
           className="approval-btn approval-btn--allow"
           disabled={resolving}
+          aria-keyshortcuts={digitShortcut("once")}
           onClick={() => resolve("allow", "once")}
         >
-          {t("approval.allow")}
+          {digit("once")}
+          <span>{t("approval.allow")}</span>
         </button>
         {shown.cacheable === true && (
           <button
             type="button"
             className="approval-btn approval-btn--always"
             disabled={resolving}
+            aria-keyshortcuts={digitShortcut("session")}
             onClick={() => resolve("allow", "session")}
           >
-            {t("approval.alwaysAllow")}
+            {digit("session")}
+            <span>{t("approval.alwaysAllow")}</span>
           </button>
         )}
         {shown.offerAutoReview === true && (
@@ -439,17 +501,21 @@ export function ApprovalPanel(): JSX.Element | null {
             // workspace; offered only where it would answer this request
             // (the `offerAutoReview` gate, same contract as `cacheable`).
             onClick={() => resolve("allow", "auto_review")}
+            aria-keyshortcuts={digitShortcut("auto_review")}
           >
-            {t("approval.autoReviewEnable")}
+            {digit("auto_review")}
+            <span>{t("approval.autoReviewEnable")}</span>
           </button>
         )}
         <button
           type="button"
           className="approval-btn approval-btn--deny"
           disabled={resolving}
+          aria-keyshortcuts="Escape"
           onClick={() => resolve("deny")}
         >
-          {t("approval.deny")}
+          <KeyCaps keys={[{ key: "Escape" }]} decorative />
+          <span>{t("approval.deny")}</span>
         </button>
       </div>
     </div>

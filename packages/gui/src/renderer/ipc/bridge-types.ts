@@ -889,8 +889,11 @@ export interface HertaBridge {
    *  for them. OPTIONAL — fakes and the website demo omit the pair. */
   windowIsFullScreen?(): Promise<boolean>;
   onWindowFullScreen?(cb: (fullScreen: boolean) => void): () => void;
-  /** The application menu's Settings… item (Cmd+, on macOS). OPTIONAL. */
+  /** The application menu's Settings… item (Ctrl/⌘+,). OPTIONAL. */
   onOpenSettings?(cb: () => void): () => void;
+  /** The application menu's Close (Ctrl/⌘+W, ADR 0082 §2): the renderer
+   *  closes the viewer's tab, or the window. OPTIONAL. */
+  onCloseRequested?(cb: () => void): () => void;
   onWorkspace(cb: (e: WorkspaceEvent) => void): () => void;
   /** The workspace's repository state (ADR 0058) — the rail's repository
    *  card. OPTIONAL: fakes and the website demo omit the pair, and the card

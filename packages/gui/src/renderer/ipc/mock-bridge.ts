@@ -292,6 +292,8 @@ export interface MockHertaBridge {
   emitWindowFullScreen(fullScreen: boolean): void;
   /** The application menu's Settings… item. */
   emitOpenSettings(): void;
+  /** The menu's Close (Ctrl/⌘+W, ADR 0082). */
+  emitCloseRequested(): void;
   emitRecord(e: RecordEvent): void;
   emitOverlay(e: OverlayEvent): void;
   emitSpeech(e: SpeechControlEvent): void;
@@ -556,6 +558,7 @@ export function createMockHertaBridge(
   const windowMaximizedCbs = new Set<(maximized: boolean) => void>();
   const windowFullScreenCbs = new Set<(fullScreen: boolean) => void>();
   const openSettingsCbs = new Set<() => void>();
+  const closeRequestedCbs = new Set<() => void>();
 
   const bridge: HertaBridge = {
     platform: opts.platform ?? "win32",
@@ -576,6 +579,7 @@ export function createMockHertaBridge(
     windowIsFullScreen: async () => opts.windowIsFullScreenResult ?? false,
     onWindowFullScreen: (cb) => sub(windowFullScreenCbs, cb),
     onOpenSettings: (cb) => sub(openSettingsCbs, cb),
+    onCloseRequested: (cb) => sub(closeRequestedCbs, cb),
     submitText: async (text, stagedImageIds, mentions) => {
       calls.submitText.push(text);
       calls.submitTextStaged.push(stagedImageIds);
@@ -1099,6 +1103,9 @@ export function createMockHertaBridge(
     },
     emitOpenSettings: () => {
       for (const cb of openSettingsCbs) cb();
+    },
+    emitCloseRequested: () => {
+      for (const cb of closeRequestedCbs) cb();
     },
   };
 }

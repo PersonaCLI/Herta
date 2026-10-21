@@ -109,7 +109,12 @@ function HelpTip(p: {
         onClick={() => setOpen((v) => !v)}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
-          if (e.key === "Escape") setOpen(false);
+          // An open tip takes its Escape whole: it must not close Settings
+          // too (ADR 0082 §11). A closed one leaves it to Settings.
+          if (e.key !== "Escape" || !open) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
         }}
       >
         ?

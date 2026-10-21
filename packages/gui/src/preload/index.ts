@@ -148,6 +148,7 @@ const bridge: HertaBridge = {
   windowIsFullScreen: () => ipcRenderer.invoke(CMD.windowIsFullScreen),
   onWindowFullScreen: (cb) => subscribe(EVT.windowFullScreen, cb),
   onOpenSettings: (cb) => subscribe(EVT.openSettings, () => cb()),
+  onCloseRequested: (cb) => subscribe(EVT.closeRequested, () => cb()),
   onWorkspace: (cb) => subscribe(EVT.workspace, cb),
   onRepo: (cb) => subscribe(EVT.repo, cb),
   onResume: (cb) => subscribe(EVT.resume, cb),

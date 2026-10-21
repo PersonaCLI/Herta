@@ -30,6 +30,9 @@ export const OVERLAY_Z = {
   settings: 60,
   keyPrompt: 60,
   lightbox: 64,
+  /** The keyboard cheat sheet (ADR 0082 §7): over Settings and the
+   *  lightbox it can be opened from, under the menus. */
+  shortcuts: 66,
   cardMenu: 70,
 } as const;
 
@@ -79,6 +82,13 @@ export function topOverlay(): string | null {
     }
   }
   return top?.id ?? null;
+}
+
+/** The topmost overlay's z-level, or null when none is open. */
+export function topOverlayZ(): number | null {
+  let z: number | null = null;
+  for (const e of entries) if (z === null || e.z > z) z = e.z;
+  return z;
 }
 
 /**

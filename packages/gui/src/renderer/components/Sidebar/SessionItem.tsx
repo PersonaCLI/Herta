@@ -515,6 +515,26 @@ export function SessionItem(props: SessionItemProps): JSX.Element {
           startRename();
           return;
         }
+        if (
+          (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+          !e.altKey &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.shiftKey
+        ) {
+          // The card above or below (ADR 0082 §10) — focus only; Enter opens.
+          e.preventDefault();
+          const cards = Array.from(
+            cardRef.current
+              ?.closest(".sidebar")
+              ?.querySelectorAll<HTMLElement>('[data-testid="session-card"]') ??
+              [],
+          );
+          const i = cards.indexOf(e.currentTarget);
+          // focus-scrolls: arrow navigation — the card must come into view.
+          cards[e.key === "ArrowDown" ? i + 1 : i - 1]?.focus();
+          return;
+        }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           open();

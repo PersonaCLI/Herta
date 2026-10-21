@@ -586,6 +586,21 @@ function openSettingsFromMenu(): void {
   if (!win.webContents.isDestroyed()) win.webContents.send(EVT.openSettings);
 }
 
+/** The application menu's Close (Ctrl/⌘+W, ADR 0082 §2): the renderer
+ *  decides — the viewer's tab when the viewer is open, the window otherwise
+ *  (through `windowClose`, the close-to-tray path). A renderer that cannot
+ *  answer (gone, crashed) leaves the window to close here. */
+function closeRequestedFromMenu(): void {
+  const win = mainWindow;
+  if (win === null || win.isDestroyed()) return;
+  const wc = win.webContents;
+  if (wc.isDestroyed() || wc.isCrashed()) {
+    win.close();
+    return;
+  }
+  wc.send(EVT.closeRequested);
+}
+
 /** The most recent window's in-flight dispose — awaited by before-quit. */
 let pendingDispose: Promise<void> | null = null;
 
@@ -717,16 +732,17 @@ void app
     // The packaged app's menu drops reload and the developer tools: the
     // frameless window shows no menu, but the default one's shortcuts were
     // live (app-menu.ts). Set before the window so no frame ever has them.
-    {
-      const template = appMenuTemplate({
-        platform: process.platform,
-        isPackaged: installMode().installed,
-        onOpenSettings: openSettingsFromMenu,
-      });
-      if (template !== null) {
-        Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-      }
-    }
+    // It carries Settings… and Close on every platform (ADR 0082 §2).
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(
+        appMenuTemplate({
+          platform: process.platform,
+          isPackaged: installMode().installed,
+          onOpenSettings: openSettingsFromMenu,
+          onCloseRequested: closeRequestedFromMenu,
+        }),
+      ),
+    );
     const firstWindow = createWindow();
     // The auto-updater and the tray wait for the renderer's first load
     // (cold-start trace, 2026-09-24): run right after createWindow they held

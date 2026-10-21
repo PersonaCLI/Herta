@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useFlipList } from "../../hooks/useFlipList.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useSessionList } from "../../hooks/useSessionList.js";
+import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
+import { useShortcut } from "../../lib/shortcut-registry.js";
+import { KeyCaps } from "../common/KeyCaps.js";
 import { useScrollEdges } from "../Workspace/useScrollEdges.js";
 import { groupSessions } from "./group-sessions.js";
 import { SettingsIcon } from "./icons.js";
@@ -39,13 +42,16 @@ export interface SidebarProps {
   readonly onCloseSearch?: () => void;
   /** Called when the foot Settings button is clicked (opens the Settings modal). */
   readonly onOpenSettings?: () => void;
+  /** The search field, for Ctrl+K to take the caret back to (ADR 0082). */
+  readonly searchInputRef?: RefObject<HTMLInputElement>;
 }
 
 export function Sidebar(props: SidebarProps): JSX.Element {
   const t = useT();
   const { bridge } = useHertaBridge();
   const sessions = useSessionList();
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const ownSearchRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = props.searchInputRef ?? ownSearchRef;
   const searchOpen = props.searchOpen ?? false;
   const query = props.query ?? "";
   const q = query.trim().toLowerCase();
@@ -162,7 +168,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
   useEffect(() => {
     // No scroll: the sidebar may still be sliding open when the field mounts.
     if (searchOpen) searchInputRef.current?.focus({ preventScroll: true });
-  }, [searchOpen]);
+  }, [searchOpen, searchInputRef]);
 
   // (The stale-card-raster heal after a delete/reorder lives in useFlipList —
   // it repaints exactly the rows the FLIP moved, once each glide ends. An
@@ -198,6 +204,46 @@ export function Sidebar(props: SidebarProps): JSX.Element {
     [groups],
   );
   useFlipList(sidebarRef, flipKeys, reduced, searchOpen);
+
+  // Ctrl+Shift+[ / ] (ADR 0082): the session above / below the open one, in
+  // the order the list shows. Through the card itself, so its guards hold:
+  // refused while a gate waits, and mid-turn the first press arms the card
+  // and a second confirms. Two quick presses while idle walk two cards: the
+  // second counts from the card the first opened, which the store may not
+  // have made active yet.
+  const activeId = useSessionSelector((s) => s.sessionId);
+  const turnInFlight = useSessionSelector((s) => s.status !== "idle");
+  const walking = useRef<{ readonly id: string; readonly at: number } | null>(
+    null,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeId is the trigger — the walk is over once the store has made a session active
+  useEffect(() => {
+    walking.current = null;
+  }, [activeId]);
+  const step = (delta: 1 | -1): boolean => {
+    const order = Array.from(groups.values()).flatMap((items) =>
+      items.map((s) => s.sessionId),
+    );
+    if (order.length === 0) return false;
+    const w = walking.current;
+    const from =
+      w !== null && Date.now() - w.at < 1500 && !turnInFlight ? w.id : activeId;
+    const i = from === null ? -1 : order.indexOf(from);
+    const next =
+      i === -1 ? order[delta === 1 ? 0 : order.length - 1] : order[i + delta];
+    if (next === undefined) return true;
+    const card = sidebarRef.current?.querySelector<HTMLElement>(
+      `[data-testid="session-card"][data-flip-key="${CSS.escape(next)}"]`,
+    );
+    if (card === null || card === undefined) return true;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView({ block: "nearest" });
+    card.click();
+    if (!turnInFlight) walking.current = { id: next, at: Date.now() };
+    return true;
+  };
+  useShortcut("prevSession", () => step(-1));
+  useShortcut("nextSession", () => step(1));
 
   return (
     <aside className="sidebar" data-testid="sidebar" ref={sidebarRef}>
@@ -264,6 +310,9 @@ export function Sidebar(props: SidebarProps): JSX.Element {
       >
         <SettingsIcon />
         <span className="sidebar-settings-label">{t("topbar.settings")}</span>
+        {/* The row names itself; its key shows at the right on hover and
+            focus, as a menu item's would (ADR 0082 §8). */}
+        <KeyCaps id="openSettings" className="sidebar-settings__keys" />
       </button>
     </aside>
   );

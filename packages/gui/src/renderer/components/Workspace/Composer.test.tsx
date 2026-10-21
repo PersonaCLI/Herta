@@ -2090,6 +2090,38 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     expect(document.querySelector(".composer-chip-menu")).toBeNull();
   });
 
+  it("Shift+F10 at a chip opens its menu focused; the arrows walk it, → opens Copy, Escape gives the caret back (ADR 0082 §10)", async () => {
+    const { input, type, options } = mentionComposer();
+    type("看看 @pars");
+    await waitFor(() => expect(options().length).toBe(2));
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input.value).toBe("看看 @parser.ts ");
+    // The caret right after the token.
+    input.setSelectionRange(13, 13);
+    fireEvent.keyDown(input, { key: "F10", shiftKey: true });
+    const menu = document.querySelector(".composer-chip-menu") as HTMLElement;
+    expect(menu).not.toBeNull();
+    const items = (): HTMLElement[] => [
+      ...menu.querySelectorAll<HTMLElement>(
+        ':scope > [role="menuitem"], :scope > .composer-chip-menu__sub-wrap > [role="menuitem"]',
+      ),
+    ];
+    expect(document.activeElement).toBe(items()[0]);
+    fireEvent.keyDown(document.activeElement as Element, { key: "ArrowUp" });
+    expect(document.activeElement?.textContent).toBe("Remove");
+    fireEvent.keyDown(document.activeElement as Element, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items()[0]);
+    fireEvent.keyDown(document.activeElement as Element, { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toBe("Relative path"),
+    );
+    fireEvent.keyDown(document.activeElement as Element, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(items()[0]);
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
+    expect(document.querySelector(".composer-chip-menu")).toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
   it("without a file listing on the bridge, @ offers @板砖 alone", async () => {
     const { type, options, mock } = mentionComposer("zh", { listing: false });
     type("@");

@@ -1,11 +1,15 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { HoverTipLayer } from "./components/common/HoverTipLayer.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
-import { FileViewerProvider } from "./components/FileViewer/file-viewer-context.js";
+import {
+  FileViewerProvider,
+  useFileViewerState,
+} from "./components/FileViewer/file-viewer-context.js";
 import { WorkspaceBodyShell } from "./components/FileViewer/WorkspaceBodyShell.js";
 import { OpeningAscii } from "./components/Opening/OpeningAscii.js";
 import { KeyPrompt } from "./components/Settings/KeyPrompt.js";
 import { SettingsModal } from "./components/Settings/SettingsModal.js";
+import { ShortcutsSheet } from "./components/Shortcuts/ShortcutsSheet.js";
 import { Sidebar } from "./components/Sidebar/Sidebar.js";
 import { TopBar } from "./components/TopBar/TopBar.js";
 import { UtilityRail } from "./components/UtilityRail/UtilityRail.js";
@@ -30,6 +34,8 @@ import { en } from "./i18n/messages/en.js";
 import { zh } from "./i18n/messages/zh.js";
 import type { HertaBridge, Locale } from "./ipc/bridge-types.js";
 import { journeyMarkAfterPaint } from "./lib/journey.js";
+import { OVERLAY_Z, topOverlayZ } from "./lib/overlay-stack.js";
+import { useShortcut, useShortcutDispatcher } from "./lib/shortcut-registry.js";
 import { initTheme } from "./lib/theme.js";
 import { ReferenceView } from "./ReferenceView.js";
 
@@ -125,12 +131,31 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
-  // The application menu's Settings… (Cmd+, on macOS; 2026-09-23).
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // The application menu's Settings… (Cmd+, on macOS since 2026-09-23;
+  // Ctrl+, everywhere, ADR 0082). From over the cheat sheet, the sheet
+  // gives way.
   useEffect(
-    () => bridge.onOpenSettings?.(() => setSettingsOpen(true)),
+    () =>
+      bridge.onOpenSettings?.(() => {
+        setShortcutsOpen(false);
+        setSettingsOpen(true);
+      }),
     [bridge],
   );
+  // The keyboard (ADR 0082): one listener for the whole app, and the
+  // commands that belong to the workbench itself.
+  useShortcutDispatcher(isMac);
+  useShortcut("showShortcuts", () => {
+    setShortcutsOpen((v) => !v);
+    return true;
+  });
+  useShortcut("toggleSidebar", () => {
+    toggleCollapsed();
+    return true;
+  });
 
   const closeSearch = (): void => {
     setSearchOpen(false);
@@ -149,6 +174,12 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
     // list is actually visible (not a dead search over a hidden list).
     if (collapsed) toggleCollapsed();
   };
+  // Ctrl+K opens the search, or takes the caret back to it when open.
+  useShortcut("searchSessions", () => {
+    if (searchOpen) searchInputRef.current?.focus({ preventScroll: true });
+    else toggleSearch();
+    return true;
+  });
 
   if (error !== null) {
     return (
@@ -176,8 +207,10 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         onQueryChange={setQuery}
         onCloseSearch={closeSearch}
         onOpenSettings={() => setSettingsOpen(true)}
+        searchInputRef={searchInputRef}
       />
       <FileViewerProvider>
+        <CloseRequests />
         <WorkspaceBodyShell>
           <Workspace />
           <UtilityRail />
@@ -188,10 +221,43 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         onClose={() => setSettingsOpen(false)}
       />
       <KeyPrompt />
+      <ShortcutsSheet
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+      />
       {/* The one hover tip, above everything it may anchor to. */}
       <HoverTipLayer />
     </div>
   );
+}
+
+/**
+ * Ctrl/⌘+W (ADR 0082 §2): the menu's Close asks the renderer, which closes
+ * the viewer's active tab when the viewer is open and the window otherwise
+ * (`windowClose`, the close-to-tray path). Under an overlay that owns the
+ * keyboard (Settings, the cheat sheet…) it does nothing — closing the window
+ * from inside a dialog would surprise.
+ */
+function CloseRequests(): null {
+  const { bridge } = useHertaBridge();
+  const viewer = useFileViewerState();
+  const viewerRef = useRef(viewer);
+  viewerRef.current = viewer;
+  useEffect(
+    () =>
+      bridge.onCloseRequested?.(() => {
+        const z = topOverlayZ();
+        if (z !== null && z > OVERLAY_Z.approval) return;
+        const v = viewerRef.current;
+        if (v?.open === true) {
+          v.closeTab(v.active);
+          return;
+        }
+        bridge.windowClose();
+      }),
+    [bridge],
+  );
+  return null;
 }
 
 function navigatorLocale(): Locale {

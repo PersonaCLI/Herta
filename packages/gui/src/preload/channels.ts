@@ -109,6 +109,7 @@ export const EVT = {
   windowMaximized: "window:maximized",
   windowFullScreen: "window:fullScreen",
   openSettings: "app:openSettings",
+  closeRequested: "app:closeRequested",
   update: "update:state",
   voiceModel: "voice:model",
   voiceMinimax: "voice:minimax",

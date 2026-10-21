@@ -386,6 +386,9 @@ export function FileViewerPanel(): JSX.Element | null {
         // 2026-09-22, item 18 — Escape in the search box closed the viewer).
         if (e.key !== "Escape" || e.defaultPrevented) return;
         if (claimsEscape(e.target)) return;
+        // Marked: this Escape closed the viewer, it does not stop the run
+        // (ADR 0082 §5).
+        e.preventDefault();
         v.close();
       }}
     >

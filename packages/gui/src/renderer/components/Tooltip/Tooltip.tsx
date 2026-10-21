@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { ShortcutId } from "../../../shared/shortcuts.js";
+import { KeyCaps } from "../common/KeyCaps.js";
 
 export interface TooltipProps {
   readonly label: string;
@@ -8,6 +10,8 @@ export interface TooltipProps {
    *  `white-space: nowrap` — appending detail to the label makes one very wide
    *  pill, while a subline keeps the primary action scannable. */
   readonly sub?: string;
+  /** The command's keys, after the label (ADR 0082 §8). */
+  readonly keys?: ShortcutId;
   readonly placement?: "top" | "bottom";
   readonly align?: "start" | "center" | "end";
   /**
@@ -149,8 +153,12 @@ export function Tooltip(props: TooltipProps): JSX.Element {
     >
       {props.children}
       {props.portal !== true && (
-        <span className="tooltip" role="tooltip">
+        <span
+          className={`tooltip${props.keys !== undefined ? " has-keys" : ""}`}
+          role="tooltip"
+        >
           {props.label}
+          {props.keys !== undefined && <KeyCaps id={props.keys} />}
           {props.sub !== undefined && (
             <span className="tooltip-sub">{props.sub}</span>
           )}
@@ -161,7 +169,7 @@ export function Tooltip(props: TooltipProps): JSX.Element {
         !suppressed &&
         createPortal(
           <span
-            className="tooltip tooltip--portal"
+            className={`tooltip tooltip--portal${props.keys !== undefined ? " has-keys" : ""}`}
             role="tooltip"
             style={{
               left: `${fixedAt.left}px`,
@@ -172,6 +180,7 @@ export function Tooltip(props: TooltipProps): JSX.Element {
             }}
           >
             {props.label}
+            {props.keys !== undefined && <KeyCaps id={props.keys} />}
             {props.sub !== undefined && (
               <span className="tooltip-sub">{props.sub}</span>
             )}

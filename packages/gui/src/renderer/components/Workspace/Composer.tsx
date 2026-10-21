@@ -35,6 +35,7 @@ import {
 } from "../../lib/file-mention.js";
 import { composeQuotedMessage, quoteLabel } from "../../lib/quote-format.js";
 import { recallLastUserMessage } from "../../lib/recall-last-message.js";
+import { useEscapeStop, useShortcut } from "../../lib/shortcut-registry.js";
 import { submitMessage } from "../../lib/submit-message.js";
 import { stopAllVoice } from "../../voice/play-voice.js";
 import { armHoverTip, hideHoverTip } from "../common/hover-tip.js";
@@ -81,6 +82,8 @@ function caretIsFree(form: HTMLElement | null): boolean {
     return true;
   }
   if (form?.contains(active)) return true;
+  // Where sending put the focus (ADR 0082 §11): the conversation itself.
+  if (active.classList.contains("conversation")) return true;
   return active.closest(".approval-panel") !== null;
 }
 
@@ -164,8 +167,40 @@ function ChipMenu(props: {
   readonly onOpenDefault?: () => void;
   readonly onReveal?: () => void;
   readonly onRemove: () => void;
+  /** Opened from the keyboard: focus the first item (ADR 0082 §10). */
+  readonly takeFocus: boolean;
+  /** Close and give the caret back (Tab). */
+  readonly onDismiss: () => void;
 }): JSX.Element {
   const { t } = props;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const subRef = useRef<HTMLDivElement>(null);
+  const copyRef = useRef<HTMLButtonElement>(null);
+  /** → opened Copy: its first item takes the focus once it renders. */
+  const intoSub = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the first item takes the focus once, on open
+  useEffect(() => {
+    if (props.takeFocus)
+      rootRef.current
+        ?.querySelector<HTMLElement>('[role="menuitem"]')
+        ?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (!props.copyOpen || !intoSub.current) return;
+    intoSub.current = false;
+    subRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]')
+      ?.focus({ preventScroll: true });
+  }, [props.copyOpen]);
+  /** The items of one menu level, in order. */
+  const levelItems = (inSub: boolean): HTMLElement[] =>
+    Array.from(
+      (inSub ? subRef.current : rootRef.current)?.querySelectorAll<HTMLElement>(
+        inSub
+          ? ':scope > [role="menuitem"]'
+          : ':scope > [role="menuitem"], :scope > .composer-chip-menu__sub-wrap > [role="menuitem"]',
+      ) ?? [],
+    );
   const item = (label: string, onPick: () => void, extra = ""): JSX.Element => (
     <button
       type="button"
@@ -179,10 +214,42 @@ function ChipMenu(props: {
   );
   return (
     <div
+      ref={rootRef}
       className="composer-chip-menu"
       role="menu"
       aria-label={props.chip.name}
       style={{ left: props.left, bottom: props.bottom }}
+      onKeyDown={(e) => {
+        const target = e.target;
+        const inSub =
+          target instanceof Node && subRef.current?.contains(target) === true;
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const items = levelItems(inSub);
+          const i = items.indexOf(target as HTMLElement);
+          const n = items.length;
+          if (n === 0) return;
+          const next = e.key === "ArrowDown" ? (i + 1) % n : (i - 1 + n) % n;
+          items[next]?.focus({ preventScroll: true });
+          return;
+        }
+        if (e.key === "ArrowRight" && target === copyRef.current) {
+          e.preventDefault();
+          intoSub.current = true;
+          props.onCopyOpen(true);
+          return;
+        }
+        if (e.key === "ArrowLeft" && inSub) {
+          e.preventDefault();
+          props.onCopyOpen(false);
+          copyRef.current?.focus({ preventScroll: true });
+          return;
+        }
+        if (e.key === "Tab") {
+          e.preventDefault();
+          props.onDismiss();
+        }
+      }}
     >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: hover only opens the submenu; the Copy button inside is its keyboard and click control. */}
       <div
@@ -191,6 +258,7 @@ function ChipMenu(props: {
         onMouseLeave={() => props.onCopyOpen(false)}
       >
         <button
+          ref={copyRef}
           type="button"
           role="menuitem"
           aria-haspopup="menu"
@@ -206,6 +274,7 @@ function ChipMenu(props: {
         </button>
         {props.copyOpen && (
           <div
+            ref={subRef}
             className="composer-chip-menu composer-chip-menu--sub"
             role="menu"
           >
@@ -334,6 +403,8 @@ export function Composer(): JSX.Element {
     readonly span: ChipSpan;
     readonly left: number;
     readonly bottom: number;
+    /** Opened from the keyboard: the menu takes the focus. */
+    readonly byKey: boolean;
   } | null>(null);
   const [chipCopyOpen, setChipCopyOpen] = useState(false);
   const hoverChip = useRef(-1);
@@ -377,6 +448,18 @@ export function Composer(): JSX.Element {
   heldRef.current = held;
   /** The user pressed Stop in this turn: a held message does not go. */
   const stopRequested = useRef(false);
+  /** Stop, from the button or Escape (ADR 0082 §5). Cut any in-flight voice
+   *  at once, not via the turn lifecycle: the opening's interrupt-as-SKIP
+   *  finishes the turn normally (`finished`, no `failed`), so useVoiceCues'
+   *  failed-cut never fires and the opening clip talked through the skip
+   *  (user 2026-07-13). The stop IS the intent — silence immediately, then
+   *  abort the turn. */
+  const stopTurn = (): void => {
+    stopAllVoice();
+    stopRequested.current = true;
+    void bridge.interrupt();
+  };
+  useEscapeStop(busy && !suppressed, stopTurn, taRef);
   /** The held card's DOM node — the flying clone lifts off from its rect. */
   const heldCardRef = useRef<HTMLElement>(null);
   const langRef = useRef(lang);
@@ -829,7 +912,11 @@ export function Composer(): JSX.Element {
     }
     return null;
   };
-  const openChipMenu = (index: number, el: HTMLElement): void => {
+  const openChipMenu = (
+    index: number,
+    el: HTMLElement,
+    byKey = false,
+  ): void => {
     const span = chipSpans[index];
     const wrap = taRef.current?.parentElement;
     if (span === undefined || wrap == null) return;
@@ -841,6 +928,7 @@ export function Composer(): JSX.Element {
       span,
       left: Math.max(0, r.left - w.left),
       bottom: w.bottom - r.top + 6,
+      byKey,
     });
   };
   /** Take a chip's token out of the text, with the space after it. */
@@ -868,7 +956,12 @@ export function Composer(): JSX.Element {
   useEffect(() => {
     if (chipMenu === null) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setChipMenu(null);
+      if (e.key !== "Escape") return;
+      // Marked: this Escape closed a menu, it does not stop the run
+      // (ADR 0082 §5).
+      e.preventDefault();
+      setChipMenu(null);
+      taRef.current?.focus({ preventScroll: true });
     };
     const onDown = (e: MouseEvent): void => {
       const t = e.target;
@@ -1068,6 +1161,17 @@ export function Composer(): JSX.Element {
       });
   };
 
+  // Ctrl/⌘+L and Ctrl/⌘+U (ADR 0082): the caret into the composer, and the
+  // paperclip — each refused exactly when its control is (a disabled
+  // textarea takes no caret; attaching waits for the turn to end).
+  useShortcut("focusComposer", () => {
+    taRef.current?.focus({ preventScroll: true });
+    return true;
+  });
+  useShortcut("attachFiles", () => {
+    if (!busy) onPickAttachments();
+    return true;
+  });
   const onPickAttachments = (): void => {
     pickerOpen.current = true;
     void bridge
@@ -1634,6 +1738,32 @@ export function Composer(): JSX.Element {
               hideHoverTip();
             }}
             onKeyDown={(e) => {
+              // Shift+F10 or the context-menu key with the caret at a chip
+              // opens its menu, focused (ADR 0082 §10).
+              if (
+                (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) &&
+                !(e.nativeEvent.isComposing || e.keyCode === 229)
+              ) {
+                const ta = e.currentTarget;
+                const caret = ta.selectionStart;
+                const index =
+                  caret !== null && caret === ta.selectionEnd
+                    ? chipSpans.findIndex(
+                        (s) => s.end === caret || s.start === caret,
+                      )
+                    : -1;
+                const el =
+                  index === -1
+                    ? null
+                    : ta.previousElementSibling?.querySelector(
+                        `[data-chip="${index}"]`,
+                      );
+                if (el instanceof HTMLElement) {
+                  e.preventDefault();
+                  openChipMenu(index, el, true);
+                  return;
+                }
+              }
               // A chip goes whole (ADR 0072 amendment 2026-10-20): Backspace
               // at its end, Delete at its start.
               if (
@@ -1782,6 +1912,11 @@ export function Composer(): JSX.Element {
               chip={chipMenu.span.chip}
               left={chipMenu.left}
               bottom={chipMenu.bottom}
+              takeFocus={chipMenu.byKey}
+              onDismiss={() => {
+                setChipMenu(null);
+                taRef.current?.focus({ preventScroll: true });
+              }}
               copyOpen={chipCopyOpen}
               onCopyOpen={setChipCopyOpen}
               t={t}
@@ -1853,6 +1988,7 @@ export function Composer(): JSX.Element {
         <Tooltip
           label={t("composer.attach")}
           sub={t("composer.attach.formats")}
+          keys="attachFiles"
           placement="top"
           align="end"
         >
@@ -1886,21 +2022,7 @@ export function Composer(): JSX.Element {
             ((text.trim().length === 0 && composerQuotes.length === 0) ||
               readingDoc)
           }
-          onClick={
-            busy
-              ? () => {
-                  // Cut any in-flight voice ON the click, not via the turn
-                  // lifecycle: the opening's interrupt-as-SKIP finishes the
-                  // turn normally (`finished`, no `failed`), so useVoiceCues'
-                  // failed-cut never fires and the opening clip talked through
-                  // the skip (user 2026-07-13). The stop click IS the intent —
-                  // silence immediately, then abort the turn.
-                  stopAllVoice();
-                  stopRequested.current = true;
-                  void bridge.interrupt();
-                }
-              : undefined
-          }
+          onClick={busy ? stopTurn : undefined}
         >
           <span
             className="composer-send__glyph composer-send__glyph--send"

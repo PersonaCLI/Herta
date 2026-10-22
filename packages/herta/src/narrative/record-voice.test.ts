@@ -807,3 +807,61 @@ describe("a folded failure says why (release review 2026-10-22)", () => {
         expect(fold(code, lang), `${lang}: ${code}`).not.toBe(bare[lang]);
   });
 });
+
+describe("tests that never ran, and a search in English (release review 2026-10-22)", () => {
+  const done = (tests: { passed: number; failed: number }): SystemBlock =>
+    row({
+      body: "完成 · 测试 0/0",
+      role: "done-marker",
+      markerSummary: {
+        kind: "done",
+        state: "completed",
+        fileCount: 0,
+        tests,
+        riskCount: 0,
+      } as never,
+    });
+
+  it("none passed and none failed is not a pass", () => {
+    expect(read(done({ passed: 0, failed: 0 }))).toBe(
+      "做完了：测试一个都没跑。",
+    );
+    expect(read(done({ passed: 0, failed: 0 }), "en")).toBe(
+      "Done: no test ran.",
+    );
+    expect(read(done({ passed: 3, failed: 0 }), "en")).toBe(
+      "Done: tests 3/3 passed.",
+    );
+  });
+
+  it("a search's header and its note of what was left out read in the session's language", () => {
+    const search = row({
+      body: "↳ search /readFile/: 7 matches in 2 files",
+      digest: {
+        kind: "search",
+        pattern: "readFile",
+        matches: 7,
+        files: 2,
+        truncated: false,
+      },
+      evidenceDetail:
+        "↳ 匹配 /readFile/:\na.ts:3: readFile(p)\nb.ts:9: readFile(q)\n（另有 5 处未列出）",
+    });
+    const en = read(search, "en") ?? "";
+    expect(en).toContain("a.ts:3: readFile(p)");
+    expect(en).toContain("(5 more not listed)");
+    expect(en).not.toMatch(/[\u4e00-\u9fff]/u);
+    expect(read(search)).toContain("（另有 5 处未列出）");
+    // The same detail as a done-marker's tail.
+    const tail =
+      read(
+        {
+          ...done({ passed: 1, failed: 0 }),
+          evidenceDetail: search.evidenceDetail,
+        },
+        "en",
+      ) ?? "";
+    expect(tail).toContain("Matches for /readFile/:");
+    expect(tail).not.toMatch(/[\u4e00-\u9fff]/u);
+  });
+});

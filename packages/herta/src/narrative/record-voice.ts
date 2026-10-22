@@ -38,6 +38,9 @@ type Texts = {
   readonly readExcerpt: (path: string, from: number, to: number) => string;
   readonly finding: (claim: string, cites: readonly string[]) => string;
   readonly search: (pattern: string, matches: number, files: number) => string;
+  /** A search detail's header and its note of matches left out. */
+  readonly matches: (pattern: string) => string;
+  readonly moreMatches: (n: number) => string;
   readonly toolFail: (tool: string, message: string) => string;
   readonly bg: (id: string, state: string, exit?: number | null) => string;
   readonly digest: (name: string, chunks: number, cached: boolean) => string;
@@ -115,6 +118,8 @@ const TEXTS: Record<PromptLang, Texts> = {
       `结论：${claim}${cites.length > 0 ? `（${cites.join("，")}）` : ""}`,
     search: (pattern, matches, files) =>
       `搜索 /${pattern}/：${files} 个文件里 ${matches} 处`,
+    matches: (pattern) => `匹配 /${pattern}/:`,
+    moreMatches: (n) => `（另有 ${n} 处未列出）`,
     toolFail: (tool, message) =>
       `这一步没成（${tool}）${message.length > 0 ? `：${message}` : ""}`,
     bg: (id, state, exit) =>
@@ -144,10 +149,14 @@ const TEXTS: Record<PromptLang, Texts> = {
         );
       }
       if (m.tests !== undefined) {
+        // None passed and none failed is not a pass: the tests were
+        // skipped or never found (release review 2026-10-22; D3).
         parts.push(
-          m.tests.failed === 0
-            ? `测试 ${m.tests.passed}/${m.tests.passed} 通过`
-            : `测试 ${m.tests.passed} 过、${m.tests.failed} 没过`,
+          m.tests.failed > 0
+            ? `测试 ${m.tests.passed} 过、${m.tests.failed} 没过`
+            : m.tests.passed > 0
+              ? `测试 ${m.tests.passed}/${m.tests.passed} 通过`
+              : "测试一个都没跑",
         );
       }
       if (m.git?.commit !== undefined) parts.push(`提交 ${m.git.commit}`);
@@ -216,6 +225,8 @@ const TEXTS: Record<PromptLang, Texts> = {
       `Finding: ${claim}${cites.length > 0 ? ` (${cites.join(", ")})` : ""}`,
     search: (pattern, matches, files) =>
       `Searched /${pattern}/: ${matches} matches in ${files} files`,
+    matches: (pattern) => `Matches for /${pattern}/:`,
+    moreMatches: (n) => `(${n} more not listed)`,
     toolFail: (tool, message) =>
       `A step failed (${tool})${message.length > 0 ? `: ${message}` : ""}`,
     bg: (id, state, exit) =>
@@ -247,9 +258,11 @@ const TEXTS: Record<PromptLang, Texts> = {
       }
       if (m.tests !== undefined) {
         parts.push(
-          m.tests.failed === 0
-            ? `tests ${m.tests.passed}/${m.tests.passed} passed`
-            : `tests ${m.tests.passed} passed, ${m.tests.failed} failed`,
+          m.tests.failed > 0
+            ? `tests ${m.tests.passed} passed, ${m.tests.failed} failed`
+            : m.tests.passed > 0
+              ? `tests ${m.tests.passed}/${m.tests.passed} passed`
+              : "no test ran",
         );
       }
       if (m.git?.commit !== undefined) parts.push(`committed ${m.git.commit}`);
@@ -347,6 +360,19 @@ export function detailForHerta(
   // (ADR 0080 §5). Passed through as an unknown line, both reached her
   // verdict prompt and the dream's digest (release review 2026-10-22).
   const [head = "", ...body] = detail.split("\n");
+  // A search's matches: its header and its note of what was left out in the
+  // session's language — they reached an English prompt in Chinese (release
+  // review 2026-10-22). The match lines are the files' own.
+  const searched = /^↳ 匹配 \/(.*)\/:$/su.exec(head);
+  if (searched !== null) {
+    return [
+      t.matches(searched[1] ?? ""),
+      ...body.map((line) => {
+        const more = /^（另有 (\d+) 处未列出）$/u.exec(line);
+        return more !== null ? t.moreMatches(Number(more[1])) : line;
+      }),
+    ].join("\n");
+  }
   if (head === "↳ 网页结果:") {
     const s = sections.find((e) => e.kind === "web-results");
     const listed =
@@ -529,9 +555,9 @@ export function systemRowForHerta(
     case "finding":
       return withDetail(namePages(t.finding(d.claim, d.cites), lang));
     case "search": {
-      // The detail opens `↳ 匹配 /p/:`, which the body now says.
+      // The detail opens with its header, which the body now says.
       const lines = (detail ?? "").split("\n");
-      const items = lines[0]?.startsWith("匹配 ") ? lines.slice(1) : lines;
+      const items = lines[0] === t.matches(d.pattern) ? lines.slice(1) : lines;
       return {
         ...rest,
         body: [t.search(d.pattern, d.matches, d.files), ...items]

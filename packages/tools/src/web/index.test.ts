@@ -176,6 +176,22 @@ describe("web_search", () => {
     expect(r.suggestion).toBeTruthy();
   });
 
+  it("the provider's error text is redacted before it reaches 板砖 or the record (release review 2026-10-22)", async () => {
+    const tool = webSearchTool({
+      client: client({
+        search: async () => {
+          throw new WebClientError(
+            "auth",
+            "401 Authentication Fails, your api key: sk-0123456789abcdef0123456789abcdef is invalid",
+          );
+        },
+      }),
+    });
+    const r = await run(tool, { query: "q" });
+    expect(r.error?.message).not.toContain("sk-0123456789abcdef");
+    expect(r.error?.message).toContain("[REDACTED:api_key]");
+  });
+
   it("rethrows an abort", async () => {
     const tool = webSearchTool({
       client: client({

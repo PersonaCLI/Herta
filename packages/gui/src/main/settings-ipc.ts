@@ -45,7 +45,7 @@ import {
   isModelChoice,
   normalizeModelChoice,
   readAppSettings,
-  writeAppSettings,
+  updateAppSettings,
 } from "./app-settings.js";
 import {
   clearDeepSeekKey,
@@ -158,12 +158,10 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
     };
   });
   handle(CMD.setDreamConfig, async (_e, cfg: { enabled: boolean }) => {
-    const ws = workspaceRoot();
-    const s = await readAppSettings(ws);
-    await writeAppSettings(ws, {
+    await updateAppSettings(workspaceRoot(), (s) => ({
       ...s,
       dream: { ...s.dream, enabled: cfg.enabled },
-    });
+    }));
   });
   // Settings → Coprocessor: backend reasoning effort. Restart-to-apply, same
   // contract as Dream above — buildConfig reads it at the next bootstrap.
@@ -194,17 +192,17 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
         ? cfg.contract
         : undefined;
       if (thinking === undefined && contract === undefined) return;
-      const ws = workspaceRoot();
-      const s = await readAppSettings(ws);
-      const next: AppSettings = {
-        ...s,
-        backend: {
-          ...s.backend,
-          ...(thinking !== undefined ? { thinking } : {}),
-          ...(contract !== undefined ? { contract } : {}),
-        },
-      };
-      await writeAppSettings(ws, next);
+      const next = await updateAppSettings(
+        workspaceRoot(),
+        (s): AppSettings => ({
+          ...s,
+          backend: {
+            ...s.backend,
+            ...(thinking !== undefined ? { thinking } : {}),
+            ...(contract !== undefined ? { contract } : {}),
+          },
+        }),
+      );
       // The effort applies from 板砖's next dispatch (ADR 0081); the tool
       // contract still waits for a restart.
       if (thinking !== undefined) {
@@ -230,13 +228,14 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
     CMD.setModelConfig,
     async (_e, cfg: { actor?: unknown; backend?: unknown }) => {
       if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
-      const ws = workspaceRoot();
-      const s = await readAppSettings(ws);
-      const next: AppSettings = {
-        ...s,
-        models: { ...s.models, actor: cfg.actor, backend: cfg.backend },
-      };
-      await writeAppSettings(ws, next);
+      const { actor, backend } = cfg;
+      const next = await updateAppSettings(
+        workspaceRoot(),
+        (s): AppSettings => ({
+          ...s,
+          models: { ...s.models, actor, backend },
+        }),
+      );
       // Live (ADR 0081): Herta's next turn and 板砖's next dispatch use them.
       // An env override still wins, as at a fresh start.
       const live = effectiveModels(next);

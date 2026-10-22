@@ -250,6 +250,28 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
     ]);
   });
 
+  it("a model pick and an effort pick in flight together are both saved (release review 2026-10-22)", async () => {
+    const { handlers } = setup();
+    await Promise.all([
+      handlers.get(CMD.setModelConfig)?.(null, {
+        actor: "deepseek-flash",
+        backend: "deepseek-v4-pro",
+      }),
+      handlers.get(CMD.setBackendConfig)?.(null, { thinking: "max" }),
+      handlers.get(CMD.setDreamConfig)?.(null, { enabled: false }),
+    ]);
+    expect(await handlers.get(CMD.getModelConfig)?.(null)).toEqual({
+      actor: "deepseek-flash",
+      backend: "deepseek-v4-pro",
+    });
+    expect(await handlers.get(CMD.getBackendConfig)?.(null)).toMatchObject({
+      thinking: "max",
+    });
+    expect(await handlers.get(CMD.getDreamConfig)?.(null)).toMatchObject({
+      enabled: false,
+    });
+  });
+
   it("an off-list model is refused and nothing reaches the host", async () => {
     const { handlers, applied } = setup();
     await handlers.get(CMD.setModelConfig)?.(null, {

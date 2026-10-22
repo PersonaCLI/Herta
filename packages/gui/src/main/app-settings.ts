@@ -186,6 +186,34 @@ export async function readAppSettings(
 /** Write the settings file, creating `.herta/` if needed. Temp + rename so a
  *  crash mid-write can't tear the file into "all defaults" (audit 2026-07-13
  *  T3.9, same fix as app-global-settings). */
+const updates = new Map<string, Promise<unknown>>();
+
+/**
+ * Read, change and write a workspace's settings as one step, queued per
+ * file. Two Settings saves in flight each read the file before the other
+ * wrote it, and the later write dropped the earlier's change: a model pick
+ * and then an effort pick left the running app on the new model and the
+ * next launch on the old one (release review 2026-10-22). Resolves to what
+ * was written.
+ */
+export function updateAppSettings(
+  workspaceRoot: string,
+  change: (current: AppSettings) => AppSettings,
+): Promise<AppSettings> {
+  const key = settingsPath(workspaceRoot);
+  const run = (updates.get(key) ?? Promise.resolve()).then(async () => {
+    const next = change(await readAppSettings(workspaceRoot));
+    await writeAppSettings(workspaceRoot, next);
+    return next;
+  });
+  const tail = run.catch(() => undefined);
+  updates.set(key, tail);
+  void tail.then(() => {
+    if (updates.get(key) === tail) updates.delete(key);
+  });
+  return run;
+}
+
 export async function writeAppSettings(
   workspaceRoot: string,
   settings: AppSettings,

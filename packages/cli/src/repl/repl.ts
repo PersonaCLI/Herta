@@ -107,7 +107,11 @@ export async function repl(deps: ReplDeps): Promise<void> {
       // nothing and the wait ran on (release review 2026-10-13).
       // (Optional calls: test doubles of the renderer omit them.)
       const land = (): void => deps.renderer.landReveal?.();
-      controller.signal.addEventListener("abort", land, { once: true });
+      // A Ctrl+C that came as the actor finished has already aborted the
+      // signal, and an abort listener added now never fires: land at once
+      // (release review 2026-10-22).
+      if (controller.signal.aborted) land();
+      else controller.signal.addEventListener("abort", land, { once: true });
       try {
         await deps.renderer.settled?.();
       } finally {

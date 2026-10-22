@@ -80,46 +80,51 @@ const clip = (text: string, max: number): string =>
   text.length <= max ? text : `${text.slice(0, max).trimEnd()} …`;
 
 function failureResult<T>(err: WebClientError): ToolResult<T> {
+  // The provider's own words — its error message or the start of its
+  // body — reach 板砖, the record and the transcript: redacted like a
+  // command's output, since a proxy or a changed message could echo the
+  // key (release review 2026-10-22).
+  const message = redactSecrets(err.message);
   switch (err.code) {
     case "not_found":
       return errResult(
         "not_found",
-        err.message,
+        message,
         "The page could not be read — missing, unreachable, or not an HTML page (PDFs are not read). Try another result, or search again.",
         "page not readable",
       );
     case "rejected":
       return errResult(
         "web_rejected",
-        err.message,
+        message,
         "The provider's policy refused this URL. Try another source.",
         "refused by the provider",
       );
     case "balance":
       return errResult(
         "web_balance",
-        err.message,
+        message,
         "The DeepSeek account is out of credit; say so in the report instead of retrying.",
         "out of credit",
       );
     case "auth":
       return errResult(
         "web_auth",
-        err.message,
+        message,
         "The DeepSeek key was refused; say so in the report instead of retrying.",
         "key refused",
       );
     case "invalid":
       return errResult(
         "invalid_input",
-        err.message,
+        message,
         "The provider rejected the request as malformed; shorten or simplify it.",
         "invalid request",
       );
     default:
       return errResult(
         "web_unavailable",
-        err.message,
+        message,
         "The web service did not answer. Try once more, or go on without it and say so.",
         "web unavailable",
         true,

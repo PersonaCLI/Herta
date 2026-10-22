@@ -17,9 +17,25 @@ import {
 /** Exit-animation duration; must match .approval-panel.is-out in reference-ux.css. */
 const EXIT_MS = 200;
 
-/** How long a fresh request waits before its number keys answer (ADR 0082
- *  §6): a key meant for something else must never approve unread. */
+/** How long the card must be in view, with no typing, before its number
+ *  keys answer (ADR 0082 §6, amended 2026-10-22): a key meant for something
+ *  else must never approve unread. */
 export const APPROVAL_ARM_MS = 800;
+
+/** A key that is somebody typing: a character, an edit, or an IME's key.
+ *  Each restarts the wait before the number keys arm. */
+function isTyping(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  return (
+    e.key.length === 1 ||
+    e.key === "Backspace" ||
+    e.key === "Delete" ||
+    e.key === "Enter" ||
+    e.key === "Process" ||
+    e.isComposing ||
+    e.keyCode === 229
+  );
+}
 
 type AllowChoice = "once" | "session" | "auto_review";
 
@@ -149,15 +165,6 @@ export function ApprovalPanel(): JSX.Element | null {
     setResolving(false);
     setDiffOpen(false);
   }, [shownRequestId]);
-  // The number keys arm late (ADR 0082 §6), per request: their keycaps fade
-  // in as they do, so a cap is on screen exactly when its key works.
-  const [armed, setArmed] = useState(false);
-  useEffect(() => {
-    setArmed(false);
-    if (shownRequestId === undefined) return;
-    const timer = window.setTimeout(() => setArmed(true), APPROVAL_ARM_MS);
-    return () => window.clearTimeout(timer);
-  }, [shownRequestId]);
 
   // +/− counts for the disclosure label, from the overlay's unified diff
   // (file headers excluded). Null when the request carries no diff.
@@ -235,32 +242,83 @@ export function ApprovalPanel(): JSX.Element | null {
   // trap keeps keyboard focus from leaving the user's one live decision).
   // resolve closes over `shown`/`resolving`; re-bind on the deps that change
   // the closure's behavior.
+  // The number keys (ADR 0082 §6): 1 / 2 / 3 press the allow buttons left to
+  // right. They arm once the card has been in view for APPROVAL_ARM_MS with
+  // no typing anywhere — their keycaps fade in as they do, so a cap is on
+  // screen exactly when its key works. Release review 2026-10-22: the wait
+  // ran from the card's mount alone, so a held message typed straight on
+  // (the card takes the focus as it appears) reached a digit at 801 ms and
+  // approved unread; and a card that waited behind Settings was armed the
+  // moment Settings closed. Now every typed key restarts the wait, and so
+  // does the card coming into view: from under a dialog, or the window
+  // shown or focused again.
+  const [armed, setArmed] = useState(false);
+  const armedRef = useRef(false);
+  const live = shown !== null && !leaving && isTop;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolve closes over shown/resolving intentionally
+  useEffect(() => {
+    armedRef.current = false;
+    setArmed(false);
+    if (!live || shown === null) return;
+    let timer: number | undefined;
+    const arm = (on: boolean): void => {
+      armedRef.current = on;
+      setArmed(on);
+    };
+    const restart = (): void => {
+      window.clearTimeout(timer);
+      arm(false);
+      timer = window.setTimeout(() => arm(true), APPROVAL_ARM_MS);
+    };
+    restart();
+    // Capture phase, so a key another surface stops still counts as typing;
+    // the answer is decided here too, before the key could count as such.
+    const onKey = (e: KeyboardEvent): void => {
+      // Only in the panel, where the card puts the focus; never before the
+      // keys arm, on a repeat, mid-IME, with a modifier, or while the answer
+      // is in flight. A digit never denies.
+      if (
+        /^[1-9]$/u.test(e.key) &&
+        armedRef.current &&
+        !resolving &&
+        !e.repeat &&
+        !(e.isComposing || e.keyCode === 229) &&
+        !(e.ctrlKey || e.metaKey || e.altKey)
+      ) {
+        const root = panelRef.current;
+        const target = e.target;
+        const choice = allowChoices(shown)[Number(e.key) - 1];
+        if (
+          root !== null &&
+          target instanceof Node &&
+          root.contains(target) &&
+          choice !== undefined
+        ) {
+          e.preventDefault();
+          resolve("allow", choice);
+          return;
+        }
+      }
+      if (isTyping(e)) restart();
+    };
+    const onShown = (): void => {
+      if (document.visibilityState === "visible") restart();
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("focus", onShown);
+    document.addEventListener("visibilitychange", onShown);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("focus", onShown);
+      document.removeEventListener("visibilitychange", onShown);
+    };
+  }, [live, shown, resolving]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: resolve closes over shown/resolving intentionally
   useEffect(() => {
     if (shown === null || leaving || !isTop) return;
     const onKey = (e: KeyboardEvent): void => {
-      // 1 / 2 / 3 press the allow buttons left to right (ADR 0082 §6) —
-      // only in the panel, where a fresh request puts the focus; never
-      // before the keys arm, on a repeat, mid-IME, with a modifier, or while
-      // the answer is in flight. A digit never denies.
-      if (/^[1-9]$/u.test(e.key)) {
-        if (!armed || resolving || e.repeat) return;
-        if (e.isComposing || e.keyCode === 229) return;
-        if (e.ctrlKey || e.metaKey || e.altKey) return;
-        const root = panelRef.current;
-        const target = e.target;
-        if (
-          root === null ||
-          !(target instanceof Node) ||
-          !root.contains(target)
-        )
-          return;
-        const choice = allowChoices(shown)[Number(e.key) - 1];
-        if (choice === undefined) return;
-        e.preventDefault();
-        resolve("allow", choice);
-        return;
-      }
       if (e.key === "Escape") {
         // Deny only when the Escape is OURS: it originated INSIDE the panel.
         // A surface that consumes Escape locally — the sidebar search field,
@@ -320,7 +378,7 @@ export function ApprovalPanel(): JSX.Element | null {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [shown, leaving, isTop, resolving, armed]);
+  }, [shown, leaving, isTop, resolving]);
 
   if (shown === null) return null;
 

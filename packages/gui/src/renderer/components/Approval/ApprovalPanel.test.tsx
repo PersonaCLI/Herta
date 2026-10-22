@@ -804,9 +804,12 @@ describe("ApprovalPanel — number keys (ADR 0082 §6)", () => {
     expect(panel().classList.contains("is-armed")).toBe(false);
     act(() => vi.advanceTimersByTime(800));
     expect(panel().classList.contains("is-armed")).toBe(true);
-    // A repeat never answers.
+    // A repeat never answers: a held key is nobody reading, and the wait
+    // starts again from it.
     fireEvent.keyDown(panel(), { key: "3", repeat: true });
     expect(mock.calls.resolveApproval).toEqual([]);
+    expect(panel().classList.contains("is-armed")).toBe(false);
+    act(() => vi.advanceTimersByTime(800));
     fireEvent.keyDown(panel(), { key: "3" });
     expect(mock.calls.resolveApproval).toEqual([
       { requestId: "req-k", decision: "allow", persistence: "auto_review" },
@@ -819,14 +822,72 @@ describe("ApprovalPanel — number keys (ADR 0082 §6)", () => {
     await settle();
     emitPending(mock); // Allow, Allow for this task, Deny
     act(() => vi.advanceTimersByTime(800));
-    // From outside the panel (a held message being typed): nothing.
+    // From outside the panel (a held message being typed): nothing — and
+    // the typing starts the wait again.
     const field = document.createElement("textarea");
     document.body.append(field);
     fireEvent.keyDown(field, { key: "1" });
     field.remove();
+    expect(mock.calls.resolveApproval).toEqual([]);
+    expect(panel().classList.contains("is-armed")).toBe(false);
+    act(() => vi.advanceTimersByTime(800));
     // A third allow button is not there.
     fireEvent.keyDown(panel(), { key: "3" });
     expect(mock.calls.resolveApproval).toEqual([]);
+    act(() => vi.advanceTimersByTime(800));
+    fireEvent.keyDown(panel(), { key: "1" });
+    expect(mock.calls.resolveApproval).toEqual([
+      { requestId: "req-9", decision: "allow", persistence: "once" },
+    ]);
+  });
+
+  it("typing straight on keeps the keys from arming — a digit in a sentence never approves (release review 2026-10-22)", async () => {
+    vi.useFakeTimers();
+    const mock = setup();
+    await settle();
+    emitPending(mock);
+    // The card took the focus; the Trailblazer types on, a key every 300 ms,
+    // well past the 800 ms the old clock counted from the card's mount.
+    for (const key of ["第", " ", "2", " ", "个", "1"]) {
+      act(() => vi.advanceTimersByTime(300));
+      fireEvent.keyDown(panel(), { key });
+      expect(panel().classList.contains("is-armed")).toBe(false);
+    }
+    expect(mock.calls.resolveApproval).toEqual([]);
+    // Tab and arrows are not typing: they move through the card.
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.keyDown(panel(), { key: "Tab" });
+    act(() => vi.advanceTimersByTime(300));
+    expect(panel().classList.contains("is-armed")).toBe(true);
+    fireEvent.keyDown(panel(), { key: "1" });
+    expect(mock.calls.resolveApproval).toEqual([
+      { requestId: "req-9", decision: "allow", persistence: "once" },
+    ]);
+  });
+
+  it("a card that waited under a dialog arms from when it comes into view, not from when it arrived (release review 2026-10-22)", async () => {
+    vi.useFakeTimers();
+    const mock = setup();
+    await settle();
+    act(() => pushOverlay("settings", OVERLAY_Z.settings));
+    try {
+      emitPending(mock);
+      act(() => vi.advanceTimersByTime(5000));
+      expect(panel().classList.contains("is-armed")).toBe(false);
+    } finally {
+      act(() => popOverlay("settings"));
+    }
+    // In view now, the focus on it: the first digit is too early.
+    fireEvent.keyDown(panel(), { key: "1" });
+    expect(mock.calls.resolveApproval).toEqual([]);
+    act(() => vi.advanceTimersByTime(800));
+    expect(panel().classList.contains("is-armed")).toBe(true);
+    // The window shown again after a while away: the wait starts over.
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(panel().classList.contains("is-armed")).toBe(false);
+    act(() => vi.advanceTimersByTime(800));
     fireEvent.keyDown(panel(), { key: "1" });
     expect(mock.calls.resolveApproval).toEqual([
       { requestId: "req-9", decision: "allow", persistence: "once" },

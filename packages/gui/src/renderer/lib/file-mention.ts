@@ -212,7 +212,9 @@ const NAME_CHAR = /[A-Za-z0-9_.\-/]/;
 /**
  * The chips' tokens in the text, left to right. A token is `@<name>` with no
  * name character before the `@` or after the name. Two chips with the same
- * name are matched to their tokens in the order they were inserted.
+ * name are matched to their tokens in the registry's order — which the
+ * composer keeps as the text's order (`addChipAt`, `chipsAfterEdit`,
+ * `withoutChip`), so each token keeps the path it was picked as.
  */
 export function findChipSpans(
   text: string,
@@ -254,6 +256,85 @@ export function findChipSpans(
     }
   }
   return spans;
+}
+
+/** Whether `@<name>` is a token at `at`, as `findChipSpans` reads one. */
+function tokenAt(text: string, at: number, name: string): boolean {
+  if (text[at] !== "@" || !text.startsWith(name, at + 1)) return false;
+  const before = at > 0 ? (text[at - 1] as string) : "";
+  const after = text[at + 1 + name.length];
+  return (
+    (before === "" || !NAME_CHAR.test(before)) &&
+    (after === undefined || !NAME_CHAR.test(after))
+  );
+}
+
+/**
+ * The chips that outlive an edit of the text from `prev` to `next`, in
+ * order. The text alone cannot say which of two same-name tokens went —
+ * deleting either leaves the same text — so the edit is placed by the
+ * caret, which ends after whatever was typed or pasted: a chip whose token
+ * the edit touched goes, and the others keep their places (release review
+ * 2026-10-22: deleting the first of two `@index.ts` chips took the second's
+ * chip, and the one left sent the first's path). `caret` null: the edit is
+ * placed by the text alone.
+ */
+export function chipsAfterEdit(
+  prev: string,
+  next: string,
+  caret: number | null,
+  chips: readonly FileChip[],
+): readonly FileChip[] {
+  if (chips.length === 0 || prev === next) return chips;
+  const shorter = Math.min(prev.length, next.length);
+  const prefixCap = caret === null ? shorter : Math.min(shorter, caret);
+  let from = 0;
+  while (from < prefixCap && prev[from] === next[from]) from += 1;
+  const tailCap = Math.min(
+    prev.length - from,
+    next.length - (caret === null ? from : Math.max(from, caret)),
+  );
+  let tail = 0;
+  while (
+    tail < tailCap &&
+    prev[prev.length - 1 - tail] === next[next.length - 1 - tail]
+  )
+    tail += 1;
+  const prevTo = prev.length - tail;
+  const shift = next.length - prev.length;
+  const kept: FileChip[] = [];
+  for (const s of findChipSpans(prev, chips)) {
+    const at =
+      s.end <= from ? s.start : s.start >= prevTo ? s.start + shift : -1;
+    if (at >= 0 && tokenAt(next, at, s.chip.name)) kept.push(s.chip);
+  }
+  return kept.length === chips.length ? chips : kept;
+}
+
+/** The registry without one chip: the one whose token was taken out by hand
+ *  (Backspace over it, the menu's Remove) — never another of its name. */
+export function withoutChip(
+  chips: readonly FileChip[],
+  chip: FileChip,
+): readonly FileChip[] {
+  const i = chips.indexOf(chip);
+  return i < 0 ? chips : [...chips.slice(0, i), ...chips.slice(i + 1)];
+}
+
+/** The registry with a picked chip in the text's order: in front of the
+ *  chip whose token is the first at or after `at` (the `spans` of the text
+ *  before the pick), where the new token goes in. */
+export function addChipAt(
+  chips: readonly FileChip[],
+  spans: readonly ChipSpan[],
+  at: number,
+  chip: FileChip,
+): readonly FileChip[] {
+  const after = spans.find((s) => s.start >= at);
+  const i = after === undefined ? -1 : chips.indexOf(after.chip);
+  return i < 0
+    ? [...chips, chip]
+    : [...chips.slice(0, i), chip, ...chips.slice(i)];
 }
 
 /** The chips whose tokens the text still holds — an edited-away chip goes. */
@@ -306,29 +387,49 @@ export function expandChips(
   return { text: out + text.slice(at), mentions };
 }
 
-/** A sent message back as chips (the ↑ recall): each mentioned path's
- *  occurrence becomes its token. */
+/** A sent message back as chips (the ↑ recall): each occurrence of a
+ *  mentioned path becomes its token and a chip of its own, in the text's
+ *  order — and only where it stands alone, as a token does: the `README.md`
+ *  inside `docs/README.md` is not a mention of it (release review
+ *  2026-10-22: one file sent twice came back as one chip and a dead token,
+ *  and a folder's path was cut out of a longer one). */
 export function chipify(
   text: string,
   mentions: readonly string[] | undefined,
 ): { readonly text: string; readonly chips: readonly FileChip[] } {
   if (mentions === undefined || mentions.length === 0)
     return { text, chips: [] };
-  let out = text;
-  const chips: FileChip[] = [];
+  const hits: Array<{ start: number; end: number; chip: FileChip }> = [];
+  const taken = (a: number, b: number): boolean =>
+    hits.some((h) => a < h.end && b > h.start);
+  // Longest first: a path that holds another is placed before it.
   for (const raw of [...mentions].sort((a, b) => b.length - a.length)) {
     const dir = raw.endsWith("/");
     const path = raw.replace(/\/+$/u, "");
     const name = chipName(path);
-    const spelled = [`\`${raw}\``, raw];
-    for (const s of spelled) {
-      if (!out.includes(s)) continue;
-      out = out.split(s).join(`@${name}`);
-      chips.push({ name, path, ...(dir ? { dir: true as const } : {}) });
-      break;
+    for (const spelled of [`\`${raw}\``, raw]) {
+      for (let i = text.indexOf(spelled); i !== -1; ) {
+        const end = i + spelled.length;
+        const before = i > 0 ? (text[i - 1] as string) : "";
+        const after = text[end] ?? "";
+        if (!NAME_CHAR.test(before) && !NAME_CHAR.test(after) && !taken(i, end))
+          hits.push({
+            start: i,
+            end,
+            chip: { name, path, ...(dir ? { dir: true as const } : {}) },
+          });
+        i = text.indexOf(spelled, i + 1);
+      }
     }
   }
-  return { text: out, chips };
+  hits.sort((a, b) => a.start - b.start);
+  let out = "";
+  let at = 0;
+  for (const h of hits) {
+    out += `${text.slice(at, h.start)}@${h.chip.name}`;
+    at = h.end;
+  }
+  return { text: out + text.slice(at), chips: hits.map((h) => h.chip) };
 }
 
 /** The `@<name>` token a picked path becomes, and the chip that draws it,

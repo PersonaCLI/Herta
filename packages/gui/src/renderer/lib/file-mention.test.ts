@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  addChipAt,
   brickAhead,
   brickComplete,
   chipAt,
   chipify,
+  chipsAfterEdit,
   expandChips,
   findChipSpans,
   findMentionQuery,
@@ -14,6 +16,7 @@ import {
   openingPaths,
   pruneChips,
   rankPaths,
+  withoutChip,
 } from "./file-mention.js";
 
 describe("@-file mentions (ADR 0072 §2)", () => {
@@ -169,7 +172,7 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
     expect(findChipSpans("x@a.ts @a.tsx", chips)).toEqual([]);
   });
 
-  it("two chips of one name match their tokens in the order they went in", () => {
+  it("two chips of one name match their tokens in the registry's order", () => {
     const one = { name: "index.ts", path: "a/index.ts" };
     const two = { name: "index.ts", path: "b/index.ts" };
     const spans = findChipSpans("@index.ts 和 @index.ts", [one, two]);
@@ -198,6 +201,45 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
     expect(pruneChips("@a.ts and @b.t", chips)).toEqual([chips[0]]);
   });
 
+  it("an edit placed by the caret takes the chip it touched — of two same-name chips, the right one (release review 2026-10-22)", () => {
+    const a = { name: "index.ts", path: "a/index.ts" };
+    const b = { name: "index.ts", path: "b/index.ts" };
+    const both = [a, b];
+    const prev = "@index.ts @index.ts ";
+    // The first token and its space selected and deleted: the caret at 0.
+    const left = chipsAfterEdit(prev, "@index.ts ", 0, both);
+    expect(left).toEqual([b]);
+    expect(expandChips("@index.ts ", left).text).toBe("b/index.ts ");
+    // The same text, the second deleted: the caret at 10.
+    expect(chipsAfterEdit(prev, "@index.ts ", 10, both)).toEqual([a]);
+    // A name character typed after the first token breaks that one only.
+    expect(chipsAfterEdit(prev, "@index.tsx @index.ts ", 10, both)).toEqual([
+      b,
+    ]);
+    // Typing in front moves the tokens and keeps every chip.
+    expect(chipsAfterEdit(prev, "看 @index.ts @index.ts ", 2, both)).toBe(both);
+  });
+
+  it("Backspace over a chip, or its menu's Remove, takes that chip and no other of its name", () => {
+    const a = { name: "index.ts", path: "a/index.ts" };
+    const b = { name: "index.ts", path: "b/index.ts" };
+    expect(withoutChip([a, b], a)).toEqual([b]);
+    const both = [a, b];
+    expect(withoutChip(both, { ...a })).toBe(both);
+  });
+
+  it("a pick goes into the registry in the text's order: picked in front of a same-name chip, each keeps its path", () => {
+    const a = { name: "index.ts", path: "a/index.ts" };
+    const b = { name: "index.ts", path: "b/index.ts" };
+    // b was picked first; now `@ind` at the start is picked as a/index.ts.
+    const before = "@ind @index.ts ";
+    const next = insertChip(before, 0, 4, "a/index.ts", false);
+    const chips = addChipAt([b], findChipSpans(before, [b]), 0, next.chip);
+    expect(next.text).toBe("@index.ts @index.ts ");
+    expect(expandChips(next.text, chips).text).toBe("a/index.ts b/index.ts ");
+    expect(addChipAt([b], findChipSpans(before, [b]), 15, a)).toEqual([b, a]);
+  });
+
   it("the caret at a token's end, or inside it, is on the chip", () => {
     const spans = findChipSpans("x @a.ts y", [
       { name: "a.ts", path: "src/a.ts" },
@@ -215,6 +257,30 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
         { name: "docs", path: "docs", dir: true },
       ],
     });
+  });
+
+  it("the ↑ recall gives each occurrence its own chip, in order, and only where the path stands alone (release review 2026-10-22)", () => {
+    const x = { name: "x.ts", path: "src/x.ts" };
+    expect(chipify("比较 src/x.ts 和 src/x.ts", ["src/x.ts"])).toEqual({
+      text: "比较 @x.ts 和 @x.ts",
+      chips: [x, x],
+    });
+    expect(chipify("看 docs/README.md 和 README.md", ["README.md"])).toEqual({
+      text: "看 docs/README.md 和 @README.md",
+      chips: [{ name: "README.md", path: "README.md" }],
+    });
+    expect(chipify("src/ 下的 src/foo.ts", ["src/"])).toEqual({
+      text: "@src 下的 src/foo.ts",
+      chips: [{ name: "src", path: "src", dir: true }],
+    });
+    // Two files of one name come back in the order they were sent.
+    const back = chipify("b/index.ts 对比 a/index.ts", [
+      "b/index.ts",
+      "a/index.ts",
+    ]);
+    expect(expandChips(back.text, back.chips).text).toBe(
+      "b/index.ts 对比 a/index.ts",
+    );
   });
 
   it("the folders of a listing, shallowest first", () => {

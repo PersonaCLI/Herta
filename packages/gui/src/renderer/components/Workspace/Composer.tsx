@@ -19,10 +19,12 @@ import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { FileTypeIcon } from "../../lib/file-icons.js";
 import {
+  addChipAt,
   brickComplete,
   type ChipSpan,
   chipAt,
   chipify,
+  chipsAfterEdit,
   expandChips,
   type FileChip,
   findChipSpans,
@@ -32,6 +34,7 @@ import {
   type MentionItem,
   mentionItems,
   pruneChips,
+  withoutChip,
 } from "../../lib/file-mention.js";
 import {
   composeQuotedMessage,
@@ -895,7 +898,10 @@ export function Composer(): JSX.Element {
         item.dir === true,
       );
       pendingCaret.current = next.caret;
-      setChips((c) => [...c, next.chip]);
+      // In the text's order, so a same-name chip keeps its own path.
+      setChips((c) =>
+        addChipAt(c, findChipSpans(text, c), mention.start, next.chip),
+      );
       setText(next.text);
       setMention(null);
       setHintActive(false);
@@ -960,6 +966,7 @@ export function Composer(): JSX.Element {
   const removeChip = (span: ChipSpan): void => {
     const end = text[span.end] === " " ? span.end + 1 : span.end;
     pendingCaret.current = span.start;
+    setChips((c) => withoutChip(c, span.chip));
     setText(`${text.slice(0, span.start)}${text.slice(end)}`);
     setChipMenu(null);
     taRef.current?.focus({ preventScroll: true });
@@ -1685,7 +1692,13 @@ export function Composer(): JSX.Element {
               // Typing is engagement: a caret given back quietly (the hold
               // window opening) expands on the first keystroke.
               setFocusWithin(true);
-              setText(e.target.value);
+              // The chips the edit touched go — placed by the caret, so of
+              // two same-name chips the right one goes (release review
+              // 2026-10-22).
+              const value = e.target.value;
+              const at = e.target.selectionStart;
+              setChips((c) => chipsAfterEdit(text, value, at, c));
+              setText(value);
               setHintActive(
                 shouldHint(e.target.value, e.target.selectionStart, -1),
               );
@@ -1807,6 +1820,7 @@ export function Composer(): JSX.Element {
                   if (span !== undefined) {
                     e.preventDefault();
                     pendingCaret.current = span.start;
+                    setChips((c) => withoutChip(c, span.chip));
                     setText(
                       `${text.slice(0, span.start)}${text.slice(span.end)}`,
                     );

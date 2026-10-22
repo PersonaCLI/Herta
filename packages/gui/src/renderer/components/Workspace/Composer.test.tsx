@@ -1800,10 +1800,10 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
 
   function mentionComposer(
     lang: "zh" | "en" = "zh",
-    opts: { readonly listing?: boolean } = {},
+    opts: { readonly listing?: boolean; readonly files?: string[] } = {},
   ) {
     const mock = createMockHertaBridge(
-      opts.listing === false ? {} : { workspaceFiles: FILES },
+      opts.listing === false ? {} : { workspaceFiles: opts.files ?? FILES },
     );
     const r = renderComposer(mock);
     act(() =>
@@ -2049,6 +2049,70 @@ describe("Composer — @-file mentions (ADR 0072 §2)", () => {
     });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(mock.calls.submitTextMentions).toEqual([undefined]);
+  });
+
+  describe("two files of one name (release review 2026-10-22)", () => {
+    const SAME = ["a/index.ts", "b/index.ts"];
+    /** `@index.ts @index.ts `: a/index.ts, then b/index.ts. */
+    async function pickBoth() {
+      const m = mentionComposer("zh", { files: SAME });
+      m.type("@index");
+      await waitFor(() =>
+        expect(m.options()).toEqual(["index.tsa", "index.tsb"]),
+      );
+      fireEvent.keyDown(m.input, { key: "Enter" });
+      m.type("@index.ts @index");
+      await waitFor(() => expect(m.options()).toHaveLength(2));
+      fireEvent.keyDown(m.input, { key: "ArrowDown" });
+      fireEvent.keyDown(m.input, { key: "Enter" });
+      expect(m.input.value).toBe("@index.ts @index.ts ");
+      return m;
+    }
+
+    it("deleting the first chip by selection leaves the second its own path", async () => {
+      const { input, mock } = await pickBoth();
+      fireEvent.change(input, {
+        target: { value: "@index.ts ", selectionStart: 0 },
+      });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(mock.calls.submitText).toEqual(["b/index.ts"]);
+      expect(mock.calls.submitTextMentions).toEqual([["b/index.ts"]]);
+    });
+
+    it("Backspace over the first chip takes that one", async () => {
+      const { input, mock } = await pickBoth();
+      input.setSelectionRange(9, 9);
+      fireEvent.keyDown(input, { key: "Backspace" });
+      expect(input.value).toBe(" @index.ts ");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(mock.calls.submitText).toEqual(["b/index.ts"]);
+    });
+
+    it("a pick in front of a same-name chip keeps each its path", async () => {
+      const { input, type, options, mock } = mentionComposer("zh", {
+        files: SAME,
+      });
+      type("@index");
+      await waitFor(() => expect(options()).toHaveLength(2));
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(input.value).toBe("@index.ts ");
+      // A space at the start, the caret back to it, and `@index` typed.
+      fireEvent.change(input, {
+        target: { value: " @index.ts ", selectionStart: 1 },
+      });
+      fireEvent.change(input, {
+        target: { value: "@index @index.ts ", selectionStart: 6 },
+      });
+      await waitFor(() => expect(options()).toHaveLength(2));
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(input.value).toBe("@index.ts @index.ts ");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(mock.calls.submitText).toEqual(["a/index.ts b/index.ts"]);
+      expect(mock.calls.submitTextMentions).toEqual([
+        ["a/index.ts", "b/index.ts"],
+      ]);
+    });
   });
 
   it("a press on a chip opens its menu; Remove takes the chip out", async () => {

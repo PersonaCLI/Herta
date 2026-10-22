@@ -305,3 +305,105 @@ describe("Settings shows where the cheat sheet is (ADR 0082 amendment 2026-10-21
     expect(screen.getByTestId("shortcuts-sheet")).toBeInTheDocument();
   });
 });
+
+describe("the small keyboard items (release review 2026-10-22)", () => {
+  beforeEach(() => window.localStorage.clear());
+
+  const flush = async (): Promise<void> => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  };
+
+  it("mid-turn, a second Ctrl+N hard on the first is not the confirm; a deliberate one is", () => {
+    const { mock } = mountWithSession();
+    act(() => mock.emitTurn({ kind: "started", turnId: "t1" }));
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      ctrl("n"); // arms
+      now += 80;
+      ctrl("n"); // a bounce
+      expect(mock.calls.createSession).toHaveLength(0);
+      now += 500;
+      ctrl("n");
+      expect(mock.calls.createSession).toHaveLength(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("Escape from a session card the keys left focused stops the run, once the card has nothing of its own to close", async () => {
+    const { mock } = mountWithSession({ listSessionsResult: mockSessionList });
+    await settle();
+    act(() => mock.emitTurn({ kind: "started", turnId: "t1" }));
+    const card = screen.getAllByTestId("session-card")[0] as HTMLElement;
+    act(() => card.focus());
+    // Keyboard focus may show the card's title tip: the first Escape closes it.
+    if (document.querySelector(".session-title-tip") !== null) {
+      fireEvent.keyDown(card, { key: "Escape" });
+      await flush();
+      expect(document.querySelector(".session-title-tip")).toBeNull();
+      expect(mock.calls.interrupt).toHaveLength(0);
+    }
+    fireEvent.keyDown(card, { key: "Escape" });
+    await flush();
+    expect(mock.calls.interrupt).toHaveLength(1);
+  });
+
+  it("Ctrl+B with the caret in the search leaves the focus on the search button, not the page; Ctrl+K then expands the sidebar and puts the caret back", () => {
+    const { container } = mountWithSession();
+    ctrl("k");
+    const input = document.activeElement as HTMLElement;
+    expect(input.classList.contains("sidebar-search")).toBe(true);
+    ctrl("b");
+    expect(
+      container.querySelector(".app")?.classList.contains("sidebar-collapsed"),
+    ).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.closest(".sidebar")).toBeNull();
+    ctrl("k");
+    expect(
+      container.querySelector(".app")?.classList.contains("sidebar-collapsed"),
+    ).toBe(false);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("Ctrl+U twice before the dialog is up opens one picker", () => {
+    const { mock } = mountWithSession();
+    ctrl("u");
+    ctrl("u");
+    expect(mock.calls.pickAttachments).toBe(1);
+  });
+
+  it("an Escape while the answered approval card is still leaving does not stop the run", async () => {
+    const { mock } = mountWithSession();
+    act(() => mock.emitTurn({ kind: "started", turnId: "t1" }));
+    act(() =>
+      mock.emitOverlay({
+        kind: "pending",
+        overlay: {
+          kind: "pending-permission",
+          requestId: "req-x",
+          risk: "network",
+          tool: "run_command",
+          summary: "install a package",
+          command: "npm install left-pad",
+        },
+      }),
+    );
+    act(() => mock.emitOverlay({ kind: "resolved", requestId: "req-x" }));
+    // The card fades out over 200 ms; the Escape lands on the page meanwhile.
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await flush();
+    expect(mock.calls.interrupt).toHaveLength(0);
+    // Gone: Escape stops the run again.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 260));
+    });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await flush();
+    expect(mock.calls.interrupt).toHaveLength(1);
+  });
+});

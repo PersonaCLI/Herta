@@ -228,5 +228,10 @@ export function aliasBrickInput(text: string, lang: "zh" | "en"): string {
  * `@板砖` on send. zh is returned byte-identical.
  */
 export function dealiasBrickDraft(text: string, lang: "zh" | "en"): string {
-  return lang === "en" ? text.replaceAll("@板砖", "@Brick") : text;
+  // Outside quotation only, as `aliasBrickInput` maps: a quote's fenced
+  // source keeps its own `@板砖` (release review 2026-10-22: the recall
+  // rewrote it, and the re-sent quote no longer matched the file).
+  return lang === "en"
+    ? mapOutsideQuotation(text, (seg) => seg.replaceAll("@板砖", "@Brick"))
+    : text;
 }

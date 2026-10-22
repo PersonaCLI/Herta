@@ -502,11 +502,20 @@ export function SessionItem(props: SessionItemProps): JSX.Element {
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
-          // Consume it — a stray Escape reaching the approval panel's window
-          // listener denies a pending permission gate (audit 2026-07-24, H2).
-          e.stopPropagation();
+          // Consumed only when the card had something to close — its 确认删除
+          // or its tip. Otherwise the Escape is not the card's: it goes on,
+          // and mid-turn it stops the run as it does anywhere outside a field
+          // (ADR 0082 §5). Swallowed every time, a card the session keys had
+          // left focused made Escape do nothing at all (release review
+          // 2026-10-22). The approval panel denies only an Escape from inside
+          // itself, so a card's never reaches it as a denial.
+          const had = confirming || tipAt !== null;
           setConfirming(false);
           closeTip();
+          if (had) {
+            e.stopPropagation();
+            e.preventDefault();
+          }
           return;
         }
         if (e.key === "F2") {

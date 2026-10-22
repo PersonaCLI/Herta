@@ -784,6 +784,6 @@ export const en = {
   "shortcut.chipMenu": "Open a file chip's menu",
   "shortcut.stopRun": "Stop the run",
   "shortcut.approve": "Allow",
-  "shortcut.approveMore": "Allow for this task · Auto-review",
+  "shortcut.approveMore": "The other allow buttons, left to right",
   "shortcut.deny": "Deny",
 } satisfies Record<MessageKey, string>;

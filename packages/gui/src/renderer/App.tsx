@@ -161,6 +161,13 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
     return true;
   });
   useShortcut("toggleSidebar", () => {
+    // Collapsing hides whatever in the sidebar holds the focus, and the focus
+    // fell to the page, where the next Escape stopped the run (release review
+    // 2026-10-22). It goes to the top bar's search button first; the search
+    // and its words stay as they were.
+    const active = document.activeElement;
+    if (!collapsed && active instanceof Element && active.closest(".sidebar"))
+      searchButtonRef.current?.focus({ preventScroll: true });
     toggleCollapsed();
     return true;
   });
@@ -182,12 +189,23 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
     // list is actually visible (not a dead search over a hidden list).
     if (collapsed) toggleCollapsed();
   };
-  // Ctrl+K opens the search, or takes the caret back to it when open.
+  // Ctrl+K opens the search, or takes the caret back to it when open — in
+  // a collapsed sidebar too, which it expands first: the hidden field took
+  // no focus, and Ctrl+K did nothing (release review 2026-10-22).
+  const focusSearchOnExpand = useRef(false);
   useShortcut("searchSessions", () => {
-    if (searchOpen) searchInputRef.current?.focus({ preventScroll: true });
-    else toggleSearch();
+    if (!searchOpen) toggleSearch();
+    else if (collapsed) {
+      focusSearchOnExpand.current = true;
+      toggleCollapsed();
+    } else searchInputRef.current?.focus({ preventScroll: true });
     return true;
   });
+  useEffect(() => {
+    if (collapsed || !focusSearchOnExpand.current) return;
+    focusSearchOnExpand.current = false;
+    searchInputRef.current?.focus({ preventScroll: true });
+  }, [collapsed]);
 
   if (error !== null) {
     return (

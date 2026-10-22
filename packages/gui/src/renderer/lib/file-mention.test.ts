@@ -283,6 +283,22 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
     );
   });
 
+  it("a full stop after a chip ends the sentence, not the name; a name that goes on is not the chip (release review 2026-10-22)", () => {
+    const readme = { name: "README.md", path: "docs/README.md" };
+    expect(findChipSpans("see @README.md.", [readme])).toEqual([
+      { start: 4, end: 14, chip: readme },
+    ]);
+    expect(expandChips("see @README.md.", [readme]).text).toBe(
+      "see docs/README.md.",
+    );
+    expect(findChipSpans("see @README.md.bak", [readme])).toEqual([]);
+    expect(findChipSpans("see @README.md..", [readme])).toEqual([]);
+    expect(chipify("see docs/README.md.", ["docs/README.md"])).toEqual({
+      text: "see @README.md.",
+      chips: [readme],
+    });
+  });
+
   it("the folders of a listing, shallowest first", () => {
     expect(listedFolders(["a/b/c.ts", "a/d.ts", "e/f.ts", "g.ts"])).toEqual([
       "a",

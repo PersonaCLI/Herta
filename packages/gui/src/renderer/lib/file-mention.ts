@@ -209,6 +209,18 @@ export function chipName(path: string): string {
  *  from a token without a space, and must not swallow it. */
 const NAME_CHAR = /[A-Za-z0-9_.\-/]/;
 
+/** Whether a token's name ends at `end`: nothing after it that would carry
+ *  the file name on. A full stop with nothing name-like past it ends the
+ *  sentence, not the name — `see @README.md.` (release review 2026-10-22:
+ *  the period dropped the chip, and the token went as typed). */
+function endsToken(text: string, end: number): boolean {
+  const after = text[end];
+  if (after === undefined || !NAME_CHAR.test(after)) return true;
+  if (after !== ".") return false;
+  const next = text[end + 1];
+  return next === undefined || !NAME_CHAR.test(next);
+}
+
 /**
  * The chips' tokens in the text, left to right. A token is `@<name>` with no
  * name character before the `@` or after the name. Two chips with the same
@@ -238,8 +250,7 @@ export function findChipSpans(
       for (const name of names) {
         if (!text.startsWith(name, i + 1)) continue;
         const end = i + 1 + name.length;
-        const after = text[end];
-        if (after !== undefined && NAME_CHAR.test(after)) continue;
+        if (!endsToken(text, end)) continue;
         const list = byName.get(name) as FileChip[];
         const k = used.get(name) ?? 0;
         if (k >= list.length) continue;
@@ -262,10 +273,9 @@ export function findChipSpans(
 function tokenAt(text: string, at: number, name: string): boolean {
   if (text[at] !== "@" || !text.startsWith(name, at + 1)) return false;
   const before = at > 0 ? (text[at - 1] as string) : "";
-  const after = text[at + 1 + name.length];
   return (
     (before === "" || !NAME_CHAR.test(before)) &&
-    (after === undefined || !NAME_CHAR.test(after))
+    endsToken(text, at + 1 + name.length)
   );
 }
 
@@ -411,8 +421,7 @@ export function chipify(
       for (let i = text.indexOf(spelled); i !== -1; ) {
         const end = i + spelled.length;
         const before = i > 0 ? (text[i - 1] as string) : "";
-        const after = text[end] ?? "";
-        if (!NAME_CHAR.test(before) && !NAME_CHAR.test(after) && !taken(i, end))
+        if (!NAME_CHAR.test(before) && endsToken(text, end) && !taken(i, end))
           hits.push({
             start: i,
             end,

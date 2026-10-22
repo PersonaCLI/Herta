@@ -47,6 +47,9 @@ export function TopBar(props: TopBarProps): JSX.Element {
   // warning, the icon tints), a second click within the window proceeds.
   // Auto-disarms on the timer or when the turn ends.
   const NEW_ARM_RESET_MS = 4000;
+  /** A key press this soon after the arm is not its confirm. */
+  const NEW_CONFIRM_MIN_MS = 400;
+  const newArmedAt = useRef(0);
   const turnInFlight = useSessionSelector((s) => s.status !== "idle");
   const [newArmed, setNewArmed] = useState(false);
   const newArmTimer = useRef<number | null>(null);
@@ -66,6 +69,7 @@ export function TopBar(props: TopBarProps): JSX.Element {
     setNewArmed(false);
   }, [turnInFlight]);
   const armNew = (): void => {
+    newArmedAt.current = Date.now();
     setNewArmed(true);
     if (newArmTimer.current !== null) window.clearTimeout(newArmTimer.current);
     newArmTimer.current = window.setTimeout(() => {
@@ -97,6 +101,12 @@ export function TopBar(props: TopBarProps): JSX.Element {
       });
   };
   useShortcut("newSession", () => {
+    // A second Ctrl+N hard on the first — a bounce, a "did it take?" press —
+    // is not the arm's confirm: it interrupted the reply the arm protects.
+    // The button refuses its double-click the same way (UX review
+    // 2026-09-22, item 3; release review 2026-10-22).
+    if (newArmed && Date.now() - newArmedAt.current < NEW_CONFIRM_MIN_MS)
+      return true;
     newSession();
     return true;
   });

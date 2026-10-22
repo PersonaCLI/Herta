@@ -107,7 +107,9 @@ async function readOutline(
   const walk = async (nodes: readonly Node[] | null): Promise<void> => {
     for (const n of nodes ?? []) {
       const page = await destPage(doc, n.dest);
-      const title = n.title.trim();
+      // One line: a title with a line break in it split the quote's header
+      // (release review 2026-10-22).
+      const title = n.title.replace(/\s+/gu, " ").trim();
       if (page !== null && title.length > 0) out.push({ page, title });
       await walk(n.items ?? null);
     }

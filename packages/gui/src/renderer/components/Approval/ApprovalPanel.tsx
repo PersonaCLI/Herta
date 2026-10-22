@@ -143,11 +143,10 @@ export function ApprovalPanel(): JSX.Element | null {
   // must not steal focus from inside the modal (an invisible Allow button
   // catching a stray Enter). When the covering modal closes, `isTop` flips
   // back and the focus effect re-fires — the panel regains focus naturally.
-  const isTop = useModalOverlay(
-    "approval",
-    shown !== null && !leaving,
-    OVERLAY_Z.approval,
-  );
+  // On the stack through its 200 ms exit too: the card is still on screen,
+  // and an Escape there was taken for the bare page's and stopped the run
+  // (release review 2026-10-22). Its own keys stand down as it leaves.
+  const isTop = useModalOverlay("approval", shown !== null, OVERLAY_Z.approval);
 
   // One resolution per request: the panel stays interactive until the
   // `resolved` overlay event round-trips over IPC, so an unlatched panel let

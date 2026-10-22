@@ -775,6 +775,6 @@ export const zh = {
   "shortcut.chipMenu": "打开文件标签的菜单",
   "shortcut.stopRun": "停止运行",
   "shortcut.approve": "同意",
-  "shortcut.approveMore": "任务内同意 · 开启自动审核",
+  "shortcut.approveMore": "其余的同意按钮，从左到右",
   "shortcut.deny": "拒绝",
 } as const;

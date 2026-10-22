@@ -312,7 +312,11 @@ export function Sidebar(props: SidebarProps): JSX.Element {
         <span className="sidebar-settings-label">{t("topbar.settings")}</span>
         {/* The row names itself; its key shows at the right on hover and
             focus, as a menu item's would (ADR 0082 §8). */}
-        <KeyCaps id="openSettings" className="sidebar-settings__keys" />
+        <KeyCaps
+          id="openSettings"
+          className="sidebar-settings__keys"
+          decorative
+        />
       </button>
     </aside>
   );

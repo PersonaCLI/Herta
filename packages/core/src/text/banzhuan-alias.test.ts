@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aliasBrickInput,
+  dealiasBrickDraft,
   mapOutsideQuotation,
   quotationRanges,
 } from "./banzhuan-alias.js";
@@ -56,5 +57,17 @@ describe("aliasBrickInput — a quoted passage is not the user typing @brick", (
     expect(
       mapOutsideQuotation(`a ${tick}a${tick} a`, (s) => s.toUpperCase()),
     ).toBe(`A ${tick}a${tick} A`);
+  });
+});
+
+describe("dealiasBrickDraft leaves quoted source as it was (release review 2026-10-22)", () => {
+  it("maps the trigger outside quotation only, as the input alias does", () => {
+    const sent =
+      "〔引用 docs/a.md:1–2〕\n```\nthe token is @板砖 here\n```\n\n@板砖 run it";
+    expect(dealiasBrickDraft(sent, "en")).toBe(
+      "〔引用 docs/a.md:1–2〕\n```\nthe token is @板砖 here\n```\n\n@Brick run it",
+    );
+    expect(aliasBrickInput(dealiasBrickDraft(sent, "en"), "en")).toBe(sent);
+    expect(dealiasBrickDraft(sent, "zh")).toBe(sent);
   });
 });

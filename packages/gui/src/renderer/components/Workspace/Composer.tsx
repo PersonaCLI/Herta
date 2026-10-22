@@ -675,10 +675,14 @@ export function Composer(): JSX.Element {
       ) {
         sessionStore.clearHeld();
         const words = takeBack(sessionStore, pending);
-        setText((prev) =>
-          prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
-        );
-        pendingCaret.current = words.length;
+        // Quotes alone come back as chips with no words: what is typed
+        // stays as it was, not pushed down two lines.
+        if (words.length > 0) {
+          setText((prev) =>
+            prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
+          );
+          pendingCaret.current = words.length;
+        }
       } else if (pending !== null) {
         // The clone lifts off from the card, not the input: measure it
         // BEFORE the clear unmounts it.
@@ -725,7 +729,19 @@ export function Composer(): JSX.Element {
   useEffect(() => {
     const was = prevHolding.current;
     prevHolding.current = holding;
-    if (was && !holding && busy) setFocusWithin(false);
+    if (was && !holding && busy) {
+      setFocusWithin(false);
+      // The disable drops the caret to the page, where Tab starts over and
+      // Escape stops the run unasked: the conversation takes it, as at the
+      // turn's start (ADR 0082 §11; release review 2026-10-22).
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active === null || active === document.body)
+          document
+            .querySelector<HTMLElement>(".conversation")
+            ?.focus({ preventScroll: true });
+      });
+    }
     if (!was && holding && caretIsFree(composerRef.current)) {
       const ta = taRef.current;
       if (ta !== null && document.activeElement !== ta) {
@@ -759,7 +775,8 @@ export function Composer(): JSX.Element {
     if (pending === null) return;
     sessionStore.clearHeld();
     const words = takeBack(sessionStore, pending);
-    setText((prev) => (prev.length > 0 ? `${words}\n\n${prev}` : words));
+    if (words.length > 0)
+      setText((prev) => (prev.length > 0 ? `${words}\n\n${prev}` : words));
     taRef.current?.focus({ preventScroll: true });
     setFocusWithin(true);
   };
@@ -1052,7 +1069,10 @@ export function Composer(): JSX.Element {
     // held card's Edit follows. A rewind replaced an unsent draft outright
     // (UX review 2026-09-22, item 15). Its quotes come back as chips.
     const words = takeBack(sessionStore, composerDraft);
-    setText((prev) => (prev.trim().length > 0 ? `${words}\n\n${prev}` : words));
+    if (words.length > 0)
+      setText((prev) =>
+        prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
+      );
     if (composerDraftImages !== null) images.restore(composerDraftImages);
     setHintActive(false);
     pendingCaret.current = words.length;
@@ -1205,6 +1225,9 @@ export function Composer(): JSX.Element {
     return true;
   });
   const onPickAttachments = (): void => {
+    // One picker at a time: a second Ctrl+U before the dialog was up opened
+    // another (release review 2026-10-22).
+    if (pickerOpen.current) return;
     pickerOpen.current = true;
     void bridge
       .pickAttachments()

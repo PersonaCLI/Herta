@@ -284,6 +284,13 @@ export class PersistentShell implements BackgroundProcess {
   async kill(): Promise<void> {
     const child = this.child;
     this.child = null;
+    // The next command starts a fresh shell, in the workspace: say so now.
+    // The rules and the reviewer read `cwd` before that command runs, and
+    // kept judging it against a `cd` the killed shell took with it — a
+    // timed-out `cd packages/app && npm test` made the next `rm -rf build`
+    // look like the app's build while it ran at the root (release review
+    // 2026-10-22).
+    this.currentCwd = this.opts.workspaceRoot;
     // What exited shells left behind first — including when no shell is up.
     for (const group of this.exitedGroups) {
       try {
@@ -388,7 +395,11 @@ export class PersistentShell implements BackgroundProcess {
       // `kill()` lets go of the child before killing its whole group, so
       // only a shell that exited ON ITS OWN is still `this.child` here.
       const ownExit = this.child === child;
-      if (ownExit) this.child = null;
+      if (ownExit) {
+        this.child = null;
+        // As in `kill`: the next command starts in the workspace.
+        this.currentCwd = this.opts.workspaceRoot;
+      }
       // Its process group outlives it while a backgrounded job runs there
       // (see isRunning). Remembered only if a member is alive right now: a
       // group that is already empty, or one kill() just felled, would be a
@@ -412,7 +423,10 @@ export class PersistentShell implements BackgroundProcess {
         this.failWaiter({ shellExited: true, timedOut: false });
     });
     child.on("error", () => {
-      if (this.child === child) this.child = null;
+      if (this.child === child) {
+        this.child = null;
+        this.currentCwd = this.opts.workspaceRoot;
+      }
       if (this.waiter?.child === child)
         this.failWaiter({ shellExited: true, timedOut: false });
     });

@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -266,6 +266,29 @@ d("PersistentShell (real bash)", () => {
     expect(r2.freshShell).toBe(true);
     expect(r2.output).toBe("KEEP=\n");
     expect(shell.spawns).toBe(2);
+  });
+
+  it("after a timeout, an exit or a kill, cwd says where the next command will run — the workspace, not a `cd` the lost shell took with it (release review 2026-10-22)", async () => {
+    mkdirSync(join(ws, "sub"));
+    await shell.run("cd sub", { timeoutMs: 10_000 });
+    expect(shell.cwd).toBe(join(ws, "sub"));
+    const r = await shell.run("sleep 30", { timeoutMs: 800 });
+    expect(r.timedOut).toBe(true);
+    expect(shell.cwd).toBe(ws);
+    // The shell's own exit, and a kill, the same.
+    await shell.run("cd sub", { timeoutMs: 10_000 });
+    expect(shell.cwd).toBe(join(ws, "sub"));
+    await shell.run("exit 3", { timeoutMs: 10_000 });
+    expect(shell.cwd).toBe(ws);
+    await shell.run("cd sub", { timeoutMs: 10_000 });
+    await shell.kill();
+    expect(shell.cwd).toBe(ws);
+    // And it is where the next command does run.
+    const next = await shell.run("pwd", { timeoutMs: 10_000 });
+    expect(
+      shellPathsFor(BASH as string).toNative(next.output.trim()) ??
+        next.output.trim(),
+    ).toBe(ws);
   });
 
   it("bounds a chatty command: keeps the tail, counts the total", async () => {

@@ -11,6 +11,7 @@ import { App } from "./App.js";
 import { en } from "./i18n/messages/en.js";
 import { zh } from "./i18n/messages/zh.js";
 import { createMockHertaBridge } from "./ipc/mock-bridge.js";
+import { OVERLAY_Z, popOverlay, pushOverlay } from "./lib/overlay-stack.js";
 import { mockSessionList } from "./mocks/sessions.js";
 
 vi.mock("./components/Opening/pick-opening-segment.js", () => ({
@@ -146,6 +147,27 @@ describe("the keyboard (ADR 0082)", () => {
     act(() => mock.emitOpenSettings());
     expect(screen.queryByTestId("shortcuts-sheet")).toBeNull();
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+  });
+
+  it("the menu's Settings… does nothing over the key prompt or the lightbox — Settings would open behind it and take its focus (release review 2026-10-22)", async () => {
+    const { mock } = mountWithSession();
+    for (const [id, z] of [
+      ["keyPrompt", OVERLAY_Z.keyPrompt],
+      ["lightbox", OVERLAY_Z.lightbox],
+    ] as const) {
+      act(() => pushOverlay(id, z));
+      try {
+        act(() => mock.emitOpenSettings());
+        await settle();
+        expect(document.querySelector(".settings-nav"), id).toBeNull();
+      } finally {
+        act(() => popOverlay(id));
+      }
+    }
+    act(() => mock.emitOpenSettings());
+    await waitFor(() =>
+      expect(document.querySelector(".settings-nav")).toBeInTheDocument(),
+    );
   });
 
   it("Ctrl+L puts the caret in the composer", () => {

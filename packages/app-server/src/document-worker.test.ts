@@ -108,8 +108,10 @@ describe("reading a document on a worker (owner 2026-10-16)", () => {
       started.push(w);
       return w.worker;
     });
-    const held = reader.extract("pdf", pdf(), {});
-    started[0]?.die();
+    // It dies mid-document: started, and a page in.
+    const held = reader.extract("pdf", pdf(), {
+      onPage: () => started[0]?.die(),
+    });
     expect(await held).toEqual({ ok: false, reason: "parse_error" });
     const next = await reader.extract("pdf", pdf(), {});
     expect(next.ok).toBe(true);
@@ -123,6 +125,85 @@ describe("reading a document on a worker (owner 2026-10-16)", () => {
     });
     const r = await reader.extract("pdf", pdf(), {});
     expect(r.ok).toBe(true);
+  });
+
+  /** A worker that never answers on its own: the test drives its events. */
+  interface SilentWorker {
+    readonly worker: DocumentWorker;
+    readonly emit: (
+      event: "message" | "error" | "exit",
+      value: unknown,
+    ) => void;
+    terminated: number;
+  }
+  function silentWorker(): SilentWorker {
+    const listeners = new Map<string, Array<(v: unknown) => void>>();
+    const worker = {
+      postMessage: () => undefined,
+      on: ((event: string, listener: (v: unknown) => void) => {
+        listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+        return worker;
+      }) as DocumentWorker["on"],
+      terminate: async () => {
+        handle.terminated += 1;
+        return 0;
+      },
+    } as DocumentWorker;
+    const handle: SilentWorker = {
+      worker,
+      terminated: 0,
+      emit: (event, value) => {
+        for (const l of listeners.get(event) ?? []) l(value);
+      },
+    };
+    return handle;
+  }
+
+  it("a worker whose file never loads — an error event before it is ready, not a throw — leaves what it held, and every later document, to the in-process reader (release review 2026-10-22)", async () => {
+    const started: Array<ReturnType<typeof silentWorker>> = [];
+    const reader = workerDocumentExtractor(() => {
+      const w = silentWorker();
+      started.push(w);
+      return w.worker;
+    });
+    const held = reader.extract("pdf", pdf(), {});
+    started[0]?.emit("error", new Error("Cannot find module"));
+    started[0]?.emit("exit", 1);
+    expect((await held).ok).toBe(true);
+    expect((await reader.extract("pdf", pdf(), {})).ok).toBe(true);
+    expect(started).toHaveLength(1);
+    await reader.close();
+  });
+
+  it("a worker that holds a document and says nothing for the stall time is ended; what it held answers parse_error, and the next document starts a new one (release review 2026-10-22)", async () => {
+    const started: Array<ReturnType<typeof silentWorker>> = [];
+    const reader = workerDocumentExtractor(
+      () => {
+        const w = silentWorker();
+        started.push(w);
+        return w.worker;
+      },
+      { stallMs: 40 },
+    );
+    const stuck = reader.extract("pdf", pdf(), {});
+    started[0]?.emit("message", { kind: "ready" });
+    expect(await stuck).toEqual({ ok: false, reason: "parse_error" });
+    expect(started[0]?.terminated).toBe(1);
+    const next = reader.extract("pdf", pdf(), {});
+    expect(started).toHaveLength(2);
+    // A page keeps the clock from running out; the answer stops it.
+    started[1]?.emit("message", { kind: "ready" });
+    await new Promise((r) => setTimeout(r, 25));
+    started[1]?.emit("message", { id: 2, kind: "page", done: 1, total: 2 });
+    await new Promise((r) => setTimeout(r, 25));
+    started[1]?.emit("message", {
+      id: 2,
+      kind: "done",
+      result: { ok: true, text: "x", pages: 2 },
+    });
+    expect((await next).ok).toBe(true);
+    expect(started[1]?.terminated).toBe(0);
+    await reader.close();
   });
 
   it("the ingest reads through the installed reader, and in-process without one", async () => {

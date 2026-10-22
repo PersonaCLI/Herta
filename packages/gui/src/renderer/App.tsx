@@ -34,7 +34,11 @@ import { en } from "./i18n/messages/en.js";
 import { zh } from "./i18n/messages/zh.js";
 import type { HertaBridge, Locale } from "./ipc/bridge-types.js";
 import { journeyMarkAfterPaint } from "./lib/journey.js";
-import { OVERLAY_Z, topOverlayZ } from "./lib/overlay-stack.js";
+import {
+  OVERLAY_Z,
+  overlayOpenAbove,
+  topOverlayZ,
+} from "./lib/overlay-stack.js";
 import { useShortcut, useShortcutDispatcher } from "./lib/shortcut-registry.js";
 import { initTheme } from "./lib/theme.js";
 import { ReferenceView } from "./ReferenceView.js";
@@ -136,10 +140,14 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   const searchInputRef = useRef<HTMLInputElement>(null);
   // The application menu's Settings… (Cmd+, on macOS since 2026-09-23;
   // Ctrl+, everywhere, ADR 0082). From over the cheat sheet, the sheet
-  // gives way.
+  // gives way. Over the key prompt, the lightbox or a menu it does nothing:
+  // Settings opened BEHIND them and took the focus from the visible one
+  // (release review 2026-10-22), as Ctrl+W already knew.
   useEffect(
     () =>
       bridge.onOpenSettings?.(() => {
+        if (overlayOpenAbove(OVERLAY_Z.approval, ["shortcuts", "settings"]))
+          return;
         setShortcutsOpen(false);
         setSettingsOpen(true);
       }),

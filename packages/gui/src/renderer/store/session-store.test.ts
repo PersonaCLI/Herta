@@ -13,6 +13,14 @@ function backendDeltaEvent(text: string): AgentEvent {
 }
 
 describe("SessionStore — the held message (ADR 0063)", () => {
+  it("a second hold goes through the join it is given (the composer's keeps quotes in front)", () => {
+    const store = new SessionStore();
+    store.connect(createMockHertaBridge().bridge);
+    store.holdMessage("one", () => "unused");
+    store.holdMessage("two", (prev, next) => `${next}+${prev}`);
+    expect(store.getSnapshot().held).toBe("two+one");
+  });
+
   it("holds one message; a second send joins it as a paragraph; clear and a new activation drop it", () => {
     const mock = createMockHertaBridge();
     const store = new SessionStore();

@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentEvent, SystemBlock } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { projectBackendEvent } from "./backend-record-projection.js";
@@ -753,5 +756,54 @@ describe("a mentioned path, as Herta reads it (ADR 0072 amendment 2026-10-20)", 
   it("a top-level file and no mentions are left as they are", () => {
     expect(nameMentionedPaths("README.md", ["README.md"])).toBe("README.md");
     expect(nameMentionedPaths("src/a.ts", undefined)).toBe("src/a.ts");
+  });
+});
+
+describe("a folded failure says why (release review 2026-10-22)", () => {
+  const fold = (code: string, lang: "zh" | "en") =>
+    foldedRunLine(
+      row({
+        label: "系统",
+        body: `↳ edit_file failed: ${code}: x`,
+        digest: { kind: "tool-fail", tool: "edit_file", code, message: "x" },
+      }),
+      lang,
+    );
+
+  it("a stale hunk, the editors' commonest failure", () => {
+    expect(fold("hunk_not_found", "zh")).toBe(
+      "这一步没成（edit_file）：要改的那段在文件里没找到",
+    );
+    expect(fold("hunk_not_found", "en")).toBe(
+      "A step failed (edit_file): the text to change was not in the file",
+    );
+  });
+
+  it("every code the tools' sources return reads with a reason, in both languages", () => {
+    const root = fileURLToPath(new URL("../../../tools/src/", import.meta.url));
+    const codes = new Set<string>();
+    for (const f of readdirSync(root, { recursive: true }) as string[]) {
+      if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+      const text = readFileSync(join(root, f), "utf8");
+      for (const m of text.matchAll(/\bcode:\s*"([a-z_]+)"/g))
+        codes.add(m[1] as string);
+    }
+    // Asks and denials never fold as failures (a denial is not projected);
+    // the ws_ codes are the workspace check's, never a tool result.
+    const failures = [...codes].filter(
+      (c) =>
+        !c.startsWith("command_ask_") &&
+        !c.endsWith("_ask") &&
+        !c.startsWith("ws_") &&
+        c !== "permission_denied",
+    );
+    expect(failures.length).toBeGreaterThan(20);
+    const bare = {
+      zh: "这一步没成（edit_file）",
+      en: "A step failed (edit_file)",
+    };
+    for (const lang of ["zh", "en"] as const)
+      for (const code of failures)
+        expect(fold(code, lang), `${lang}: ${code}`).not.toBe(bare[lang]);
   });
 });

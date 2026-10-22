@@ -58,6 +58,10 @@ interface ExtractRequest {
 
 type ExtractReply =
   | {
+      /** The worker's module loaded and it is listening (sent once, first). */
+      readonly kind: "ready";
+    }
+  | {
       readonly id: number;
       readonly kind: "page";
       readonly done: number;
@@ -78,8 +82,11 @@ export interface DocumentPort {
 }
 
 /** The worker's side: answers every request on `port`. Never throws — the
- *  reader's own contract — so every request gets its `done`. */
+ *  reader's own contract — so every request gets its `done`. Says `ready`
+ *  first, so the host can tell a worker that never started from one that
+ *  fell over on a document. */
 export function serveDocumentExtraction(port: DocumentPort): void {
+  port.postMessage({ kind: "ready" });
   port.on("message", (value) => {
     const req = value as ExtractRequest;
     void extractDocumentText(req.format, req.bytes, {
@@ -103,57 +110,126 @@ export interface DocumentWorker extends DocumentPort {
   terminate(): Promise<number>;
 }
 
+/** How long a worker holding documents may say nothing — no page, no
+ *  answer — before it is taken for stuck (release review 2026-10-22). A page
+ *  of 40 photos took 3 s; this is far past any page. */
+export const DOCUMENT_STALL_MS = 60_000;
+
 /**
  * The host's side: a reader that sends each document to a worker, started
- * on the first one. A worker that dies (an error, an exit) answers what it
- * held with `parse_error` — the document that took it down is not read again
- * on the main thread — and the next document starts a new one. A worker that
- * cannot be started at all leaves that document to the in-process reader, so
- * attaching never stops working.
+ * on the first one.
+ *
+ * - A worker that dies (an error, an exit) after it said `ready` answers what
+ *   it held with `parse_error` — the document that took it down is not read
+ *   again on the main thread — and the next document starts a new one.
+ * - A worker that dies BEFORE `ready` never started: its module did not load
+ *   (a packaging fault, an antivirus quarantine). What it held, and every
+ *   later document, goes to the in-process reader, so attaching never stops
+ *   working. `new Worker` reports that failure as an `error` event, not a
+ *   throw — the throw is caught too (release review 2026-10-22: only the
+ *   throw was, so such a worker answered every document 读取失败).
+ * - A worker that holds documents and says nothing for `stallMs` is stuck on
+ *   one: it is ended, what it held answers `parse_error`, and the next
+ *   document starts a new one. Before, every later document waited behind
+ *   it until the app quit.
  */
-export function workerDocumentExtractor(start: () => DocumentWorker): {
+export function workerDocumentExtractor(
+  start: () => DocumentWorker,
+  opts: { readonly stallMs?: number } = {},
+): {
   readonly extract: DocumentExtractor;
   readonly close: () => Promise<void>;
 } {
+  const stallMs = opts.stallMs ?? DOCUMENT_STALL_MS;
   let worker: DocumentWorker | null = null;
+  /** No worker could start: the in-process reader from here on. */
+  let broken = false;
   let nextId = 0;
   const pending = new Map<
     number,
     {
       readonly resolve: (result: ExtractedDocument) => void;
-      readonly onPage: ExtractOptions["onPage"];
+      readonly format: DocumentFormat;
+      readonly bytes: Uint8Array;
+      readonly opts: ExtractOptions;
     }
   >();
+  let stall: ReturnType<typeof setTimeout> | null = null;
+  const quiet = (): void => {
+    if (stall !== null) clearTimeout(stall);
+    stall = null;
+  };
+  /** (Re)start the stall clock while the current worker holds documents. */
+  const watch = (): void => {
+    quiet();
+    const w = worker;
+    if (w === null || pending.size === 0) return;
+    stall = setTimeout(() => {
+      if (worker !== w) return;
+      failAll();
+      void w.terminate().catch(() => undefined);
+    }, stallMs);
+    (stall as { unref?: () => void }).unref?.();
+  };
   const failAll = (): void => {
     worker = null;
+    quiet();
     for (const p of pending.values())
       p.resolve({ ok: false, reason: "parse_error" });
     pending.clear();
   };
+  const inProcess = (
+    format: DocumentFormat,
+    bytes: Uint8Array,
+    o: ExtractOptions,
+  ): Promise<ExtractedDocument> =>
+    extractDocumentText(format, bytes, o).catch(
+      (): ExtractedDocument => ({ ok: false, reason: "parse_error" }),
+    );
+  /** The worker never started: what it held goes to the in-process reader,
+   *  and so does everything after it. */
+  const fallBack = (): void => {
+    broken = true;
+    worker = null;
+    quiet();
+    const held = [...pending.values()];
+    pending.clear();
+    for (const p of held)
+      void inProcess(p.format, p.bytes, p.opts).then(p.resolve);
+  };
   const ensure = (): DocumentWorker => {
     if (worker !== null) return worker;
     const w = start();
+    let ready = false;
+    const died = (): void => {
+      if (worker !== w) return;
+      if (ready) failAll();
+      else fallBack();
+    };
     w.on("message", (value) => {
+      if (worker !== w) return;
       const reply = value as ExtractReply;
+      watch();
+      if (reply.kind === "ready") {
+        ready = true;
+        return;
+      }
       const p = pending.get(reply.id);
       if (p === undefined) return;
       if (reply.kind === "page") {
         try {
-          p.onPage?.(reply.done, reply.total);
+          p.opts.onPage?.(reply.done, reply.total);
         } catch {
           // A display hook failing is not an extraction failing.
         }
         return;
       }
       pending.delete(reply.id);
+      if (pending.size === 0) quiet();
       p.resolve(withBuffers(reply.result));
     });
-    w.on("error", () => {
-      if (worker === w) failAll();
-    });
-    w.on("exit", () => {
-      if (worker === w) failAll();
-    });
+    w.on("error", died);
+    w.on("exit", died);
     // The worker never keeps the process alive; a request in flight is the
     // main process's own business.
     w.unref?.();
@@ -161,18 +237,22 @@ export function workerDocumentExtractor(start: () => DocumentWorker): {
     return w;
   };
   const extract: DocumentExtractor = (format, bytes, opts) => {
+    if (broken) return inProcess(format, bytes, opts);
     let w: DocumentWorker;
     try {
       w = ensure();
     } catch {
-      return extractDocumentText(format, bytes, opts);
+      broken = true;
+      return inProcess(format, bytes, opts);
     }
     nextId += 1;
     const id = nextId;
-    // A copy the worker owns: the caller keeps the original for its hash.
+    // A copy the worker owns: the caller keeps the original for its hash —
+    // and for the in-process reader, should the worker never start.
     const copy = new Uint8Array(bytes);
     return new Promise<ExtractedDocument>((resolve) => {
-      pending.set(id, { resolve, onPage: opts.onPage });
+      pending.set(id, { resolve, format, bytes, opts });
+      watch();
       const req: ExtractRequest = {
         id,
         format,

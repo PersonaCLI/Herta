@@ -609,11 +609,17 @@ export class SessionStore {
    *  time (owner 2026-09-14): a second send while one waits joins it as a
    *  new paragraph rather than replacing it — nothing typed is lost, and
    *  the strip's edit takes the whole back into the composer. */
-  holdMessage(text: string): void {
+  holdMessage(
+    text: string,
+    /** How a second hold joins the first; the composer's keeps quotes in
+     *  front (`joinHeld`). */
+    join: (prev: string, next: string) => string = (prev, next) =>
+      `${prev}\n\n${next}`,
+  ): void {
     const prev = this.snapshot.held;
     this.emit({
       ...this.snapshot,
-      held: prev === null ? text : `${prev}\n\n${text}`,
+      held: prev === null ? text : join(prev, text),
     });
   }
 

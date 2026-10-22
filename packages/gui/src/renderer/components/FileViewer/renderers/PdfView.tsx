@@ -207,12 +207,20 @@ export function PdfView({
     if (el !== null && pages.length > 0) setWidth(el.clientWidth);
   }, [pages.length]);
 
-  // A quote's label opened this PDF: its first page comes into view.
+  // A quote's label opened this PDF: its first page comes into view — once
+  // per anchor. It waits for the first layout (`width`), and then a resize
+  // (a dragged divider, the window) pulled the reader back to that page
+  // from wherever they had scrolled (release review 2026-10-22).
+  const anchored = useRef<ViewerAnchor | undefined>(undefined);
   useEffect(() => {
     if (anchor === undefined || pages.length === 0 || width === 0) return;
-    hostRef.current
-      ?.querySelector<HTMLElement>(`[data-page="${anchor.from}"]`)
-      ?.scrollIntoView({ block: "start" });
+    if (anchored.current === anchor) return;
+    const page = hostRef.current?.querySelector<HTMLElement>(
+      `[data-page="${anchor.from}"]`,
+    );
+    if (page === null || page === undefined) return;
+    anchored.current = anchor;
+    page.scrollIntoView({ block: "start" });
   }, [anchor, pages.length, width]);
 
   /** Read a page's text once, as it comes near the viewport. */

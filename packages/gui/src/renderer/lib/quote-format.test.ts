@@ -4,6 +4,7 @@ import {
   type ComposerQuote,
   composeQuotedMessage,
   formatQuote,
+  joinHeld,
   parseLeadingQuotes,
   QUOTE_MAX_LINES,
   quotedMessagePreview,
@@ -190,5 +191,81 @@ describe("a PDF quote counts pages (ADR 0078 amendment 2026-10-21)", () => {
       title: "A · B",
     });
     expect(q?.unit).toBeUndefined();
+  });
+});
+
+describe("quotes held twice, a title that reads like a page, a cut emoji (release review 2026-10-22)", () => {
+  const ADD: ComposerQuote = {
+    id: "q2",
+    path: "src/calc.js",
+    from: 1,
+    to: 2,
+    text: "export function add(a, b) {\n  return a + b;",
+    fence: "js",
+  };
+
+  it("a second hold keeps both messages' quotes in front, so both come back as chips and the card shows labels", () => {
+    const joined = joinHeld(
+      composeQuotedMessage([DIV], "first", "zh"),
+      composeQuotedMessage([ADD], "second", "zh"),
+    );
+    const back = quotesBack(joined);
+    expect(back.quotes.map((q) => [q.from, q.to])).toEqual([
+      [9, 14],
+      [1, 2],
+    ]);
+    expect(back.rest).toBe("first\n\nsecond");
+    expect(quotedMessagePreview(joined)).not.toContain("```");
+    // Quotes alone in the second; plain words as before.
+    expect(
+      quotesBack(joinHeld("first", composeQuotedMessage([ADD], "", "zh"))),
+    ).toMatchObject({ rest: "first" });
+    expect(joinHeld("a", "b")).toBe("a\n\nb");
+  });
+
+  it("a line quote whose title reads like a page stays a line quote; a PDF quote with a title is still a page quote", () => {
+    for (const [lang, title] of [
+      ["zh", "第 2 页"],
+      ["en", "p. 3"],
+      ["zh", "第 2 页 · 小结"],
+    ] as const) {
+      const msg = composeQuotedMessage([{ ...DIV, title }], "看这里", lang);
+      const q = parseLeadingQuotes(msg).quotes[0];
+      expect(q, title).toMatchObject({
+        path: "src/calc.js",
+        from: 9,
+        to: 14,
+        title,
+      });
+      expect(q?.unit, title).toBeUndefined();
+    }
+    const paper = composeQuotedMessage(
+      [
+        {
+          id: "p",
+          path: "docs/paper.pdf",
+          from: 3,
+          to: 3,
+          unit: "page",
+          title: "Intro",
+          text: "x",
+        },
+      ],
+      "",
+      "zh",
+    );
+    expect(parseLeadingQuotes(paper).quotes[0]).toMatchObject({
+      path: "docs/paper.pdf",
+      from: 3,
+      unit: "page",
+      title: "Intro",
+    });
+  });
+
+  it("the bound never cuts a character in half", () => {
+    const out = boundQuoteText(`a${"😀".repeat(4100)}`, "zh");
+    // encodeURIComponent throws on a lone surrogate.
+    expect(() => encodeURIComponent(out)).not.toThrow();
+    expect(out.length).toBeLessThan(8_100);
   });
 });

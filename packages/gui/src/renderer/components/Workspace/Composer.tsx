@@ -38,6 +38,7 @@ import {
 } from "../../lib/file-mention.js";
 import {
   composeQuotedMessage,
+  joinHeld,
   quotedMessagePreview,
   quoteLabel,
   quotesBack,
@@ -562,7 +563,7 @@ export function Composer(): JSX.Element {
         lang,
       );
       if (pending.trim().length === 0) return;
-      sessionStore.holdMessage(pending);
+      sessionStore.holdMessage(pending, joinHeld);
       setText("");
       setChips([]);
       setHintActive(false);

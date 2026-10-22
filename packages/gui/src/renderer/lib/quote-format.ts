@@ -128,6 +128,11 @@ export function boundQuoteText(text: string, lang: "zh" | "en"): string {
   let body = kept.join("\n");
   if (body.length > QUOTE_MAX_CHARS) {
     body = body.slice(0, QUOTE_MAX_CHARS);
+    // Never half a character: a cut between a surrogate pair (an emoji, a
+    // CJK Extension B ideograph) left a lone surrogate in the record and the
+    // request (release review 2026-10-22).
+    const last = body.charCodeAt(body.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) body = body.slice(0, -1);
     kept = body.split("\n");
   }
   const left = lines.length - kept.length;
@@ -194,6 +199,28 @@ export interface ParsedQuote {
 }
 
 /**
+ * A header's label and title. The label takes an optional page part, so a
+ * line quote whose title reads like one (`docs/x.md:1–5 · 第 2 页`, a
+ * heading in a book's transcript) read as a PDF page quote of a file named
+ * `docs/x.md:1–5` (release review 2026-10-22). A page label whose path is
+ * itself a line label is that line quote, its title the page phrase.
+ */
+function splitHeader(
+  label: string,
+  title: string | undefined,
+): { readonly label: string; readonly title?: string } {
+  const at = parseLabel(label);
+  if (at?.unit === "page" && LABEL.test(at.path)) {
+    const phrase = label.slice(at.path.length + " · ".length);
+    return {
+      label: at.path,
+      title: title !== undefined ? `${phrase} · ${title}` : phrase,
+    };
+  }
+  return title !== undefined ? { label, title } : { label };
+}
+
+/**
  * The quotes at the front of a message, and the rest of it. A header that
  * is not followed by a well-formed fence is ordinary text.
  */
@@ -212,12 +239,12 @@ export function parseLeadingQuotes(message: string): {
     const tag = (open[2] ?? "").trim();
     const close = lines.findIndex((l, k) => k > i + 1 && l === fence);
     if (close === -1) break;
-    const label = head[1] as string;
+    const { label, title } = splitHeader(head[1] as string, head[2]);
     const at = parseLabel(label);
     quotes.push({
       label,
       ...(at ?? {}),
-      ...(head[2] !== undefined ? { title: head[2] } : {}),
+      ...(title !== undefined ? { title } : {}),
       text: lines.slice(i + 2, close).join("\n"),
       ...(tag.length > 0 ? { fence: tag } : {}),
     });
@@ -226,6 +253,38 @@ export function parseLeadingQuotes(message: string): {
   }
   if (quotes.length === 0) return { quotes, rest: message };
   return { quotes, rest: lines.slice(i).join("\n") };
+}
+
+/** A message's leading quotes as written, and the rest of it. */
+function splitLeadingQuotes(message: string): {
+  readonly head: string;
+  readonly rest: string;
+} {
+  const { quotes, rest } = parseLeadingQuotes(message);
+  if (quotes.length === 0) return { head: "", rest: message };
+  return {
+    head: message.slice(0, message.length - rest.length).trimEnd(),
+    rest,
+  };
+}
+
+/**
+ * A second message held while the first waits (ADR 0063 holds one): the
+ * quotes of both in front, then the words of both, in order. Joined as
+ * they came, the second's quotes sat mid-message, where nothing reads a
+ * quote — the held card showed its fence, and Edit, Stop or a failure put
+ * the fence into the field as text (release review 2026-10-22).
+ */
+export function joinHeld(prev: string, next: string): string {
+  const b = splitLeadingQuotes(next);
+  if (b.head === "") return `${prev}\n\n${next}`;
+  const a = splitLeadingQuotes(prev);
+  const heads = [a.head, b.head].filter((h) => h.length > 0).join("\n\n");
+  const words = [a.rest, b.rest]
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0)
+    .join("\n\n");
+  return words.length > 0 ? `${heads}\n\n${words}` : heads;
 }
 
 let backSeq = 0;

@@ -84,6 +84,14 @@ export function topOverlay(): string | null {
   return top?.id ?? null;
 }
 
+/** Whether an overlay above level `z` is open, leaving out `except`. */
+export function overlayOpenAbove(
+  z: number,
+  except: readonly string[] = [],
+): boolean {
+  return entries.some((e) => e.z > z && !except.includes(e.id));
+}
+
 /** The topmost overlay's z-level, or null when none is open. */
 export function topOverlayZ(): number | null {
   let z: number | null = null;

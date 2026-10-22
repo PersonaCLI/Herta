@@ -157,7 +157,11 @@ export type { MemorySaveInput } from "./memory-save/schema.js";
 // it — the two halves living in different packages is exactly why that needs
 // a test rather than a shared assumption.
 export type { ResolveSafePathOpts, SafePathResult } from "./path-safety.js";
-export { namesHertaState, resolveSafePath } from "./path-safety.js";
+export {
+  hertaStateWriteDenial,
+  namesHertaState,
+  resolveSafePath,
+} from "./path-safety.js";
 export {
   killProcesses,
   listProcesses,

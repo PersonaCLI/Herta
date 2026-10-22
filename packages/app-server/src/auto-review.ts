@@ -40,6 +40,7 @@ import {
 import { type ApiKey, deepseekProvider } from "@herta/providers";
 import {
   bodyUnreadable,
+  hertaStateWriteDenial,
   maxReviewRisk,
   namesHertaState,
   type ReviewRisk,
@@ -481,7 +482,25 @@ function ownerOnly(
   return (
     codes.includes("command_ask_harness_state") ||
     namesHertaState(withoutHertaExclusions(command), workspace) ||
+    runsInHertaState(request, workspace) ||
     bodyUnreadable(codes, request.reason, command)
+  );
+}
+
+/** The command runs from a directory inside `.herta`, where every relative
+ *  path lands in the harness's own state, whatever the text names (release
+ *  review 2026-10-22: `npm install` or `tar xf` after `cd .herta` named no
+ *  `.herta` and went to the reviewer). Judged as spelled and through links;
+ *  without the workspace, any `.herta` in the path — the stricter reading. */
+function runsInHertaState(
+  request: PermissionRequest,
+  workspace: string,
+): boolean {
+  const cwd = request.cwd;
+  if (cwd === undefined) return false;
+  return (
+    namesHertaState(cwd, workspace) ||
+    (workspace !== "" && hertaStateWriteDenial(workspace, cwd) !== null)
   );
 }
 

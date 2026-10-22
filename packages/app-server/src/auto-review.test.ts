@@ -18,6 +18,7 @@ import {
   type ReviewModel,
   reviewMessage,
   reviewOutcome,
+  reviewTakes,
 } from "./auto-review.js";
 import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 import type { AutoReviewNotice } from "./types.js";
@@ -224,6 +225,69 @@ describe("AutoReviewer.review", () => {
       ).toEqual({ kind: "card", why: "owner_only" });
       expect(sent, command).toHaveLength(0);
     }
+  });
+
+  it("a command run from a directory inside .herta is the owner's, whatever its text names (release review 2026-10-22)", async () => {
+    for (const cwd of [
+      "C:\\work\\repo\\.herta",
+      "C:\\work\\repo\\.herta\\memory",
+    ]) {
+      const { model, sent } = scripted();
+      expect(
+        await new AutoReviewer(model).review(
+          input("npm install left-pad", { code: "command_ask_network", cwd }),
+          signal(),
+        ),
+        cwd,
+      ).toEqual({ kind: "card", why: "owner_only" });
+      expect(sent, cwd).toHaveLength(0);
+      expect(
+        reviewTakes(
+          bashRequest("npm install left-pad", { cwd }),
+          "C:\\work\\repo",
+        ),
+        cwd,
+      ).toBe(false);
+    }
+    // A real workspace on this machine, its own path spelling.
+    const ws = mkdtempSync(join(tmpdir(), "rv-herta-"));
+    try {
+      const inside = join(ws, ".herta", "memory");
+      expect(
+        reviewTakes(bashRequest("tar xf ../pkg.tar", { cwd: inside }), ws),
+      ).toBe(false);
+      expect(
+        reviewTakes(
+          bashRequest("tar xf ../pkg.tar", { cwd: join(ws, "src") }),
+          ws,
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+    // An ordinary subdirectory is reviewed as before.
+    const { model, sent } = scripted();
+    expect(
+      (
+        await new AutoReviewer(model).review(
+          input("npm test", { cwd: "C:\\work\\repo\\packages\\app" }),
+          signal(),
+        )
+      ).kind,
+    ).toBe("allow");
+    expect(sent).toHaveLength(1);
+    // A managed sandbox lives under ~/.herta; its own directories are not
+    // .herta state — unless the workspace is not known: the stricter reading.
+    const sandbox = "C:\\Users\\u\\.herta\\workspaces\\abc";
+    expect(
+      reviewTakes(
+        bashRequest("make test", { cwd: `${sandbox}\\src` }),
+        sandbox,
+      ),
+    ).toBe(true);
+    expect(
+      reviewTakes(bashRequest("make test", { cwd: `${sandbox}\\src` })),
+    ).toBe(false);
   });
 
   it("a managed sandbox's own path names .herta, and is still reviewed", async () => {

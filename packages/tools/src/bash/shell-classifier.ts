@@ -13,6 +13,7 @@ import {
   classifyCommand,
   classifyShellBody,
   GIT_INTERNALS_ASK_CODE,
+  HARNESS_STATE_ASK_CODE,
   splitShellSegments,
   unresolvedProgramName,
   type Verdict,
@@ -1095,6 +1096,18 @@ function classifySegment(
     if (dest === null) {
       asks.push(cdAsk(target));
       return segmentVerdict(asks);
+    }
+    // Into the harness's own state: every relative path after it lands
+    // there, and the shell keeps that directory for the calls that follow.
+    // The owner's alone, never reviewed (release review 2026-10-22: `cd
+    // .herta` ran with no card, and what ran from there named no `.herta`).
+    if (hertaStateWriteDenial(opts.workspaceRoot, dest) !== null) {
+      asks.push({
+        kind: "ask",
+        risk: "workspace_write",
+        code: HARNESS_STATE_ASK_CODE,
+        reason: `${name} into .herta — the harness's own state; every relative path after it lands there`,
+      });
     }
     return segmentVerdict(asks, dest);
   }

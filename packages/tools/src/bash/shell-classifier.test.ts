@@ -149,6 +149,18 @@ describe("classifyShellCommand — the harness's own state (.herta) is not comma
     expect(ask("echo x >| out.txt").code).toBe("command_ask_write");
   });
 
+  it("cd or pushd into .herta asks as the owner's alone — the shell keeps that directory for the calls after it (release review 2026-10-22)", () => {
+    const state = "command_ask_harness_state";
+    expect(ask("cd .herta").code).toBe(state);
+    expect(ask("pushd .herta/memory").code).toBe(state);
+    expect(ask("cd src/../.herta && ls").code).toBe(state);
+    expect(ask(`cd ${wsShell}/.herta`).code).toBe(state);
+    expect(kind("cd src && ls")).toBe("allow");
+    expect(kind("cd .herta-notes && ls")).toBe("allow");
+    // A write from there is still the block it was.
+    expect(kind("cd .herta && echo x > permissions.json")).toBe("block");
+  });
+
   it("a find with an action from a directory holding .herta asks in a class trust never covers", () => {
     const state = "command_ask_harness_state";
     expect(ask("find . -name permissions.json -delete").code).toBe(state);

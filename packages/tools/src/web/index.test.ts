@@ -358,6 +358,36 @@ describe("checkFetchUrl", () => {
   ])("%s → %s", (url, ok) => {
     expect(checkFetchUrl(url).ok).toBe(ok);
   });
+
+  // Release review 2026-10-22: the shell redactor's rules over the whole
+  // URL refused public pages; a URL's own rules refuse only what carries a
+  // credential.
+  it.each([
+    "https://huggingface.co/docs/transformers/main_classes/tokenizer?tokenizer=gpt2",
+    "https://example.com/jobs?secretary=1",
+    "https://example.com/blog/sk-some-long-slug-name-here",
+    "https://example.com/blog/sk-2024-release-notes-for-v2",
+    "https://example.com/api?publicKey=abc&sortKey=name",
+    "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+    "https://example.com/?token=",
+  ])("reads %s", (url) => {
+    expect(checkFetchUrl(url)).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    "https://example.com/?api_key=abc123",
+    "https://example.com/?apiKey=abc123",
+    "https://example.com/?x-api-key=abc123",
+    "https://example.com/?key=abc123",
+    "https://example.com/?client_secret=abc",
+    "https://bucket.s3.amazonaws.com/o?X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261022&X-Amz-Signature=abc",
+    "https://example.com/cb#access_token=abc123",
+    `https://x.example/c?d=${encodeURIComponent("DEEPSEEK_API_KEY=hunter2")}`,
+    "https://x.example/sk-0123456789abcdef0123456789abcdef",
+    "https://x.example/v?q=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+  ])("refuses %s as credential-shaped", (url) => {
+    expect(checkFetchUrl(url)).toMatchObject({ ok: false, reason: "secret" });
+  });
 });
 
 describe("registerWebRules", () => {

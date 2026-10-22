@@ -33,6 +33,11 @@ const PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
 const ENV_SECRET_RE =
   /\b([A-Z0-9_]*(?:API_?KEY|ACCESS_KEY|SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE_KEY)[A-Z0-9_]*)(\s*=\s*)("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/gi;
 
+/** The token shapes by known prefix, for a check that refuses rather than
+ *  redacts (the web fetch's URL check, ADR 0080 §2). Global regexes: test
+ *  with a copy (`new RegExp(re.source)`), never `.test` on these. */
+export const TOKEN_SECRET_PATTERNS = PATTERNS;
+
 export function redactSecrets(text: string): string {
   let out = text.replace(PEM_BLOCK_RE, "[REDACTED:private_key]");
   for (const { kind, re } of PATTERNS) {

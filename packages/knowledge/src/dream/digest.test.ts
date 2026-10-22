@@ -291,6 +291,42 @@ describe("buildEpisodeDigest", () => {
     expect(fromStore).not.toContain("CONFIDENTIAL");
   });
 
+  it("a run that ended on a web page: the marker's tail names the site, never the URL or the stored path (release review 2026-10-22)", () => {
+    const url = "https://nodejs.org/api/fs.html";
+    const path = ".herta/web/nodejs.org-ab12cd34.md";
+    const d = buildEpisodeDigest([
+      { kind: "user", text: "查一下 fs.readFile 的签名" },
+      { kind: "herta", surface: "speech", text: "@板砖 去查。" },
+      {
+        kind: "system",
+        label: "差分协处理器",
+        body: "完成",
+        evidenceDetail: `↳ 网页 「File system」（${url}，存于 ${path}）
+readFile(path[, options], callback)`,
+        evidence: [
+          {
+            kind: "web-page",
+            url,
+            title: "File system",
+            path,
+            text: "readFile(path[, options], callback)",
+          },
+        ],
+        role: "done-marker",
+        markerSummary: {
+          kind: "done",
+          state: "completed",
+          fileCount: 0,
+          riskCount: 0,
+        },
+      },
+      { kind: "herta", surface: "speech", text: "签名在这。" },
+    ]);
+    expect(d).toContain("网页 nodejs.org「File system」");
+    expect(d).not.toContain("https://");
+    expect(d).not.toContain(".herta/web");
+  });
+
   it("bounds a long run: its first and last rows, every marker, and a line saying how many were left out (ADR 0069 §7)", () => {
     const op = (i: number): TerminalRecordBlock => ({
       kind: "system",

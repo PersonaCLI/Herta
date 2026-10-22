@@ -88,6 +88,52 @@ describe("the done-marker reads as a sentence", () => {
     );
   });
 
+  it("a run that ended on a web page or a search: the tail names the site, never the URL or the stored path (release review 2026-10-22)", () => {
+    const url = "https://nodejs.org/api/fs.html?x=1";
+    const path = ".herta/web/nodejs.org-ab12cd34.md";
+    const page = {
+      ...marker("completed"),
+      evidenceDetail: `↳ 网页 「File system」（${url}，存于 ${path}）\nThe fs module enables interacting with the file system.`,
+      evidence: [
+        {
+          kind: "web-page" as const,
+          url,
+          title: "File system",
+          path,
+          text: "The fs module enables interacting with the file system.",
+        },
+      ],
+    };
+    for (const lang of ["zh", "en"] as const) {
+      const out = read(page, lang) ?? "";
+      expect(out).not.toContain("https://");
+      expect(out).not.toContain(".herta");
+      expect(out).not.toContain("存于");
+      expect(out).toContain("The fs module enables");
+    }
+    expect(read(page)).toContain("网页 nodejs.org「File system」，开头：");
+    expect(read(page, "en")).toContain(
+      'Page nodejs.org, "File system" — the opening:',
+    );
+    const results = {
+      ...marker("completed"),
+      evidenceDetail: "↳ 网页结果:\n- File system（nodejs.org）",
+      evidence: [
+        {
+          kind: "web-results" as const,
+          items: [{ title: "File system", site: "nodejs.org", url }],
+        },
+      ],
+    };
+    expect(read(results)).toContain(
+      "找到 1 条结果：\n- File system（nodejs.org）",
+    );
+    expect(read(results, "en")).toContain(
+      "Found 1 result:\n- File system (nodejs.org)",
+    );
+    expect(read(results, "en")).not.toContain("https://");
+  });
+
   it("its detail loses the arrows, the log path, the sandbox and the call ids; a command's own `; ` survives", () => {
     const out = read({
       ...marker("completed"),

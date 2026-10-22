@@ -341,6 +341,34 @@ export function detailForHerta(
       : null;
   };
   const sep = lang === "en" ? "; " : "；";
+  // A web row's detail — carried whole as the done-marker's tail when the
+  // run ended on it — is rebuilt from its evidence, as the row itself is:
+  // its header names the URL and the stored path, and her view never does
+  // (ADR 0080 §5). Passed through as an unknown line, both reached her
+  // verdict prompt and the dream's digest (release review 2026-10-22).
+  const [head = "", ...body] = detail.split("\n");
+  if (head === "↳ 网页结果:") {
+    const s = sections.find((e) => e.kind === "web-results");
+    const listed =
+      s?.kind === "web-results"
+        ? s.items.map((i) => `- ${i.title}${t.aside(i.site)}`)
+        : body;
+    return [t.webResults(listed.length), ...listed].join("\n");
+  }
+  if (head.startsWith("↳ 网页 ")) {
+    const s = sections.find((e) => e.kind === "web-page");
+    const url =
+      s?.kind === "web-page"
+        ? s.url
+        : (/（(\S+?)，存于 /u.exec(head)?.[1] ?? "");
+    const title =
+      s?.kind === "web-page"
+        ? s.title
+        : (/^↳ 网页 「(.*)」（/su.exec(head)?.[1] ?? "");
+    return [t.webPage(url !== "" ? hostOf(url) : "", title), ...body].join(
+      "\n",
+    );
+  }
   return detail
     .split("\n")
     .map((line) => {

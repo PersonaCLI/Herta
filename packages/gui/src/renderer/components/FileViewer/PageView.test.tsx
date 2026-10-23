@@ -215,4 +215,83 @@ describe("the browser page tab (ADR 0083)", () => {
     expect(page.freeze).toHaveBeenCalledTimes(2);
     act(() => endPageMotion());
   });
+
+  describe("the new-tab page: the launcher's servers (ADR 0083 §4; pick B)", () => {
+    it("lists a card per server; an ask-class Run confirms in its card first", async () => {
+      const mock = createMockHertaBridge();
+      withPage(mock);
+      let state: "idle" | "ready" = "idle";
+      const start = vi.fn(
+        async (_s: string, _n: string, confirmed: boolean) => {
+          if (!confirmed)
+            return {
+              ok: false as const,
+              reason: "confirm" as const,
+              command: "npm run dev",
+              code: "command_ask_unknown",
+            };
+          state = "ready";
+          return {
+            ok: true as const,
+            already: false,
+            url: "http://localhost:5173/",
+          };
+        },
+      );
+      Object.assign(mock.bridge, {
+        serversList: vi.fn(async () => ({
+          ok: true as const,
+          entries: [
+            {
+              name: "web",
+              command: "npm run dev",
+              port: 5173,
+              url: "http://localhost:5173/",
+              state,
+            },
+          ],
+        })),
+        serversStart: start,
+        serversStop: vi.fn(async () => ({ ok: true })),
+        onServersChanged: () => () => undefined,
+      });
+      const h = renderWithSession(ui(), { mock });
+      h.openSession("s1");
+      act(() => {
+        runShortcut("openBrowser");
+      });
+      expect(await screen.findByText("web")).toBeTruthy();
+      expect(screen.getByText("npm run dev")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      expect(
+        await screen.findByRole("button", { name: "Run it" }),
+      ).toBeTruthy();
+      expect(start).toHaveBeenLastCalledWith("s1", "web", false);
+      fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+      await waitFor(() =>
+        expect(start).toHaveBeenLastCalledWith("s1", "web", true),
+      );
+      expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
+    });
+
+    it("without a launch file, says how to make one", async () => {
+      const mock = createMockHertaBridge();
+      withPage(mock);
+      Object.assign(mock.bridge, {
+        serversList: vi.fn(async () => ({
+          ok: false as const,
+          reason: "no_launch_file" as const,
+        })),
+        onServersChanged: () => () => undefined,
+      });
+      const h = renderWithSession(ui(), { mock });
+      h.openSession("s1");
+      act(() => {
+        runShortcut("openBrowser");
+      });
+      expect(
+        await screen.findByText(/no herta.launch.json at the workspace root/),
+      ).toBeTruthy();
+    });
+  });
 });

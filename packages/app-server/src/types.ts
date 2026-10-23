@@ -865,6 +865,19 @@ export interface Session {
    *  mid-turn waits for the turn's end. OPTIONAL: a session without a
    *  launcher has none to note. */
   noteServer?(note: ServerNote): void;
+  /** The launcher's entries and what runs (ADR 0083 §4's new-tab page).
+   *  OPTIONAL: a session without a launcher has none. */
+  listServers?(): Promise<ServerListing>;
+  /** The Trailblazer's Run (§5, question 8): classified as run_command
+   *  would classify the entry's argv, at every start. An ask-class command
+   *  needs `confirmed` on its first start in the session; a block-class one
+   *  is refused. The start is noted in the record. */
+  startServer?(
+    name: string,
+    opts?: { readonly confirmed?: boolean },
+  ): Promise<StartServerResult>;
+  /** The Trailblazer's Stop, noted in the record when it stopped one. */
+  stopServer?(name: string): Promise<{ readonly ok: boolean }>;
   /** Restore the managed-sandbox default backend workspace. Persisted +
    *  broadcast (with `isDefault: true`). Idle-only, like setWorkspace. */
   resetWorkspace(): Promise<WorkspaceSetResult>;
@@ -943,3 +956,55 @@ export interface Session {
 
   close(): Promise<void>;
 }
+
+/** One launcher entry as the new-tab page shows it (ADR 0083 §4). */
+export interface ServerEntryView {
+  readonly name: string;
+  /** `npm run dev`, as the entry wrote it. */
+  readonly command: string;
+  readonly port: number;
+  readonly url: string;
+  /** `idle`: never started in this session. */
+  readonly state: "starting" | "ready" | "exited" | "stopped" | "idle";
+  readonly by?: "banzhuan" | "trailblazer";
+  /** The log, workspace-relative, once it ran. */
+  readonly logPath?: string;
+  readonly exitCode?: number | null;
+}
+
+export type ServerListing =
+  | { readonly ok: true; readonly entries: readonly ServerEntryView[] }
+  | {
+      readonly ok: false;
+      readonly reason: "no_launch_file" | "bad_launch_file" | "no_launcher";
+      readonly message?: string;
+    };
+
+export type StartServerResult =
+  | { readonly ok: true; readonly already: boolean; readonly url: string }
+  /** An ask-class command, not yet confirmed in this session: the page
+   *  shows the command and why it asks. */
+  | {
+      readonly ok: false;
+      readonly reason: "confirm";
+      readonly command: string;
+      readonly code?: string;
+    }
+  /** A block-class command: never runs. */
+  | { readonly ok: false; readonly reason: "refused"; readonly message: string }
+  /** It did not come up (exited, timed out, could not spawn). */
+  | {
+      readonly ok: false;
+      readonly reason: "failed";
+      readonly code: string;
+      readonly message: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason:
+        | "no_entry"
+        | "no_launch_file"
+        | "bad_launch_file"
+        | "no_launcher";
+      readonly message?: string;
+    };

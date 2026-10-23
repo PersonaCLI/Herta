@@ -17,12 +17,14 @@ import type {
   ResolveApprovalOpts,
   ResumeEvent,
   RewindResult,
+  ServerListing,
   SessionAgentEvent,
   SessionDeletedEvent,
   SessionExportSource,
   SessionMetadata,
   SessionSearchHit,
   SessionTopic,
+  StartServerResult,
   SteerTextResult,
   SubmitTextResult,
   TerminalRecord,
@@ -917,6 +919,18 @@ export interface HertaBridge {
   /** Settings → 差分协处理器 → Browser data (ADR 0083 §8): the page
    *  partition's sign-ins, cookies, storage and cache, cleared. */
   pageClearData?(): Promise<boolean>;
+  /** The launcher's entries for the new-tab page (ADR 0083 §4). */
+  serversList?(sessionId: string): Promise<ServerListing>;
+  /** The Trailblazer's Run; `confirmed` answers an ask-class command's
+   *  first start in the session (question 8). */
+  serversStart?(
+    sessionId: string,
+    name: string,
+    confirmed: boolean,
+  ): Promise<StartServerResult>;
+  serversStop?(sessionId: string, name: string): Promise<{ ok: boolean }>;
+  /** A session's server changed state: the new-tab page reads again. */
+  onServersChanged?(cb: (sessionId: string) => void): () => void;
   onPageState?(cb: (state: PageState) => void): () => void;
   /** An app shortcut pressed while the page had the focus (§3). */
   onPageCommand?(cb: (id: ShortcutId) => void): () => void;

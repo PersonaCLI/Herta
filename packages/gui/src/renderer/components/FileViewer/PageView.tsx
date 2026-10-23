@@ -4,6 +4,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { subscribeOverlayStack, topOverlay } from "../../lib/overlay-stack.js";
 import { pageInMotion, subscribePageMotion } from "../../lib/page-motion.js";
+import { PageNewTab } from "./PageNewTab.js";
 
 /** How many frames the tab's box must hold still before the page is laid
  *  over it again: a drag or the panel's slide shows the still frame. */
@@ -306,7 +307,7 @@ export function PageView({
             draggable={false}
           />
         )}
-        {!live && <p className="page-view__empty">{t("page.empty")}</p>}
+        {!live && <PageNewTab sessionId={sessionId} />}
       </div>
     </div>
   );

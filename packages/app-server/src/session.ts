@@ -30,6 +30,7 @@ import {
   restoreUndo,
   resumableRun,
   type ServerHost,
+  ServerHostError,
   type SessionTopic,
   type SystemBlock,
   type TerminalRecord,
@@ -61,10 +62,13 @@ import {
   describeLog,
   describeRepoOutcome,
   describeWorkingDiff,
+  entryCommand,
   type GitReadTimeout,
   type LogPage,
   type LogQuery,
+  makeRunCommandRule,
   type RepoContextOutcome,
+  readLaunchFile,
   type WorkingDiff,
 } from "@herta/tools";
 import { type ImageCaptioner, migrateAttachments } from "./attachments.js";
@@ -121,11 +125,14 @@ import type {
   ResolveApprovalOpts,
   ResumeEvent,
   RewindResult,
+  ServerEntryView,
+  ServerListing,
   Session,
   SessionAgentEvent,
   SessionModels,
   SpeechControlEvent,
   StageImagesResult,
+  StartServerResult,
   SteerTextResult,
   TitleEvent,
   TurnLifecycleEvent,
@@ -504,6 +511,11 @@ export class SessionImpl implements Session {
    *  git-tool refresh after a workspace move, and its digest-tool mount
    *  when the first document lands. Both optional (tests build without). */
   private readonly onWorkspaceChanged: (() => void) | undefined;
+  /** The session's dev servers (ADR 0083 §5); null without a launcher. */
+  private readonly servers: ServerHost | null;
+  /** Ask-class launcher entries the Trailblazer confirmed in this session —
+   *  by name, argv and directory, so a changed entry asks again. */
+  private readonly confirmedServers = new Set<string>();
   private readonly onDocumentAttached: (() => void) | undefined;
   /** True between the backend's `turn.started` and its `turn.finished` /
    *  `turn.failed` on the bus — the window in which a steer has a sampling
@@ -592,6 +604,7 @@ export class SessionImpl implements Session {
     /** ADR 0067: the toolset follows the environment. Fired after the
      *  workspace holder moves (setWorkspace / resetWorkspace). */
     onWorkspaceChanged?: () => void;
+    servers?: ServerHost | null;
     /** ADR 0067: fired when a readable document is attached. */
     onDocumentAttached?: () => void;
     /** The contract this session's backend runs (ADR 0040): an interrupted
@@ -602,6 +615,7 @@ export class SessionImpl implements Session {
     this.steer = opts.steer;
     this.bus = opts.bus;
     this.onWorkspaceChanged = opts.onWorkspaceChanged;
+    this.servers = opts.servers ?? null;
     this.onDocumentAttached = opts.onDocumentAttached;
     this.lastTurnEnd = opts.lastTurnEnd;
     this.sessionId = opts.sessionId;
@@ -1669,6 +1683,105 @@ export class SessionImpl implements Session {
    * Mirrors rewindLastTurn's guard; the DeviceCard menu is clickable mid-turn,
    * so enforce it here rather than trusting the renderer.
    */
+  async listServers(): Promise<ServerListing> {
+    if (this.servers === null) return { ok: false, reason: "no_launcher" };
+    const file = await readLaunchFile(this.wsHolder.current);
+    if (!file.ok)
+      return { ok: false, reason: file.code, message: file.message };
+    const host = this.servers;
+    return {
+      ok: true,
+      entries: file.entries.map((e): ServerEntryView => {
+        const st = host.status(e.name);
+        return {
+          name: e.name,
+          command: entryCommand(e),
+          port: e.port,
+          url: e.url,
+          state: st?.state ?? "idle",
+          ...(st !== null ? { by: st.by } : {}),
+          ...(st !== null && st.logPath !== "" ? { logPath: st.logPath } : {}),
+          ...(st?.exitCode !== undefined ? { exitCode: st.exitCode } : {}),
+        };
+      }),
+    };
+  }
+
+  async startServer(
+    name: string,
+    opts: { readonly confirmed?: boolean } = {},
+  ): Promise<StartServerResult> {
+    if (this.servers === null) return { ok: false, reason: "no_launcher" };
+    const root = this.wsHolder.current;
+    const file = await readLaunchFile(root);
+    if (!file.ok)
+      return { ok: false, reason: file.code, message: file.message };
+    const entry = file.entries.find((e) => e.name === name);
+    if (entry === undefined) return { ok: false, reason: "no_entry" };
+    const command = entryCommand(entry);
+    // Classified exactly as run_command would classify this argv in this
+    // directory (ADR 0083 §5): 板砖 may have written the file, and a page
+    // it read could have steered what it wrote. The Trailblazer's own
+    // click answers an ask — never a reviewer (it is their action).
+    const verdict = await makeRunCommandRule()(
+      {
+        id: `run-${name}`,
+        tool: "run_command",
+        input: {
+          argv: [entry.command, ...entry.args],
+          cwd: relative(root, entry.cwd) || ".",
+        },
+      },
+      { workspaceRoot: root } as Parameters<
+        ReturnType<typeof makeRunCommandRule>
+      >[1],
+    );
+    if (verdict.kind === "deny")
+      return { ok: false, reason: "refused", message: verdict.reason };
+    const key = [entry.name, entry.command, ...entry.args, entry.cwd].join(
+      "\0",
+    );
+    if (verdict.kind === "ask") {
+      if (opts.confirmed === true) this.confirmedServers.add(key);
+      else if (!this.confirmedServers.has(key))
+        return {
+          ok: false,
+          reason: "confirm",
+          command,
+          ...(verdict.code !== undefined ? { code: verdict.code } : {}),
+        };
+    }
+    try {
+      const started = await this.servers.start(entry, { by: "trailblazer" });
+      this.noteServer({
+        kind: "started",
+        name: entry.name,
+        command,
+        url: started.status.url,
+        already: started.already,
+      });
+      return { ok: true, already: started.already, url: started.status.url };
+    } catch (err) {
+      if (!(err instanceof ServerHostError)) throw err;
+      return {
+        ok: false,
+        reason: "failed",
+        code: err.code,
+        message: err.message,
+      };
+    }
+  }
+
+  async stopServer(name: string): Promise<{ readonly ok: boolean }> {
+    if (this.servers === null) return { ok: false };
+    const before = this.servers.status(name);
+    const running = before?.state === "starting" || before?.state === "ready";
+    const after = await this.servers.stop(name);
+    if (after === null) return { ok: false };
+    if (running) this.noteServer({ kind: "stopped", name });
+    return { ok: true };
+  }
+
   async setWorkspace(workspace: string): Promise<WorkspaceSetResult> {
     if (this.currentTurn !== null) {
       return { ok: false, reason: "turn_in_progress" };
@@ -2513,6 +2626,7 @@ export class SessionImpl implements Session {
         void opts.servers?.stopAll();
       },
       onDocumentAttached: () => backend.mountDigestTool(),
+      servers: opts.servers ?? null,
       sessionId,
       workspaceRoot,
       wsHolder,

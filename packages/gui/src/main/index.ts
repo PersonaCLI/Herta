@@ -421,6 +421,10 @@ function createWindow(): BrowserWindow {
   // server that answers opens the page tab when the page is not elsewhere.
   const servers = new ServerRegistry({
     ready: (sessionId, url) => pages.openOn(sessionId, url),
+    changed: (sessionId) => {
+      if (!win.webContents.isDestroyed())
+        win.webContents.send(EVT.serversChanged, sessionId);
+    },
   });
   const service = createSessionService(win.webContents, win, {
     browser: pages,

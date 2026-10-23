@@ -95,6 +95,9 @@ export const CMD = {
   pageState: "page:state",
   pageOpenExternal: "page:openExternal",
   pageClearData: "page:clearData",
+  serversList: "servers:list",
+  serversStart: "servers:start",
+  serversStop: "servers:stop",
 } as const;
 
 export const EVT = {
@@ -121,6 +124,7 @@ export const EVT = {
   pageState: "page:stateChanged",
   pageCommand: "page:command",
   pageOpen: "page:open",
+  serversChanged: "servers:changed",
   update: "update:state",
   voiceModel: "voice:model",
   voiceMinimax: "voice:minimax",

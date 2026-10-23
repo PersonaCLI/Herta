@@ -13,7 +13,10 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  LaunchEntry,
   RepoContextSnapshot,
+  ServerHost,
+  ServerStatus,
   TerminalRecord,
   TerminalRecordBlock,
   UndoFileResult,
@@ -282,6 +285,125 @@ describe("Session — interaction language threading (slice 4)", () => {
   });
 });
 
+describe("the Trailblazer's Run and Stop (ADR 0083 §5, question 8)", () => {
+  function fakeServers(): ServerHost & { started: string[] } {
+    const statuses = new Map<string, ServerStatus>();
+    const started: string[] = [];
+    return {
+      started,
+      list: () => [...statuses.values()],
+      status: (name) => statuses.get(name) ?? null,
+      async start(entry: LaunchEntry, opts) {
+        started.push(entry.name);
+        const status: ServerStatus = {
+          name: entry.name,
+          state: "ready",
+          port: entry.port,
+          url: entry.url,
+          command: [entry.command, ...entry.args].join(" "),
+          by: opts.by,
+          logPath: `.herta/logs/servers/${entry.name}-1.log`,
+        };
+        statuses.set(entry.name, status);
+        return { status, already: false };
+      },
+      logs: () => null,
+      async stop(name) {
+        const st = statuses.get(name);
+        if (st === undefined) return null;
+        const stopped = { ...st, state: "stopped" as const };
+        statuses.set(name, stopped);
+        return stopped;
+      },
+      async stopAll() {},
+    };
+  }
+
+  it("classifies at every start: an ask-class command is confirmed once a session, a block-class one never runs", async () => {
+    const cfg = mkConfig();
+    writeFileSync(
+      join(cfg.workspaceRoot, "herta.launch.json"),
+      JSON.stringify({
+        version: 1,
+        servers: [
+          { name: "web", command: "npm", args: ["run", "dev"], port: 5173 },
+          { name: "tests", command: "npm", args: ["test"], port: 4000 },
+          { name: "wipe", command: "rm", args: ["-rf", "/"], port: 4001 },
+        ],
+      }),
+    );
+    const servers = fakeServers();
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      [{ kind: "user", text: "earlier" }],
+      1,
+      undefined,
+      { servers },
+    );
+    const first = await session.startServer("web");
+    expect(first).toMatchObject({
+      ok: false,
+      reason: "confirm",
+      command: "npm run dev",
+    });
+    expect(servers.started).toEqual([]);
+    expect(await session.startServer("web", { confirmed: true })).toMatchObject(
+      {
+        ok: true,
+        url: "http://localhost:5173/",
+      },
+    );
+    // Confirmed once in this session: the next start does not ask.
+    await session.stopServer("web");
+    expect((await session.startServer("web")).ok).toBe(true);
+    expect((await session.startServer("tests")).ok).toBe(true);
+    expect(await session.startServer("wipe")).toMatchObject({
+      ok: false,
+      reason: "refused",
+    });
+    expect(await session.startServer("nope")).toMatchObject({
+      ok: false,
+      reason: "no_entry",
+    });
+    expect(servers.started).toEqual(["web", "web", "tests"]);
+
+    const listing = await session.listServers();
+    expect(listing.ok && listing.entries.map((e) => [e.name, e.state])).toEqual(
+      [
+        ["web", "ready"],
+        ["tests", "ready"],
+        ["wipe", "idle"],
+      ],
+    );
+    const notes = session.record
+      .filter((b) => b.kind === "system" && b.digest?.kind === "server")
+      .map((b) => (b.kind === "system" ? b.body : ""));
+    expect(notes).toEqual([
+      "开拓者启动了开发服务器 web（npm run dev），localhost:5173",
+      "开拓者停了开发服务器 web",
+      "开拓者启动了开发服务器 web（npm run dev），localhost:5173",
+      "开拓者启动了开发服务器 tests（npm test），localhost:4000",
+    ]);
+    await cleanup();
+  });
+
+  it("without a launch file the page says so", async () => {
+    const cfg = mkConfig();
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      [{ kind: "user", text: "earlier" }],
+      1,
+      undefined,
+      { servers: fakeServers() },
+    );
+    expect(await session.listServers()).toMatchObject({
+      ok: false,
+      reason: "no_launch_file",
+    });
+    await cleanup();
+  });
+});
+
 describe("noteServer (ADR 0083 §5)", () => {
   it("a launcher event outside 板砖's steps lands as a → 系统 row, sanitized", async () => {
     const cfg = mkConfig();
@@ -365,6 +487,8 @@ async function mkStubSession(
     branchesDescriber?: SessionInternalDeps["branchesDescriber"];
     // The backend-stack seam (ADR 0067 toolset-gate tests).
     backendStackObserver?: SessionInternalDeps["backendStackObserver"];
+    // The session's dev servers (ADR 0083 §5).
+    servers?: ServerHost;
   },
 ): Promise<{
   session: SessionImpl;
@@ -416,6 +540,7 @@ async function mkStubSession(
       : {}),
     ...(extra?.lang !== undefined ? { lang: extra.lang } : {}),
     ...(initialRecord !== undefined ? { initialRecord } : {}),
+    ...(extra?.servers !== undefined ? { servers: extra.servers } : {}),
     deps: {
       providerOverrides: {
         actor: actorStub,

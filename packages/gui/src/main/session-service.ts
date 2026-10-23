@@ -205,6 +205,8 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.pickAttachments,
   CMD.attachFiles,
   CMD.removeAttachment,
+  CMD.serversStart,
+  CMD.serversStop,
   CMD.stageImages,
   CMD.unstageImage,
   CMD.readWorkspaceFile,
@@ -856,6 +858,34 @@ export function createSessionService(
         sessionId,
         target,
       ),
+    );
+    // The new-tab page's launcher (ADR 0083 §4–§5), for the session the
+    // window shows.
+    const activeFor = (sessionId: unknown) => {
+      const active = host?.activeSession ?? null;
+      return active !== null && active.sessionId === sessionId ? active : null;
+    };
+    handle(
+      CMD.serversList,
+      async (_e, sessionId?: unknown) =>
+        (await activeFor(sessionId)?.listServers?.()) ?? {
+          ok: false as const,
+          reason: "no_launcher" as const,
+        },
+    );
+    handle(
+      CMD.serversStart,
+      async (_e, sessionId?: unknown, name?: unknown, confirmed?: unknown) =>
+        typeof name === "string"
+          ? ((await activeFor(sessionId)?.startServer?.(name, {
+              confirmed: confirmed === true,
+            })) ?? { ok: false as const, reason: "no_launcher" as const })
+          : { ok: false as const, reason: "no_entry" as const },
+    );
+    handle(CMD.serversStop, async (_e, sessionId?: unknown, name?: unknown) =>
+      typeof name === "string"
+        ? ((await activeFor(sessionId)?.stopServer?.(name)) ?? { ok: false })
+        : { ok: false },
     );
     handle(CMD.maybePlayEasterEgg, () => {
       // Fire-and-forget GUI flourish: a successful 板砖-card lift may play the

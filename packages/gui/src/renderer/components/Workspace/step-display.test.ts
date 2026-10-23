@@ -930,3 +930,82 @@ describe("web rows (ADR 0080)", () => {
     );
   });
 });
+
+describe("stepDisplayBody — the page steps (ADR 0083 §10)", () => {
+  const tz = (key: MessageKey): string => zh[key];
+  const te = (key: MessageKey): string => en[key];
+
+  it("names each step's verb in the user's language", () => {
+    const op = sys("Clicking", { kind: "op", verb: "Clicking", arg: "" });
+    expect(stepDisplayBody(op, tz)).toBe("点击");
+    expect(stepDisplayBody(op, te)).toBe("Clicking");
+    const open = sys("Opening page localhost:5173/login", {
+      kind: "op",
+      verb: "Opening page",
+      arg: "localhost:5173/login",
+    });
+    expect(stepDisplayBody(open, tz)).toBe("打开页面 localhost:5173/login");
+  });
+
+  it("localizes the chrome, keeps the page's words verbatim", () => {
+    const opened = sys("↳ opened …", {
+      kind: "page-open",
+      route: "localhost:5173/login",
+      title: "Vite + React",
+      status: 500,
+      errors: 2,
+    });
+    expect(stepDisplayBody(opened, tz)).toBe(
+      "↳ localhost:5173/login · Vite + React · HTTP 500 · 2 个控制台错误",
+    );
+    const typed = sys("↳ typed …", {
+      kind: "page-act",
+      action: "type",
+      route: "localhost:5173/login",
+      title: "",
+      navigated: false,
+      target: 'textbox "Password"',
+      typed: "••••••",
+      password: true,
+      submit: true,
+      errors: 0,
+    });
+    expect(stepDisplayBody(typed, tz)).toBe(
+      '↳ 在 textbox "Password" 输入了 "••••••"，按了回车',
+    );
+    expect(stepDisplayBody(typed, te)).toBe(
+      '↳ Typed "••••••" into textbox "Password", then pressed Enter',
+    );
+    const network = sys("↳ network …", {
+      kind: "page-read",
+      mode: "network",
+      route: "localhost:5173/login",
+      title: "",
+      count: 24,
+      truncated: false,
+      failures: 1,
+    });
+    expect(stepDisplayBody(network, te)).toBe("↳ 24 requests · 1 failed");
+    const shot = sys("↳ screenshot …", {
+      kind: "page-shot",
+      route: "localhost:5173",
+      path: ".herta/browser/s/shot-1.png",
+      width: 375,
+      height: 812,
+      region: false,
+    });
+    expect(stepDisplayBody(shot, tz)).toBe("↳ localhost:5173 · 375×812");
+  });
+
+  it("the detail pane counts what the bound left out", () => {
+    const b: SystemBlock = {
+      ...sys("↳ 3 elements on localhost:5173"),
+      evidence: [
+        { kind: "page", mode: "tree", text: 'button "Sign in"', omitted: 4 },
+      ],
+    };
+    expect(stepDisplayDetail(b, tz)).toBe(
+      '↳ 页面元素:\nbutton "Sign in"\n（另有 4 个未列出）',
+    );
+  });
+});

@@ -22,6 +22,8 @@ import type {
   SystemBlockDigest,
 } from "@herta/core";
 import {
+  browserOpArg,
+  browserOpVerb,
   composeMarkerSummary,
   countDiffLines as countDiffLinesShared,
   type MarkerSummaryLabels,
@@ -29,6 +31,7 @@ import {
 import { boundedTail } from "./bounded-tail.js";
 import { sanitizeActorText } from "./escape.js";
 import type { GitOutcome } from "./git-outcome.js";
+import { projectPageResult } from "./page-record-projection.js";
 
 /** system-body sanitize for one string field (see `sanitizeSystemBlock`). */
 export function cleanBody(s: string): string {
@@ -132,6 +135,51 @@ export function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
         title: cleanBody(digest.title),
         path: cleanBody(digest.path),
       };
+    case "page-open":
+      // The page's own title and route (ADR 0083): text a page writes, the
+      // same trust class as a fetched page's.
+      return {
+        ...digest,
+        route: cleanBody(digest.route),
+        title: cleanBody(digest.title),
+      };
+    case "page-read":
+      return {
+        ...digest,
+        route: cleanBody(digest.route),
+        title: cleanBody(digest.title),
+        ...(digest.query !== undefined
+          ? { query: cleanBody(digest.query) }
+          : {}),
+        ...(digest.path !== undefined ? { path: cleanBody(digest.path) } : {}),
+      };
+    case "page-act": {
+      // The element names are the page's; the typed text and the chosen
+      // option are 板砖's, redacted by the tool. All ride the cleaner.
+      const opt = (v: string | undefined) =>
+        v !== undefined ? cleanBody(v) : undefined;
+      const target = opt(digest.target);
+      const hit = opt(digest.hit);
+      const typed = opt(digest.typed);
+      const key = opt(digest.key);
+      const value = opt(digest.value);
+      return {
+        ...digest,
+        route: cleanBody(digest.route),
+        title: cleanBody(digest.title),
+        ...(target !== undefined ? { target } : {}),
+        ...(hit !== undefined ? { hit } : {}),
+        ...(typed !== undefined ? { typed } : {}),
+        ...(key !== undefined ? { key } : {}),
+        ...(value !== undefined ? { value } : {}),
+      };
+    }
+    case "page-shot":
+      return {
+        ...digest,
+        route: cleanBody(digest.route),
+        path: cleanBody(digest.path),
+      };
     case "undo":
       // Paths 板砖 wrote, or its commands touched (ADR 0074): backend-derived
       // like every path here. The results and flags are harness-made.
@@ -232,6 +280,11 @@ export function sanitizeSection(s: EvidenceSection): EvidenceSection {
     case "hint":
       // Harness-authored in every shipped tool, but a tool is a plugin
       // seam — clean it like the rest.
+      return { ...s, text: cleanBody(s.text) };
+    case "page":
+      // What a page step read (ADR 0083): element names, page text,
+      // console messages — all written by the page. A planted （我 说） in
+      // a button's label must not forge an actor block.
       return { ...s, text: cleanBody(s.text) };
   }
 }
@@ -461,13 +514,16 @@ export function projectBackendEventUnsanitized(
       const label = workflowLabel(event.tool, event.inputSummary);
       if (label === null) return null;
       // The editor's summary leads with its command word so the verb can be
-      // chosen; the row itself reads like edit_file's (`Writing <path>`).
+      // chosen; the row itself reads like edit_file's (`Writing <path>`). A
+      // page step's leads with its mode or action, which the verb says.
       const arg =
         event.tool === "str_replace_editor"
           ? event.inputSummary
               .replace(/^(view|create|str_replace|insert)\s*/, "")
               .trim()
-          : event.inputSummary.trim();
+          : browserOpVerb(event.tool) !== null
+            ? browserOpArg(event.tool, event.inputSummary)
+            : event.inputSummary.trim();
       const body = `${label} ${arg}`.trim();
       return {
         kind: "system",
@@ -571,6 +627,11 @@ export function projectBackendEventUnsanitized(
           const data = event.result.data as WebSearchResultData | undefined;
           if (data === undefined || !Array.isArray(data.results)) return null;
           return projectWebSearchResult(data);
+        }
+        // The page steps (ADR 0083 §10): what came of each — the page
+        // opened, what was read, what was done, the picture taken.
+        if (browserOpVerb(event.tool) !== null) {
+          return projectPageResult(event.tool, event.result.data);
         }
         if (event.tool === "web_fetch") {
           const data = event.result.data as WebFetchResultData | undefined;
@@ -895,7 +956,9 @@ export function workflowLabel(
     case "web_fetch":
       return "Reading web page";
     default:
-      return null;
+      // The page steps (ADR 0083 §10): the verb follows the mode or action
+      // the summary leads with — shared with the desktop's live feed.
+      return browserOpVerb(tool, inputSummary);
   }
 }
 

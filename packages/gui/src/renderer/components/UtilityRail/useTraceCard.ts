@@ -1,3 +1,4 @@
+import { browserOpArg } from "@herta/core/browser-host";
 import { useEffect, useMemo } from "react";
 import { opVerbOf } from "../../../shared/op-verb.js";
 import { useApprovalPending } from "../../hooks/useApprovalPending.js";
@@ -69,6 +70,7 @@ export function stepOf(
   const verb = opVerbOf(
     view.tool,
     view.tool === "str_replace_editor" && !view.streams,
+    view.summary,
   );
   if (verb === null) return null;
   const status: PendingOp["status"] = !view.done
@@ -83,7 +85,9 @@ export function stepOf(
         ? view.summary
             .replace(/^(view|create|str_replace|insert)\s*/, "")
             .trim()
-        : view.summary.trim()
+        : view.tool.startsWith("browser_")
+          ? browserOpArg(view.tool, view.summary)
+          : view.summary.trim()
       : verb === "Running"
         ? withoutWorkspaceCd(view.commandLine ?? "", workspace)
         : workspaceRelative(view.path ?? "", workspace);

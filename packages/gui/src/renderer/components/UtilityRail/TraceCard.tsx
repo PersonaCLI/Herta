@@ -496,6 +496,18 @@ export function segmentSummary(segment: TraceSegment, t: T): string {
           }),
     );
   }
+  const [firstAppPage] = tally.appPages;
+  if (firstAppPage !== undefined) {
+    parts.push(
+      tally.appPages.length === 1
+        ? t("trace.sum.pageOne", { route: firstAppPage })
+        : t("trace.sum.pageMany", {
+            route: firstAppPage,
+            n: String(tally.appPages.length),
+          }),
+    );
+  }
+  counted(tally.pageSteps, "trace.sum.pageStepOne", "trace.sum.pageStepMany");
   counted(tally.digests, "trace.sum.digestOne", "trace.sum.digestMany");
   counted(tally.memories, "trace.sum.memoryOne", "trace.sum.memoryMany");
   counted(tally.stops, "trace.sum.stopOne", "trace.sum.stopMany");

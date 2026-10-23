@@ -403,6 +403,10 @@ export interface SegmentTally {
   readonly webSearches: number;
   /** Hosts of the pages read, in first-read order. */
   readonly pages: readonly string[];
+  /** Routes of the app's pages opened (ADR 0083), in first-open order. */
+  readonly appPages: readonly string[];
+  /** The other page steps: reads, clicks, typing, screenshots. */
+  readonly pageSteps: number;
 }
 
 export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
@@ -416,6 +420,8 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
   let stops = 0;
   let webSearches = 0;
   const pages: string[] = [];
+  const appPages: string[] = [];
+  let pageSteps = 0;
   for (const op of ops) {
     switch (op.verb) {
       case "Reading":
@@ -450,6 +456,25 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
         if (!pages.includes(host)) pages.push(host);
         break;
       }
+      case "Opening page":
+        // A history step (`back`) names no page of its own.
+        if (op.arg.includes(":") || op.arg.includes("/")) {
+          if (!appPages.includes(op.arg)) appPages.push(op.arg);
+        } else pageSteps += 1;
+        break;
+      case "Reading page":
+      case "Finding on page":
+      case "Reading console":
+      case "Reading network":
+      case "Clicking":
+      case "Typing":
+      case "Pressing":
+      case "Scrolling":
+      case "Choosing":
+      case "Resizing page":
+      case "Taking screenshot":
+        pageSteps += 1;
+        break;
       default:
         break;
     }
@@ -465,6 +490,8 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
     stops,
     webSearches,
     pages,
+    appPages,
+    pageSteps,
   };
 }
 

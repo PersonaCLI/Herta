@@ -1,8 +1,10 @@
-import type {
-  DoneMarkerSummary,
-  EvidenceSection,
-  SystemBlock,
+import {
+  type DoneMarkerSummary,
+  type EvidenceSection,
+  isBrowserOpVerb,
+  type SystemBlock,
 } from "@herta/core";
+import { isPageDigest, pageFoldLine, pageRowForHerta } from "./page-voice.js";
 import type { PromptLang } from "./prompt-lang.js";
 
 /**
@@ -179,6 +181,12 @@ const TEXTS: Record<PromptLang, Texts> = {
       提示: "提示：",
       错误: "错误：",
       中断时: "中断时：",
+      // A page row's detail, when the done-marker carries it (ADR 0083).
+      页面元素: "页面元素：",
+      匹配元素: "名字相符的元素：",
+      页面文字: "页面文字：",
+      控制台错误: "控制台错误：",
+      失败的请求: "失败的请求：",
     },
     ran: (cmd, exit) =>
       exit === "0" ? `运行 \`${cmd}\`` : `运行 \`${cmd}\`（退出码 ${exit}）`,
@@ -287,6 +295,11 @@ const TEXTS: Record<PromptLang, Texts> = {
       提示: "Hint: ",
       错误: "Error: ",
       中断时: "When it stopped: ",
+      页面元素: "Elements on the page: ",
+      匹配元素: "Matching elements: ",
+      页面文字: "The page's text: ",
+      控制台错误: "Console errors: ",
+      失败的请求: "Failed requests: ",
     },
     ran: (cmd, exit) =>
       exit === "0" ? `ran \`${cmd}\`` : `ran \`${cmd}\` (exit code ${exit})`,
@@ -400,6 +413,12 @@ export function detailForHerta(
     .map((line) => {
       if (/^…\(truncated(?:, full log: .*)?\)$/u.test(line))
         return t.moreNotShown;
+      // A page read's note of what its bound left out (ADR 0083).
+      const omitted = /^（另有 (\d+) 个未列出）$/u.exec(line);
+      if (omitted !== null)
+        return lang === "en"
+          ? `(${omitted[1]} more not listed)`
+          : `（还有 ${omitted[1]} 个没列出）`;
       if (!line.startsWith("↳ ")) return line;
       if (line === "↳ 输出:") return t.output;
       const excerpt = /^↳ 摘录 (.+):(\d+)-(\d+)$/u.exec(line);
@@ -516,8 +535,13 @@ export function systemRowForHerta(
 
   const d = block.digest;
   if (d === undefined) return block;
+  // A page step's result row says what came of it whole — the page, the
+  // element, the error — so its op row says nothing more (ADR 0083 §10).
+  if (isPageDigest(d))
+    return { ...rest, body: pageRowForHerta(block, d, lang) };
   switch (d.kind) {
     case "op": {
+      if (isBrowserOpVerb(d.verb)) return null;
       const verb = t.verb[d.verb];
       if (verb === null) return null;
       const arg = opArg(d.verb, d.arg, lang);
@@ -612,10 +636,26 @@ function opArg(verb: string, arg: string, lang: PromptLang): string {
  *  A command keeps its words: it is quoted as 板砖 ran it. */
 const STORED_PAGE = /\.herta[\\/]web[\\/]([a-z0-9.-]+?)-[0-9a-f]{8}\.md/gu;
 
+/** What a page step stored (`.herta/browser/<session>/shot-3.png`, a whole
+ *  tree's `snap-2.txt`), named as what it is: a finding that cites a
+ *  screenshot cites "screenshot 3" in her notes (ADR 0083 §10). */
+const STORED_SHOT =
+  /\.herta[\\/]browser[\\/][^\\/\s，,；;）)]+[\\/](shot|snap)-(\d+)\.(?:png|txt)/gu;
+
 function namePages(text: string, lang: PromptLang): string {
-  return text.replace(STORED_PAGE, (_m, host: string) =>
-    lang === "en" ? `the ${host} page` : `网页 ${host}`,
-  );
+  return text
+    .replace(STORED_PAGE, (_m, host: string) =>
+      lang === "en" ? `the ${host} page` : `网页 ${host}`,
+    )
+    .replace(STORED_SHOT, (_m, kind: string, n: string) =>
+      kind === "shot"
+        ? lang === "en"
+          ? `screenshot ${n}`
+          : `截图 ${n}`
+        : lang === "en"
+          ? `page snapshot ${n}`
+          : `页面快照 ${n}`,
+    );
 }
 
 /** A verb and its argument; a 「quoted」 argument sits against the verb, as
@@ -788,6 +828,7 @@ export function foldedRunLine(
   if (fact !== null) return `${t.remembered}${fact}`;
   const d = block.digest;
   if (d === undefined) return null;
+  if (isPageDigest(d)) return pageFoldLine(d, lang);
   switch (d.kind) {
     case "op":
       return null;

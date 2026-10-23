@@ -659,6 +659,50 @@ describe("translateBackend", () => {
     });
   });
 
+  it("holds the pictures until every tool call of the turn is answered", () => {
+    // A user message between two tool messages 400s the request: the API
+    // wants each tool_call_id answered first (a screenshot beside a command,
+    // ADR 0083 lab 2026-10-23).
+    const ts = "2026-10-23T00:00:00.000Z";
+    const req = translate(
+      makeBackendFrame({
+        messages: [
+          {
+            role: "assistant",
+            ts,
+            text: "",
+            toolCalls: [
+              { id: "call_1", tool: "browser_screenshot", input: {} },
+              { id: "call_2", tool: "bash", input: { command: "ls" } },
+            ],
+          },
+          imageResult(["shot-1.png"]),
+          {
+            role: "tool",
+            toolCallId: "call_2",
+            ts,
+            result: { ok: true, summary: "2 files" },
+          },
+          { role: "user", ts, text: "next" },
+        ],
+      }),
+      { model: "test-model" },
+    );
+    const roles = req.messages.map((m) => m.role);
+    expect(roles.slice(-5)).toEqual([
+      "assistant",
+      "tool",
+      "tool",
+      "user",
+      "user",
+    ]);
+    const pictures = req.messages.at(-2) as {
+      content: { type: string; text?: string }[];
+    };
+    expect(pictures.content[0]?.text).toBe("[shot-1.png]");
+    expect(pictures.content).toHaveLength(2);
+  });
+
   it("names every picture in the text part, so a multi-image call can cite", () => {
     const req = translate(
       makeBackendFrame({ messages: [imageResult(["a.png", "b.png"])] }),

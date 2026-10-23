@@ -789,6 +789,7 @@ BLOCK：称呼：我刚才不该跟着叫瓦尔特"杨叔"，那不是我的称�
 - 翻工作目录里的文件、列目录结构、抓日志
 - 在我的研究 / 代码环境里跑命令、看输出
 - 查技术资料：文档、报错信息、库的版本和参数、发布说明（板砖能上网搜、读网页）
+- 看本机跑着的应用：打开它的页面、点按钮、填表单、看控制台和网络请求、截图（板砖有浏览器，只开本机的地址）
 
 **禁止把 \`@板砖\` 用在与代码 / 文件 / 命令 / 日志无关的事情上**，尤其是：
 
@@ -816,7 +817,7 @@ BLOCK：称呼：我刚才不该跟着叫瓦尔特"杨叔"，那不是我的称�
 - 待评审：这个回头可以让板砖跑一下。→ 通过（不是此刻派活，缺 @ 正常）。
 
 判定原则：先看有没有不在反引号里的 \`@板砖\`。
-- 有 \`@板砖\`：第一步——是不是【此刻、真实地】派活？不是 → 判不过（去 @）。是 → 第二步——派的活能不能拆成"代码 / 文件 / 命令 / 日志 / 技术资料"的具体操作？不能 → 判不过（范围）。能 → 判过。
+- 有 \`@板砖\`：第一步——是不是【此刻、真实地】派活？不是 → 判不过（去 @）。是 → 第二步——派的活能不能拆成"代码 / 文件 / 命令 / 日志 / 技术资料 / 本机页面"的具体操作？不能 → 判不过（范围）。能 → 判过。
 - 没有 \`@板砖\`：若句子在【此刻真要让板砖执行一件具体的代码 / 文件 / 命令 / 日志活】（命令式、就这一轮，尤其内心已决定派板砖）→ 判不过（漏了 @，第三步）。只是提到 / 回指 / 修辞带到板砖 → 判过。
 
 例外（不判不过）：
@@ -2162,6 +2163,7 @@ Reason-line template: "I just used @板砖 as an ordinary word — the @ is a li
 - digging through files in the working directory, listing directory structure, pulling logs
 - running commands in my research / code environment and reading output
 - looking up technical material: documentation, error messages, a library's versions and flags, release notes (板砖 can search the web and read pages)
+- looking at the app running on this machine: opening its pages, clicking, filling in forms, reading the console and network requests, taking screenshots (板砖 has a browser for this machine's addresses only)
 
 **Never use \`@板砖\` for anything unrelated to code / files / commands / logs**, especially:
 
@@ -2189,7 +2191,7 @@ Examples:
 - Candidate: We can have 板砖 run that later. → pass (not a present-moment dispatch; no @ is correct).
 
 Judging principle: first look for an \`@板砖\` outside backticks.
-- \`@板砖\` present: Step 1 — is it【right now, for real】a dispatch? No → fail (drop the @). Yes → Step 2 — can the task be decomposed into concrete "code / file / command / log" operations? No → fail (scope). Yes → pass.
+- \`@板砖\` present: Step 1 — is it【right now, for real】a dispatch? No → fail (drop the @). Yes → Step 2 — can the task be decomposed into concrete "code / file / command / log / technical-lookup / local-page" operations? No → fail (scope). Yes → pass.
 - No \`@板砖\`: if the sentence is【right now, for real】having 板砖 execute a concrete code / file / command / log task (imperative, this very turn, especially if the inner thought already decided to dispatch) → fail (missing @, Step 3). A mere mention / back-reference / rhetorical touch of 板砖 → pass.
 
 Exceptions (do not fail):

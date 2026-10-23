@@ -1,5 +1,8 @@
+import { type BrowserOpVerb, browserOpVerb } from "@herta/core/browser-host";
+
 /** The op verbs a record row can carry for a live call. */
 export type LiveOpVerb =
+  | BrowserOpVerb
   | "Reading"
   | "Writing"
   | "Running"
@@ -22,7 +25,13 @@ export type LiveOpVerb =
  * which calls count. A drift from the projection costs a moment: a live
  * step reads differently from the row that replaces it.
  */
-export function opVerbOf(tool: string, viewing: boolean): LiveOpVerb | null {
+export function opVerbOf(
+  tool: string,
+  viewing: boolean,
+  /** The call's summary once dispatched: a page step's verb follows its
+   *  mode or action (`browserOpVerb`, shared with the projection). */
+  summary = "",
+): LiveOpVerb | null {
   switch (tool) {
     case "read_file":
     case "glob":
@@ -53,6 +62,6 @@ export function opVerbOf(tool: string, viewing: boolean): LiveOpVerb | null {
     case "web_fetch":
       return "Reading web page";
     default:
-      return null;
+      return browserOpVerb(tool, summary);
   }
 }

@@ -97,10 +97,7 @@ export function translateActor(
   if (frame.retrievedLore.length > 0) {
     messages.push({ role: "system", content: frame.retrievedLore });
   }
-  const thinking = thinkingEnabled(opts);
-  for (const m of frame.messages) {
-    messages.push(...toOpenAI(m, thinking));
-  }
+  messages.push(...toOpenAIMessages(frame.messages, thinkingEnabled(opts)));
   const tools =
     frame.toolSchemas.length > 0 ? frame.toolSchemas.map(toTool) : undefined;
   return finalizeRequest(messages, tools, opts);
@@ -117,10 +114,7 @@ export function translateBackend(
   if (frame.scopedMemory.length > 0) {
     messages.push({ role: "system", content: frame.scopedMemory });
   }
-  const thinking = thinkingEnabled(opts);
-  for (const m of frame.messages) {
-    messages.push(...toOpenAI(m, thinking));
-  }
+  messages.push(...toOpenAIMessages(frame.messages, thinkingEnabled(opts)));
   // The per-iteration state trailer (working state, steps left):
   // trails the transcript so the stable prefix keeps its prompt-cache bytes;
   // recomputed each call by the turn loop and never part of the durable
@@ -148,6 +142,40 @@ function finalizeRequest(
   if (opts.maxTokens !== undefined) base.max_tokens = opts.maxTokens;
   if (opts.extraBody !== undefined) Object.assign(base, opts.extraBody);
   return base;
+}
+
+/**
+ * The transcript's messages on the wire, in order — except a tool result's
+ * pictures, which wait for the last tool message of their turn. The API wants
+ * every `tool_call_id` of an assistant message answered before anything
+ * else: a picture's user message between two tool messages fails the whole
+ * request with a 400. A screenshot taken beside a command in one turn did
+ * (ADR 0083 lab, 2026-10-23). The pictures held over one run of tool
+ * messages go out as one user message, in the order their tools answered.
+ */
+function toOpenAIMessages(
+  ms: readonly Message[],
+  thinking: boolean,
+): OpenAIMessage[] {
+  const out: OpenAIMessage[] = [];
+  let held: OpenAIContentPart[] = [];
+  const flush = (): void => {
+    if (held.length === 0) return;
+    out.push({ role: "user", content: held });
+    held = [];
+  };
+  for (const m of ms) {
+    if (m.role !== "tool") flush();
+    const [first, ...pictures] = toOpenAI(m, thinking);
+    if (first !== undefined) out.push(first);
+    for (const p of pictures) {
+      if (p.role === "user" && Array.isArray(p.content))
+        held.push(...p.content);
+      else out.push(p);
+    }
+  }
+  flush();
+  return out;
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { ExecutionStatus } from "../bridge/types.js";
+import type { BrowserOpVerb } from "../browser-host.js";
 
 /**
  * Canonical system-block labels emitted by the v0.2 harness into
@@ -242,7 +243,9 @@ export type SystemBlockDigest =
         /** web_search (ADR 0080): the arg is the query. */
         | "Searching the web"
         /** web_fetch (ADR 0080): the arg is the URL. */
-        | "Reading web page";
+        | "Reading web page"
+        /** The page steps (ADR 0083 §10): `browserOpVerb` names them. */
+        | BrowserOpVerb;
       readonly arg: string;
       /** The command runs tests — recognised at dispatch from the WHOLE
        *  input (`arg` is the 80-char header, which can cut the test run off),
@@ -505,6 +508,80 @@ export type SystemBlockDigest =
       readonly chars: number;
     }
   | {
+      /** A page 板砖 opened (browser_navigate, ADR 0083 §10). `route` is
+       *  host, port and path — the app's own route, never the query, which
+       *  is bookkeeping and may carry a token. `go` names a history step. */
+      readonly kind: "page-open";
+      readonly route: string;
+      /** Empty when the page has none. */
+      readonly title: string;
+      /** The main document's HTTP status; null when none was seen. */
+      readonly status: number | null;
+      readonly go?: "back" | "forward" | "reload";
+      /** Console errors the opening raised (the first three ride the
+       *  evidence). */
+      readonly errors: number;
+    }
+  | {
+      /** What 板砖 read of the page (browser_read). The read itself rides
+       *  `evidenceDetail`, bounded (ADR 0083 §10): a tree's first 1 500
+       *  chars, the console's first three errors, at most five failed
+       *  requests. `path` is the whole read, stored when it was cut. */
+      readonly kind: "page-read";
+      readonly mode: "tree" | "find" | "text" | "console" | "network";
+      readonly route: string;
+      readonly title: string;
+      /** Elements, chars, console messages or requests, by mode. */
+      readonly count: number;
+      readonly truncated: boolean;
+      /** tree: every element with a role, not only those to act on. */
+      readonly all?: true;
+      /** find: the text looked for. */
+      readonly query?: string;
+      readonly path?: string;
+      /** console: its errors; network: its failed requests. */
+      readonly failures?: number;
+    }
+  | {
+      /** What 板砖 did on the page (browser_act). `target` and `hit` are
+       *  elements as the page names them (`button "Sign in"`); `typed` is
+       *  redacted, or masked for a password field. */
+      readonly kind: "page-act";
+      readonly action:
+        | "click"
+        | "type"
+        | "key"
+        | "scroll"
+        | "select"
+        | "resize";
+      /** The page's route after the step. */
+      readonly route: string;
+      readonly title: string;
+      readonly navigated: boolean;
+      readonly target?: string;
+      readonly hit?: string;
+      readonly typed?: string;
+      readonly password?: true;
+      readonly submit?: true;
+      readonly key?: string;
+      readonly direction?: "up" | "down";
+      /** select: the option chosen; absent for a toggle. */
+      readonly value?: string;
+      readonly preset?: "phone" | "tablet" | "desktop";
+      readonly scheme?: "light" | "dark";
+      readonly errors: number;
+    }
+  | {
+      /** A screenshot 板砖 took (browser_screenshot): what it saw, kept,
+       *  since the live page changes (ADR 0083 §11). */
+      readonly kind: "page-shot";
+      readonly route: string;
+      readonly path: string;
+      readonly width: number;
+      readonly height: number;
+      readonly region: boolean;
+    }
+  | {
       /** A conclusion the backend recorded via `report_finding` (ADR 0039).
        *  Unlike excerpt/search this is NOT two-state: the claim IS the
        *  deliverable, short by schema, and it survives compaction whole —
@@ -694,6 +771,16 @@ export type EvidenceSection =
       readonly title: string;
       readonly path: string;
       readonly text: string;
+    }
+  | {
+      /** What a page step read (ADR 0083 §10), bounded by the bridge: tree
+       *  or find lines without their refs (`button "Sign in"`), the page's
+       *  text, console errors, or failed requests. `omitted` counts what the
+       *  bound left out. Page text: data, never instructions. */
+      readonly kind: "page";
+      readonly mode: "tree" | "find" | "text" | "console" | "network";
+      readonly text: string;
+      readonly omitted: number;
     }
   | {
       /** A failed tool call's own `suggestion` (`↳ 提示:`), 2026-08-17 — the

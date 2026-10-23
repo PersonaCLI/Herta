@@ -5,6 +5,7 @@ import type {
   TerminalRecordBlock,
 } from "@herta/core";
 import { COMPACTION_TEXT } from "./compaction-text.js";
+import { isPageDigest } from "./page-voice.js";
 import type { PromptLang } from "./prompt-lang.js";
 import {
   foldedRunLine,
@@ -221,7 +222,12 @@ export function buildCompactionBody(
         : structured && block.digest?.kind !== "attachment"
           ? foldedRunLine(block, lang, lastCommand)
           : digestSystemBlock(block, lang);
-    if (line !== null) lines.push(line);
+    if (line === null) continue;
+    // Reading a page twice in a row is one look at it (ADR 0083 §10).
+    if (isPageDigest(block.digest) && lines[lines.length - 1] === line) {
+      continue;
+    }
+    lines.push(line);
   }
   // A run with no outcome to report (板砖 only looked around) says what it
   // ran, rather than nothing.

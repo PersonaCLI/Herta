@@ -54,6 +54,12 @@ export function workflowKindForBeat(tool: string): string | null {
     case "web_search":
     case "web_fetch":
       return "web";
+    // The page steps (ADR 0083 §10): one bucket, like the web's.
+    case "browser_navigate":
+    case "browser_read":
+    case "browser_act":
+    case "browser_screenshot":
+      return "browser";
     default:
       return null;
   }

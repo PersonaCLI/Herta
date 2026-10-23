@@ -1505,14 +1505,10 @@ export function createSessionService(
       );
       // And the composer-prediction switch (2026-10-10), before any turn.
       host.setComposerPredictions(composerPredictionsEnabled(startupSettings));
-      // The window's browser pages (ADR 0083), for 板砖's page steps. Until
-      // the steps have their record rows (build step 5), Herta would not see
-      // what they did (D7), so they mount only under HERTA_BROWSER_STEPS=1.
+      // The window's browser pages (ADR 0083), for 板砖's page steps.
       const browser = hooks.browser;
       host.setBrowserProvider?.(
-        browser !== undefined && process.env.HERTA_BROWSER_STEPS === "1"
-          ? (sid) => browser.driverFor(sid)
-          : null,
+        browser !== undefined ? (sid) => browser.driverFor(sid) : null,
       );
       // Launch lands on the connect screen (接入黑塔空间站) rather than
       // auto-resuming the latest session: the user explicitly opens one from the

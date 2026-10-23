@@ -57,7 +57,12 @@ export interface BrowserNavigateData {
   readonly host: string;
   readonly title: string;
   readonly status: number | null;
+  /** The history step taken, when it was one. */
+  readonly go?: "back" | "forward" | "reload";
+  /** The first three console errors the step raised (redacted)… */
   readonly consoleErrors: readonly string[];
+  /** …of this many. */
+  readonly consoleErrorCount: number;
   readonly elements: number;
 }
 
@@ -67,6 +72,8 @@ export interface BrowserReadData {
   readonly title: string;
   readonly count: number;
   readonly truncated: boolean;
+  /** tree: every element with a role, not only those to act on. */
+  readonly all?: boolean;
   readonly query?: string;
   /** The whole read, when it was more than 板砖 was shown. */
   readonly path?: string;
@@ -84,10 +91,16 @@ export interface BrowserActData {
   /** What was typed: redacted, or masked for a password field. */
   readonly typed?: string;
   readonly password?: boolean;
+  /** type: Enter was pressed after the text. */
+  readonly submit?: boolean;
   readonly key?: string;
-  readonly preset?: string;
-  readonly scheme?: string;
+  readonly direction?: "up" | "down";
+  /** select: the option chosen (redacted); absent for a toggle. */
+  readonly value?: string;
+  readonly preset?: "phone" | "tablet" | "desktop";
+  readonly scheme?: "light" | "dark";
   readonly consoleErrors: readonly string[];
+  readonly consoleErrorCount: number;
 }
 
 export interface BrowserScreenshotData {
@@ -176,6 +189,13 @@ const invalid = <T>(issues: string, usage: string): ToolResult<T> => ({
 
 /** The address as the record names it: host, port and path — never the
  *  query, which may carry anything (ADR 0083 §10). */
+/** A navigation's address as its op row shows it: host, port and path, as
+ *  given when it does not parse (`localhost:5173/login` has no scheme). */
+function summaryRoute(url: string): string {
+  const bare = url.replace(/[?#].*$/su, "");
+  return /^[a-z][a-z0-9+.-]*:\/\//iu.test(bare) ? pageRoute(bare) : bare;
+}
+
 export function pageRoute(url: string): string {
   try {
     const u = new URL(url);
@@ -263,8 +283,10 @@ export function browserNavigateTool(opts: {
       };
     },
     summarize(input: unknown): string | undefined {
+      // The record's op row: the address as host, port and path. A query
+      // is bookkeeping and may carry a token (ADR 0083 §10).
       const i = input as { url?: unknown; go?: unknown } | undefined;
-      if (typeof i?.url === "string") return i.url;
+      if (typeof i?.url === "string") return summaryRoute(i.url);
       return typeof i?.go === "string" ? i.go : undefined;
     },
     async run(
@@ -298,7 +320,9 @@ export function browserNavigateTool(opts: {
             host: hostOf(nav.url),
             title: redactSecrets(nav.title),
             status: nav.status,
+            ...("go" in to ? { go: to.go } : {}),
             consoleErrors: nav.consoleErrors.slice(0, 3).map(redactSecrets),
+            consoleErrorCount: nav.consoleErrors.length,
             elements: nav.elements.count,
           },
           summary: `opened ${route}`,
@@ -391,6 +415,7 @@ export function browserReadTool(opts: {
             title: redactSecrets(read.title),
             count: read.count,
             truncated: read.truncated,
+            ...(i.mode === "tree" && i.all === true ? { all: true } : {}),
             ...(i.query !== undefined ? { query: i.query } : {}),
             ...(path !== undefined ? { path } : {}),
             text,
@@ -429,19 +454,17 @@ export function browserActTool(opts: {
       };
     },
     summarize(input: unknown): string | undefined {
+      // The action and what it says — never a ref or a position, which are
+      // bookkeeping (ADR 0083 §10); the result row names the element.
       const i = input as Record<string, unknown> | undefined;
       if (typeof i?.action !== "string") return undefined;
-      const on =
-        typeof i.ref === "string"
-          ? ` ${i.ref}`
-          : typeof i.x === "number" && typeof i.y === "number"
-            ? ` ${Math.round(i.x)},${Math.round(i.y)}`
-            : "";
       if (i.action === "key" && typeof i.key === "string")
         return `key ${i.key}`;
+      if (i.action === "scroll")
+        return `scroll ${i.direction === "up" ? "up" : "down"}`;
       if (i.action === "resize" && typeof i.preset === "string")
         return `resize ${i.preset}${typeof i.scheme === "string" ? ` ${i.scheme}` : ""}`;
-      return `${i.action}${on}`;
+      return i.action;
     },
     async run(
       call: ToolCallRequest,
@@ -569,7 +592,14 @@ export function browserActTool(opts: {
             navigated: acted.navigated,
             ...(typed !== undefined ? { typed } : {}),
             ...(acted.password === true ? { password: true } : {}),
+            ...(req.action === "type" && req.submit === true
+              ? { submit: true }
+              : {}),
             ...(req.action === "key" ? { key: req.key } : {}),
+            ...(req.action === "scroll" ? { direction: req.direction } : {}),
+            ...(req.action === "select" && req.value !== undefined
+              ? { value: redactSecrets(req.value) }
+              : {}),
             ...(req.action === "resize"
               ? {
                   preset: req.preset,
@@ -577,6 +607,7 @@ export function browserActTool(opts: {
                 }
               : {}),
             consoleErrors: acted.consoleErrors.slice(0, 3).map(redactSecrets),
+            consoleErrorCount: acted.consoleErrors.length,
           },
           summary: what,
           modelText: modelText.slice(0, STEP_ELEMENTS_CHARS + 2000),

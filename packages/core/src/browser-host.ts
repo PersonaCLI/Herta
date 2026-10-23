@@ -207,3 +207,86 @@ export function isLoopbackUrl(url: string): boolean {
     return false;
   }
 }
+
+/** The op verbs of the page steps' rows (ADR 0083 §10). */
+export type BrowserOpVerb =
+  | "Opening page"
+  | "Reading page"
+  | "Finding on page"
+  | "Reading console"
+  | "Reading network"
+  | "Clicking"
+  | "Typing"
+  | "Pressing"
+  | "Scrolling"
+  | "Choosing"
+  | "Resizing page"
+  | "Taking screenshot";
+
+const BROWSER_OP_VERBS: ReadonlySet<string> = new Set<BrowserOpVerb>([
+  "Opening page",
+  "Reading page",
+  "Finding on page",
+  "Reading console",
+  "Reading network",
+  "Clicking",
+  "Typing",
+  "Pressing",
+  "Scrolling",
+  "Choosing",
+  "Resizing page",
+  "Taking screenshot",
+]);
+
+export function isBrowserOpVerb(verb: string): verb is BrowserOpVerb {
+  return BROWSER_OP_VERBS.has(verb);
+}
+
+const ACT_VERB: Readonly<Record<string, BrowserOpVerb>> = {
+  click: "Clicking",
+  type: "Typing",
+  key: "Pressing",
+  scroll: "Scrolling",
+  select: "Choosing",
+  resize: "Resizing page",
+};
+
+/**
+ * The verb of a page step's op row, from its tool and the summary the tool
+ * wrote for the call (its mode or action leads), or null for any other
+ * tool. The record projection and the desktop's live feed both read it, so
+ * a live step and the row that replaces it name the same verb. A summary
+ * not yet known (arguments still streaming) reads as the tool's commonest
+ * step.
+ */
+export function browserOpVerb(
+  tool: string,
+  summary = "",
+): BrowserOpVerb | null {
+  const word = /^\S*/.exec(summary)?.[0] ?? "";
+  switch (tool) {
+    case "browser_navigate":
+      return "Opening page";
+    case "browser_read":
+      return word === "find"
+        ? "Finding on page"
+        : word === "console"
+          ? "Reading console"
+          : word === "network"
+            ? "Reading network"
+            : "Reading page";
+    case "browser_act":
+      return ACT_VERB[word] ?? "Clicking";
+    case "browser_screenshot":
+      return "Taking screenshot";
+    default:
+      return null;
+  }
+}
+
+/** A page step's op-row argument: the summary less the mode or action word
+ *  its verb already says — a navigation keeps its address whole. */
+export function browserOpArg(tool: string, summary: string): string {
+  const s = summary.trim();
+  return tool === "browser_navigate" ? s : s.replace(/^\S*\s*/, "");
+}

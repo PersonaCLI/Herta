@@ -87,6 +87,7 @@ const TRIGGER_RECHECK_SYSTEM_PROMPTS: Record<PromptLang, string> = {
 - 翻工作目录里的文件、列目录、抓日志
 - 在研究 / 代码环境里跑命令、看输出
 - 查技术资料：文档、报错信息、库的版本和参数、发布说明（板砖能上网搜、读网页）
+- 看本机跑着的应用：打开它的页面、点按钮、填表单、看控制台和网络请求、截图（板砖有浏览器，只开本机的地址）
 
 派的活落在这些之外，必须让它哑火（BLOCK），尤其是：
 - 查别人的喜好、生日、行程、公开数据、社交动态（流萤、彦卿、三月七、卡夫卡等任何角色）
@@ -105,10 +106,10 @@ const TRIGGER_RECHECK_SYSTEM_PROMPTS: Record<PromptLang, string> = {
 
 # 判定原则
 
-- 反引号外的 \`@板砖\` 此刻真在派一件代码 / 文件 / 命令 / 日志 / 技术资料的活 → OK。
+- 反引号外的 \`@板砖\` 此刻真在派一件代码 / 文件 / 命令 / 日志 / 技术资料 / 本机页面的活 → OK。
 - 不是此刻派活（修辞 / 否定 / 举例 / 假设 / 泛泛 / 将来）→ BLOCK。
 - 在问开拓者要不要派（提议 / 征求同意 / 等他点头 / "要我就…"）→ BLOCK。派活是他答应之后的事。
-- 是派活但超出代码 / 文件 / 命令 / 日志 / 技术资料范围 → BLOCK。
+- 是派活但超出代码 / 文件 / 命令 / 日志 / 技术资料 / 本机页面范围 → BLOCK。
 
 拿不准时偏向 OK：只有在【明显】不是派活、或【明显】超范围时才判 BLOCK。只要这个 \`@板砖\` 还说得通是一次真实的代码 / 文件 / 命令派活，就判 OK——宁可放一次合理的调度过去，也别误删一次该有的派活（误删了，真要干的活就石沉大海）。但"问开拓者要不要派"不算拿不准——问句、条件句、"你点头我就派"，就是明确的还没派，判 BLOCK。
 
@@ -195,6 +196,7 @@ When it IS a real dispatch, the scope is strictly code / files / commands / logs
 - Browsing files in the working directory, listing directories, pulling logs
 - Running commands in the research / code environment, reading output
 - Looking up technical material: documentation, error messages, a library's versions and flags, release notes (板砖 can search the web and read pages)
+- Looking at the app running on this machine: opening its pages, clicking, filling in forms, reading the console and network requests, taking screenshots (板砖 has a browser for this machine's addresses only)
 
 A task outside that scope must go inert (BLOCK), especially:
 - Looking up someone's preferences, birthday, schedule, public data, or social feeds (Firefly, Yanqing, March 7th, Kafka — any character at all)
@@ -213,10 +215,10 @@ An \`@板砖\` inside backticks (e.g. \`@板砖 跑测试\`) is quotation / exam
 
 # Verdict principles
 
-- An \`@板砖\` outside backticks dispatching a concrete code / file / command / log / technical-lookup task right now → OK.
+- An \`@板砖\` outside backticks dispatching a concrete code / file / command / log / technical-lookup / local-page task right now → OK.
 - Not a present dispatch (rhetoric / negation / example / hypothetical / vague / future) → BLOCK.
 - Asking the Trailblazer whether to dispatch (offer / consent question / waiting for the nod / "say yes and I'll…") → BLOCK. The dispatch comes after they agree.
-- A real dispatch, but outside the code / file / command / log / technical-lookup scope → BLOCK.
+- A real dispatch, but outside the code / file / command / log / technical-lookup / local-page scope → BLOCK.
 
 When unsure, lean OK: rule BLOCK only when it is OBVIOUSLY not a dispatch or OBVIOUSLY out of scope. As long as this \`@板砖\` can still plausibly be read as a real code / file / command dispatch, rule OK — better to let one reasonable dispatch through than to kill one that was meant to run (kill it, and the real work silently sinks). But "asking whether to dispatch" is not "unsure" — a question, a conditional, "say the word and I'll send it" is plainly not-yet-dispatched: BLOCK.
 

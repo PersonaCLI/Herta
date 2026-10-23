@@ -386,6 +386,8 @@ describe("tallySegment", () => {
       stops: 0,
       webSearches: 0,
       pages: [],
+      appPages: [],
+      pageSteps: 0,
     });
   });
 
@@ -401,5 +403,23 @@ describe("tallySegment", () => {
     expect(tally.webSearches).toBe(1);
     expect(tally.pages).toEqual(["vitest.dev", "github.com"]);
     expect(tally.reads).toEqual([]);
+  });
+
+  it("counts the app's pages opened and the other page steps (ADR 0083)", () => {
+    const ops = opsOf([
+      user(),
+      op("Opening page", "localhost:5173/login"),
+      op("Reading page", ""),
+      op("Typing", ""),
+      op("Clicking", ""),
+      op("Opening page", "back"),
+      op("Opening page", "localhost:5173/login"),
+      op("Taking screenshot", ""),
+    ]);
+    const tally = tallySegment(ops);
+    expect(tally.appPages).toEqual(["localhost:5173/login"]);
+    // A history step is a step, not a page.
+    expect(tally.pageSteps).toBe(5);
+    expect(tally.pages).toEqual([]);
   });
 });

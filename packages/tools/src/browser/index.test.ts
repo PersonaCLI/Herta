@@ -16,6 +16,7 @@ import {
   browserNavigateTool,
   browserReadTool,
   browserScreenshotTool,
+  createBrowserTools,
   MAX_SCREENSHOTS,
   pageRoute,
   registerBrowserRules,
@@ -270,6 +271,40 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     );
     expect(pageRoute("http://127.0.0.1:3000/")).toBe("127.0.0.1:3000");
     expect(pageRoute("about:blank")).toBe("about:blank");
+  });
+
+  it("a step's summary — its op row — carries no ref, position or query (ADR 0083 §10)", () => {
+    const [nav, read, act, shot] = createBrowserTools({
+      host: fakeHost(),
+      eyes: true,
+    });
+    if (!nav || !read || !act || !shot) throw new Error("four tools");
+    const ctx = { workspaceRoot: "/w" };
+    expect(
+      nav.summarize?.({ url: "http://localhost:5173/login?token=x#top" }, ctx),
+    ).toBe("localhost:5173/login");
+    expect(nav.summarize?.({ url: "localhost:5173/a?b=1" }, ctx)).toBe(
+      "localhost:5173/a",
+    );
+    expect(nav.summarize?.({ go: "back" }, ctx)).toBe("back");
+    expect(read.summarize?.({ mode: "find", query: "Sign" }, ctx)).toBe(
+      'find "Sign"',
+    );
+    expect(read.summarize?.({ mode: "tree", ref: "e4" }, ctx)).toBe("tree");
+    expect(act.summarize?.({ action: "click", ref: "e12" }, ctx)).toBe("click");
+    expect(
+      act.summarize?.({ action: "type", x: 10, y: 20, text: "hi" }, ctx),
+    ).toBe("type");
+    expect(act.summarize?.({ action: "scroll", ref: "e2" }, ctx)).toBe(
+      "scroll down",
+    );
+    expect(
+      act.summarize?.(
+        { action: "resize", preset: "phone", scheme: "dark" },
+        ctx,
+      ),
+    ).toBe("resize phone dark");
+    expect(shot.summarize?.({}, ctx)).toBe("view");
   });
 });
 

@@ -16,7 +16,8 @@ import { ATTACHMENT_SCHEME } from "../shared/attachment-image.js";
  *
  * Deliberately NARROWER than the voice scheme it is modelled on:
  *
- * - only paths under `.herta/attachments/` resolve, so this cannot become a
+ * - only paths under `.herta/attachments/` and `.herta/browser/` (the page
+ *   steps' screenshots, ADR 0083 §11) resolve, so this cannot become a
  *   read-any-file primitive for a compromised renderer;
  * - only the image types the ingest actually stores are served, by EXTENSION
  *   and only after `sniffImage` accepted the bytes at attach time;
@@ -31,9 +32,10 @@ import { ATTACHMENT_SCHEME } from "../shared/attachment-image.js";
  *  is the runaway backstop for a file that got there another way. */
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 
-/** The prefix a request must resolve inside. Attachments live under the
- *  session directories below it (ADR 0033). */
-const ATTACHMENT_PREFIX = ".herta/attachments/";
+/** The prefixes a request must resolve inside: attachments, under the
+ *  session directories below it (ADR 0033), and the screenshots the page
+ *  steps keep (ADR 0083 §11) — the harness's own two image stores. */
+const IMAGE_PREFIXES = [".herta/attachments/", ".herta/browser/"];
 
 function imageContentType(filePath: string): string | null {
   if (/\.png$/i.test(filePath)) return "image/png";
@@ -63,18 +65,21 @@ export function resolveAttachmentPath(
     return null;
   }
   if (rel.length === 0) return null;
-  // Check the CLAIM before resolving: a path that does not even say it is an
-  // attachment is refused without touching the filesystem.
-  if (!rel.replace(/\\/g, "/").startsWith(ATTACHMENT_PREFIX)) return null;
+  // Check the CLAIM before resolving: a path that does not even say it is in
+  // one of the image stores is refused without touching the filesystem.
+  const claimed = IMAGE_PREFIXES.find((p) =>
+    rel.replace(/\\/g, "/").startsWith(p),
+  );
+  if (claimed === undefined) return null;
 
   const root = resolve(workspaceRoot);
   const target = resolve(root, rel);
   if (!isPathInside(root, target)) return null;
   // …and check it again on the RESOLVED path, so a traversal that lands back
-  // inside the root but outside the attachment tree (`.herta/attachments/../../x`)
+  // inside the root but outside the claimed store (`.herta/attachments/../../x`)
   // is refused too.
-  const attachmentRoot = resolve(root, ATTACHMENT_PREFIX);
-  if (!isPathInside(attachmentRoot, target, { strict: true })) return null;
+  const storeRoot = resolve(root, claimed);
+  if (!isPathInside(storeRoot, target, { strict: true })) return null;
   return target;
 }
 

@@ -273,4 +273,31 @@ describe("BanzhuanSettings", () => {
       expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
   });
+
+  describe("browser data (ADR 0083 §8)", () => {
+    it("a first press arms, a second clears the page tab's data", async () => {
+      const mock = createMockHertaBridge();
+      const clear = vi.fn(async () => true);
+      const bridge: HertaBridge = { ...mock.bridge, pageClearData: clear };
+      renderWithLocale(
+        <HertaBridgeProvider bridge={bridge}>
+          <BanzhuanSettings />
+        </HertaBridgeProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(clear).not.toHaveBeenCalled();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Press again to clear" }),
+      );
+      await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+      expect(
+        await screen.findByRole("button", { name: "Cleared" }),
+      ).toBeTruthy();
+    });
+
+    it("is not offered without a page tab", () => {
+      renderPane();
+      expect(screen.queryByText("Browser data")).toBeNull();
+    });
+  });
 });

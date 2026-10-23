@@ -158,6 +158,7 @@ const bridge: HertaBridge = {
   pageState: (sessionId) => ipcRenderer.invoke(CMD.pageState, sessionId),
   pageOpenExternal: (sessionId) =>
     ipcRenderer.invoke(CMD.pageOpenExternal, sessionId),
+  pageClearData: () => ipcRenderer.invoke(CMD.pageClearData),
   onPageState: (cb) => subscribe(EVT.pageState, cb),
   onPageCommand: (cb) => subscribe(EVT.pageCommand, cb),
   onPageOpen: (cb) => subscribe(EVT.pageOpen, cb),

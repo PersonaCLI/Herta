@@ -7,6 +7,7 @@ import {
   createMockHertaBridge,
   type MockHertaBridge,
 } from "../../ipc/mock-bridge.js";
+import { useShortcut } from "../../lib/shortcut-registry.js";
 import { TopBar } from "./TopBar.js";
 
 function renderTopBar(
@@ -374,5 +375,43 @@ describe("TopBar new-session mid-turn guard (2026-07-12)", () => {
     // The tray attempt was the first step — a direct click now creates.
     fireEvent.click(btn);
     expect(bar.calls.createSession).toHaveLength(1);
+  });
+
+  it("the browser's button opens the page tab, with a session and pages (ADR 0083)", () => {
+    const mock = createMockHertaBridge();
+    const bridge = { ...mock.bridge, pageShow: vi.fn() };
+    const opened = vi.fn(() => true);
+    function Host(): null {
+      useShortcut("openBrowser", opened, true);
+      return null;
+    }
+    renderWithLocale(
+      <HertaBridgeProvider bridge={bridge}>
+        <Host />
+        <TopBar
+          collapsed={false}
+          onToggleCollapse={vi.fn()}
+          searchActive={false}
+          onToggleSearch={vi.fn()}
+        />
+      </HertaBridgeProvider>,
+    );
+    // No session yet: no page to open.
+    expect(
+      screen.queryByRole("button", { name: "Open the browser" }),
+    ).toBeNull();
+    act(() => {
+      mock.emitReset({
+        sessionId: "s-1",
+        workspaceRoot: "/r",
+        record: [],
+        overlay: null,
+        title: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Open the browser" }));
+    expect(opened).toHaveBeenCalledTimes(1);
   });
 });

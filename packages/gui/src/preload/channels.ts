@@ -94,6 +94,7 @@ export const CMD = {
   pageNavigate: "page:navigate",
   pageState: "page:state",
   pageOpenExternal: "page:openExternal",
+  pageClearData: "page:clearData",
 } as const;
 
 export const EVT = {

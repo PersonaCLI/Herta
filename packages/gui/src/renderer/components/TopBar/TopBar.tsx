@@ -7,10 +7,15 @@ import {
 } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { isRepeatClick } from "../../lib/repeat-click.js";
-import { useShortcut } from "../../lib/shortcut-registry.js";
+import { runShortcut, useShortcut } from "../../lib/shortcut-registry.js";
 import { TitleText } from "../TitleText.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
-import { NewSessionIcon, PanelToggleIcon, SearchIcon } from "./icons.js";
+import {
+  GlobeIcon,
+  NewSessionIcon,
+  PanelToggleIcon,
+  SearchIcon,
+} from "./icons.js";
 
 export interface TopBarProps {
   /** Current sidebar collapsed state — drives the toggle's aria-expanded. */
@@ -204,6 +209,30 @@ export function TopBar(props: TopBarProps): JSX.Element {
             animate={titleAnimate && title !== null}
           />
         </h1>
+      )}
+      {/* The browser's page tab (ADR 0083 §2; owner's pick B: on the right).
+          Windows and Linux end the bar before OUR caption buttons, so it sits
+          just left of them; macOS has its lights on the left and no buttons
+          here, so the bar runs to the window's edge (`.app.is-mac .topbar`).
+          A session's page: shown only with one open, on the desktop. */}
+      {sessionId !== null && bridge.pageShow !== undefined && (
+        <>
+          <span className="topbar-spacer" />
+          <Tooltip
+            label={t("shortcut.openBrowser")}
+            keys="openBrowser"
+            align="end"
+          >
+            <button
+              type="button"
+              className="sidebar-header-icon"
+              aria-label={t("shortcut.openBrowser")}
+              onClick={() => runShortcut("openBrowser")}
+            >
+              <GlobeIcon />
+            </button>
+          </Tooltip>
+        </>
       )}
     </div>
   );

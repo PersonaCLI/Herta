@@ -521,6 +521,13 @@ export const en = {
   "activity.page.light": "light",
   "activity.page.landed": "landed on {hit}",
   "activity.page.region": "region",
+  "activity.page.openShot": "Enlarge the screenshot of",
+  "banzhuan.browserData": "Browser data",
+  "banzhuan.browserDataDesc":
+    "Sign-ins, cookies and cache of the page tab. Clearing them signs you and 板砖 out of those pages.",
+  "banzhuan.browserData.clear": "Clear",
+  "banzhuan.browserData.confirm": "Press again to clear",
+  "banzhuan.browserData.done": "Cleared",
   "activity.verb.startingServer": "Starting dev server",
   "activity.verb.stoppingServer": "Stopping dev server",
   "activity.verb.readingServerLog": "Reading server log",

@@ -497,6 +497,13 @@ export const zh = {
   "activity.page.light": "浅色",
   "activity.page.landed": "实际点到了 {hit}",
   "activity.page.region": "局部",
+  "activity.page.openShot": "放大截图",
+  "banzhuan.browserData": "浏览器数据",
+  "banzhuan.browserDataDesc":
+    "页面标签页里的登录、Cookie 和缓存。清除后，你和板砖在这些页面上的登录都会退出。",
+  "banzhuan.browserData.clear": "清除",
+  "banzhuan.browserData.confirm": "再按一次清除",
+  "banzhuan.browserData.done": "已清除",
   "activity.verb.startingServer": "启动开发服务器",
   "activity.verb.stoppingServer": "停止开发服务器",
   "activity.verb.readingServerLog": "读取服务器日志",

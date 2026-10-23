@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
@@ -35,6 +36,7 @@ import {
   activitySummary,
   type SystemBlock,
 } from "./group-record.js";
+import { type LightboxImage, useLightbox } from "./ImageLightbox.js";
 import { composeMarkerSummary } from "./marker-summary.js";
 import { isAttachHandoff, pendingAttachIndex } from "./pending-attach.js";
 import { SwapText } from "./SwapText.js";
@@ -47,6 +49,30 @@ import {
 import { type StepIconKey, stepIcon } from "./step-icon.js";
 
 /** One history row's props, derived once per `blocks` identity. */
+/** A screenshot row's thumbnail (ADR 0083 §11; owner's pick A). */
+function shotThumb(
+  d: {
+    readonly path: string;
+    readonly route: string;
+    readonly width: number;
+    readonly height: number;
+  },
+  t: (key: MessageKey) => string,
+  openLightbox: (img: LightboxImage) => void,
+): NonNullable<ActivityStepProps["thumb"]> {
+  return {
+    src: attachmentImageUrl(d.path),
+    onOpen: () =>
+      openLightbox({
+        path: d.path,
+        name: d.route,
+        width: d.width,
+        height: d.height,
+      }),
+    ariaLabel: `${t("activity.page.openShot")} ${d.route}`,
+  };
+}
+
 interface RowView {
   readonly body: string;
   readonly icon: StepIconKey;
@@ -67,6 +93,7 @@ interface RowView {
   readonly progress: ActivityStepProps["progress"];
   /** A real row that just replaced a placeholder. */
   readonly progressFinishing: boolean;
+  readonly thumb: ActivityStepProps["thumb"];
 }
 
 export interface ActivityBlockProps {
@@ -333,6 +360,7 @@ export const ActivityBlock = memo(function ActivityBlock(
   // tests): its identity never changes, so reading it here cannot
   // invalidate the load-bearing record-identity memo (ADR 0050 §1).
   const openFile = useFileViewerOpen();
+  const openLightbox = useLightbox();
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
   // An all-attachment group is a USER act filed under the system chip (ADR
   // 0033): "which files did I just hand over" is the whole point of the row,
@@ -676,6 +704,12 @@ export const ActivityBlock = memo(function ActivityBlock(
                   ? { index: pendingIndex, label: progressLabel }
                   : undefined,
               progressFinishing: isAttachHandoff(b),
+              // A screenshot 板砖 took (ADR 0083 §11): its picture at the
+              // row's end, the lightbox on a click.
+              thumb:
+                b.digest?.kind === "page-shot" && b.digest.path.length > 0
+                  ? shotThumb(b.digest, t, openLightbox)
+                  : undefined,
               // Icon parses the CANONICAL body — the display body may be a
               // localized verb stepIcon can't recognize. Failure and
               // attachment rows key off the structured digest instead.
@@ -722,6 +756,7 @@ export const ActivityBlock = memo(function ActivityBlock(
       onOpenWebPage,
       rowsMounted,
       progressLabel,
+      openLightbox,
     ],
   );
 
@@ -977,6 +1012,7 @@ export const ActivityBlock = memo(function ActivityBlock(
                     {...(rv.progressFinishing
                       ? { progressFinishing: true }
                       : {})}
+                    {...(rv.thumb !== undefined ? { thumb: rv.thumb } : {})}
                   />
                 );
               })}

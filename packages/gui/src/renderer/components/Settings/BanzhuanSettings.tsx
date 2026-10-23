@@ -96,6 +96,49 @@ function metaFor(state: BanzhuanDeviceState): StateMeta {
  * to persist and send the choice as-is regardless). The UI deliberately
  * says nothing about server-side handling of the tiers.
  */
+/** The page partition's data, cleared (ADR 0083 §8). It signs the
+ *  Trailblazer and 板砖 out of every page, so a first press arms it and a
+ *  second one, within a few seconds, clears. */
+function ClearBrowserData(props: {
+  readonly clear: () => Promise<boolean>;
+}): JSX.Element {
+  const t = useT();
+  const [state, setState] = useState<
+    "idle" | "armed" | "busy" | "done" | "failed"
+  >("idle");
+  useEffect(() => {
+    if (state !== "armed" && state !== "done" && state !== "failed") return;
+    const timer = window.setTimeout(() => setState("idle"), 4000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return (
+    <button
+      type="button"
+      className={`settings-btn${state === "armed" ? " settings-btn--danger" : ""}`}
+      disabled={state === "busy"}
+      onClick={() => {
+        if (state !== "armed") {
+          setState("armed");
+          return;
+        }
+        setState("busy");
+        void props.clear().then(
+          (ok) => setState(ok ? "done" : "failed"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      {state === "armed"
+        ? t("banzhuan.browserData.confirm")
+        : state === "done"
+          ? t("banzhuan.browserData.done")
+          : state === "failed"
+            ? t("common.couldntSave")
+            : t("banzhuan.browserData.clear")}
+    </button>
+  );
+}
+
 export function BanzhuanSettings(): JSX.Element {
   const t = useT();
   const { bridge } = useHertaBridge();
@@ -323,6 +366,14 @@ export function BanzhuanSettings(): JSX.Element {
                 onChange={onPdfPictures}
               />
             }
+          />
+        )}
+        {/* The page tab's own data (ADR 0083 §8). */}
+        {bridge.pageClearData !== undefined && (
+          <SettingRow
+            title={t("banzhuan.browserData")}
+            description={t("banzhuan.browserDataDesc")}
+            control={<ClearBrowserData clear={bridge.pageClearData} />}
           />
         )}
       </div>

@@ -16,6 +16,32 @@ describe("ActivityStep", () => {
     expect(container.querySelector('svg[data-icon="read"]')).not.toBeNull();
   });
 
+  it("a screenshot row shows its picture at the row's end, and opens it (ADR 0083 §11)", () => {
+    const onOpen = vi.fn();
+    const { container } = renderWithLocale(
+      <ActivityStep
+        body="↳ localhost:5173/login · 375×812"
+        t={tEn}
+        icon="result"
+        active={false}
+        thumb={{
+          src: "herta-attachment://file/.herta/browser/s/shot-1.png",
+          onOpen,
+          ariaLabel: "Enlarge the screenshot of localhost:5173/login",
+        }}
+      />,
+    );
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "herta-attachment://file/.herta/browser/s/shot-1.png",
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Enlarge the screenshot of localhost:5173/login",
+      }),
+    );
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("adds is-active only when active", () => {
     const { container, rerender } = renderWithLocale(
       <ActivityStep body="Writing a.ts" t={tEn} active={false} />,

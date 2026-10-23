@@ -623,6 +623,19 @@ function registerPageHandlers(pages: PageHost): void {
       pages.navigate(sessionId, move);
   });
   ipcMain.handle(CMD.pageFreeze, () => pages.freeze());
+  // Settings' "Clear browser data" (ADR 0083 §8): the page partition only,
+  // never the app's own session.
+  ipcMain.handle(CMD.pageClearData, async () => {
+    try {
+      const s = pageSession();
+      await s.clearStorageData();
+      await s.clearCache();
+      await s.clearAuthCache();
+      return true;
+    } catch {
+      return false;
+    }
+  });
   ipcMain.handle(CMD.pageState, (_e, sessionId: unknown) =>
     typeof sessionId === "string" ? pages.state(sessionId) : null,
   );

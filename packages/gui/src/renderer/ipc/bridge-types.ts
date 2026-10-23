@@ -914,6 +914,9 @@ export interface HertaBridge {
   pageState?(sessionId: string): Promise<PageState | null>;
   /** The page's own address in the OS browser (main reads it). */
   pageOpenExternal?(sessionId: string): Promise<void>;
+  /** Settings → 差分协处理器 → Browser data (ADR 0083 §8): the page
+   *  partition's sign-ins, cookies, storage and cache, cleared. */
+  pageClearData?(): Promise<boolean>;
   onPageState?(cb: (state: PageState) => void): () => void;
   /** An app shortcut pressed while the page had the focus (§3). */
   onPageCommand?(cb: (id: ShortcutId) => void): () => void;

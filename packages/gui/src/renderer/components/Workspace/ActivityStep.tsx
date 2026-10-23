@@ -23,6 +23,17 @@ import { StepIcon, type StepIconKey, stepIcon } from "./step-icon.js";
 
 export interface ActivityStepProps {
   readonly body: string;
+  /**
+   * A picture the step left (ADR 0083 §11; owner's pick A): a screenshot
+   * 板砖 took, as a small thumbnail at the row's end that opens the
+   * lightbox. The pixels come through the attachment scheme.
+   */
+  readonly thumb?: {
+    readonly src: string;
+    readonly onOpen: () => void;
+    /** Localized, session-language like the row. */
+    readonly ariaLabel: string;
+  };
   /** SESSION-scoped translator, forwarded to CollapsibleBody's diff toggle —
    *  the whole activity line follows the session lang (ADR 0019), and `body`
    *  arrives already localized with this same `t`. */
@@ -356,6 +367,16 @@ export const ActivityStep = memo(function ActivityStep(
                   }
                 : {})}
             />
+            {props.thumb !== undefined && (
+              <button
+                type="button"
+                className="activity-step__thumb"
+                aria-label={props.thumb.ariaLabel}
+                onClick={props.thumb.onOpen}
+              >
+                <img src={props.thumb.src} alt="" draggable={false} />
+              </button>
+            )}
             {props.progress !== undefined && (
               <AttachProgressLabel
                 index={props.progress.index}

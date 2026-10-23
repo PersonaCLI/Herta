@@ -359,6 +359,10 @@
 }
 :root[data-theme="dark"] .card-menu-error,
 :root[data-theme="dark"] .settings-note.is-error,
+:root[data-theme="dark"] .settings-btn--danger {
+  color: #ff9d92;
+  border-color: rgba(255, 157, 146, 0.4);
+}
 :root[data-theme="dark"] .settings-key-delete {
   color: #ff9d92;
 }
@@ -2707,6 +2711,10 @@ button.agent-preview {
    website mounts this same stylesheet and must keep the bar flush left. */
 .app.is-mac .topbar {
   padding-left: 86px;
+  /* No caption buttons of ours on macOS (its lights are on the left), so
+     the bar runs to the edge: the browser's button at the right end sits at
+     the same 18px gutter as the left (ADR 0083, owner 2026-10-23). */
+  margin-right: 0;
 }
 /* …except in full screen, where macOS hides the lights (they come back with
    the menu bar, in a strip ABOVE the window's content), and the room kept for
@@ -2716,6 +2724,10 @@ button.agent-preview {
 }
 .topbar .sidebar-header-icon {
   -webkit-app-region: no-drag;
+}
+/* Pushes the browser's button to the bar's right end; stays a drag area. */
+.topbar-spacer {
+  flex: 1;
 }
 .topbar-title {
   margin: 0 0 0 6px;
@@ -7963,6 +7975,9 @@ button.commit-view__path:hover {
   border: none;
 }
 .settings-btn--primary:hover:not(:disabled) { filter: brightness(1.05); }
+/* An armed destructive press (Clear browser data, ADR 0083 §8): the second
+   press does it. The key-delete link's red, in both themes. */
+.settings-btn--danger { color: #b23b3b; border-color: rgba(178, 59, 59, 0.4); }
 .settings-key-delete {
   margin: 12px 0 0;
   padding: 0;
@@ -9205,3 +9220,27 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
   font-size: 12.5px;
   color: var(--muted-slate);
 }
+
+/* A screenshot 板砖 took (ADR 0083 §11; owner's pick A): a small thumbnail at
+   the row's end, the lightbox on a click. Bounded to the row's scale — a
+   phone shot stands about 30x64, a desktop one about 64x48. */
+.activity-step__thumb {
+  flex: none;
+  margin-left: 8px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: var(--ink-a05);
+  overflow: hidden;
+  line-height: 0;
+  cursor: zoom-in;
+  -webkit-app-region: no-drag;
+}
+.activity-step__thumb img {
+  display: block;
+  max-width: 64px;
+  max-height: 64px;
+  width: auto;
+  height: auto;
+}
+.activity-step__thumb:hover { border-color: var(--ink-a22); }

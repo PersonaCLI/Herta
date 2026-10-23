@@ -35,6 +35,17 @@ describe("resolveAttachmentPath", () => {
     expect(resolveRel("src/main/key-store.ts")).toBe(null);
   });
 
+  it("resolves a screenshot the page steps kept, and nothing else of theirs outside it (ADR 0083 §11)", () => {
+    expect(resolveRel(".herta/browser/s1/shot-3.png")).toBe(
+      [ROOT, ".herta", "browser", "s1", "shot-3.png"].join(sep),
+    );
+    // Claimed as the browser store, resolved outside it.
+    expect(resolveRel(".herta/browser/../attachments/../settings.json")).toBe(
+      null,
+    );
+    expect(resolveRel(".herta/browser/../logs/run.log")).toBe(null);
+  });
+
   it("refuses a traversal that escapes the workspace", () => {
     expect(resolveRel(".herta/attachments/../../../etc/passwd")).toBe(null);
     expect(resolveRel("../outside.png")).toBe(null);

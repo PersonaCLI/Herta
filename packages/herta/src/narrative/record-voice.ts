@@ -627,21 +627,38 @@ const STORED_PAGE = /\.herta[\\/]web[\\/]([a-z0-9.-]+?)-[0-9a-f]{8}\.md/gu;
  *  tree's `snap-2.txt`), named as what it is: a finding that cites a
  *  screenshot cites "screenshot 3" in her notes (ADR 0083 §10). */
 const STORED_SHOT =
-  /\.herta[\\/]browser[\\/][^\\/\s，,；;）)]+[\\/](shot|snap)-(\d+)\.(?:png|txt)/gu;
+  /\.herta[\\/]browser[\\/][^\\/\s，,；;）)]+[\\/](shot|snap|console|network)-(\d+)\.(?:png|txt)(?::(\d+)(?:-(\d+))?)?/gu;
+
+const STORED_NAME: Record<PromptLang, Record<string, string>> = {
+  zh: {
+    shot: "截图",
+    snap: "页面快照",
+    console: "控制台记录",
+    network: "网络记录",
+  },
+  en: {
+    shot: "screenshot",
+    snap: "page snapshot",
+    console: "console log",
+    network: "network log",
+  },
+};
 
 function namePages(text: string, lang: PromptLang): string {
   return text
     .replace(STORED_PAGE, (_m, host: string) =>
       lang === "en" ? `the ${host} page` : `网页 ${host}`,
     )
-    .replace(STORED_SHOT, (_m, kind: string, n: string) =>
-      kind === "shot"
-        ? lang === "en"
-          ? `screenshot ${n}`
-          : `截图 ${n}`
-        : lang === "en"
-          ? `page snapshot ${n}`
-          : `页面快照 ${n}`,
+    .replace(
+      STORED_SHOT,
+      (_m, kind: string, n: string, from?: string, to?: string) =>
+        from === undefined
+          ? `${STORED_NAME[lang][kind] ?? kind} ${n}`
+          : TEXTS[lang].cite(
+              `${STORED_NAME[lang][kind] ?? kind} ${n}`,
+              Number(from),
+              Number(to ?? from),
+            ),
     );
 }
 

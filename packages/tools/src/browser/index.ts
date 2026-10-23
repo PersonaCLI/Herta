@@ -46,6 +46,9 @@ import {
 export const BROWSER_STORE_DIR = ".herta/browser";
 /** Screenshots kept per session; the oldest goes first. */
 export const MAX_SCREENSHOTS = 40;
+/** Console and network reads kept per session, each kind; the oldest goes
+ *  first. */
+export const MAX_STORED_READS = 40;
 /** The elements a navigation or an action shows 板砖. */
 const STEP_ELEMENTS_CHARS = 4000;
 
@@ -75,7 +78,8 @@ export interface BrowserReadData {
   /** tree: every element with a role, not only those to act on. */
   readonly all?: boolean;
   readonly query?: string;
-  /** The whole read, when it was more than 板砖 was shown. */
+  /** Where the read is stored: a console or network read always (to be
+   *  cited), a tree or text read when it was more than 板砖 was shown. */
   readonly path?: string;
   /** The read's text as 板砖 got it, for the record's excerpt. */
   readonly text: string;
@@ -386,14 +390,24 @@ export function browserReadTool(opts: {
       return hosted(async () => {
         const read = await opts.host.read(req, ctx.signal);
         const text = redactSecrets(read.text);
+        // What a read returned stays 板砖's (owner 2026-10-23), so what it
+        // found is reported as a finding — and a finding cites. A console or
+        // network read is always stored, a message or a request a line, so
+        // its lines can be cited; a tree or text read when it was cut.
+        const kept =
+          i.mode === "console" || i.mode === "network"
+            ? { prefix: i.mode, keep: MAX_STORED_READS }
+            : read.full !== undefined && read.truncated
+              ? { prefix: "snap", keep: undefined }
+              : null;
         let path: string | undefined;
-        if (read.full !== undefined && read.truncated) {
+        if (kept !== null && (read.full ?? read.text) !== "") {
           const store = await storeDir(ctx, opts.host);
-          const n = await nextIndex(store.abs, "snap", "txt");
-          path = `${store.rel}/snap-${n}.txt`;
+          const n = await nextIndex(store.abs, kept.prefix, "txt", kept.keep);
+          path = `${store.rel}/${kept.prefix}-${n}.txt`;
           await writeFile(
-            join(store.abs, `snap-${n}.txt`),
-            redactSecrets(read.full),
+            join(store.abs, `${kept.prefix}-${n}.txt`),
+            `${redactSecrets(read.full ?? read.text)}\n`,
             "utf8",
           ).catch(() => {
             path = undefined;
@@ -402,7 +416,11 @@ export function browserReadTool(opts: {
         const modelText = [
           `browser_read ${i.mode}${i.query !== undefined ? ` "${i.query}"` : ""} — ${pageRoute(read.url)}: ${read.count} ${i.mode === "network" ? "requests" : i.mode === "console" ? "messages" : i.mode === "text" ? "chars" : "elements"}`,
           ...(path !== undefined
-            ? [`Saved whole: ${path} — read the rest from that file`]
+            ? [
+                kept?.prefix === "snap"
+                  ? `Saved whole: ${path} — read the rest from that file`
+                  : `Saved: ${path}, ${i.mode === "console" ? "a message" : "a request"} a line — cite what matters with report_finding (${path}:<line>)`,
+              ]
             : []),
           UNTRUSTED,
           text === "" ? "(nothing)" : text,

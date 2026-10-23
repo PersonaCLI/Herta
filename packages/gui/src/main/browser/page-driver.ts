@@ -305,7 +305,10 @@ export class PageInstrument {
         (pattern === undefined || c.text.includes(pattern)),
     );
     this.consoleRead = this.consoleSeq;
-    const lines = fresh.map((c) => `[${c.level}] ${c.text}`);
+    // One message a line, so a stored read's lines can be cited.
+    const lines = fresh.map(
+      (c) => `[${c.level}] ${c.text.replace(/\s*[\r\n]+\s*/g, " ⏎ ")}`,
+    );
     const text = lines.join("\n");
     return {
       url: this.wc.getURL(),

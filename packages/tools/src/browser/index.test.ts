@@ -9,6 +9,7 @@ import {
   RulePermissionEngine,
 } from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
+import { reportFindingTool } from "../report-finding/index.js";
 import { mkToolContext } from "../testing/tool-context.js";
 import {
   BROWSER_STORE_DIR,
@@ -160,7 +161,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     expect(tree.ok).toBe(true);
     const path = (tree.data as { path?: string }).path as string;
     expect(path).toBe(`${BROWSER_STORE_DIR}/s-1/snap-1.txt`);
-    expect(readFileSync(join(ws, path), "utf8")).toHaveLength(9000);
+    expect(readFileSync(join(ws, path), "utf8").trimEnd()).toHaveLength(9000);
     expect(tree.modelText).toContain(`Saved whole: ${path}`);
     const text = await browserReadTool({ host }).run(
       call("browser_read", { mode: "text" }),
@@ -263,6 +264,65 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     );
     expect(blind.images).toBeUndefined();
     expect(blind.modelText).toContain("you cannot see it");
+  });
+
+  it("a console or network read is stored a line an entry, and a finding can cite its lines (owner 2026-10-23)", async () => {
+    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    const host = fakeHost({
+      async read(req: PageReadRequest) {
+        return {
+          url: "http://localhost:5173/login",
+          title: "Vite + React",
+          text:
+            req.mode === "console"
+              ? "[log] vite connected\n[error] TypeError: Cannot read properties of undefined (reading 'token') ⏎ at signIn (Login.jsx:12)"
+              : "GET localhost:5173/login 200 document 9ms\n✗ POST localhost:5173/api/login 500 fetch 31ms",
+          count: 2,
+          truncated: false,
+        };
+      },
+    });
+    host.url = "http://localhost:5173/login";
+    const read = browserReadTool({ host });
+    const consoleRead = await read.run(
+      call("browser_read", { mode: "console" }),
+      ctx(),
+      () => {},
+    );
+    const path = (consoleRead.data as { path?: string }).path as string;
+    expect(path).toBe(`${BROWSER_STORE_DIR}/s-1/console-1.txt`);
+    expect(consoleRead.modelText).toContain(`${path}:<line>`);
+    const lines = readFileSync(join(ws, path), "utf8").trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("TypeError");
+    const network = await read.run(
+      call("browser_read", { mode: "network" }),
+      ctx(),
+      () => {},
+    );
+    expect((network.data as { path?: string }).path).toBe(
+      `${BROWSER_STORE_DIR}/s-1/network-1.txt`,
+    );
+
+    const finding = reportFindingTool();
+    const cited = await finding.run(
+      call("report_finding", {
+        claim: "Sign in throws on a 500",
+        cites: [`${path}:2`, `${BROWSER_STORE_DIR}/s-1/network-1.txt:2`],
+      }),
+      ctx(),
+      () => {},
+    );
+    expect(cited.ok).toBe(true);
+    const beyond = await finding.run(
+      call("report_finding", {
+        claim: "Sign in throws on a 500",
+        cites: [`${path}:9`],
+      }),
+      ctx(),
+      () => {},
+    );
+    expect(beyond.error?.code).toBe("invalid_cite");
   });
 
   it("the record names a page by host, port and path, never the query", () => {

@@ -407,6 +407,23 @@ describe("a finding that cites what a page step stored", () => {
     );
     expect(foldedRunLine(finding, "zh")).not.toContain(".herta");
   });
+
+  it("names a stored console or network read and the lines cited", () => {
+    const finding = finished("report_finding", {
+      claim: "点 Sign in 时登录接口回了 500，前端读 token 时抛了 TypeError",
+      cites: [
+        ".herta/browser/lab/console-3.txt:2",
+        ".herta/browser/lab/network-1.txt:4-5",
+      ],
+    });
+    expect(read(finding)).toBe(
+      "结论：点 Sign in 时登录接口回了 500，前端读 token 时抛了 TypeError（控制台记录 3 第 2 行，网络记录 1 第 4–5 行）",
+    );
+    expect(read(finding, "en")).toContain(
+      "(console log 3 line 2, network log 1 lines 4–5)",
+    );
+    expect(foldedRunLine(finding, "en")).not.toContain(".herta");
+  });
 });
 
 describe("folded, a page step is what was done", () => {

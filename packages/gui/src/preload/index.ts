@@ -149,6 +149,17 @@ const bridge: HertaBridge = {
   onWindowFullScreen: (cb) => subscribe(EVT.windowFullScreen, cb),
   onOpenSettings: (cb) => subscribe(EVT.openSettings, () => cb()),
   onCloseRequested: (cb) => subscribe(EVT.closeRequested, () => cb()),
+  pageShow: (sessionId, bounds) =>
+    ipcRenderer.send(CMD.pageShow, sessionId, bounds),
+  pageHide: () => ipcRenderer.send(CMD.pageHide),
+  pageFreeze: () => ipcRenderer.invoke(CMD.pageFreeze),
+  pageNavigate: (sessionId, to) =>
+    ipcRenderer.send(CMD.pageNavigate, sessionId, to),
+  pageState: (sessionId) => ipcRenderer.invoke(CMD.pageState, sessionId),
+  pageOpenExternal: (sessionId) =>
+    ipcRenderer.invoke(CMD.pageOpenExternal, sessionId),
+  onPageState: (cb) => subscribe(EVT.pageState, cb),
+  onPageCommand: (cb) => subscribe(EVT.pageCommand, cb),
   onWorkspace: (cb) => subscribe(EVT.workspace, cb),
   onRepo: (cb) => subscribe(EVT.repo, cb),
   onResume: (cb) => subscribe(EVT.resume, cb),

@@ -18,6 +18,7 @@ import {
 } from "electron";
 import hertaIcon from "../../resources/herta-icon.png?asset";
 import { CMD, EVT } from "../preload/channels.js";
+import type { PageBounds, PageNavigation } from "../shared/browser-page.js";
 import { isAllowedExternalUrl } from "../shared/links.js";
 import {
   defaultCloseToTray,
@@ -37,6 +38,7 @@ import {
   registerAttachmentProtocol,
   registerAttachmentScheme,
 } from "./attachment-protocol.js";
+import { PageHost, pageSession } from "./browser/page-host.js";
 import { buildCsp } from "./csp.js";
 import createDocumentWorker from "./document-worker?nodeWorker";
 import { hideToTray } from "./hide-to-tray.js";
@@ -137,6 +139,9 @@ const appFileUrlExact = pathToFileURL(
 // navigation pinned to the app's own URL. A surface that genuinely needs
 // more must opt in explicitly where it is created.
 app.on("web-contents-created", (_event, contents) => {
+  // The browser page (ADR 0083 §8) is the one surface that opts out here:
+  // it may go to any http(s) address, and guards itself where it is made.
+  if (contents.session === pageSession()) return;
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.on("will-navigate", (event, url) => {
     // Same gated constant + origin compare as the main window's handler:
@@ -467,11 +472,29 @@ function createWindow(): BrowserWindow {
       tray?.refreshMenu();
     }
   });
+  // The browser pages of this window (ADR 0083): main owns them.
+  const pages = new PageHost(
+    win,
+    {
+      state: (state) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pageState, state);
+      },
+      command: (id) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pageCommand, id);
+      },
+    },
+    process.platform === "darwin",
+  );
+  registerPageHandlers(pages);
+
   win.on("closed", () => {
     if (mainWindow === win) {
       mainWindow = null;
       mainService = null;
     }
+    pages.dispose();
     pendingDispose = service.dispose().catch(() => undefined);
   });
 
@@ -534,6 +557,61 @@ function registerUpdateHandlers(): void {
     () => updateService?.current() ?? { phase: "idle" },
   );
   ipcMain.handle(CMD.appVersion, () => appVersion());
+}
+
+const finite = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n);
+
+/** What the renderer sent as the page tab's box, or null when it is not one. */
+function pageBoundsOf(value: unknown): PageBounds | null {
+  if (typeof value !== "object" || value === null) return null;
+  const b = value as Record<string, unknown>;
+  return finite(b.x) && finite(b.y) && finite(b.width) && finite(b.height)
+    ? { x: b.x, y: b.y, width: b.width, height: b.height }
+    : null;
+}
+
+/** What the renderer asked of the page, or null when it is not a move. */
+function pageNavigationOf(value: unknown): PageNavigation | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.url === "string") return { url: v.url.slice(0, 4096) };
+  if (
+    v.go === "back" ||
+    v.go === "forward" ||
+    v.go === "reload" ||
+    v.go === "stop"
+  )
+    return { go: v.go };
+  return null;
+}
+
+/** The browser page's IPC (ADR 0083). Idempotent and re-run per
+ *  createWindow, like the window controls below. */
+function registerPageHandlers(pages: PageHost): void {
+  ipcMain.removeAllListeners(CMD.pageShow);
+  ipcMain.removeAllListeners(CMD.pageHide);
+  ipcMain.removeAllListeners(CMD.pageNavigate);
+  ipcMain.removeHandler(CMD.pageFreeze);
+  ipcMain.removeHandler(CMD.pageState);
+  ipcMain.removeHandler(CMD.pageOpenExternal);
+  ipcMain.on(CMD.pageShow, (_e, sessionId: unknown, bounds: unknown) => {
+    const b = pageBoundsOf(bounds);
+    if (typeof sessionId === "string" && b !== null) pages.show(sessionId, b);
+  });
+  ipcMain.on(CMD.pageHide, () => pages.hide());
+  ipcMain.on(CMD.pageNavigate, (_e, sessionId: unknown, to: unknown) => {
+    const move = pageNavigationOf(to);
+    if (typeof sessionId === "string" && move !== null)
+      pages.navigate(sessionId, move);
+  });
+  ipcMain.handle(CMD.pageFreeze, () => pages.freeze());
+  ipcMain.handle(CMD.pageState, (_e, sessionId: unknown) =>
+    typeof sessionId === "string" ? pages.state(sessionId) : null,
+  );
+  ipcMain.handle(CMD.pageOpenExternal, (_e, sessionId: unknown) =>
+    typeof sessionId === "string" ? pages.openExternally(sessionId) : undefined,
+  );
 }
 
 /** Custom caption-button IPC (acts on the current window). Idempotent and

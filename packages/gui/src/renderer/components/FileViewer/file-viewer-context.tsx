@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionScoped } from "../../hooks/useSessionScoped.js";
+import { useShortcut } from "../../lib/shortcut-registry.js";
 
 /**
  * The file-viewer panel's state (ADR 0050). Two contexts on purpose:
@@ -41,7 +42,11 @@ export interface ViewerAnchor {
 /** What a non-file tab shows (ADR 0059): a commit by id, a path's
  *  working-tree diff against HEAD, or the repository's history (§6).
  *  Absent = the file itself. */
-export type ViewerTabKind = "commit" | "diff" | "log";
+export type ViewerTabKind = "commit" | "diff" | "log" | "page";
+
+/** The page tab's path: a page tab is not a file, and there is one per
+ *  session (ADR 0083 §2). */
+export const PAGE_TAB_PATH = "page:";
 
 export interface FileViewerTarget {
   /** The path to read — or, on a `commit` tab, the commit id (ADR 0059). */
@@ -221,12 +226,17 @@ export function FileViewerProvider({
           const tabs = s.tabs.map((t, i) => (i === existing ? next : t));
           return { tabs, active: existing };
         }
+        // The page tab is pinned first (ADR 0083 §2).
+        if (opts?.kind === "page")
+          return { tabs: [next, ...s.tabs], active: 0 };
         let tabs = [...s.tabs, next];
         let active = tabs.length - 1;
         if (tabs.length > MAX_VIEWER_TABS) {
-          // Evict the OLDEST tab (index 0 — never the one just opened).
-          tabs = tabs.slice(1);
-          active -= 1;
+          // Evict the OLDEST tab that is not the page (never the one just
+          // opened); the page is never evicted.
+          const oldest = tabs.findIndex((t) => t.kind !== "page");
+          tabs = tabs.filter((_, i) => i !== oldest);
+          if (oldest < active) active -= 1;
         }
         return { tabs, active };
       });
@@ -236,6 +246,17 @@ export function FileViewerProvider({
   const close = useCallback(
     () => setTabState({ tabs: [], active: 0 }),
     [setTabState],
+  );
+  // Ctrl/⌘+Shift+B opens the panel on the page tab (ADR 0083 §2), where the
+  // bridge has a page to show.
+  const pageAvailable = bridge.pageShow !== undefined;
+  useShortcut(
+    "openBrowser",
+    () => {
+      openRef(PAGE_TAB_PATH, { kind: "page" });
+      return true;
+    },
+    pageAvailable,
   );
   const activateTab = useCallback(
     (index: number) =>

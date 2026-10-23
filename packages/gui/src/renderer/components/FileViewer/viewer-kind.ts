@@ -22,7 +22,9 @@ export type ViewerKind =
    *  target's kind again. */
   | "diff"
   /** The repository's history (ADR 0059 §6). */
-  | "log";
+  | "log"
+  /** The browser page (ADR 0083 §2): not a file at all. */
+  | "page";
 
 export interface ViewerKindInfo {
   readonly kind: ViewerKind;

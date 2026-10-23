@@ -16,6 +16,7 @@ import type {
   ReadWorkspaceDiffReply,
   ReadWorkspaceFileReply,
 } from "../../ipc/bridge-types.js";
+import { beginPageMotion, endPageMotion } from "../../lib/page-motion.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import {
   CONVERSATION_MIN_PX,
@@ -26,6 +27,7 @@ import {
   VIEWER_MIN_PX,
   type ViewerAnchor,
 } from "./file-viewer-context.js";
+import { PageView } from "./PageView.js";
 import {
   PieceQuoteIcon,
   type PieceQuoting,
@@ -141,16 +143,19 @@ export function FileViewerPanel(): JSX.Element | null {
   const isCommit = target?.kind === "commit";
   const isDiff = target?.kind === "diff";
   const isLog = target?.kind === "log";
+  const isPage = target?.kind === "page";
   const kindInfo: ViewerKindInfo =
     path === null
       ? { kind: "text" }
-      : isCommit
-        ? { kind: "commit" }
-        : isDiff
-          ? { kind: "diff" }
-          : isLog
-            ? { kind: "log" }
-            : viewerKindFor(path);
+      : isPage
+        ? { kind: "page" }
+        : isCommit
+          ? { kind: "commit" }
+          : isDiff
+            ? { kind: "diff" }
+            : isLog
+              ? { kind: "log" }
+              : viewerKindFor(path);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
   const [modes, setModes] = useState<Readonly<Record<string, ViewMode>>>({});
@@ -182,8 +187,9 @@ export function FileViewerPanel(): JSX.Element | null {
     const readBytes = bridge.readWorkspaceBytes?.bind(bridge);
     const readCommit = bridge.readWorkspaceCommit?.bind(bridge);
     const readDiff = bridge.readWorkspaceDiff?.bind(bridge);
-    if (kindInfo.kind === "log") {
-      // The log tab pages itself (LogView); nothing to load here.
+    if (kindInfo.kind === "log" || kindInfo.kind === "page") {
+      // The log tab pages itself (LogView), and the page tab is not a file
+      // (ADR 0083 §2): nothing to load here.
       setLoad({ kind: "loading" });
     } else if (kindInfo.kind === "diff") {
       if (readDiff === undefined) {
@@ -423,12 +429,12 @@ export function FileViewerPanel(): JSX.Element | null {
                 className="file-viewer__tab-name"
                 onClick={() => v.activateTab(i)}
               >
-                {tabName(tab)}
+                {tab.kind === "page" ? t("page.tab") : tabName(tab)}
               </button>
               <button
                 type="button"
                 className="file-viewer__tab-x"
-                aria-label={`${t("viewer.closeTab")} ${tabName(tab)}`}
+                aria-label={`${t("viewer.closeTab")} ${tab.kind === "page" ? t("page.tab") : tabName(tab)}`}
                 onClick={() => v.closeTab(i)}
               >
                 <svg
@@ -519,7 +525,7 @@ export function FileViewerPanel(): JSX.Element | null {
             </Tooltip>
           )}
           {/* The history tab has nothing to copy. */}
-          {!isLog && (
+          {!isLog && !isPage && (
             <Tooltip
               label={
                 copied === "copied"
@@ -568,7 +574,7 @@ export function FileViewerPanel(): JSX.Element | null {
             </Tooltip>
           )}
           {/* A commit is not a file the OS could open; neither is history. */}
-          {!isCommit && !isLog && (
+          {!isCommit && !isLog && !isPage && (
             <Tooltip
               label={t("viewer.openExternal")}
               placement="bottom"
@@ -628,15 +634,19 @@ export function FileViewerPanel(): JSX.Element | null {
           </Tooltip>
         </span>
       </div>
-      <FileViewerBody
-        path={path}
-        load={load}
-        kindInfo={kindInfo}
-        mode={mode}
-        anchor={anchor}
-        onAnchorUnmapped={onAnchorUnmapped}
-        piece={piece}
-      />
+      {isPage ? (
+        sessionId !== null && <PageView sessionId={sessionId} />
+      ) : (
+        <FileViewerBody
+          path={path}
+          load={load}
+          kindInfo={kindInfo}
+          mode={mode}
+          anchor={anchor}
+          onAnchorUnmapped={onAnchorUnmapped}
+          piece={piece}
+        />
+      )}
     </section>
   );
 }
@@ -847,6 +857,8 @@ function useDividerDrag(): (e: ReactPointerEvent<HTMLDivElement>) => void {
         // fall through — window-level listeners below still track the drag
       }
       body?.classList.add("is-resizing");
+      // The browser page gives way at once (ADR 0083 §3).
+      beginPageMotion();
       const onMove = (ev: PointerEvent): void => {
         const w = clampViewerWidth(startW + (startX - ev.clientX), v.bodyWidth);
         v.setWidthPx(w);
@@ -855,6 +867,7 @@ function useDividerDrag(): (e: ReactPointerEvent<HTMLDivElement>) => void {
         // One storage write per gesture, not per frame (see persistWidthPx).
         v.persistWidthPx();
         body?.classList.remove("is-resizing");
+        endPageMotion();
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);

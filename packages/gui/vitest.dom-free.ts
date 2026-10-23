@@ -32,6 +32,7 @@ export const DOM_FREE_TESTS = [
   "src/main/app-settings.test.ts",
   "src/main/attachment-protocol.test.ts",
   "src/main/attention.test.ts",
+  "src/main/browser/page-keys.test.ts",
   "src/main/csp.test.ts",
   "src/main/hide-to-tray.test.ts",
   "src/main/key-store.test.ts",
@@ -53,6 +54,7 @@ export const DOM_FREE_TESTS = [
   "src/main/workspace-files.test.ts",
   // Shared between main and renderer — pure functions.
   "src/shared/agent-event-wire.test.ts",
+  "src/shared/browser-page.test.ts",
   "src/shared/dead-transcoder.test.ts",
   "src/shared/links.test.ts",
   // The live views' fold and the partial-JSON scanner under it (ADR 0073).

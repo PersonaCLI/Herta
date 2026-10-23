@@ -9140,3 +9140,68 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
 .conversation:focus {
   outline: none;
 }
+
+/* The browser page tab (ADR 0083 §2, §4): the controls over the area main's
+   page is laid on. The still frame stands in for the page while it moves or
+   an overlay covers it. */
+.page-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.page-view__bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px 6px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.page-view__bar .file-viewer__action:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+.page-view__address {
+  flex: 1;
+  min-width: 0;
+  margin: 0 4px;
+}
+.page-view__url {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--surface-pop);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--slate-deep);
+  outline: none;
+}
+.page-view__url:focus { border-color: var(--input-border-focus); }
+/* Inset from the panel's edges: the native page would otherwise cover the
+   divider (a 9px strip on the panel's left edge) and take its drag; rounded
+   to match the view's own corners (main sets the same radius). */
+.page-view__body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 9px 9px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.page-view__still {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: none;
+  pointer-events: none;
+  user-select: none;
+}
+.page-view__empty {
+  margin: 0;
+  padding: 24px 18px;
+  font-size: 12.5px;
+  color: var(--muted-slate);
+}

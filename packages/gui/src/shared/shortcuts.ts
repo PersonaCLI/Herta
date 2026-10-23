@@ -20,6 +20,7 @@ export type ShortcutId =
   | "openSettings"
   | "closeTab"
   | "showShortcuts"
+  | "openBrowser"
   | "focusComposer"
   | "send"
   | "newline"
@@ -98,6 +99,12 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: "openSettings", group: "window", channel: "menu", keys: [mod(",")] },
   { id: "closeTab", group: "window", channel: "menu", keys: [mod("w")] },
   { id: "showShortcuts", group: "window", channel: "window", keys: [mod("/")] },
+  {
+    id: "openBrowser",
+    group: "window",
+    channel: "window",
+    keys: [{ mod: true, shift: true, key: "b" }],
+  },
   {
     id: "focusComposer",
     group: "composer",

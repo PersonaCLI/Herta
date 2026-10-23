@@ -35,7 +35,13 @@ import type {
   WorkingDiff,
   WorkspaceEvent,
 } from "@herta/app-server";
+import type {
+  PageBounds,
+  PageNavigation,
+  PageState,
+} from "../../shared/browser-page.js";
 import type { LiveToolSnapshot } from "../../shared/live-tool-feed.js";
+import type { ShortcutId } from "../../shared/shortcuts.js";
 
 /** One file's progress in an attach in flight, from main (2026-10-01). */
 export interface AttachProgressEvent extends AttachProgress {
@@ -894,6 +900,23 @@ export interface HertaBridge {
   /** The application menu's Close (Ctrl/⌘+W, ADR 0082 §2): the renderer
    *  closes the viewer's tab, or the window. OPTIONAL. */
   onCloseRequested?(cb: () => void): () => void;
+  /** The browser page (ADR 0083), a main-owned view over the viewer's page
+   *  tab. OPTIONAL as a set: without `pageShow` there is no page tab.
+   *  Lay the session's page over the tab's content area (CSS pixels). */
+  pageShow?(sessionId: string, bounds: PageBounds): void;
+  /** Take the page off the window; it keeps running. */
+  pageHide?(): void;
+  /** Take the page off the window at once and answer with its still frame
+   *  (a data URL) to show in its place. */
+  pageFreeze?(): Promise<string | null>;
+  pageNavigate?(sessionId: string, to: PageNavigation): void;
+  /** The session's page, or null before its first address. */
+  pageState?(sessionId: string): Promise<PageState | null>;
+  /** The page's own address in the OS browser (main reads it). */
+  pageOpenExternal?(sessionId: string): Promise<void>;
+  onPageState?(cb: (state: PageState) => void): () => void;
+  /** An app shortcut pressed while the page had the focus (§3). */
+  onPageCommand?(cb: (id: ShortcutId) => void): () => void;
   onWorkspace(cb: (e: WorkspaceEvent) => void): () => void;
   /** The workspace's repository state (ADR 0058) — the rail's repository
    *  card. OPTIONAL: fakes and the website demo omit the pair, and the card

@@ -39,7 +39,11 @@ import {
   overlayOpenAbove,
   topOverlayZ,
 } from "./lib/overlay-stack.js";
-import { useShortcut, useShortcutDispatcher } from "./lib/shortcut-registry.js";
+import {
+  runShortcut,
+  useShortcut,
+  useShortcutDispatcher,
+} from "./lib/shortcut-registry.js";
 import { initTheme } from "./lib/theme.js";
 import { ReferenceView } from "./ReferenceView.js";
 
@@ -156,6 +160,12 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   // The keyboard (ADR 0082): one listener for the whole app, and the
   // commands that belong to the workbench itself.
   useShortcutDispatcher(isMac);
+  // A key pressed while the browser page has the focus reaches main first
+  // (ADR 0083 §3): an app command comes back here and runs as its key would.
+  useEffect(
+    () => bridge.onPageCommand?.((id) => void runShortcut(id)),
+    [bridge],
+  );
   useShortcut("showShortcuts", () => {
     setShortcutsOpen((v) => !v);
     return true;

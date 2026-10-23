@@ -87,6 +87,13 @@ export const CMD = {
   windowIsMaximized: "window:isMaximized",
   windowIsFullScreen: "window:isFullScreen",
   refreshRepo: "session:refreshRepo",
+  // The browser page (ADR 0083): where its tab is, its still frame, moves.
+  pageShow: "page:show",
+  pageHide: "page:hide",
+  pageFreeze: "page:freeze",
+  pageNavigate: "page:navigate",
+  pageState: "page:state",
+  pageOpenExternal: "page:openExternal",
 } as const;
 
 export const EVT = {
@@ -110,6 +117,8 @@ export const EVT = {
   windowFullScreen: "window:fullScreen",
   openSettings: "app:openSettings",
   closeRequested: "app:closeRequested",
+  pageState: "page:stateChanged",
+  pageCommand: "page:command",
   update: "update:state",
   voiceModel: "voice:model",
   voiceMinimax: "voice:minimax",

@@ -159,6 +159,7 @@ const bridge: HertaBridge = {
   pageOpenExternal: (sessionId) =>
     ipcRenderer.invoke(CMD.pageOpenExternal, sessionId),
   pageClearData: () => ipcRenderer.invoke(CMD.pageClearData),
+  pageClose: (sessionId) => ipcRenderer.send(CMD.pageClose, sessionId),
   serversList: (sessionId) => ipcRenderer.invoke(CMD.serversList, sessionId),
   serversStart: (sessionId, name, confirmed) =>
     ipcRenderer.invoke(CMD.serversStart, sessionId, name, confirmed),

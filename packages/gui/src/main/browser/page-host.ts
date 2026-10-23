@@ -227,6 +227,14 @@ export class PageHost {
     this.close(sessionId);
   }
 
+  /** The Trailblazer closed the page tab (owner, 2026-10-23): the page
+   *  ends, as a browser tab's does, and the tab opens next on the server
+   *  list. 板砖's driver stays — its next navigation opens a page again. */
+  closePage(sessionId: string): void {
+    this.addresses.delete(sessionId);
+    this.close(sessionId);
+  }
+
   dispose(): void {
     this.stopStills();
     this.still = null;

@@ -123,6 +123,20 @@ describe("the browser page tab (ADR 0083)", () => {
     expect(screen.getByTestId("page-view")).toBeTruthy();
   });
 
+  it("closing the page tab ends the page, so it opens next on the server list (owner 2026-10-23)", () => {
+    const mock = createMockHertaBridge();
+    withPage(mock);
+    const close = vi.fn();
+    Object.assign(mock.bridge, { pageClose: close });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    act(() => {
+      runShortcut("openBrowser");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close file Browser" }));
+    expect(close).toHaveBeenCalledWith("s1");
+  });
+
   it("is never evicted by the tab cap", () => {
     const mock = createMockHertaBridge();
     withPage(mock);
@@ -272,6 +286,34 @@ describe("the browser page tab (ADR 0083)", () => {
         expect(start).toHaveBeenLastCalledWith("s1", "web", true),
       );
       expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
+    });
+
+    it("a running server's log opens in a viewer tab", async () => {
+      const mock = createMockHertaBridge();
+      withPage(mock);
+      Object.assign(mock.bridge, {
+        serversList: vi.fn(async () => ({
+          ok: true as const,
+          entries: [
+            {
+              name: "web",
+              command: "npm run dev",
+              port: 5173,
+              url: "http://localhost:5173/",
+              state: "ready" as const,
+              logPath: ".herta/logs/servers/web-1.log",
+            },
+          ],
+        })),
+        onServersChanged: () => () => undefined,
+      });
+      const h = renderWithSession(ui(), { mock });
+      h.openSession("s1");
+      act(() => {
+        runShortcut("openBrowser");
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Log" }));
+      await waitFor(() => expect(tabNames()).toContain("web · Log"));
     });
 
     it("without a launch file, says how to make one", async () => {

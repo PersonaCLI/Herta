@@ -919,6 +919,8 @@ export interface HertaBridge {
   /** Settings → 差分协处理器 → Browser data (ADR 0083 §8): the page
    *  partition's sign-ins, cookies, storage and cache, cleared. */
   pageClearData?(): Promise<boolean>;
+  /** The page tab was closed: the session's page ends (owner 2026-10-23). */
+  pageClose?(sessionId: string): void;
   /** The launcher's entries for the new-tab page (ADR 0083 §4). */
   serversList?(sessionId: string): Promise<ServerListing>;
   /** The Trailblazer's Run; `confirmed` answers an ask-class command's

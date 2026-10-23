@@ -281,7 +281,11 @@ export function FileViewerProvider({
     [setTabState],
   );
   const closeTab = useCallback(
-    (index: number) =>
+    (index: number) => {
+      // Closing the page tab ends the page (owner 2026-10-23), so the tab
+      // opens next on the server list.
+      if (tabState.tabs[index]?.path === PAGE_TAB_PATH && sessionId !== null)
+        bridge.pageClose?.(sessionId);
       setTabState((s) => {
         if (index < 0 || index >= s.tabs.length) return s;
         const tabs = s.tabs.filter((_, i) => i !== index);
@@ -293,8 +297,9 @@ export function FileViewerProvider({
                 tabs.length - 1,
               );
         return { tabs, active };
-      }),
-    [setTabState],
+      });
+    },
+    [setTabState, tabState, sessionId, bridge],
   );
   // The latest width lives in a ref too, so the persist reads the value the
   // drag ended on rather than the render it was captured in.

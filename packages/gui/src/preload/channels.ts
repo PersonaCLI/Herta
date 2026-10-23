@@ -95,6 +95,7 @@ export const CMD = {
   pageState: "page:state",
   pageOpenExternal: "page:openExternal",
   pageClearData: "page:clearData",
+  pageClose: "page:close",
   serversList: "servers:list",
   serversStart: "servers:start",
   serversStop: "servers:stop",

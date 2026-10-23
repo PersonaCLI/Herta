@@ -621,6 +621,9 @@ function registerPageHandlers(pages: PageHost): void {
     if (typeof sessionId === "string" && b !== null) pages.show(sessionId, b);
   });
   ipcMain.on(CMD.pageHide, () => pages.hide());
+  ipcMain.on(CMD.pageClose, (_e, sessionId: unknown) => {
+    if (typeof sessionId === "string") pages.closePage(sessionId);
+  });
   ipcMain.on(CMD.pageNavigate, (_e, sessionId: unknown, to: unknown) => {
     const move = pageNavigationOf(to);
     if (typeof sessionId === "string" && move !== null)

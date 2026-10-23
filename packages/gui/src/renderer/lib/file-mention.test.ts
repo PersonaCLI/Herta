@@ -5,15 +5,20 @@ import {
   brickComplete,
   chipAt,
   chipify,
+  chipifyPicks,
   chipsAfterEdit,
   expandChips,
   findChipSpans,
   findMentionQuery,
   insertBrick,
   insertChip,
+  insertPickChip,
   listedFolders,
   mentionItems,
   openingPaths,
+  type PagePick,
+  pickLine,
+  picksIn,
   pruneChips,
   rankPaths,
   withoutChip,
@@ -189,6 +194,7 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
     ).toEqual({
       text: "看 src/a.ts 和 docs/ 里的 `docs/design notes.md`",
       mentions: ["src/a.ts", "docs/", "docs/design notes.md"],
+      picks: [],
     });
   });
 
@@ -304,6 +310,57 @@ describe("file chips (ADR 0072 amendment 2026-10-20)", () => {
       "a",
       "e",
       "a/b",
+    ]);
+  });
+});
+
+describe("elements picked on the page (ADR 0083 §4)", () => {
+  const raw = {
+    element: 'button "Sign in"',
+    route: "localhost:5173/login",
+    html: '<button class="cta">\n  Sign in\n</button>',
+  };
+  const pick: PagePick = {
+    element: raw.element,
+    route: raw.route,
+    line: pickLine(raw),
+  };
+
+  it("a pick's line: route, element and HTML on one line", () => {
+    expect(pick.line).toBe(
+      'localhost:5173/login · button "Sign in" · <button class="cta"> Sign in </button>',
+    );
+    expect(pickLine({ ...raw, html: "" })).toBe(
+      'localhost:5173/login · button "Sign in"',
+    );
+  });
+
+  it("lands as a token at the caret and goes as its line, recorded as a pick", () => {
+    const placed = insertPickChip(
+      "this does nothing",
+      4,
+      "按钮「Sign in」",
+      pick,
+    );
+    expect(placed.text).toBe("this @按钮「Sign in」 does nothing");
+    expect(placed.caret).toBe("this @按钮「Sign in」 ".length);
+    expect(findChipSpans(placed.text, [placed.chip])).toHaveLength(1);
+    const sent = expandChips(placed.text, [placed.chip]);
+    expect(sent.text).toBe(`this ${pick.line} does nothing`);
+    expect(sent.picks).toEqual([pick]);
+    expect(sent.mentions).toEqual([]);
+  });
+
+  it("a line that came back as words is still a pick, and comes back as its chip", () => {
+    const words = `again: ${pick.line}`;
+    expect(picksIn(words, [pick, { ...pick, line: "elsewhere" }])).toEqual([
+      pick,
+    ]);
+    expect(picksIn("nothing here", [pick])).toEqual([]);
+    const back = chipifyPicks(words, [pick], () => "按钮「Sign in」");
+    expect(back.text).toBe("again: @按钮「Sign in」");
+    expect(back.chips).toEqual([
+      { name: "按钮「Sign in」", path: pick.line, pick },
     ]);
   });
 });

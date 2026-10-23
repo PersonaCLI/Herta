@@ -183,12 +183,105 @@ export function insertBrick(
 // paths it mentions, so Herta's prompt can name each by its file name while
 // 板砖 reads the path.
 
+/** An element picked on the page (ADR 0083 §4): `line` is what the message
+ *  carries for 板砖 — route, element, HTML — and the record keeps it as one
+ *  of the user block's picks. */
+export interface PagePick {
+  readonly element: string;
+  readonly route: string;
+  readonly line: string;
+}
+
 /** One chip in the composer: the token's name and the path it stands for. */
 export interface FileChip {
   readonly name: string;
   readonly path: string;
   /** A folder: the icon says so, and the path is sent with a `/`. */
   readonly dir?: true;
+  /** An element picked on the page, not a file (ADR 0083 §4): the token
+   *  is its label, and it is sent as its line. */
+  readonly pick?: PagePick;
+}
+
+/** A picked element's line: the page's host and path, the element as the
+ *  page names it, and its HTML — one line, as 板砖 reads it. */
+export function pickLine(pick: {
+  readonly element: string;
+  readonly route: string;
+  readonly html: string;
+}): string {
+  const html = pick.html.replace(/\s+/gu, " ").trim();
+  return `${pick.route} · ${pick.element}${html !== "" ? ` · ${html}` : ""}`;
+}
+
+/** A picked element's chip at the caret: its `@<label>` token, a space on
+ *  either side so it stands as a token. */
+export function insertPickChip(
+  value: string,
+  caret: number,
+  label: string,
+  pick: PagePick,
+): {
+  readonly text: string;
+  readonly caret: number;
+  readonly chip: FileChip;
+} {
+  const chip: FileChip = { name: label, path: pick.line, pick };
+  const before = value.slice(0, caret);
+  const after = value.slice(caret);
+  const lead = before === "" || /\s$/u.test(before) ? "" : " ";
+  const token = `${lead}@${label}`;
+  const sep = after.startsWith(" ") ? "" : " ";
+  return {
+    text: `${before}${token}${sep}${after}`,
+    caret: before.length + token.length + 1,
+    chip,
+  };
+}
+
+/** The picks whose lines the text holds, each once (ADR 0083 §4). A picked
+ *  element's line that came back as words — a recall, a rewind, a message
+ *  held while 板砖 works — still goes as a pick, so Herta reads the element
+ *  and never its HTML. */
+export function picksIn(text: string, picks: Iterable<PagePick>): PagePick[] {
+  const out: PagePick[] = [];
+  for (const p of picks) {
+    if (p.line === "" || !text.includes(p.line)) continue;
+    if (!out.some((o) => o.line === p.line)) out.push(p);
+  }
+  return out;
+}
+
+/** A message's picked elements back as chips: each line becomes its
+ *  `@<label>` token, in the text's order. */
+export function chipifyPicks(
+  text: string,
+  picks: readonly PagePick[],
+  label: (pick: PagePick) => string,
+): { readonly text: string; readonly chips: readonly FileChip[] } {
+  const hits: Array<{ start: number; end: number; pick: PagePick }> = [];
+  // Longest first: a line that holds another is placed before it.
+  for (const p of [...picks].sort((a, b) => b.line.length - a.line.length)) {
+    if (p.line === "") continue;
+    for (let i = text.indexOf(p.line); i !== -1; ) {
+      const end = i + p.line.length;
+      if (!hits.some((h) => i < h.end && end > h.start))
+        hits.push({ start: i, end, pick: p });
+      i = text.indexOf(p.line, end);
+    }
+  }
+  if (hits.length === 0) return { text, chips: [] };
+  hits.sort((a, b) => a.start - b.start);
+  let out = "";
+  let at = 0;
+  const chips: FileChip[] = [];
+  for (const h of hits) {
+    const name = label(h.pick);
+    out += `${text.slice(at, h.start)}@${name}`;
+    at = h.end;
+    chips.push({ name, path: h.pick.line, pick: h.pick });
+  }
+  return { text: out + text.slice(at), chips };
 }
 
 /** Where a chip's token sits in the text (`end` exclusive). */
@@ -369,6 +462,7 @@ export function chipAt(
 /** A chip's path as the message spells it: a folder with its `/`, a path
  *  with whitespace in backticks (as a picked path always was). */
 function spelledPath(chip: FileChip): string {
+  if (chip.pick !== undefined) return chip.pick.line;
   const path =
     chip.dir === true ? `${chip.path.replace(/\/+$/u, "")}/` : chip.path;
   return /\s/.test(path) ? `\`${path}\`` : path;
@@ -379,22 +473,33 @@ function spelledPath(chip: FileChip): string {
 export function expandChips(
   text: string,
   chips: readonly FileChip[],
-): { readonly text: string; readonly mentions: readonly string[] } {
+): {
+  readonly text: string;
+  readonly mentions: readonly string[];
+  /** Elements picked on the page, each sent as its line (ADR 0083 §4). */
+  readonly picks: readonly PagePick[];
+} {
   const spans = findChipSpans(text, chips);
-  if (spans.length === 0) return { text, mentions: [] };
+  if (spans.length === 0) return { text, mentions: [], picks: [] };
   let out = "";
   let at = 0;
   const mentions: string[] = [];
+  const picks: PagePick[] = [];
   for (const s of spans) {
     out += text.slice(at, s.start) + spelledPath(s.chip);
     at = s.end;
+    if (s.chip.pick !== undefined) {
+      if (!picks.some((p) => p.line === s.chip.pick?.line))
+        picks.push(s.chip.pick);
+      continue;
+    }
     const path =
       s.chip.dir === true
         ? `${s.chip.path.replace(/\/+$/u, "")}/`
         : s.chip.path;
     if (!mentions.includes(path)) mentions.push(path);
   }
-  return { text: out + text.slice(at), mentions };
+  return { text: out + text.slice(at), mentions, picks };
 }
 
 /** A sent message back as chips (the ↑ recall): each occurrence of a

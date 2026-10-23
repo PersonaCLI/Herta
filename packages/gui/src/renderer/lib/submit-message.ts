@@ -1,5 +1,6 @@
 import type { HertaBridge, StagedImageInfo } from "../ipc/bridge-types.js";
 import type { SessionStore } from "../store/session-store.js";
+import type { PagePick } from "./file-mention.js";
 import { journeyMark, journeyMarkAfterPaint } from "./journey.js";
 
 /**
@@ -31,12 +32,15 @@ export function submitMessage(
   /** Paths mentioned with the composer's `@` (ADR 0072 amendment
    *  2026-10-20): recorded on the user block, drawn as chips. */
   mentions?: readonly string[],
+  /** Elements picked on the page (ADR 0083 §4): their lines are in the
+   *  text; the user block records them, drawn as chips. */
+  picks?: readonly PagePick[],
 ): void {
   journeyMark("send:start");
   // Armed BEFORE the echo lands: the conversation's outgoing morph reads it
   // on the same edge that mounts the flying clone.
   store.armLaunch(launch ?? null);
-  store.markPendingUser(text, staged, mentions);
+  store.markPendingUser(text, staged, mentions, picks);
   journeyMarkAfterPaint("send:echo-painted");
   const ids =
     staged !== undefined && staged.length > 0
@@ -47,6 +51,7 @@ export function submitMessage(
       text,
       ids,
       mentions !== undefined && mentions.length > 0 ? mentions : undefined,
+      picks !== undefined && picks.length > 0 ? picks : undefined,
     )
     .then(
       (result) => {

@@ -5,6 +5,7 @@ import type {
 } from "@herta/core";
 import {
   errorMessage,
+  namePickedElements,
   readSessionTitle,
   readSessionTopics,
   writeSessionTitle,
@@ -58,6 +59,7 @@ const MAX_INITIAL_TITLE_ATTEMPTS = 3;
 export function buildRecentTitleInput(
   record: TerminalRecord,
   windowExchanges: number,
+  lang: "zh" | "en" = "zh",
 ): { userText: string; hertaText: string; startIndex: number } | null {
   const userIdxs: number[] = [];
   record.forEach((b, i) => {
@@ -70,7 +72,10 @@ export function buildRecentTitleInput(
   const slice = record.slice(start);
   const userText = slice
     .filter((b) => b.kind === "user")
-    .map((b) => (b.kind === "user" ? b.text : ""))
+    // An element picked on the page is named, not its HTML (ADR 0083 §4).
+    .map((b) =>
+      b.kind === "user" ? namePickedElements(b.text, b.picks, lang) : "",
+    )
     .join("\n")
     .trim();
   const hertaText = slice
@@ -331,6 +336,7 @@ export class SessionTitler {
       const input = buildRecentTitleInput(
         this.deps.getRecord(),
         TITLE_WINDOW_EXCHANGES,
+        this.deps.lang,
       );
       if (input === null) {
         console.warn(
@@ -374,7 +380,13 @@ export class SessionTitler {
         title,
         anchorIndex: input.startIndex,
         anchorText: topicAnchorText(
-          anchorBlock?.kind === "user" ? anchorBlock.text : input.userText,
+          anchorBlock?.kind === "user"
+            ? namePickedElements(
+                anchorBlock.text,
+                anchorBlock.picks,
+                this.deps.lang,
+              )
+            : input.userText,
         ),
         at: new Date().toISOString(),
         // How much conversation this topic needed to exist. A rewind below it

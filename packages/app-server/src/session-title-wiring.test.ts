@@ -675,6 +675,24 @@ describe("buildRecentTitleInput", () => {
     });
   });
 
+  it("names an element picked on the page, never its HTML (ADR 0083 §4)", () => {
+    const line =
+      'localhost:5173/login · button "Sign in" · <button>Sign in</button>';
+    const rec: TerminalRecord = [
+      {
+        kind: "user",
+        text: `点了 ${line} 没反应`,
+        picks: [
+          { line, element: 'button "Sign in"', route: "localhost:5173/login" },
+        ],
+      },
+      { kind: "herta", surface: "speech", text: "H1" },
+    ];
+    expect(buildRecentTitleInput(rec, 2, "zh")?.userText).toBe(
+      "点了 按钮「Sign in」 没反应",
+    );
+  });
+
   it("windows to the last N exchanges", () => {
     const rec: TerminalRecord = [
       { kind: "user", text: "U1" },

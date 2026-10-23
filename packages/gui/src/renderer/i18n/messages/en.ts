@@ -616,6 +616,8 @@ export const en = {
   "page.address": "Address",
   "page.addressPlaceholder": "Type an address, such as localhost:5173",
   "page.openExternal": "Open in your browser",
+  "page.pick": "Pick an element on the page",
+  "page.pickStop": "Stop picking (Esc)",
   "page.empty": "Type an address above to open a page.",
   "page.servers.start": "Start",
   "page.servers.stop": "Stop",

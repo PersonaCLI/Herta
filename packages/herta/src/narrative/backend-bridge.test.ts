@@ -1177,6 +1177,44 @@ describe("bridge drain — todo layout + background dedup (2026-07-23)", () => {
     });
   });
 
+  it("a steer's picked elements ride its user block (ADR 0083 §4)", async () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const pick = {
+      line: 'localhost:5173/login · button "Sign in" · <button>Sign in</button>',
+      element: 'button "Sign in"',
+      route: "localhost:5173/login",
+    };
+    const runtime = {
+      runBrief: async (brief: HertaToAgentBrief) => {
+        publishWithLayer(bus, "backend", {
+          type: "tool.call.started",
+          id: "c1",
+          tool: "read_file",
+          inputSummary: "a.ts",
+        } as never);
+        bus.publish({
+          type: "user.steer",
+          layer: "actor",
+          id: "s-1",
+          text: `also ${pick.line}`,
+          picks: [pick],
+        });
+        return emptyReport(brief.taskId);
+      },
+    } as unknown as CodingAgentRuntime;
+    const out = await invokeBanzhuanBridge([], [], {
+      bus,
+      runtimeFactory: () => runtime,
+      signal: new AbortController().signal,
+    });
+    expect(out.find((b) => b.kind === "user")).toEqual({
+      kind: "user",
+      text: `also ${pick.line}`,
+      steer: true,
+      picks: [pick],
+    });
+  });
+
   it("the live views never reach the record: a call's streaming arguments and a command's output project nothing (ADR 0073)", async () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const runtime = runtimePublishing(bus, [

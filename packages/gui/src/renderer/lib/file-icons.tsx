@@ -186,3 +186,23 @@ export function FileTypeIcon(props: {
     </svg>
   );
 }
+
+/** A picked page element's mark (ADR 0083 §4, the owner's pick A): a
+ *  crosshair, in the chip's own ink. */
+export function PickIcon(props: { readonly className?: string }): JSX.Element {
+  return (
+    <svg
+      className={`pick-icon${props.className !== undefined ? ` ${props.className}` : ""}`}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="8" cy="8" r="4.2" />
+      <path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3" />
+    </svg>
+  );
+}

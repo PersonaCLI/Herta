@@ -68,6 +68,7 @@ function renderBlock(
           {...(block.mentions !== undefined
             ? { mentions: block.mentions }
             : {})}
+          {...(block.picks !== undefined ? { picks: block.picks } : {})}
           {...(onRewind !== undefined ? { onRewind } : {})}
           {...(imageViews.length > 0 ? { images: imageViews } : {})}
         />

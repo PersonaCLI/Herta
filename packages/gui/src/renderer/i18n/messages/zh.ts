@@ -597,6 +597,8 @@ export const zh = {
   "page.address": "网址",
   "page.addressPlaceholder": "输入网址，例如 localhost:5173",
   "page.openExternal": "在系统浏览器中打开",
+  "page.pick": "在页面上选一个元素",
+  "page.pickStop": "不选了（Esc）",
   "page.empty": "在上面输入网址打开一个页面。",
   "page.servers.start": "启动",
   "page.servers.stop": "停止",

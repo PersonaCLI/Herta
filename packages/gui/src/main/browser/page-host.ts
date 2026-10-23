@@ -1,3 +1,4 @@
+import { redactSecrets } from "@herta/tools";
 import {
   type BrowserWindow,
   type NativeImage,
@@ -68,6 +69,16 @@ export interface PageHostEvents {
   readonly command: (id: ShortcutId) => void;
   /** 板砖 opened a page: the Trailblazer is shown it. */
   readonly opened: (sessionId: string) => void;
+  /** The Trailblazer picked an element (ADR 0083 §4), or the pick ended
+   *  without one (`null`: Escape, a navigation, the picker turned off). */
+  readonly picked?: (
+    sessionId: string,
+    pick: {
+      readonly element: string;
+      readonly route: string;
+      readonly html: string;
+    } | null,
+  ) => void;
 }
 
 /**
@@ -227,6 +238,36 @@ export class PageHost {
     this.close(sessionId);
   }
 
+  /** The Trailblazer's picker (ADR 0083 §4): on, a click in the page picks
+   *  an element for the composer; off, or Escape, ends it. A navigation
+   *  ends it too. */
+  pick(sessionId: string, on: boolean): void {
+    const page = this.pages.get(sessionId);
+    if (page === undefined) {
+      if (on) this.events.picked?.(sessionId, null);
+      return;
+    }
+    if (!on) {
+      void page.instrument.stopPick();
+      this.events.picked?.(sessionId, null);
+      return;
+    }
+    const wc = page.view.webContents;
+    wc.once("did-navigate", () => {
+      if (page.instrument.picking) this.pick(sessionId, false);
+    });
+    if (!wc.isFocused()) wc.focus();
+    void page.instrument
+      .startPick(({ element, html }) =>
+        this.events.picked?.(sessionId, {
+          element,
+          route: routeOf(wc.getURL()),
+          html: redactSecrets(html.replace(/\s+/g, " ").trim()).slice(0, 400),
+        }),
+      )
+      .catch(() => this.events.picked?.(sessionId, null));
+  }
+
   /** The Trailblazer closed the page tab (owner, 2026-10-23): the page
    *  ends, as a browser tab's does, and the tab opens next on the server
    *  list. 板砖's driver stays — its next navigation opens a page again. */
@@ -366,6 +407,17 @@ export class PageHost {
       wc.on(name as "did-stop-loading", push);
     }
     wc.on("before-input-event", (event, input) => {
+      // Escape ends a pick in progress (ADR 0083 §4) and is kept from the
+      // page while it does.
+      if (
+        input.type === "keyDown" &&
+        input.key === "Escape" &&
+        this.pages.get(sessionId)?.instrument.picking === true
+      ) {
+        event.preventDefault();
+        this.pick(sessionId, false);
+        return;
+      }
       const id = appCommandForPageKey(input, this.mac);
       if (id === null) return;
       event.preventDefault();
@@ -411,4 +463,14 @@ function stateOf(sessionId: string, view: WebContentsView): PageState {
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
   };
+}
+
+/** A page's host, port and path — never its query (ADR 0083 §10). */
+function routeOf(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname === "/" ? "" : u.pathname}`;
+  } catch {
+    return url;
+  }
 }

@@ -16,6 +16,7 @@ import type {
   UndoTurnEditsResult,
   WorkspaceEvent,
 } from "@herta/app-server";
+import { namePickedElements } from "@herta/core/page-element";
 import { EMPTY_LIVE } from "../../shared/live-tool-feed.js";
 import type {
   HertaBridge,
@@ -27,6 +28,7 @@ import type {
   SpeechControlEvent,
   StagedImageInfo,
 } from "../ipc/bridge-types.js";
+import type { PagePick } from "../lib/file-mention.js";
 import { journeyMark, journeyMarkAfterPaint } from "../lib/journey.js";
 import type { ComposerQuote } from "../lib/quote-format.js";
 
@@ -77,6 +79,10 @@ export interface SessionSnapshotView {
    *  amendment 2026-10-20): the echo draws them as chips, as the record's
    *  user block will. Cleared with `pendingUser`. */
   readonly pendingUserMentions: readonly string[] | null;
+  /** The elements the echoed message picked on the page (ADR 0083 §4): the
+   *  echo draws them as chips, as the record's user block will. Cleared
+   *  with `pendingUser`. */
+  readonly pendingUserPicks: readonly PagePick[] | null;
   /** True while the supervisor-veto retract morph is in flight:
    *  streamingText holds the vetoed candidate (the morph's shrink source)
    *  and retryText buffers the retry's deltas. Cleared when the finalized
@@ -179,6 +185,13 @@ export interface SessionSnapshotView {
    *  the composer until they are sent or removed. They belong to the
    *  session: a new activation starts with none. */
   readonly composerQuotes: readonly ComposerQuote[];
+  /** Elements picked on the page, waiting for the composer to place them
+   *  as chips at its caret (ADR 0083 §4). */
+  readonly composerPicks: readonly {
+    readonly element: string;
+    readonly route: string;
+    readonly html: string;
+  }[];
   /** One-shot: pictures main still holds staged for this session, carried
    *  by a reset (a window that reloaded with pictures in its strip, UX
    *  review 2026-09-22, item 7). The composer adopts them into its strip,
@@ -257,6 +270,7 @@ const INITIAL: SessionSnapshotView = {
   pendingUser: null,
   pendingUserImages: null,
   pendingUserMentions: null,
+  pendingUserPicks: null,
   retracting: false,
   retryText: null,
   retractKeepLen: null,
@@ -279,6 +293,7 @@ const INITIAL: SessionSnapshotView = {
   composerDraft: null,
   composerDraftImages: null,
   composerQuotes: [],
+  composerPicks: [],
   restagedImages: null,
   held: null,
   resumable: false,
@@ -518,6 +533,7 @@ export class SessionStore {
     text: string,
     images?: readonly StagedImageInfo[],
     mentions?: readonly string[],
+    picks?: readonly PagePick[],
   ): void {
     this.emit({
       ...this.snapshot,
@@ -526,6 +542,7 @@ export class SessionStore {
         images !== undefined && images.length > 0 ? images : null,
       pendingUserMentions:
         mentions !== undefined && mentions.length > 0 ? mentions : null,
+      pendingUserPicks: picks !== undefined && picks.length > 0 ? picks : null,
     });
   }
 
@@ -577,6 +594,25 @@ export class SessionStore {
       ...this.snapshot,
       composerQuotes: [...this.snapshot.composerQuotes, quote],
     });
+  }
+
+  /** An element picked on the page (ADR 0083 §4): the composer places it
+   *  as a chip at its caret. */
+  addComposerPick(pick: {
+    readonly element: string;
+    readonly route: string;
+    readonly html: string;
+  }): void {
+    this.emit({
+      ...this.snapshot,
+      composerPicks: [...this.snapshot.composerPicks, pick],
+    });
+  }
+
+  /** The composer placed them. */
+  clearComposerPicks(): void {
+    if (this.snapshot.composerPicks.length === 0) return;
+    this.emit({ ...this.snapshot, composerPicks: [] });
   }
 
   /** The chip's ×. */
@@ -801,6 +837,9 @@ export class SessionStore {
     if (next.pendingUser === null && next.pendingUserMentions !== null) {
       next = { ...next, pendingUserMentions: null };
     }
+    if (next.pendingUser === null && next.pendingUserPicks !== null) {
+      next = { ...next, pendingUserPicks: null };
+    }
     if (next.composerDraft === null && next.composerDraftImages !== null) {
       next = { ...next, composerDraftImages: null };
     }
@@ -858,6 +897,7 @@ export class SessionStore {
       pendingUser: null,
       pendingUserImages: null,
       pendingUserMentions: null,
+      pendingUserPicks: null,
       retracting: false,
       retryText: null,
       retractKeepLen: null,
@@ -886,6 +926,7 @@ export class SessionStore {
       composerDraft: null,
       composerDraftImages: null,
       composerQuotes: [],
+      composerPicks: [],
       restagedImages:
         e.stagedImages !== undefined && e.stagedImages.length > 0
           ? e.stagedImages
@@ -1022,7 +1063,11 @@ export class SessionStore {
       const activationFirstUser =
         shrank &&
         frozen !== null &&
-        !record.some((b) => b.kind === "user" && b.text === frozen)
+        !record.some(
+          (b) =>
+            b.kind === "user" &&
+            namePickedElements(b.text, b.picks, this.snapshot.lang) === frozen,
+        )
           ? null
           : frozen;
       this.emit({
@@ -1064,9 +1109,11 @@ export class SessionStore {
     // Capture the FIRST user message of this activation (frozen after). These
     // are streamed blocks (the activation's initial record arrives via reset,
     // not onRecord), so the first one here is this activation's first message.
+    // A picked page element reads as the element, as its chip did (ADR 0083
+    // §4), never as its HTML.
     const activationFirstUser =
       block.kind === "user" && this.snapshot.activationFirstUser === null
-        ? block.text
+        ? namePickedElements(block.text, block.picks, this.snapshot.lang)
         : this.snapshot.activationFirstUser;
     this.emit({
       ...this.snapshot,

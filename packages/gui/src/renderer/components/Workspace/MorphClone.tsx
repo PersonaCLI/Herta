@@ -2,7 +2,7 @@ import { forwardRef, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
-import { renderMentionText } from "../../lib/mention-text.js";
+import { type MessagePick, renderMentionText } from "../../lib/mention-text.js";
 import type { UserImageView } from "./UserBubble.js";
 
 export interface MorphCloneProps {
@@ -25,6 +25,8 @@ export interface MorphCloneProps {
   readonly imagesWidthPx?: number;
   /** Mentioned paths, drawn as chips like the row it lands on. */
   readonly mentions?: readonly string[];
+  /** Picked page elements, drawn as chips like the row it lands on. */
+  readonly picks?: readonly MessagePick[];
 }
 
 /** A floating bubble copy rendered into the workspace morph overlay,
@@ -71,8 +73,14 @@ export const MorphClone = forwardRef<HTMLDivElement, MorphCloneProps>(
           </div>
         )}
         <div className="message-text">
-          {renderMentionText(props.text, props.mentions, (segment) =>
-            renderBanzhuanText(segment, "bubble", props.lang),
+          {renderMentionText(
+            props.text,
+            props.mentions,
+            (segment) => renderBanzhuanText(segment, "bubble", props.lang),
+            undefined,
+            props.picks !== undefined
+              ? { list: props.picks, lang: props.lang }
+              : undefined,
           )}
         </div>
       </div>,

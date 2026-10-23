@@ -1,4 +1,4 @@
-import type { TerminalRecord } from "@herta/core";
+import type { PickedElement, TerminalRecord } from "@herta/core";
 import { dealiasBrickDraft } from "./banzhuan-mention.js";
 
 /**
@@ -21,13 +21,22 @@ export function recallLastMessage(
 export function recallLastUserMessage(
   record: TerminalRecord,
   lang: "zh" | "en",
-): { readonly text: string; readonly mentions?: readonly string[] } | null {
+): {
+  readonly text: string;
+  readonly mentions?: readonly string[];
+  /** Elements picked on the page (ADR 0083 §4). */
+  readonly picks?: readonly PickedElement[];
+} | null {
   for (let i = record.length - 1; i >= 0; i -= 1) {
     const b = record[i];
     if (b?.kind !== "user" || b.steer === true || b.resume === true) continue;
     if (b.text.trim().length === 0) continue;
     const text = dealiasBrickDraft(b.text, lang);
-    return b.mentions !== undefined ? { text, mentions: b.mentions } : { text };
+    return {
+      text,
+      ...(b.mentions !== undefined ? { mentions: b.mentions } : {}),
+      ...(b.picks !== undefined ? { picks: b.picks } : {}),
+    };
   }
   return null;
 }

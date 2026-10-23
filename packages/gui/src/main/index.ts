@@ -413,6 +413,10 @@ function createWindow(): BrowserWindow {
         if (!win.webContents.isDestroyed())
           win.webContents.send(EVT.pageOpen, sessionId);
       },
+      picked: (sessionId, pick) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pagePicked, { sessionId, pick });
+      },
     },
     process.platform === "darwin",
   );
@@ -623,6 +627,9 @@ function registerPageHandlers(pages: PageHost): void {
   ipcMain.on(CMD.pageHide, () => pages.hide());
   ipcMain.on(CMD.pageClose, (_e, sessionId: unknown) => {
     if (typeof sessionId === "string") pages.closePage(sessionId);
+  });
+  ipcMain.on(CMD.pagePick, (_e, sessionId: unknown, on: unknown) => {
+    if (typeof sessionId === "string") pages.pick(sessionId, on === true);
   });
   ipcMain.on(CMD.pageNavigate, (_e, sessionId: unknown, to: unknown) => {
     const move = pageNavigationOf(to);

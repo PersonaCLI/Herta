@@ -15,10 +15,10 @@ function subscribe<T>(channel: string, cb: (e: T) => void): () => void {
 
 const bridge: HertaBridge = {
   platform: process.platform,
-  submitText: (text, stagedImageIds, mentions) =>
-    ipcRenderer.invoke(CMD.submitText, text, stagedImageIds, mentions),
+  submitText: (text, stagedImageIds, mentions, picks) =>
+    ipcRenderer.invoke(CMD.submitText, text, stagedImageIds, mentions, picks),
   interrupt: (turnId) => ipcRenderer.invoke(CMD.interrupt, turnId),
-  steerText: (text) => ipcRenderer.invoke(CMD.steerText, text),
+  steerText: (text, picks) => ipcRenderer.invoke(CMD.steerText, text, picks),
   continueInterrupted: () => ipcRenderer.invoke(CMD.continueInterrupted),
   rewindLastTurn: (sessionId) =>
     ipcRenderer.invoke(CMD.rewindLastTurn, sessionId),
@@ -160,6 +160,8 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.pageOpenExternal, sessionId),
   pageClearData: () => ipcRenderer.invoke(CMD.pageClearData),
   pageClose: (sessionId) => ipcRenderer.send(CMD.pageClose, sessionId),
+  pagePick: (sessionId, on) => ipcRenderer.send(CMD.pagePick, sessionId, on),
+  onPagePicked: (cb) => subscribe(EVT.pagePicked, cb),
   serversList: (sessionId) => ipcRenderer.invoke(CMD.serversList, sessionId),
   serversStart: (sessionId, name, confirmed) =>
     ipcRenderer.invoke(CMD.serversStart, sessionId, name, confirmed),

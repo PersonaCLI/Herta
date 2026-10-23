@@ -609,6 +609,9 @@ async function runTurn(
       ...(deps.userMentions !== undefined && deps.userMentions.length > 0
         ? { mentions: deps.userMentions }
         : {}),
+      ...(deps.userPicks !== undefined && deps.userPicks.length > 0
+        ? { picks: deps.userPicks }
+        : {}),
     },
     ...(deps.userAttachments ?? []),
   ];

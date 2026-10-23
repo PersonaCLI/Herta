@@ -1,5 +1,6 @@
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { namePickedElements } from "../text/page-element.js";
 import { readSessionTitle } from "./session-title-sidecar.js";
 
 export interface SessionListEntry {
@@ -71,16 +72,36 @@ function readWindow(fd: number, position: number, length: number): string {
 }
 
 /** The text of a user block on `line`, or undefined. */
-function userText(line: string): string | undefined {
+function userText(line: string, lang: "zh" | "en"): string | undefined {
   if (line === "") return undefined;
   try {
-    const block = JSON.parse(line) as { kind?: string; text?: string };
+    const block = JSON.parse(line) as {
+      kind?: string;
+      text?: string;
+      picks?: unknown;
+    };
+    // An element picked on the page reads as the element, as the
+    // Trailblazer's chip did (ADR 0083 §4), never as its HTML.
     return block.kind === "user" && typeof block.text === "string"
-      ? block.text
+      ? namePickedElements(block.text, pickList(block.picks), lang)
       : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** A user block's picks as stored, the well-formed ones. */
+function pickList(
+  raw: unknown,
+): { readonly line: string; readonly element: string }[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter(
+    (p): p is { line: string; element: string } =>
+      typeof p === "object" &&
+      p !== null &&
+      typeof (p as { line?: unknown }).line === "string" &&
+      typeof (p as { element?: unknown }).element === "string",
+  );
 }
 
 /**
@@ -95,6 +116,7 @@ function lastUserBackward(
   fd: number,
   size: number,
   budget: number,
+  lang: "zh" | "en",
 ): string | undefined {
   let end = size;
   let carry = Buffer.alloc(0);
@@ -120,7 +142,7 @@ function lastUserBackward(
     }
     const lines = chunk.toString("utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
-      const text = userText(lines[i] ?? "");
+      const text = userText(lines[i] ?? "", lang);
       if (text !== undefined) return text;
     }
     end = start;
@@ -349,7 +371,12 @@ function readTranscript(
       // Only a file this workspace lists reads past its head: a foreign
       // one costs its head alone, as before.
       if (listed(header) && size > HEAD_SCAN_BYTES) {
-        lastFromEnd = lastUserBackward(fd, size, LAST_USER_SCAN_BYTES);
+        lastFromEnd = lastUserBackward(
+          fd,
+          size,
+          LAST_USER_SCAN_BYTES,
+          header?.lang ?? "zh",
+        );
         tailScanned = true;
       }
     } finally {
@@ -367,12 +394,10 @@ function readTranscript(
     const line = lines[i]!;
     if (line === "") continue;
     try {
-      const block = JSON.parse(line) as { kind?: string; text?: string };
-      if (block.kind === "user" && typeof block.text === "string") {
+      const text = userText(line, header?.lang ?? "zh");
+      if (text !== undefined) {
         preview =
-          block.text.length > PREVIEW_MAX
-            ? `${block.text.slice(0, PREVIEW_MAX)}...`
-            : block.text;
+          text.length > PREVIEW_MAX ? `${text.slice(0, PREVIEW_MAX)}...` : text;
         break;
       }
     } catch {
@@ -387,7 +412,7 @@ function readTranscript(
   // line, which fails its parse).
   let found = lastFromEnd;
   for (let i = headLines.length - 1; found === undefined && i >= 1; i--) {
-    found = userText(headLines[i] ?? "");
+    found = userText(headLines[i] ?? "", header?.lang ?? "zh");
   }
   const lastUserText =
     found === undefined

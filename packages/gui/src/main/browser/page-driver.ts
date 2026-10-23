@@ -118,6 +118,10 @@ export class PageInstrument {
   /** Dispatching 板砖's own input: the Trailblazer's is everything else. */
   private driving = 0;
   private mainFrame: string | null = null;
+  /** The Trailblazer's picker, while it is on (ADR 0083 §4). */
+  private onPicked:
+    | ((pick: { readonly element: string; readonly html: string }) => void)
+    | null = null;
   status: number | null = null;
 
   constructor(private readonly wc: WebContents) {
@@ -168,8 +172,75 @@ export class PageInstrument {
     });
   }
 
+  /** Pick an element: Chromium's own inspect mode — a hover highlights, a
+   *  click picks and does not reach the page. Nothing is injected; the pick
+   *  is read by the harness's read script in its isolated world. */
+  async startPick(
+    onPicked: (pick: {
+      readonly element: string;
+      readonly html: string;
+    }) => void,
+  ): Promise<void> {
+    this.onPicked = onPicked;
+    await this.cdp.sendCommand("DOM.enable");
+    await this.cdp.sendCommand("Overlay.enable");
+    await this.cdp.sendCommand("Overlay.setInspectMode", {
+      mode: "searchForNode",
+      highlightConfig: {
+        showInfo: true,
+        contentColor: { r: 92, g: 182, b: 202, a: 0.22 },
+        borderColor: { r: 92, g: 182, b: 202, a: 0.9 },
+      },
+    });
+  }
+
+  async stopPick(): Promise<void> {
+    if (this.onPicked === null) return;
+    this.onPicked = null;
+    await this.cdp
+      .sendCommand("Overlay.setInspectMode", {
+        mode: "none",
+        highlightConfig: {},
+      })
+      .catch(() => undefined);
+  }
+
+  get picking(): boolean {
+    return this.onPicked !== null;
+  }
+
+  private async picked(backendNodeId: number): Promise<void> {
+    const done = this.onPicked;
+    if (done === null) return;
+    await this.stopPick();
+    try {
+      const world = await this.ensureWorld();
+      const node = (await this.cdp.sendCommand("DOM.resolveNode", {
+        backendNodeId,
+        executionContextId: world,
+      })) as { object: { objectId?: string } };
+      if (node.object.objectId === undefined) return;
+      const r = (await this.cdp.sendCommand("Runtime.callFunctionOn", {
+        objectId: node.object.objectId,
+        functionDeclaration:
+          "function () { return globalThis.__herta.describeNode(this); }",
+        returnByValue: true,
+      })) as { result: { value?: { element?: unknown; html?: unknown } } };
+      const v = r.result.value;
+      if (typeof v?.element !== "string" || typeof v.html !== "string") return;
+      done({ element: v.element, html: v.html });
+    } catch {
+      // The page changed under the pick: nothing was picked.
+    }
+  }
+
   private onMessage(method: string, p: Record<string, unknown>): void {
     switch (method) {
+      case "Overlay.inspectNodeRequested": {
+        const id = p.backendNodeId;
+        if (typeof id === "number") void this.picked(id);
+        return;
+      }
       case "Runtime.consoleAPICalled": {
         const type = String(p.type);
         const args = (p.args as Parameters<typeof remoteText>[0][]) ?? [];

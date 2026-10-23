@@ -4,6 +4,7 @@ import type {
   SessionMetadata,
   TitleEvent,
 } from "@herta/app-server";
+import { namePickedElements } from "@herta/core/page-element";
 import type { HertaBridge } from "../ipc/bridge-types.js";
 
 /** The most recent live title (one session's), used to drive the sidebar
@@ -157,7 +158,12 @@ export class SessionListStore {
     this.sessions = [
       {
         ...bumped,
-        lastUserText: text,
+        // A picked page element reads as the element (ADR 0083 §4).
+        lastUserText: namePickedElements(
+          text,
+          e.block.picks,
+          bumped.lang ?? "zh",
+        ),
         lastActivityAt: new Date().toISOString(),
       },
       ...this.sessions.filter((s) => s.sessionId !== id),

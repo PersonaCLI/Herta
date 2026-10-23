@@ -265,6 +265,25 @@ describe("listSessions", () => {
     expect(result[0]?.lastUserText).toBe("last thing"); // last user
   });
 
+  it("names an element picked on the page, never its HTML (ADR 0083 §4)", () => {
+    const line =
+      'localhost:5173/login · button "Sign in" · <button>Sign in</button>';
+    const block = JSON.stringify({
+      kind: "user",
+      text: `${line} does nothing`,
+      picks: [
+        { line, element: 'button "Sign in"', route: "localhost:5173/login" },
+      ],
+    });
+    writeSession("s1", { workspaceRoot: "/p", lang: "en" }, [block]);
+    const result = listSessions({
+      transcriptDir: tmp,
+      currentWorkspaceRoot: "/p",
+    });
+    expect(result[0]?.preview).toBe('button "Sign in" does nothing');
+    expect(result[0]?.lastUserText).toBe('button "Sign in" does nothing');
+  });
+
   it("leaves lastUserText undefined when there is no user message", () => {
     writeSession("s1", { workspaceRoot: "/p" }, [
       '{"kind":"herta","surface":"speech","text":"only herta"}',

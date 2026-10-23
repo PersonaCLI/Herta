@@ -512,6 +512,13 @@ export interface HertaBridge {
     /** Paths mentioned with the composer's `@` (ADR 0072 amendment
      *  2026-10-20), recorded on the user block. */
     mentions?: readonly string[],
+    /** Elements picked on the page (ADR 0083 §4), each `line` in the text,
+     *  recorded on the user block. */
+    picks?: readonly {
+      readonly line: string;
+      readonly element: string;
+      readonly route: string;
+    }[],
   ): Promise<SubmitTextResult>;
   interrupt(turnId?: string): Promise<{ readonly ok: boolean }>;
   /** A message while 板砖 works (ADR 0063): `accepted` means the text is in
@@ -519,7 +526,16 @@ export interface HertaBridge {
    *  there was no step to reach and the composer keeps holding the text for
    *  the next turn. OPTIONAL — fakes and the website demo omit it, and the
    *  held strip then offers no steer. */
-  steerText?(text: string): Promise<SteerTextResult>;
+  steerText?(
+    text: string,
+    /** Elements picked on the page whose lines the text holds (ADR 0083
+     *  §4). */
+    picks?: readonly {
+      readonly line: string;
+      readonly element: string;
+      readonly route: string;
+    }[],
+  ): Promise<SteerTextResult>;
   /** 继续 (ADR 0071 §1.4): continue the interrupted 板砖 run. Resolves when
    *  the turn has ended, like `submitText`; never rejects. OPTIONAL with
    *  `onResume` — fakes and the website demo omit them, and no strip shows. */
@@ -921,6 +937,19 @@ export interface HertaBridge {
   pageClearData?(): Promise<boolean>;
   /** The page tab was closed: the session's page ends (owner 2026-10-23). */
   pageClose?(sessionId: string): void;
+  /** The picker on or off (ADR 0083 §4). */
+  pagePick?(sessionId: string, on: boolean): void;
+  /** An element picked — or `pick: null`, the pick ended without one. */
+  onPagePicked?(
+    cb: (event: {
+      readonly sessionId: string;
+      readonly pick: {
+        readonly element: string;
+        readonly route: string;
+        readonly html: string;
+      } | null;
+    }) => void,
+  ): () => void;
   /** The launcher's entries for the new-tab page (ADR 0083 §4). */
   serversList?(sessionId: string): Promise<ServerListing>;
   /** The Trailblazer's Run; `confirmed` answers an ask-class command's

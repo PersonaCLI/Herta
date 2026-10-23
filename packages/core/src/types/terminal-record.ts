@@ -54,6 +54,12 @@ export interface UserBlock {
    *  lets Herta's prompt name each by its file name and the bubble draw it
    *  as a chip. Absent when nothing was mentioned. */
   readonly mentions?: readonly string[];
+  /** Elements the user picked on the page with the picker (ADR 0083 §4),
+   *  as they appear in `text`: each `line` is what 板砖 reads — the page's
+   *  host and path, the element, its HTML — and Herta reads the element in
+   *  her words instead, the chip the user saw. Absent when nothing was
+   *  picked. */
+  readonly picks?: readonly PickedElement[];
   /** Wall-clock ISO time the block was emitted/persisted. Optional for
    *  backward compat (pre-timestamp sessions lack it). Stamped at the output
    *  boundaries (live sink emit + JSONL persist), never at construction — the
@@ -102,6 +108,17 @@ export interface HertaBlock {
   readonly selfCorrection?: string;
   /** Wall-clock ISO time the block was emitted/persisted. See `UserBlock.at`. */
   readonly at?: string;
+}
+
+/** An element picked on the page (ADR 0083 §4). */
+export interface PickedElement {
+  /** The text the message carries: `localhost:5173/login · button "Sign
+   *  in" · <button …>Sign in</button>` — 板砖 reads it as written. */
+  readonly line: string;
+  /** The element as the page names it: `button "Sign in"`. */
+  readonly element: string;
+  /** The page's host, port and path. */
+  readonly route: string;
 }
 
 /**

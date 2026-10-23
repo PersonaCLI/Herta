@@ -393,7 +393,14 @@ async function invokeBanzhuanBridgeInner(
           // commission and half of 板砖's run standing with no 完成.
           current = [
             ...current,
-            { kind: "user", text: event.text, steer: true },
+            {
+              kind: "user",
+              text: event.text,
+              steer: true,
+              ...(event.picks !== undefined && event.picks.length > 0
+                ? { picks: event.picks }
+                : {}),
+            },
           ];
           deps.sink?.flushBlocks(current);
         }

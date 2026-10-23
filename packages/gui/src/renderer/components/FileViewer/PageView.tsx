@@ -140,11 +140,27 @@ export function PageView({
   readonly sessionId: string;
 }): JSX.Element {
   const t = useT();
-  const { bridge } = useHertaBridge();
+  const { bridge, sessionStore } = useHertaBridge();
   const body = useRef<HTMLDivElement | null>(null);
   const [page, setPage] = useState<PageState | null>(null);
   const [still, setStill] = useState<PageStill | null>(null);
   const [typed, setTyped] = useState<string | null>(null);
+  // The picker (ADR 0083 §4): on, a click in the page picks an element for
+  // the composer; main says when the pick is over.
+  const [picking, setPicking] = useState(false);
+
+  useEffect(() => {
+    setPicking(false);
+    const off = bridge.onPagePicked?.((e) => {
+      if (e.sessionId !== sessionId) return;
+      setPicking(false);
+      if (e.pick !== null) sessionStore.addComposerPick(e.pick);
+    });
+    return () => {
+      off?.();
+      bridge.pagePick?.(sessionId, false);
+    };
+  }, [bridge, sessionStore, sessionId]);
 
   useEffect(() => {
     let alive = true;
@@ -163,6 +179,10 @@ export function PageView({
 
   const live = isLive(page);
   usePageSurface(sessionId, body, live, setStill);
+  // A page that goes away takes the pick with it.
+  useEffect(() => {
+    if (!live) setPicking(false);
+  }, [live]);
 
   const go = (to: Parameters<NonNullable<typeof bridge.pageNavigate>>[1]) =>
     bridge.pageNavigate?.(sessionId, to);
@@ -275,6 +295,33 @@ export function PageView({
             }}
           />
         </form>
+        {bridge.pagePick !== undefined && (
+          <button
+            type="button"
+            className={`file-viewer__action page-view__pick${picking ? " is-picking" : ""}`}
+            aria-label={t(picking ? "page.pickStop" : "page.pick")}
+            aria-pressed={picking}
+            disabled={!live}
+            onClick={() => {
+              const on = !picking;
+              setPicking(on);
+              bridge.pagePick?.(sessionId, on);
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M2.5 1.8 9.6 5.2 6.4 6.3 5.2 9.6Z" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           className="file-viewer__action"

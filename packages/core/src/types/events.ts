@@ -1,6 +1,7 @@
 import type { AgentExecutionReport } from "../bridge/types.js";
 import type { CommandConsequence, RiskLevel } from "../permission-engine.js";
 import type { AgentError } from "./errors.js";
+import type { PickedElement } from "./terminal-record.js";
 import type { ToolCallRequest, ToolResult } from "./tool.js";
 import type { AssistantMessage } from "./transcript.js";
 
@@ -147,4 +148,12 @@ export type AgentEvent =
   // boundary through `BackendTurnHandle.takePendingUserInput`. `id` is the
   // beat's dedup signature; `text` is the raw user text (escaped for the
   // prompt by the serializer like every other user block).
-  | { type: "user.steer"; layer: EventLayer; id: string; text: string };
+  | {
+      type: "user.steer";
+      layer: EventLayer;
+      id: string;
+      text: string;
+      /** Elements picked on the page whose lines `text` holds (ADR 0083
+       *  §4): the steer's user block records them, as a message's does. */
+      picks?: readonly PickedElement[];
+    };

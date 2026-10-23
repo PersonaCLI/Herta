@@ -23,6 +23,7 @@ import {
   type EventBus,
   isAbortError,
   type LastTurnEnd,
+  type PickedElement,
   type ProviderAdapter,
   type RepoContextSnapshot,
   readDispatchJournal,
@@ -1170,6 +1171,7 @@ export class SessionImpl implements Session {
     opts: {
       readonly stagedImageIds?: readonly string[];
       readonly mentions?: readonly string[];
+      readonly picks?: readonly PickedElement[];
     } = {},
   ): Promise<{ readonly turnId: string } | { readonly needsKey: true }> {
     // No DeepSeek key yet (first run, or it was cleared): don't run the turn —
@@ -1229,13 +1231,20 @@ export class SessionImpl implements Session {
         const mentions = (opts.mentions ?? []).filter(
           (p) => typeof p === "string" && p.length > 0 && text.includes(p),
         );
-        await this.driver.runTurn(
-          text,
-          signal,
-          true,
-          userAttachments,
-          mentions.length > 0 ? { mentions } : {},
+        // The same for picked elements (ADR 0083 §4): only lines the text
+        // still holds.
+        const picks = (opts.picks ?? []).filter(
+          (p) =>
+            typeof p?.line === "string" &&
+            typeof p.element === "string" &&
+            typeof p.route === "string" &&
+            p.line.length > 0 &&
+            text.includes(p.line),
         );
+        await this.driver.runTurn(text, signal, true, userAttachments, {
+          ...(mentions.length > 0 ? { mentions } : {}),
+          ...(picks.length > 0 ? { picks } : {}),
+        });
       },
       {
         onFinished: () => this.recordTurnEnd("completed"),
@@ -1460,7 +1469,10 @@ export class SessionImpl implements Session {
    * the commentary after the run — answers `queued`, records nothing, and
    * leaves the caller holding the text for the next turn.
    */
-  async steerText(text: string): Promise<SteerTextResult> {
+  async steerText(
+    text: string,
+    picks?: readonly PickedElement[],
+  ): Promise<SteerTextResult> {
     const trimmed = text.trim();
     if (
       trimmed.length === 0 ||
@@ -1470,11 +1482,21 @@ export class SessionImpl implements Session {
       return { queued: true };
     }
     this.steer.push(trimmed);
+    // Picked elements whose lines the steer still holds (ADR 0083 §4).
+    const held = (picks ?? []).filter(
+      (p) =>
+        typeof p?.line === "string" &&
+        typeof p.element === "string" &&
+        typeof p.route === "string" &&
+        p.line.length > 0 &&
+        trimmed.includes(p.line),
+    );
     this.bus.publish({
       type: "user.steer",
       layer: "actor",
       id: randomUUID(),
       text: trimmed,
+      ...(held.length > 0 ? { picks: held } : {}),
     });
     return { accepted: this.currentTurn.turnId };
   }

@@ -2,7 +2,7 @@ import { memo, type Ref, useMemo } from "react";
 import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
-import { renderMentionText } from "../../lib/mention-text.js";
+import { type MessagePick, renderMentionText } from "../../lib/mention-text.js";
 import { parseLeadingQuotes } from "../../lib/quote-format.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
@@ -64,6 +64,8 @@ export interface UserBubbleProps {
   /** Paths the message mentions with the composer's `@` (ADR 0072 amendment
    *  2026-10-20): drawn as the chips the composer showed. */
   readonly mentions?: readonly string[];
+  /** Elements picked on the page (ADR 0083 §4): drawn as their chips. */
+  readonly picks?: readonly MessagePick[];
 }
 
 /** Everything the bubble needs to draw one attached picture. `caption` is
@@ -205,6 +207,9 @@ export const UserBubble = memo(function UserBubble(
               props.mentions,
               (segment) => renderBanzhuanText(segment, "bubble", lang),
               openFile !== null ? (path) => openFile(path, {}) : undefined,
+              props.picks !== undefined
+                ? { list: props.picks, lang }
+                : undefined,
             )}
           </div>
         )}

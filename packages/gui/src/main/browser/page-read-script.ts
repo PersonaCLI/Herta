@@ -159,6 +159,20 @@ export const READ_SCRIPT = String.raw`(() => {
       const t = document.body ? document.body.innerText : "";
       return { lines: t.slice(0, budget), count: t.length, shown: Math.min(t.length, budget), full: t };
     },
+    // The Trailblazer's pick (ADR 0083 §4): the nearest element one can act
+    // on, a few levels up from what the click hit (a button's own text, say),
+    // as the page names it, with its HTML.
+    describeNode(el) {
+      let n = el && el.nodeType === 1 ? el : el && el.parentElement;
+      let chosen = n;
+      for (let i = 0; n && i < 4; i += 1) {
+        const r = roleOf(n);
+        if (r && INTERACTIVE.has(r)) { chosen = n; break; }
+        n = n.parentElement;
+      }
+      if (!chosen) return null;
+      return { element: describe(chosen), html: String(chosen.outerHTML || "").slice(0, 2000) };
+    },
     locate(ref) {
       const el = refs.get(ref);
       if (!el) return { missing: true };

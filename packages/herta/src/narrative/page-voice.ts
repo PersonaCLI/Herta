@@ -1,4 +1,5 @@
 import type { SystemBlock, SystemBlockDigest } from "@herta/core";
+import { namePickedElements, pageElementWords } from "@herta/core/page-element";
 import type { PromptLang } from "./prompt-lang.js";
 
 /**
@@ -27,125 +28,13 @@ export function isPageDigest(
   );
 }
 
-const ROLE: Record<PromptLang, Record<string, string>> = {
-  zh: {
-    button: "按钮",
-    link: "链接",
-    textbox: "输入框",
-    searchbox: "搜索框",
-    checkbox: "复选框",
-    radio: "单选按钮",
-    combobox: "下拉框",
-    listbox: "列表框",
-    option: "选项",
-    menuitem: "菜单项",
-    menuitemcheckbox: "菜单项",
-    menuitemradio: "菜单项",
-    tab: "标签页",
-    switch: "开关",
-    slider: "滑块",
-    spinbutton: "数字框",
-    treeitem: "树节点",
-    heading: "标题",
-    img: "图片",
-    dialog: "对话框",
-    alert: "提示",
-    navigation: "导航",
-    list: "列表",
-    listitem: "列表项",
-    table: "表格",
-    row: "行",
-    cell: "单元格",
-    form: "表单",
-    paragraph: "段落",
-  },
-  en: {
-    textbox: "text box",
-    searchbox: "search box",
-    combobox: "dropdown",
-    listbox: "list box",
-    menuitem: "menu item",
-    menuitemcheckbox: "menu item",
-    menuitemradio: "menu item",
-    spinbutton: "number box",
-    treeitem: "tree item",
-    img: "image",
-  },
-};
-
-/** One state word of a tree line, as she reads it. */
-function stateWord(state: string, lang: PromptLang): string {
-  const zh = lang !== "en";
-  const quoted = /^(value|selected) "((?:[^"\\]|\\.)*)"$/u.exec(state);
-  if (quoted !== null) {
-    const v = unquote(`"${quoted[2] ?? ""}"`);
-    return quoted[1] === "value"
-      ? zh
-        ? `内容「${v}」`
-        : `holding "${v}"`
-      : zh
-        ? `选的是「${v}」`
-        : `"${v}" selected`;
-  }
-  const level = /^level (\d+)$/u.exec(state);
-  if (level !== null) return zh ? `${level[1]} 级` : state;
-  if (!zh) return state;
-  return (
-    {
-      disabled: "不可用",
-      checked: "已勾选",
-      unchecked: "未勾选",
-      expanded: "已展开",
-      password: "密码框",
-      filled: "已填",
-    }[state] ?? state
-  );
-}
-
-function unquote(q: string): string {
-  try {
-    const v: unknown = JSON.parse(q);
-    return typeof v === "string" ? v : q;
-  } catch {
-    return q.slice(1, -1);
-  }
-}
-
-/**
- * An element as the page names it — a tree line, `button "Sign in"
- * (disabled)`, or a step's target — in her words: `按钮「Sign in」（不可用）`,
- * or in English the role word made readable. `article` puts "the" before an
- * English element named in a sentence.
- */
+/** An element in her words — `@herta/core/page-element`'s, the chip's too. */
 export function pageElementForHerta(
   line: string,
   lang: PromptLang,
   article = false,
 ): string {
-  const m = /^(?:e\d+\s+)?(\S+) ("(?:[^"\\]|\\.)*")(?: \((.*)\))?$/u.exec(
-    line.trim(),
-  );
-  if (m === null) return line.trim();
-  const roleRaw = m[1] ?? "";
-  const role = ROLE[lang][roleRaw] ?? roleRaw;
-  const name = unquote(m[2] ?? '""')
-    .replace(/\s+/g, " ")
-    .trim();
-  const states = (m[3] ?? "")
-    .match(/(?:value|selected) "(?:[^"\\]|\\.)*"|[^,]+/gu)
-    ?.map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .map((s) => stateWord(s, lang));
-  if (lang === "en") {
-    const head = `${article ? "the " : ""}${role}${name !== "" ? ` "${name}"` : ""}`;
-    return states !== undefined && states.length > 0
-      ? `${head} (${states.join(", ")})`
-      : head;
-  }
-  const head = `${role}${name !== "" ? `「${name}」` : ""}`;
-  return states !== undefined && states.length > 0
-    ? `${head}（${states.join("，")}）`
-    : head;
+  return pageElementWords(line, lang, article);
 }
 
 const resizeWords = (d: ActDigest, lang: PromptLang): string => {
@@ -257,6 +146,21 @@ const openVerb = (
         : go === "reload"
           ? "重新加载页面"
           : "打开页面";
+
+/**
+ * A message as Herta reads it once the user picked elements on the page
+ * (ADR 0083 §4): each pick's line — route, element, HTML, what 板砖 reads —
+ * becomes the element in her words, the chip the user saw.
+ */
+export function namePicks(
+  text: string,
+  picks:
+    | readonly { readonly line: string; readonly element: string }[]
+    | undefined,
+  lang: PromptLang,
+): string {
+  return namePickedElements(text, picks, lang);
+}
 
 /** A page as host:port/path and its title. */
 const pageName = (route: string, title: string, lang: PromptLang): string =>

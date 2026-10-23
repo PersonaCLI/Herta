@@ -19,7 +19,12 @@ import {
   type UndoTarget,
   type UndoTurnEditsResult,
 } from "@herta/app-server";
-import { type BrowserHost, errorMessage, type ServerHost } from "@herta/core";
+import {
+  type BrowserHost,
+  errorMessage,
+  type PickedElement,
+  type ServerHost,
+} from "@herta/core";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -767,12 +772,14 @@ export function createSessionService(
         text: string,
         stagedImageIds?: readonly string[],
         rawMentions?: unknown,
+        rawPicks?: unknown,
       ) => {
         // The `@` mentions (ADR 0072 amendment 2026-10-20): strings only —
         // the session keeps the ones the text still holds.
         const mentions = Array.isArray(rawMentions)
           ? rawMentions.filter((m): m is string => typeof m === "string")
           : [];
+        const picks = pickedElements(rawPicks);
         // Length only — chat content must not land in terminal/log capture
         // (audit 2026-07-13 T1.5; mirrors the repo's memory discipline). The
         // staged COUNT is safe for the same reason a file count is.
@@ -795,6 +802,7 @@ export function createSessionService(
               ? { stagedImageIds }
               : {}),
             ...(mentions.length > 0 ? { mentions } : {}),
+            ...(picks.length > 0 ? { picks } : {}),
           });
           if ("needsKey" in result) {
             console.log("[herta] submitText deferred — no DeepSeek key set");
@@ -821,8 +829,11 @@ export function createSessionService(
     // keeps the text and sends it as the next turn.
     handle(
       CMD.steerText,
-      async (_e, text: string): Promise<SteerTextResult> =>
-        (await host?.activeSession?.steerText?.(text)) ?? { queued: true },
+      async (_e, text: string, rawPicks?: unknown): Promise<SteerTextResult> =>
+        (await host?.activeSession?.steerText?.(
+          text,
+          pickedElements(rawPicks),
+        )) ?? { queued: true },
     );
     // 继续 (ADR 0071 §1.4). No session, or one that cannot continue: there
     // is nothing to continue, and the renderer drops its strip.
@@ -1726,4 +1737,24 @@ export function mainNavigationBlock(
     return "turn-in-flight";
   }
   return null;
+}
+
+/** Elements picked on the page, as the renderer sent them (ADR 0083 §4):
+ *  objects with a string line, element and route, nothing else kept. The
+ *  session keeps the ones its text still holds. */
+function pickedElements(raw: unknown): PickedElement[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PickedElement[] = [];
+  for (const p of raw.slice(0, 20)) {
+    if (typeof p !== "object" || p === null) continue;
+    const { line, element, route } = p as Record<string, unknown>;
+    if (
+      typeof line === "string" &&
+      typeof element === "string" &&
+      typeof route === "string" &&
+      line.length > 0
+    )
+      out.push({ line, element, route });
+  }
+  return out;
 }

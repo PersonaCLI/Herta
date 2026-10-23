@@ -274,6 +274,10 @@ export {
   type MarkerSummaryLabels,
 } from "./text/marker-summary.js";
 export {
+  namePickedElements,
+  pageElementWords,
+} from "./text/page-element.js";
+export {
   type PageMarkerLang,
   pageMarkerLine,
   pageMarkerShape,
@@ -299,6 +303,7 @@ export {
   type EvidenceSection,
   type HertaBlock,
   isSystemBlockLabel,
+  type PickedElement,
   SYSTEM_BLOCK_LABELS,
   type SystemBlock,
   type SystemBlockDigest,

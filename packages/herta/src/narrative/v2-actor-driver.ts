@@ -3,6 +3,7 @@ import type {
   CodingAgentRuntime,
   CompletionProviderAdapter,
   EventBus,
+  PickedElement,
   ProviderAdapter,
   SystemBlock,
   SystemBlockLabel,
@@ -487,6 +488,8 @@ export class V2ActorDriver {
       /** The paths mentioned with the composer's `@` (ADR 0072 amendment
        *  2026-10-20), recorded on the user block. */
       readonly mentions?: readonly string[];
+      /** Elements picked on the page (ADR 0083 §4). */
+      readonly picks?: readonly PickedElement[];
     } = {},
   ): Promise<TerminalRecord> {
     const prevLen = this.record.length;
@@ -703,6 +706,9 @@ export class V2ActorDriver {
         ...(userAttachments.length > 0 ? { userAttachments } : {}),
         ...(opts.mentions !== undefined && opts.mentions.length > 0
           ? { userMentions: opts.mentions }
+          : {}),
+        ...(opts.picks !== undefined && opts.picks.length > 0
+          ? { userPicks: opts.picks }
           : {}),
         ...(opts.resume === true ? { resume: true as const } : {}),
         lang: this.deps.lang ?? "zh",

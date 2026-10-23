@@ -6719,6 +6719,17 @@ button.commit-view__path:hover {
   background: var(--ink-a13);
   color: var(--slate-deep);
 }
+/* The picker while it is on (ADR 0083 §4, the owner's pick B): the accent. */
+.file-viewer__action.is-picking,
+.file-viewer__action.is-picking:hover {
+  background: rgba(77, 134, 255, 0.13);
+  color: var(--accent-blue);
+}
+/* A picked element's crosshair takes the chip's ink, not a file's colour. */
+.message-chip--pick .message-chip__icon,
+.composer-chip .pick-icon {
+  color: var(--mention-ink);
+}
 
 /* Code tokens (highlight.js classes) in house ink — both themes read the
    same tokens, so the palette lives here once and follows the ink. */

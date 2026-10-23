@@ -73,6 +73,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     pendingUser,
     pendingUserImages,
     pendingUserMentions,
+    pendingUserPicks,
     retracting,
     retractKeepLen,
     turnStartedAt,
@@ -333,6 +334,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 {...(pendingUserMentions !== null
                   ? { mentions: pendingUserMentions }
                   : {})}
+                {...(pendingUserPicks !== null
+                  ? { picks: pendingUserPicks }
+                  : {})}
                 bubbleRef={pendingUserBubbleRef}
                 {...(pendingEchoImages.length > 0
                   ? { images: pendingEchoImages }
@@ -351,6 +355,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 lang={lang}
                 {...(pendingUserMentions !== null
                   ? { mentions: pendingUserMentions }
+                  : {})}
+                {...(pendingUserPicks !== null
+                  ? { picks: pendingUserPicks }
                   : {})}
                 {...(outgoingClone.images.length > 0
                   ? { images: outgoingClone.images }

@@ -9,6 +9,7 @@ import { classifyBeatTrigger, workflowKindForBeat } from "./beat-policy.js";
 import { buildCompactionBody } from "./compact-record.js";
 import { pageElementForHerta } from "./page-voice.js";
 import { foldedRunLine, systemRowForHerta } from "./record-voice.js";
+import { serializeBlock } from "./serialize.js";
 
 /** The page steps' rows (ADR 0083 §10): what each step leaves in the record,
  *  and how Herta reads it in both languages. */
@@ -445,6 +446,28 @@ describe("folded, a page step is what was done", () => {
     const body = buildCompactionBody([opened, tree, typed, clicked], "zh");
     expect(body.match(/看过页面/gu)?.length).toBe(1);
     expect(body).not.toContain("TypeError");
+  });
+});
+
+describe("an element the user picked on the page (ADR 0083 §4)", () => {
+  it("she reads the element in her words; the line stays in the record for 板砖", () => {
+    const line =
+      'localhost:5173/login · button "Sign in" · <button type="submit" class="btn">Sign in</button>';
+    const user = {
+      kind: "user" as const,
+      text: `这个 ${line} 点了没反应`,
+      picks: [
+        { line, element: 'button "Sign in"', route: "localhost:5173/login" },
+      ],
+    };
+    expect(serializeBlock(user, { lang: "zh" })).toBe(
+      "（开拓者 说）\n这个 按钮「Sign in」 点了没反应\n（/开拓者 说）",
+    );
+    expect(serializeBlock(user, { lang: "en" })).toContain(
+      '这个 button "Sign in" 点了没反应',
+    );
+    expect(serializeBlock(user, { lang: "zh" })).not.toContain("<button");
+    expect(user.text).toContain("<button");
   });
 });
 

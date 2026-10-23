@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PageState } from "../../../shared/browser-page.js";
+import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import {
   createMockHertaBridge,
   type MockHertaBridge,
@@ -8,6 +9,7 @@ import {
 import { OVERLAY_Z, popOverlay, pushOverlay } from "../../lib/overlay-stack.js";
 import { beginPageMotion, endPageMotion } from "../../lib/page-motion.js";
 import { runShortcut } from "../../lib/shortcut-registry.js";
+import type { SessionStore } from "../../store/session-store.js";
 import { renderWithSession } from "../../testing/renderWithSession.js";
 import { FileViewerPanel } from "./FileViewerPanel.js";
 import {
@@ -135,6 +137,67 @@ describe("the browser page tab (ADR 0083)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Close file Browser" }));
     expect(close).toHaveBeenCalledWith("s1");
+  });
+
+  it("the picker: on while live, and a pick goes to the composer (ADR 0083 §4)", async () => {
+    const mock = createMockHertaBridge();
+    const { emit } = withPage(mock);
+    const pick = vi.fn();
+    let picked:
+      | ((e: {
+          sessionId: string;
+          pick: { element: string; route: string; html: string } | null;
+        }) => void)
+      | null = null;
+    Object.assign(mock.bridge, {
+      pagePick: pick,
+      onPagePicked: (cb: NonNullable<typeof picked>) => {
+        picked = cb;
+        return () => {
+          picked = null;
+        };
+      },
+    });
+    let store: SessionStore | null = null;
+    function StoreProbe(): null {
+      store = useHertaBridge().sessionStore;
+      return null;
+    }
+    const h = renderWithSession(
+      <>
+        <StoreProbe />
+        {ui()}
+      </>,
+      { mock },
+    );
+    h.openSession("s1");
+    act(() => {
+      runShortcut("openBrowser");
+    });
+    await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
+    const button = screen.getByLabelText("Pick an element on the page");
+    expect(button).toBeDisabled();
+    emit({});
+    expect(button).not.toBeDisabled();
+    fireEvent.click(button);
+    expect(pick).toHaveBeenLastCalledWith("s1", true);
+    expect(
+      screen.getByLabelText("Stop picking (Esc)").getAttribute("aria-pressed"),
+    ).toBe("true");
+    const element = {
+      element: 'button "Sign in"',
+      route: "localhost:5173/login",
+      html: "<button>Sign in</button>",
+    };
+    act(() => picked?.({ sessionId: "s1", pick: element }));
+    expect((store as SessionStore | null)?.getSnapshot().composerPicks).toEqual(
+      [element],
+    );
+    expect(
+      screen
+        .getByLabelText("Pick an element on the page")
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 
   it("is never evicted by the tab cap", () => {

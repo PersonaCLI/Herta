@@ -1,3 +1,5 @@
+import type { TerminalRecord } from "@herta/core";
+import { pageElementWords } from "@herta/core/page-element";
 import { workspaceRelativeRepoPath } from "@herta/core/repo-path";
 import {
   Fragment,
@@ -17,13 +19,14 @@ import {
 import { useT } from "../../i18n/LocaleProvider.js";
 import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
-import { FileTypeIcon } from "../../lib/file-icons.js";
+import { FileTypeIcon, PickIcon } from "../../lib/file-icons.js";
 import {
   addChipAt,
   brickComplete,
   type ChipSpan,
   chipAt,
   chipify,
+  chipifyPicks,
   chipsAfterEdit,
   expandChips,
   type FileChip,
@@ -31,8 +34,12 @@ import {
   findMentionQuery,
   insertBrick,
   insertChip,
+  insertPickChip,
   type MentionItem,
   mentionItems,
+  type PagePick,
+  pickLine,
+  picksIn,
   pruneChips,
   withoutChip,
 } from "../../lib/file-mention.js";
@@ -112,6 +119,27 @@ function pasteName(mime: string): string {
   return `image.${sub === "jpeg" ? "jpg" : sub.replace(/[^a-z0-9]/gi, "")}`;
 }
 
+/** Every element picked on the page this composer knows of (ADR 0083 §4):
+ *  the ones it placed and the ones the record's messages carry, by line. */
+function knownPicksOf(
+  placed: ReadonlyMap<string, PagePick>,
+  record: TerminalRecord,
+): PagePick[] {
+  const all = new Map(placed);
+  for (const b of record) {
+    if (b.kind !== "user") continue;
+    for (const p of b.picks ?? []) all.set(p.line, p);
+  }
+  return [...all.values()];
+}
+
+/** A picked element's chip label: the element in the session's words, as
+ *  Herta reads it (`按钮「Sign in」`). */
+const pickLabelIn =
+  (lang: "zh" | "en") =>
+  (pick: PagePick): string =>
+    pageElementWords(pick.element, lang);
+
 /**
  * The highlight layer's text with its chips drawn (ADR 0072 amendment
  * 2026-10-20). A chip keeps its token's glyphs — the `@` turns invisible and
@@ -138,11 +166,15 @@ function renderWithChips(
       <span key={`c${s.start}`} className="composer-chip" data-chip={i}>
         <span className="composer-chip__at">
           @
-          <FileTypeIcon
-            path={s.chip.path}
-            dir={s.chip.dir === true}
-            className="composer-chip__icon"
-          />
+          {s.chip.pick !== undefined ? (
+            <PickIcon className="composer-chip__icon" />
+          ) : (
+            <FileTypeIcon
+              path={s.chip.path}
+              dir={s.chip.dir === true}
+              className="composer-chip__icon"
+            />
+          )}
         </span>
         {text.slice(s.start + 1, s.end)}
       </span>,
@@ -261,46 +293,50 @@ function ChipMenu(props: {
         }
       }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: hover only opens the submenu; the Copy button inside is its keyboard and click control. */}
-      <div
-        className="composer-chip-menu__sub-wrap"
-        onMouseEnter={() => props.onCopyOpen(true)}
-        onMouseLeave={() => props.onCopyOpen(false)}
-      >
-        <button
-          ref={copyRef}
-          type="button"
-          role="menuitem"
-          aria-haspopup="menu"
-          aria-expanded={props.copyOpen}
-          className="composer-chip-menu__item has-sub"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => props.onCopyOpen(!props.copyOpen)}
-        >
-          {t("composer.chip.copy")}
-          <span className="composer-chip-menu__chevron" aria-hidden="true">
-            ›
-          </span>
-        </button>
-        {props.copyOpen && (
+      {props.chip.pick === undefined && (
+        <>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: hover only opens the submenu; the Copy button inside is its keyboard and click control. */}
           <div
-            ref={subRef}
-            className="composer-chip-menu composer-chip-menu--sub"
-            role="menu"
+            className="composer-chip-menu__sub-wrap"
+            onMouseEnter={() => props.onCopyOpen(true)}
+            onMouseLeave={() => props.onCopyOpen(false)}
           >
-            {item(t("composer.chip.copyRelative"), props.onCopyRelative)}
-            {item(t("composer.chip.copyAbsolute"), props.onCopyAbsolute)}
-            {item(t("composer.chip.copyName"), props.onCopyName)}
+            <button
+              ref={copyRef}
+              type="button"
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={props.copyOpen}
+              className="composer-chip-menu__item has-sub"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => props.onCopyOpen(!props.copyOpen)}
+            >
+              {t("composer.chip.copy")}
+              <span className="composer-chip-menu__chevron" aria-hidden="true">
+                ›
+              </span>
+            </button>
+            {props.copyOpen && (
+              <div
+                ref={subRef}
+                className="composer-chip-menu composer-chip-menu--sub"
+                role="menu"
+              >
+                {item(t("composer.chip.copyRelative"), props.onCopyRelative)}
+                {item(t("composer.chip.copyAbsolute"), props.onCopyAbsolute)}
+                {item(t("composer.chip.copyName"), props.onCopyName)}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {props.onOpenViewer !== undefined &&
-        item(t("composer.chip.openViewer"), props.onOpenViewer)}
-      {props.onOpenDefault !== undefined &&
-        item(t("composer.chip.openDefault"), props.onOpenDefault)}
-      {props.onReveal !== undefined &&
-        item(t("composer.chip.reveal"), props.onReveal)}
-      <div className="composer-chip-menu__sep" aria-hidden="true" />
+          {props.onOpenViewer !== undefined &&
+            item(t("composer.chip.openViewer"), props.onOpenViewer)}
+          {props.onOpenDefault !== undefined &&
+            item(t("composer.chip.openDefault"), props.onOpenDefault)}
+          {props.onReveal !== undefined &&
+            item(t("composer.chip.reveal"), props.onReveal)}
+          <div className="composer-chip-menu__sep" aria-hidden="true" />
+        </>
+      )}
       {item(t("composer.chip.remove"), props.onRemove, " is-danger")}
     </div>
   );
@@ -335,6 +371,7 @@ export function Composer(): JSX.Element {
     restagedImages,
     prediction,
     composerQuotes,
+    composerPicks,
   } = useSessionSelector(
     (s) => ({
       status: s.status,
@@ -350,6 +387,7 @@ export function Composer(): JSX.Element {
       restagedImages: s.restagedImages,
       prediction: s.prediction,
       composerQuotes: s.composerQuotes,
+      composerPicks: s.composerPicks,
     }),
     shallowEqualObjects,
   );
@@ -417,6 +455,9 @@ export function Composer(): JSX.Element {
   const chipsRef = useRef(chips);
   chipsRef.current = chips;
   const chipSpans = useMemo(() => findChipSpans(text, chips), [text, chips]);
+  // Elements picked on the page (ADR 0083 §4), by line: a line that comes
+  // back as words — a hold, a rewind, a recall — still goes as a pick.
+  const placedPicks = useRef(new Map<string, PagePick>());
   /** The chip menu: which chip, and where it opens (over the chip). */
   const [chipMenu, setChipMenu] = useState<{
     readonly span: ChipSpan;
@@ -609,6 +650,12 @@ export function Composer(): JSX.Element {
     const staged = images.take();
     // Optimistic echo + dispatch. With no DeepSeek key set, the backend
     // reports needsKey and submitMessage opens the no-key onboarding card.
+    // The elements picked on the page go as their lines, recorded as picks
+    // (ADR 0083 §4) — a chip's and a line that came back as words alike.
+    const picks = picksIn(expanded.text, [
+      ...expanded.picks,
+      ...knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+    ]);
     submitMessage(
       bridge,
       sessionStore,
@@ -616,6 +663,7 @@ export function Composer(): JSX.Element {
       staged.length > 0 ? staged : undefined,
       undefined,
       expanded.mentions.length > 0 ? expanded.mentions : undefined,
+      picks.length > 0 ? picks : undefined,
     );
     setText("");
     setChips([]);
@@ -674,13 +722,20 @@ export function Composer(): JSX.Element {
         (stopped || sessionStore.getSnapshot().turnFailed)
       ) {
         sessionStore.clearHeld();
-        const words = takeBack(sessionStore, pending);
+        // Its picked elements come back as chips (ADR 0083 §4).
+        const back = chipifyPicks(
+          takeBack(sessionStore, pending),
+          knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+          pickLabelIn(langRef.current),
+        );
+        const words = back.text;
         // Quotes alone come back as chips with no words: what is typed
         // stays as it was, not pushed down two lines.
         if (words.length > 0) {
           setText((prev) =>
             prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
           );
+          setChips((c) => [...back.chips, ...c]);
           pendingCaret.current = words.length;
         }
       } else if (pending !== null) {
@@ -692,12 +747,18 @@ export function Composer(): JSX.Element {
             ? { left: rect.left + 16, top: rect.top }
             : undefined;
         sessionStore.clearHeld();
+        const picks = picksIn(
+          pending,
+          knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+        );
         submitMessage(
           bridge,
           sessionStore,
           aliasBrickInput(pending, langRef.current),
           undefined,
           launch,
+          undefined,
+          picks.length > 0 ? picks : undefined,
         );
       }
     }
@@ -760,7 +821,14 @@ export function Composer(): JSX.Element {
     const pending = held;
     const steer = bridge.steerText;
     if (pending === null || steer === undefined) return;
-    steer(aliasBrickInput(pending, lang)).then(
+    const picks = picksIn(
+      pending,
+      knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+    );
+    steer(
+      aliasBrickInput(pending, lang),
+      picks.length > 0 ? picks : undefined,
+    ).then(
       (r) => {
         // Accepted: it is in the record now, on its way to 板砖. Queued (the
         // run ended between the click and the call): it stays held and goes
@@ -774,9 +842,16 @@ export function Composer(): JSX.Element {
     const pending = held;
     if (pending === null) return;
     sessionStore.clearHeld();
-    const words = takeBack(sessionStore, pending);
-    if (words.length > 0)
+    const back = chipifyPicks(
+      takeBack(sessionStore, pending),
+      knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+      pickLabelIn(lang),
+    );
+    const words = back.text;
+    if (words.length > 0) {
       setText((prev) => (prev.length > 0 ? `${words}\n\n${prev}` : words));
+      setChips((c) => [...back.chips, ...c]);
+    }
     taRef.current?.focus({ preventScroll: true });
     setFocusWithin(true);
   };
@@ -1068,17 +1143,57 @@ export function Composer(): JSX.Element {
     // In FRONT of whatever is being typed, never over it — the same rule the
     // held card's Edit follows. A rewind replaced an unsent draft outright
     // (UX review 2026-09-22, item 15). Its quotes come back as chips.
-    const words = takeBack(sessionStore, composerDraft);
-    if (words.length > 0)
+    const back = chipifyPicks(
+      takeBack(sessionStore, composerDraft),
+      knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+      pickLabelIn(lang),
+    );
+    const words = back.text;
+    if (words.length > 0) {
       setText((prev) =>
         prev.trim().length > 0 ? `${words}\n\n${prev}` : words,
       );
+      setChips((c) => [...back.chips, ...c]);
+    }
     if (composerDraftImages !== null) images.restore(composerDraftImages);
     setHintActive(false);
     pendingCaret.current = words.length;
     taRef.current?.focus({ preventScroll: true });
     sessionStore.clearComposerDraft();
   }, [composerDraft]);
+
+  // An element picked on the page (ADR 0083 §4) lands as a chip at the
+  // caret, and the caret comes back to the composer.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the picks signal; the text and chips are this render's
+  useEffect(() => {
+    if (composerPicks.length === 0) return;
+    let value = text;
+    let caret = taRef.current?.selectionStart ?? value.length;
+    let next = chips;
+    for (const raw of composerPicks) {
+      const pick: PagePick = {
+        element: raw.element,
+        route: raw.route,
+        line: pickLine(raw),
+      };
+      placedPicks.current.set(pick.line, pick);
+      const placed = insertPickChip(
+        value,
+        caret,
+        pickLabelIn(lang)(pick),
+        pick,
+      );
+      next = addChipAt(next, findChipSpans(value, next), caret, placed.chip);
+      value = placed.text;
+      caret = placed.caret;
+    }
+    sessionStore.clearComposerPicks();
+    setChips(next);
+    setText(value);
+    pendingCaret.current = caret;
+    taRef.current?.focus({ preventScroll: true });
+    setFocusWithin(true);
+  }, [composerPicks]);
 
   // Adopt the pictures main still holds staged (a window that reloaded with
   // pictures in its strip — UX review 2026-09-22, item 7). Runs after the
@@ -1791,9 +1906,11 @@ export function Composer(): JSX.Element {
               if (hit !== null && span !== undefined && chipMenu === null) {
                 armHoverTip(
                   hit.el,
-                  span.chip.dir === true
-                    ? `${span.chip.path}/`
-                    : span.chip.path,
+                  span.chip.pick !== undefined
+                    ? span.chip.pick.route
+                    : span.chip.dir === true
+                      ? `${span.chip.path}/`
+                      : span.chip.path,
                 );
               }
             }}
@@ -1911,8 +2028,13 @@ export function Composer(): JSX.Element {
                     composerQuotes.length === 0
                       ? takeBack(sessionStore, last.text)
                       : quotesBack(last.text).rest;
-                  const back = chipify(words, last.mentions);
-                  setChips(back.chips);
+                  const picked = chipifyPicks(
+                    words,
+                    last.picks ?? [],
+                    pickLabelIn(lang),
+                  );
+                  const back = chipify(picked.text, last.mentions);
+                  setChips([...picked.chips, ...back.chips]);
                   setText(back.text);
                   pendingCaret.current = back.text.length;
                 }

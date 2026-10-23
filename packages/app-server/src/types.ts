@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   ApprovalOverlayState,
   BrowserHost,
+  PickedElement,
   RepoContextSnapshot,
   ServerHost,
   SessionTopic,
@@ -772,6 +773,9 @@ export interface Session {
       /** Paths mentioned with the composer's `@` (ADR 0072 amendment
        *  2026-10-20), recorded on the user block. */
       readonly mentions?: readonly string[];
+      /** Elements picked on the page (ADR 0083 §4), each `line` in the
+       *  text, recorded on the user block. */
+      readonly picks?: readonly PickedElement[];
     },
   ): Promise<SubmitTextResult>;
   /**
@@ -804,7 +808,10 @@ export interface Session {
    * submits it as the next turn. OPTIONAL: fakes and the website demo omit
    * it; the composer then offers no steer.
    */
-  steerText?(text: string): Promise<SteerTextResult>;
+  steerText?(
+    text: string,
+    picks?: readonly PickedElement[],
+  ): Promise<SteerTextResult>;
   /**
    * 继续 (ADR 0071 §1.4): continue the interrupted 板砖 run. OPTIONAL like
    * `steerText`: fakes and the website demo omit it, and no offer is shown.

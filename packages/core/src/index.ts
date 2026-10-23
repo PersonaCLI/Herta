@@ -127,6 +127,22 @@ export {
 } from "./backend/undo-store.js";
 export { ExecutionReportBuilder } from "./bridge/report-builder.js";
 export type * from "./bridge/types.js";
+export {
+  type BrowserFailure,
+  type BrowserHost,
+  BrowserHostError,
+  isLoopbackHost,
+  isLoopbackUrl,
+  type PageActed,
+  type PageAction,
+  type PageElements,
+  type PageNavigated,
+  type PageNavigation,
+  type PageRead,
+  type PageReadRequest,
+  type PageShot,
+  type PageView,
+} from "./browser-host.js";
 export { abortError, errorMessage, isAbortError } from "./errors.js";
 export type { EventBus } from "./event-bus.js";
 export { InMemoryEventBus, publishWithLayer } from "./event-bus.js";

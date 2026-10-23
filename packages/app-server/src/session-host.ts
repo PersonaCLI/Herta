@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
+  type BrowserHost,
   defaultWorkspaceFor,
   deleteSessionFiles,
   dispatchJournalDir,
@@ -88,6 +89,8 @@ class SessionHostImpl implements SessionHost {
    *  says otherwise — the CLI never does. */
   private readonly pdfTranscriptsHolder = { current: true };
   /** Composer predictions (2026-10-10): on unless the user turned them off. */
+  /** The desktop's browser pages (ADR 0083); null without them. */
+  private browserProvider: ((sessionId: string) => BrowserHost) | null = null;
   private readonly predictionsHolder = { current: true };
   /** The models and 板砖's effort (ADR 0081), live the same way: seeded from
    *  the config, read by each session at a turn's or a dispatch's start. */
@@ -387,6 +390,14 @@ class SessionHostImpl implements SessionHost {
     this.pdfTranscriptsHolder.current = enabled;
   }
 
+  /** The desktop's browser pages (ADR 0083): each session opened from here
+   *  on gets its own page through this. */
+  setBrowserProvider(
+    provider: ((sessionId: string) => BrowserHost) | null,
+  ): void {
+    this.browserProvider = provider;
+  }
+
   /** Update the composer-prediction switch (Settings, 2026-10-10). The next
    *  finished turn — in this session or any later one — reads the new
    *  value. Persistence is the caller's job. */
@@ -462,6 +473,7 @@ class SessionHostImpl implements SessionHost {
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
       composerPredictions: () => this.predictionsHolder.current,
       models: () => this.modelsHolder.current,
+      browser: this.browserProvider?.(sessionId) ?? null,
       persister,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     });
@@ -537,6 +549,7 @@ class SessionHostImpl implements SessionHost {
       transcribePdfPictures: () => this.pdfTranscriptsHolder.current,
       composerPredictions: () => this.predictionsHolder.current,
       models: () => this.modelsHolder.current,
+      browser: this.browserProvider?.(opts.sessionId) ?? null,
       persister,
       initialRecord: record,
       // How the last turn ENDED, when the file recorded it. Its absence is

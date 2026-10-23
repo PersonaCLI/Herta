@@ -3,12 +3,14 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionScoped } from "../../hooks/useSessionScoped.js";
+import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useShortcut } from "../../lib/shortcut-registry.js";
 
 /**
@@ -250,6 +252,16 @@ export function FileViewerProvider({
   // Ctrl/⌘+Shift+B opens the panel on the page tab (ADR 0083 §2), where the
   // bridge has a page to show.
   const pageAvailable = bridge.pageShow !== undefined;
+  // 板砖 opened a page in this session: the Trailblazer is shown it, in the
+  // pinned tab (ADR 0083 §6 — "opens the page tab if none is open").
+  const sessionId = useSessionSelector((s) => s.sessionId);
+  useEffect(
+    () =>
+      bridge.onPageOpen?.((sid) => {
+        if (sid === sessionId) openRef(PAGE_TAB_PATH, { kind: "page" });
+      }),
+    [bridge, sessionId, openRef],
+  );
   useShortcut(
     "openBrowser",
     () => {

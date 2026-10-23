@@ -395,7 +395,29 @@ function createWindow(): BrowserWindow {
   // `before-quit` can hold app exit until the session flushes (a window close
   // mid-stream raced `app.quit()` against the async closeActiveSession —
   // persistence inside it could be truncated).
+  // The browser pages of this window (ADR 0083): main owns them, and the
+  // session service hands each session its page for 板砖's steps.
+  const pages = new PageHost(
+    win,
+    {
+      state: (state) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pageState, state);
+      },
+      command: (id) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pageCommand, id);
+      },
+      opened: (sessionId) => {
+        if (!win.webContents.isDestroyed())
+          win.webContents.send(EVT.pageOpen, sessionId);
+      },
+    },
+    process.platform === "darwin",
+  );
+  registerPageHandlers(pages);
   const service = createSessionService(win.webContents, win, {
+    browser: pages,
     // Settings → Language: the tray tooltip is OS-rendered on hover, so it
     // must be re-pushed when the locale changes (user 2026-07-04 — it stayed
     // 黑塔 after switching to English until restart). The menu labels need the
@@ -472,22 +494,6 @@ function createWindow(): BrowserWindow {
       tray?.refreshMenu();
     }
   });
-  // The browser pages of this window (ADR 0083): main owns them.
-  const pages = new PageHost(
-    win,
-    {
-      state: (state) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pageState, state);
-      },
-      command: (id) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pageCommand, id);
-      },
-    },
-    process.platform === "darwin",
-  );
-  registerPageHandlers(pages);
 
   win.on("closed", () => {
     if (mainWindow === win) {

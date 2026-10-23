@@ -474,6 +474,8 @@ describe("no tool replaces a file unrecorded", () => {
       .map((s) => s.file)
       .sort();
     expect(plain).toEqual([
+      // The page steps' store: whole trees and screenshots (ADR 0083 §11).
+      "browser/index.ts",
       "digest-document/index.ts",
       "run-command/logger.ts",
       "testing/tmp-workspace.ts",

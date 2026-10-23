@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   ApprovalOverlayState,
+  BrowserHost,
   RepoContextSnapshot,
   SessionTopic,
   TerminalRecord,
@@ -640,6 +641,13 @@ export interface SessionHost {
    *  finished turn, in any session, reads it — no restart. On until set.
    *  Persistence is the caller's job. */
   setComposerPredictions(enabled: boolean): void;
+  /** The desktop's browser pages (ADR 0083): each session opened after this
+   *  gets its own page from the provider, and the page steps with it. Null
+   *  takes the provider away. OPTIONAL: a host without pages (the CLI's)
+   *  has no provider to take. */
+  setBrowserProvider?(
+    provider: ((sessionId: string) => BrowserHost) | null,
+  ): void;
   /** Update the models and 板砖's effort live (ADR 0081): Herta's model
    *  applies from the next turn, 板砖's model and effort from the next
    *  dispatch — in this session or any later one. A field left out keeps its

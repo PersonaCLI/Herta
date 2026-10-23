@@ -59,6 +59,21 @@ export {
   msysGroupWinpids,
 } from "./bash/msys-processes.js";
 export type { BashInput } from "./bash/schema.js";
+export {
+  BROWSER_STORE_DIR,
+  type BrowserActData,
+  type BrowserNavigateData,
+  type BrowserReadData,
+  type BrowserScreenshotData,
+  browserActTool,
+  browserNavigateTool,
+  browserReadTool,
+  browserScreenshotTool,
+  createBrowserTools,
+  MAX_SCREENSHOTS,
+  pageRoute,
+  registerBrowserRules,
+} from "./browser/index.js";
 // Exported for the attachment ingest (ADR 0033): the denylist must apply to
 // the SOURCE file at the door, because safeStoredName's hash suffix means the
 // stored name (`id_rsa-ab12cd34`) no longer matches the basename rules — a

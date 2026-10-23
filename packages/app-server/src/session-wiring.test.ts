@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AskResolver } from "@herta/core";
+import type { AskResolver, BrowserHost } from "@herta/core";
 import { FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -289,6 +289,66 @@ describe("createBackendStack", () => {
       .map((t) => t.name);
     expect(without).not.toContain("web_search");
     expect(without).not.toContain("web_fetch");
+  });
+
+  it("mounts the page steps with a browser page: loopback free, another host refused, and act and screenshot follow the model's eyes (ADR 0083)", async () => {
+    let model = "deepseek-v4-pro";
+    let url: string | null = null;
+    const browser = {
+      sessionKey: "s",
+      currentUrl: () => url,
+    } as unknown as BrowserHost;
+    const build = (page: BrowserHost | null) =>
+      createBackendStack({
+        wsHolder: { current: mkWorkspace() },
+        workspaceRoot: mkWorkspace(),
+        lang: "zh",
+        wantMinimal: false,
+        backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: () => model,
+        digestModel: null,
+        browser: page,
+        makeAsk: () => noAsk,
+      });
+    const stack = build(browser);
+    stack.runtimeFactory();
+    const names = (): string[] => stack.backendTools.list().map((t) => t.name);
+    for (const tool of [
+      "browser_navigate",
+      "browser_read",
+      "browser_act",
+      "browser_screenshot",
+    ])
+      expect(names()).toContain(tool);
+    const actSchema = (): string =>
+      JSON.stringify(
+        stack.backendTools.get("browser_act")?.schema().inputSchema,
+      );
+    // Pro reads no images: no positions to give.
+    expect(actSchema()).not.toContain('"x"');
+    model = "deepseek-flash";
+    stack.runtimeFactory();
+    expect(actSchema()).toContain('"x"');
+    const ctx = {
+      sessionId: "s",
+      signal: new AbortController().signal,
+      workspaceRoot: mkWorkspace(),
+    } as unknown as Parameters<typeof stack.permissions.check>[1];
+    const check = (tool: string, input: unknown) =>
+      stack.permissions.check({ id: "1", tool, input }, ctx);
+    expect(
+      (await check("browser_navigate", { url: "localhost:5173" })).kind,
+    ).toBe("allow");
+    expect(
+      (await check("browser_navigate", { url: "https://example.com" })).kind,
+    ).toBe("deny");
+    url = "https://github.com/login";
+    expect((await check("browser_read", { mode: "tree" })).kind).toBe("deny");
+    // Without a page, none of them.
+    const without = build(null)
+      .backendTools.list()
+      .map((t) => t.name);
+    expect(without.some((n) => n.startsWith("browser_"))).toBe(false);
   });
 
   // ADR 0044: the standard contract on a Windows host carries the host note

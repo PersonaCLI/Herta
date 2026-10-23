@@ -160,6 +160,7 @@ const bridge: HertaBridge = {
     ipcRenderer.invoke(CMD.pageOpenExternal, sessionId),
   onPageState: (cb) => subscribe(EVT.pageState, cb),
   onPageCommand: (cb) => subscribe(EVT.pageCommand, cb),
+  onPageOpen: (cb) => subscribe(EVT.pageOpen, cb),
   onWorkspace: (cb) => subscribe(EVT.workspace, cb),
   onRepo: (cb) => subscribe(EVT.repo, cb),
   onResume: (cb) => subscribe(EVT.resume, cb),

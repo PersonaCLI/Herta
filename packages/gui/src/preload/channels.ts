@@ -119,6 +119,7 @@ export const EVT = {
   closeRequested: "app:closeRequested",
   pageState: "page:stateChanged",
   pageCommand: "page:command",
+  pageOpen: "page:open",
   update: "update:state",
   voiceModel: "voice:model",
   voiceMinimax: "voice:minimax",

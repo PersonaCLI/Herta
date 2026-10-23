@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import {
   type AgentEvent,
   type ApprovalOverlayState,
+  type BrowserHost,
   defaultWorkspaceFor,
   dispatchJournalPath,
   type EventBus,
@@ -2021,6 +2022,9 @@ export class SessionImpl implements Session {
      *  holder, 2026-10-10). Absent = off: a host that offers no switch
      *  (tests, the CLI) makes no prediction calls. */
     composerPredictions?: () => boolean;
+    /** The session's browser page (ADR 0083), from the host's provider.
+     *  Absent = no page steps (tests, the CLI). */
+    browser?: BrowserHost | null;
     /** Live getter for the models and 板砖's effort (from the host's holder,
      *  ADR 0081). Absent = the config's, fixed (tests). */
     models?: () => SessionModels;
@@ -2167,6 +2171,8 @@ export class SessionImpl implements Session {
         deps.providerOverrides === undefined
           ? defaultWebClient(apiKey, baseUrl)
           : null,
+      // The page the Trailblazer watches (ADR 0083), when the host has one.
+      browser: opts.browser ?? null,
       makeAsk: ({ cache, workspacePermissions }) => {
         overlayResolver = new OverlayAskResolver({
           cache,

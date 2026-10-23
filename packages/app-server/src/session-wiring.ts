@@ -30,6 +30,7 @@ import {
   type AskResolver,
   BackendContextBuilder,
   type BackendContract,
+  type BrowserHost,
   CodingAgentRuntime,
   type CompletionProviderAdapter,
   darwinBackendHostNote,
@@ -85,6 +86,10 @@ import {
   deepseekWebClient,
 } from "@herta/providers";
 import {
+  browserActTool,
+  browserNavigateTool,
+  browserReadTool,
+  browserScreenshotTool,
   createMinimalTools,
   createMvpTools,
   type DigestModel,
@@ -97,6 +102,7 @@ import {
   PersistentShell,
   primeShellPaths,
   probeRepoState,
+  registerBrowserRules,
   registerEditFileRule,
   registerMinimalRules,
   registerRunCommandRule,
@@ -285,6 +291,9 @@ export interface BackendStackOpts {
    *  (§4 — the environment decides, never a preference); absent or null
    *  leaves the tools out (tests, labs). */
   readonly webClient?: WebClient | null;
+  /** The session's browser page (ADR 0083): the desktop's main hands one
+   *  in, and the page steps mount with their rules. The CLI has none. */
+  readonly browser?: BrowserHost | null;
   /** Test seam for the host-note decision (ADR 0044); defaults to
    *  `process.platform`. On "win32" the STANDARD contract carries
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
@@ -495,6 +504,14 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   }
   // Neither web tool asks (ADR 0080 §3); the rule says so explicitly.
   if (opts.webClient != null) registerWebRules(permissions);
+  // The page steps (ADR 0083 §6–§7): loopback only, judged before each step.
+  const browser = opts.browser ?? null;
+  if (browser !== null) {
+    backendTools.register(browserNavigateTool({ host: browser }));
+    backendTools.register(browserReadTool({ host: browser }));
+    registerBrowserRules(permissions, browser);
+  }
+  let browserEyes: boolean | null = null;
 
   // `view_image` follows the model (ADR 0048 §5), checked when a dispatch
   // starts (ADR 0081) — a model switched in Settings mounts or drops it for
@@ -504,6 +521,18 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     const have = backendTools.get("view_image") !== undefined;
     if (want && !have) backendTools.register(viewImageToolFor({ bashPath }));
     else if (!want && have) backendTools.unregister("view_image");
+    // The page's act and screenshot steps follow it too: a position from a
+    // screenshot, and the picture itself, only for a model that reads
+    // images (ADR 0083 §6) — at the same boundary.
+    if (browser !== null && browserEyes !== want) {
+      backendTools.unregister("browser_act");
+      backendTools.unregister("browser_screenshot");
+      backendTools.register(browserActTool({ host: browser, eyes: want }));
+      backendTools.register(
+        browserScreenshotTool({ host: browser, eyes: want }),
+      );
+      browserEyes = want;
+    }
   };
 
   const runtimeFactory = (): CodingAgentRuntime => {

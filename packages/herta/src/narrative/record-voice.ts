@@ -680,6 +680,16 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     findings_cap: "结论记得太多了",
     digest_failed: "通读失败",
     permission_failed: "权限检查出了错",
+    // The page steps (ADR 0083 §10).
+    browser_no_page: "还没有打开页面",
+    browser_off_loopback: "这个地址不在本机",
+    browser_scheme: "这种地址打不开",
+    stale_ref: "页面变了，那个元素已经对不上",
+    browser_no_ref: "页面上没有那个元素",
+    browser_timeout: "页面没在 15 秒内打开",
+    browser_load_failed: "那个地址没有回应",
+    browser_password_refused: "密码只在本机的页面上输入",
+    browser_unavailable: "页面不在了",
   },
   en: {
     invalid_input: "bad arguments",
@@ -723,6 +733,16 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     findings_cap: "too many findings recorded",
     digest_failed: "the read-through failed",
     permission_failed: "the permission check failed",
+    browser_no_page: "no page was open yet",
+    browser_off_loopback: "that address is not on this machine",
+    browser_scheme: "that kind of address does not open",
+    stale_ref: "the page changed, and that element no longer matches",
+    browser_no_ref: "the page has no such element",
+    browser_timeout: "the page did not open within 15 seconds",
+    browser_load_failed: "nothing answered at that address",
+    browser_password_refused:
+      "a password is typed only on this machine's pages",
+    browser_unavailable: "the page went away",
   },
 };
 

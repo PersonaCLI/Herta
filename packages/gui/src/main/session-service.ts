@@ -19,7 +19,7 @@ import {
   type UndoTarget,
   type UndoTurnEditsResult,
 } from "@herta/app-server";
-import { errorMessage } from "@herta/core";
+import { type BrowserHost, errorMessage } from "@herta/core";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -599,7 +599,14 @@ export interface SessionService {
 }
 
 /** The main-side hooks the Settings rows fire (see settings-ipc.ts). */
-export type SessionServiceHooks = SettingsHooks;
+export type SessionServiceHooks = SettingsHooks & {
+  /** The window's browser pages (ADR 0083): each session gets its page's
+   *  driver for 板砖's steps, and a deleted session's page closes. */
+  readonly browser?: {
+    driverFor(sessionId: string): BrowserHost;
+    closeSession(sessionId: string): void;
+  };
+};
 
 /** Wires the SessionHost + ipcMain handlers to a single window's webContents.
  *  Single-window assumption for Slice 4. */
@@ -910,7 +917,9 @@ export function createSessionService(
     handle(CMD.deleteSession, async (_e, id: string) => {
       // Same id gate as CMD.open — deleteSession feeds rmSync path joins.
       if (!isSafeSessionId(id)) return { ok: false, wasActive: false };
-      return activation.deleteAndReconcile(id);
+      const result = await activation.deleteAndReconcile(id);
+      if (result.ok) hooks.browser?.closeSession(id);
+      return result;
     });
     // Rename and export (ADR 0072 §3), from the sidebar's session menu —
     // any session, open or not. Same id gate: both join transcript paths.
@@ -1496,6 +1505,15 @@ export function createSessionService(
       );
       // And the composer-prediction switch (2026-10-10), before any turn.
       host.setComposerPredictions(composerPredictionsEnabled(startupSettings));
+      // The window's browser pages (ADR 0083), for 板砖's page steps. Until
+      // the steps have their record rows (build step 5), Herta would not see
+      // what they did (D7), so they mount only under HERTA_BROWSER_STEPS=1.
+      const browser = hooks.browser;
+      host.setBrowserProvider?.(
+        browser !== undefined && process.env.HERTA_BROWSER_STEPS === "1"
+          ? (sid) => browser.driverFor(sid)
+          : null,
+      );
       // Launch lands on the connect screen (接入黑塔空间站) rather than
       // auto-resuming the latest session: the user explicitly opens one from the
       // sidebar or starts a new one from the connect button (user 2026-06-20).

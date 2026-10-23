@@ -1,9 +1,7 @@
-import { monitorEventLoopDelay } from "node:perf_hooks";
 import {
   type BrowserWindow,
   type NativeImage,
   type Session,
-  screen,
   session,
   shell,
   WebContentsView,
@@ -16,6 +14,7 @@ import {
   typedPageUrl,
 } from "../../shared/browser-page.js";
 import type { ShortcutId } from "../../shared/shortcuts.js";
+import { PageDriver, PageInstrument } from "./page-driver.js";
 import { appCommandForPageKey } from "./page-keys.js";
 
 /** The page's own persistent partition, apart from the app's session
@@ -28,6 +27,12 @@ export const MAX_LIVE_PAGES = 3;
 
 /** The page's corner radius, the page tab body's own (reference-ux.css). */
 const PAGE_RADIUS_PX = 10;
+
+/** Where a parked page waits: on the window, outside what it shows. */
+const PARK_X = -30_000;
+/** A page 板砖 opens before the Trailblazer has shown it lays out at this
+ *  size until the tab reports its own. */
+const DEFAULT_SIZE = { width: 1024, height: 768 } as const;
 
 /** The page partition, hardened once: every permission request denied
  *  (camera, microphone, location, notifications, clipboard read), and
@@ -45,13 +50,15 @@ export function pageSession(): Session {
 
 interface LivePage {
   readonly view: WebContentsView;
+  readonly instrument: PageInstrument;
   lastShown: number;
+  size: { width: number; height: number };
 }
 
 /** How often the shown page's still frame is refreshed. A page taken off
  *  the window cannot be captured, so the frame a freeze shows is the last
- *  one taken while it was on (spike, 2026-10-23). The capture is an async
- *  readback, ~6–8 ms; nothing is encoded until a freeze asks for it. */
+ *  one taken while it was shown (spike, 2026-10-23). The capture is an
+ *  async readback, ~6–8 ms; nothing is encoded until a freeze asks. */
 const STILL_REFRESH_MS = 1500;
 
 export interface PageHostEvents {
@@ -59,21 +66,30 @@ export interface PageHostEvents {
   readonly state: (state: PageState) => void;
   /** An app command pressed inside the page, kept from it. */
   readonly command: (id: ShortcutId) => void;
+  /** 板砖 opened a page: the Trailblazer is shown it. */
+  readonly opened: (sessionId: string) => void;
 }
 
 /**
  * The browser pages of one window (ADR 0083 §3). Main owns each page: one
- * `WebContentsView` per session, created on its first navigation, laid over
- * the viewer's page tab where the renderer reports it, detached — and left
- * running — when the tab is hidden or the session switches. Closed with the
- * session, the window or the app; past `MAX_LIVE_PAGES` the least recently
- * shown is closed and reloads from its address when shown again.
+ * `WebContentsView` per session, laid over the viewer's page tab where the
+ * renderer reports it. When the tab is hidden the page is PARKED — still on
+ * the window, outside what it shows — so it keeps its layout and 板砖 can
+ * still capture it (a page off the window cannot be captured at all: spike,
+ * 2026-10-23). Another session's page is taken off the window, and keeps
+ * running. Closed with the session, the window or the app; past
+ * `MAX_LIVE_PAGES` the least recently shown is closed and reloads from its
+ * address when shown again.
  */
 export class PageHost {
-  private readonly live = new Map<string, LivePage>();
+  private readonly pages = new Map<string, LivePage>();
   /** A closed page's address, so showing it again reloads it. */
-  private readonly parked = new Map<string, string>();
-  private attached: string | null = null;
+  private readonly addresses = new Map<string, string>();
+  private readonly drivers = new Map<string, PageDriver>();
+  /** The page on the window, and whether it is laid over the tab (shown)
+   *  or parked. */
+  private onWindow: string | null = null;
+  private placed = false;
   /** The shown page's latest still frame, kept as an image. */
   private still: { readonly id: string; readonly image: NativeImage } | null =
     null;
@@ -87,83 +103,180 @@ export class PageHost {
 
   /** Lay the session's page over `bounds` (the renderer's CSS pixels). */
   show(sessionId: string, bounds: PageBounds): void {
-    const page = this.live.get(sessionId) ?? this.revive(sessionId);
+    const page = this.pages.get(sessionId) ?? this.revive(sessionId);
     if (page === null) return;
-    if (this.attached !== null && this.attached !== sessionId) this.hide();
     const z = this.win.webContents.getZoomFactor();
-    page.view.setBounds({
+    const box = {
       x: Math.round(bounds.x * z),
       y: Math.round(bounds.y * z),
       width: Math.max(0, Math.round(bounds.width * z)),
       height: Math.max(0, Math.round(bounds.height * z)),
-    });
-    if (this.attached !== sessionId) {
-      this.win.contentView.addChildView(page.view);
-      this.attached = sessionId;
-      this.startStills(sessionId, page);
-      if (process.env.HERTA_PAGE_PROBE === "1") {
-        const d = screen.getDisplayMatching(this.win.getBounds());
-        probe(
-          "show",
-          0,
-          ` · css ${JSON.stringify(bounds)} · zoom ${z} · content ${JSON.stringify(this.win.getContentBounds())} · display ${JSON.stringify(d.bounds)} x${d.scaleFactor}`,
-        );
-      }
-    }
+    };
+    this.putOnWindow(sessionId, page);
+    page.view.setBounds(box);
+    page.size = { width: box.width, height: box.height };
     page.lastShown = Date.now();
+    if (!this.placed) {
+      this.placed = true;
+      this.startStills(sessionId, page);
+    }
   }
 
-  /** Take the shown page off the window; it keeps running. */
+  /** The tab is hidden: the page is parked, and keeps running. */
   hide(): void {
-    const id = this.attached;
-    this.attached = null;
-    this.stopStills();
-    if (id === null) return;
-    const page = this.live.get(id);
+    const id = this.onWindow;
+    if (id === null || !this.placed) return;
+    const page = this.pages.get(id);
     if (page === undefined) return;
-    // A page taken off the window keeps the keyboard if it had it, and every
-    // key then went to a page nobody could see — Escape could not close the
-    // cheat sheet opened over it (spike, 2026-10-23). The app takes it back.
-    const hadFocus =
-      !page.view.webContents.isDestroyed() && page.view.webContents.isFocused();
-    this.win.contentView.removeChildView(page.view);
-    if (hadFocus && !this.win.webContents.isDestroyed())
-      this.win.webContents.focus();
+    this.park(page);
   }
 
   /**
-   * Take the shown page off the window at once, and answer with its still
-   * frame (a JPEG data URL) for the renderer to show in its place: an
-   * overlay opening over the viewer, or the divider pressed. At once,
-   * because a native page draws over any overlay, and under the pointer it
-   * takes the mouse from the window (spike, 2026-10-23). The frame is the
-   * last one taken while the page was on; with none yet, one is taken
-   * first.
+   * Park the shown page at once, and answer with its still frame (a JPEG
+   * data URL) for the renderer to show in its place: an overlay opening
+   * over the viewer, or the divider pressed. At once, because a native page
+   * draws over any overlay, and under the pointer it takes the mouse from
+   * the window (spike, 2026-10-23).
    */
   async freeze(): Promise<string | null> {
-    const id = this.attached;
-    const page = id === null ? undefined : this.live.get(id);
-    if (id === null || page === undefined) return null;
-    const t0 = performance.now();
+    const id = this.onWindow;
+    const page = id === null ? undefined : this.pages.get(id);
+    if (id === null || page === undefined || !this.placed) return null;
     let image = this.still?.id === id ? this.still.image : null;
-    if (image === null) {
+    if (image === null)
       image = await page.view.webContents.capturePage().catch(() => null);
-    }
-    if (this.attached === id) this.hide();
+    if (this.onWindow === id && this.placed) this.park(page);
     if (image === null || image.isEmpty()) return null;
-    const url = `data:image/jpeg;base64,${image.toJPEG(85).toString("base64")}`;
-    probe("freeze", performance.now() - t0);
-    return url;
+    return `data:image/jpeg;base64,${image.toJPEG(85).toString("base64")}`;
+  }
+
+  /** The driver 板砖's steps run on, for one session (ADR 0083 §6). */
+  driverFor(sessionId: string): PageDriver {
+    const have = this.drivers.get(sessionId);
+    if (have !== undefined) return have;
+    const driver = new PageDriver(sessionId, {
+      live: () => {
+        const page =
+          this.pages.get(sessionId) ??
+          this.revive(sessionId) ??
+          this.create(sessionId);
+        if (this.onWindow !== sessionId) {
+          this.putOnWindow(sessionId, page);
+          this.park(page);
+        }
+        return { wc: page.view.webContents, instrument: page.instrument };
+      },
+      existing: () => {
+        const page = this.pages.get(sessionId);
+        return page === undefined
+          ? null
+          : { wc: page.view.webContents, instrument: page.instrument };
+      },
+      opened: () => this.events.opened(sessionId),
+    });
+    this.drivers.set(sessionId, driver);
+    return driver;
+  }
+
+  /** The current state of a session's page, or null when it has none. */
+  state(sessionId: string): PageState | null {
+    const page = this.pages.get(sessionId);
+    return page === undefined ? null : stateOf(sessionId, page.view);
+  }
+
+  /** The Trailblazer's URL bar and buttons (§4): anywhere http(s) goes. */
+  navigate(sessionId: string, to: PageNavigation): void {
+    if ("url" in to) {
+      const url = typedPageUrl(to.url);
+      if (url === null) return;
+      const page = this.pages.get(sessionId) ?? this.create(sessionId);
+      void page.view.webContents.loadURL(url).catch(() => undefined);
+      return;
+    }
+    const page = this.pages.get(sessionId);
+    if (page === undefined) return;
+    const wc = page.view.webContents;
+    const history = wc.navigationHistory;
+    if (to.go === "back" && history.canGoBack()) history.goBack();
+    else if (to.go === "forward" && history.canGoForward()) history.goForward();
+    else if (to.go === "reload") wc.reload();
+    else if (to.go === "stop") wc.stop();
+  }
+
+  /** The page's address in the OS browser — read here, never taken from
+   *  the renderer, and only an http(s) one. */
+  async openExternally(sessionId: string): Promise<void> {
+    const url = this.pages.get(sessionId)?.view.webContents.getURL() ?? "";
+    if (/^https?:\/\//i.test(url)) await shell.openExternal(url);
+  }
+
+  /** The session ended (closed, deleted): its page goes. */
+  closeSession(sessionId: string): void {
+    this.addresses.delete(sessionId);
+    this.drivers.delete(sessionId);
+    this.close(sessionId);
+  }
+
+  dispose(): void {
+    this.stopStills();
+    this.still = null;
+    for (const id of [...this.pages.keys()]) this.close(id);
+    this.addresses.clear();
+    this.drivers.clear();
+  }
+
+  /** Put this session's page on the window, taking another's off. */
+  private putOnWindow(sessionId: string, page: LivePage): void {
+    if (this.onWindow === sessionId) return;
+    if (this.onWindow !== null) this.takeOff(this.onWindow);
+    this.win.contentView.addChildView(page.view);
+    this.onWindow = sessionId;
+    this.placed = false;
+  }
+
+  /** Off the window entirely: another session's turn. */
+  private takeOff(sessionId: string): void {
+    const page = this.pages.get(sessionId);
+    if (this.onWindow === sessionId) {
+      this.onWindow = null;
+      this.placed = false;
+      this.stopStills();
+    }
+    if (page === undefined) return;
+    this.giveBackFocus(page);
+    this.win.contentView.removeChildView(page.view);
+  }
+
+  /** Still on the window, outside what it shows, at its last size. */
+  private park(page: LivePage): void {
+    this.placed = false;
+    this.stopStills();
+    this.giveBackFocus(page);
+    const size = page.size;
+    page.view.setBounds({ x: PARK_X, y: 0, ...size });
+  }
+
+  /** A page out of sight keeps the keyboard if it had it, and every key
+   *  then went to a page nobody could see — Escape could not close the
+   *  cheat sheet opened over it (spike, 2026-10-23). The app takes it back. */
+  private giveBackFocus(page: LivePage): void {
+    const wc = page.view.webContents;
+    if (
+      !wc.isDestroyed() &&
+      wc.isFocused() &&
+      !this.win.webContents.isDestroyed()
+    )
+      this.win.webContents.focus();
   }
 
   private startStills(id: string, page: LivePage): void {
     this.stopStills();
     const take = (): void => {
       const wc = page.view.webContents;
-      if (this.attached !== id || wc.isDestroyed()) return;
+      if (this.onWindow !== id || !this.placed || wc.isDestroyed()) return;
       void wc.capturePage().then(
         (image) => {
-          if (this.attached === id && !image.isEmpty())
+          if (this.onWindow === id && !image.isEmpty())
             this.still = { id, image };
         },
         () => undefined,
@@ -178,63 +291,20 @@ export class PageHost {
     this.stillTimer = null;
   }
 
-  /** The current state of a session's page, or null when it has none. */
-  state(sessionId: string): PageState | null {
-    const page = this.live.get(sessionId);
-    return page === undefined ? null : stateOf(sessionId, page.view);
-  }
-
-  navigate(sessionId: string, to: PageNavigation): void {
-    if ("url" in to) {
-      const url = typedPageUrl(to.url);
-      if (url === null) return;
-      const page = this.live.get(sessionId) ?? this.create(sessionId);
-      void page.view.webContents.loadURL(url).catch(() => undefined);
-      return;
-    }
-    const page = this.live.get(sessionId);
-    if (page === undefined) return;
-    const wc = page.view.webContents;
-    const history = wc.navigationHistory;
-    if (to.go === "back" && history.canGoBack()) history.goBack();
-    else if (to.go === "forward" && history.canGoForward()) history.goForward();
-    else if (to.go === "reload") wc.reload();
-    else if (to.go === "stop") wc.stop();
-  }
-
-  /** The page's address in the OS browser — read here, never taken from
-   *  the renderer, and only an http(s) one. */
-  async openExternally(sessionId: string): Promise<void> {
-    const url = this.live.get(sessionId)?.view.webContents.getURL() ?? "";
-    if (/^https?:\/\//i.test(url)) await shell.openExternal(url);
-  }
-
-  /** The session ended (closed, deleted): its page goes. */
-  closeSession(sessionId: string): void {
-    this.parked.delete(sessionId);
-    this.close(sessionId);
-  }
-
-  dispose(): void {
-    this.stopStills();
-    this.still = null;
-    for (const id of [...this.live.keys()]) this.close(id);
-    this.parked.clear();
-  }
-
   private close(sessionId: string): void {
-    const page = this.live.get(sessionId);
+    const page = this.pages.get(sessionId);
     if (page === undefined) return;
-    if (this.attached === sessionId) this.hide();
+    if (this.onWindow === sessionId) this.takeOff(sessionId);
     if (this.still?.id === sessionId) this.still = null;
-    this.live.delete(sessionId);
+    this.pages.delete(sessionId);
+    page.instrument.detach();
     if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
   }
 
   private revive(sessionId: string): LivePage | null {
-    const url = this.parked.get(sessionId);
+    const url = this.addresses.get(sessionId);
     if (url === undefined) return null;
-    this.parked.delete(sessionId);
+    this.addresses.delete(sessionId);
     const page = this.create(sessionId);
     void page.view.webContents.loadURL(url).catch(() => undefined);
     return page;
@@ -283,11 +353,13 @@ export class PageHost {
       event.preventDefault();
       this.events.command(id);
     });
-    if (process.env.HERTA_PAGE_PROBE === "1") {
-      wc.on("did-stop-loading", () => void probeAxTree(view));
-    }
-    const page: LivePage = { view, lastShown: Date.now() };
-    this.live.set(sessionId, page);
+    const page: LivePage = {
+      view,
+      instrument: new PageInstrument(wc),
+      lastShown: Date.now(),
+      size: { ...DEFAULT_SIZE },
+    };
+    this.pages.set(sessionId, page);
     this.capLive(sessionId);
     return page;
   }
@@ -295,9 +367,9 @@ export class PageHost {
   /** Past the cap, the page least recently shown closes; its address is
    *  kept so that showing it again reloads it. */
   private capLive(keep: string): void {
-    while (this.live.size > MAX_LIVE_PAGES) {
+    while (this.pages.size > MAX_LIVE_PAGES) {
       let oldest: [string, LivePage] | null = null;
-      for (const entry of this.live) {
+      for (const entry of this.pages) {
         if (entry[0] === keep) continue;
         if (oldest === null || entry[1].lastShown < oldest[1].lastShown)
           oldest = entry;
@@ -305,7 +377,7 @@ export class PageHost {
       if (oldest === null) return;
       const url = oldest[1].view.webContents.getURL();
       if (pageUrlAllowed(url) && url !== "about:blank")
-        this.parked.set(oldest[0], url);
+        this.addresses.set(oldest[0], url);
       this.close(oldest[0]);
     }
   }
@@ -321,37 +393,4 @@ function stateOf(sessionId: string, view: WebContentsView): PageState {
     canGoBack: wc.navigationHistory.canGoBack(),
     canGoForward: wc.navigationHistory.canGoForward(),
   };
-}
-
-/** Spike measurements (ADR 0083 build step 1), only with HERTA_PAGE_PROBE=1:
- *  how long a still frame takes, and what Chromium's accessibility tree
- *  costs main — the wait, its size, and the longest the event loop stalled. */
-function probe(what: string, ms: number, extra = ""): void {
-  if (process.env.HERTA_PAGE_PROBE !== "1") return;
-  console.log(`[page-probe] ${what} ${ms.toFixed(1)} ms${extra}`);
-}
-
-async function probeAxTree(view: WebContentsView): Promise<void> {
-  const dbg = view.webContents.debugger;
-  try {
-    if (!dbg.isAttached()) dbg.attach("1.3");
-    const lag = monitorEventLoopDelay({ resolution: 1 });
-    lag.enable();
-    const t0 = performance.now();
-    const tree = (await dbg.sendCommand("Accessibility.getFullAXTree")) as {
-      nodes: unknown[];
-    };
-    const waited = performance.now() - t0;
-    const t1 = performance.now();
-    const text = JSON.stringify(tree);
-    const walked = performance.now() - t1;
-    lag.disable();
-    probe(
-      "ax-tree",
-      waited,
-      ` · ${tree.nodes.length} nodes · ${(text.length / 1024).toFixed(0)} KB · walk ${walked.toFixed(1)} ms · max loop stall ${(lag.max / 1e6).toFixed(1)} ms`,
-    );
-  } catch (err) {
-    probe("ax-tree failed", 0, ` · ${String(err)}`);
-  }
 }

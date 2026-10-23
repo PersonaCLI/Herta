@@ -103,7 +103,12 @@ const HARNESS_READ_PREFIXES = [".herta/logs/", ".herta/tool-results/"];
  * internals — 板砖 reads the rest of a page there, quotes it back with
  * `show_excerpt`, and cites it in `report_finding`.
  */
-const ATTACHMENT_READ_PREFIXES = [".herta/attachments/", ".herta/web/"];
+const ATTACHMENT_READ_PREFIXES = [
+  ".herta/attachments/",
+  ".herta/web/",
+  // What the page steps saw: whole trees and screenshots (ADR 0083 §11).
+  ".herta/browser/",
+];
 
 /**
  * Shell-output evidence the model may EXCERPT back to the user (ADR 0036,

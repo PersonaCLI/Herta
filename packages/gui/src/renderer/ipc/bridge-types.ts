@@ -917,6 +917,8 @@ export interface HertaBridge {
   onPageState?(cb: (state: PageState) => void): () => void;
   /** An app shortcut pressed while the page had the focus (§3). */
   onPageCommand?(cb: (id: ShortcutId) => void): () => void;
+  /** 板砖 opened a page in this session (ADR 0083 §6): show its tab. */
+  onPageOpen?(cb: (sessionId: string) => void): () => void;
   onWorkspace(cb: (e: WorkspaceEvent) => void): () => void;
   /** The workspace's repository state (ADR 0058) — the rail's repository
    *  card. OPTIONAL: fakes and the website demo omit the pair, and the card

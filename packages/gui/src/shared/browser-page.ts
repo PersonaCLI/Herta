@@ -1,3 +1,5 @@
+import { isLoopbackHost } from "@herta/core";
+
 /**
  * The browser page (ADR 0083): the shapes main and the renderer share, and
  * the pure rules for where a page may go. The page is a main-owned
@@ -42,17 +44,9 @@ export function pageUrlAllowed(url: string): boolean {
   }
 }
 
-/** A host this machine answers for itself: `localhost`, `*.localhost`,
- *  127.0.0.0/8 and `::1` (ADR 0083 §7). Not ADR 0080's `isLocalHost`, which
- *  counts the LAN as local — right for refusing a fetch, wrong for letting
- *  a browser in. */
-export function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "::1") return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  return v4 !== null && Number(v4[1]) === 127;
-}
+/** The one loopback predicate (ADR 0083 §7) is core's: the rules that let
+ *  板砖's steps in and the URL bar read it alike. */
+export { isLoopbackHost };
 
 /**
  * What the URL bar's text opens, or null: a full `http(s)` URL as it is; a

@@ -2,16 +2,13 @@ import type { SystemBlock } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import {
   projectBackendEvent,
+  ridesDoneMarker,
   workflowLabel,
 } from "./backend-record-projection.js";
 import { classifyBeatTrigger, workflowKindForBeat } from "./beat-policy.js";
 import { buildCompactionBody } from "./compact-record.js";
 import { pageElementForHerta } from "./page-voice.js";
-import {
-  detailForHerta,
-  foldedRunLine,
-  systemRowForHerta,
-} from "./record-voice.js";
+import { foldedRunLine, systemRowForHerta } from "./record-voice.js";
 
 /** The page steps' rows (ADR 0083 §10): what each step leaves in the record,
  *  and how Herta reads it in both languages. */
@@ -289,39 +286,28 @@ describe("the record keeps what came of each step, bounded", () => {
   });
 });
 
-describe("she reads the page steps as what was done (ADR 0083 §10)", () => {
-  it("in Chinese, as the ADR's example reads", () => {
+describe("she reads what 板砖 did on the page, never what the page held (owner 2026-10-23)", () => {
+  it("in Chinese: one line a step", () => {
     expect(read(opened)).toBe("打开页面 localhost:5173/login「Vite + React」");
-    expect(read(tree)).toBe(
-      "页面上能操作的：输入框「Email」、输入框「Password」（密码框）、按钮「Sign in」",
-    );
+    expect(read(tree)).toBe("看了页面上的元素");
     expect(read(typed)).toBe("在输入框「Password」里输入了 ••••••");
-    expect(read(clicked)).toBe(
-      "点了按钮「Sign in」\n控制台 1 个错误：TypeError: Cannot read properties of undefined (reading 'token')",
-    );
-    expect(read(consoleRead)).toBe(
-      "控制台 1 个错误：TypeError: Cannot read properties of undefined (reading 'token') at login.tsx:12",
-    );
-    expect(read(network)).toBe("网络：POST /api/login 500");
-    expect(read(shot)).toBe("截了一张页面图 localhost:5173/login（375×812）");
+    expect(read(clicked)).toBe("点了按钮「Sign in」");
+    expect(read(consoleRead)).toBe("看了控制台");
+    expect(read(network)).toBe("看了网络请求");
+    expect(read(shot)).toBe("截了一张页面图 localhost:5173/login");
   });
 
-  it("in English, the same rows", () => {
+  it("in English, the same", () => {
     expect(read(opened, "en")).toBe(
       'Opened localhost:5173/login, "Vite + React"',
     );
-    expect(read(tree, "en")).toBe(
-      'On the page you can act on: text box "Email", text box "Password" (password), button "Sign in"',
-    );
-    expect(read(clicked, "en")?.split("\n")).toEqual([
-      'Clicked the button "Sign in"',
-      "The console: 1 error — TypeError: Cannot read properties of undefined (reading 'token')",
-    ]);
-    expect(read(network, "en")).toBe("Network: POST /api/login 500");
+    expect(read(tree, "en")).toBe("Read the page's elements");
+    expect(read(clicked, "en")).toBe('Clicked the button "Sign in"');
+    expect(read(network, "en")).toBe("Read the network requests");
     expect(read(typed, "en")).toBe('Typed •••••• into the text box "Password"');
   });
 
-  it("never a ref, a query or a stored path", () => {
+  it("no element list, page text, console line or request — and no ref, query or stored path", () => {
     for (const b of [
       opened,
       tree,
@@ -332,7 +318,12 @@ describe("she reads the page steps as what was done (ADR 0083 §10)", () => {
       shot,
     ]) {
       for (const lang of ["zh", "en"] as const) {
-        const text = read(b, lang) ?? "";
+        const out = systemRowForHerta(b, lang);
+        expect(out?.evidenceDetail).toBeUndefined();
+        const text = out?.body ?? "";
+        expect(text).not.toContain("Email");
+        expect(text).not.toContain("TypeError");
+        expect(text).not.toContain("/api/login");
         expect(text).not.toMatch(/\be\d+\b/u);
         expect(text).not.toContain("token=");
         expect(text).not.toContain(".herta/");
@@ -340,27 +331,19 @@ describe("she reads the page steps as what was done (ADR 0083 §10)", () => {
     }
   });
 
-  it("a read that found nothing says so", () => {
-    const quiet = finished("browser_read", {
-      mode: "console",
-      url: "http://localhost:5173/",
-      title: "",
-      count: 2,
-      truncated: false,
-      text: "[log] a\n[info] b",
-    });
-    expect(read(quiet)).toBe("控制台没有错误（2 条消息）");
-    expect(read(quiet, "en")).toBe("The console: no errors (2 messages)");
-    const none = finished("browser_read", {
-      mode: "find",
-      url: "http://localhost:5173/",
-      title: "",
-      count: 0,
-      truncated: false,
-      query: "Sign up",
-      text: "",
-    });
-    expect(read(none)).toBe("页面上没有名字含「Sign up」的元素");
+  it("nor through the done-marker: a page row's detail is not its tail", () => {
+    for (const b of [tree, consoleRead, network, clicked]) {
+      expect(b.evidenceDetail).toBeDefined();
+      expect(ridesDoneMarker(b)).toBe(false);
+    }
+    expect(
+      ridesDoneMarker({
+        kind: "system",
+        label: "差分协处理器",
+        body: "↳ exit 0 · 1 lines",
+        evidenceDetail: "↳ 输出:\nok",
+      }),
+    ).toBe(true);
   });
 
   it("a step that moved the page, a resize and a history step", () => {
@@ -426,23 +409,8 @@ describe("a finding that cites what a page step stored", () => {
   });
 });
 
-describe("a page row's detail, carried by the done-marker", () => {
-  it("reads its header in her language; the count of what was left out too", () => {
-    const detail = network.evidenceDetail ?? "";
-    expect(detailForHerta(detail, "en", network.evidence)).toBe(
-      "Failed requests: \nPOST /api/login 500",
-    );
-    expect(
-      detailForHerta(
-        '↳ 页面元素:\nbutton "Sign in"\n（另有 4 个未列出）',
-        "en",
-      ),
-    ).toBe('Elements on the page: \nbutton "Sign in"\n(4 more not listed)');
-  });
-});
-
-describe("folded, a page step is what came of it", () => {
-  it("the page looked at, the picture taken, the console and network as found", () => {
+describe("folded, a page step is what was done", () => {
+  it("the page looked at, the picture taken, a step that moved the page", () => {
     expect(foldedRunLine(opened, "zh")).toBe(
       "看过页面 localhost:5173/login「Vite + React」",
     );
@@ -450,23 +418,16 @@ describe("folded, a page step is what came of it", () => {
       'Looked at localhost:5173/login, "Vite + React"',
     );
     expect(foldedRunLine(shot, "zh")).toBe("截过图（localhost:5173/login）");
-    expect(foldedRunLine(consoleRead, "zh")).toBe(
-      "控制台报过 1 个错误（原文不在手边）",
-    );
-    expect(foldedRunLine(network, "en")).toBe(
-      "1 request failed on the network (not at hand)",
-    );
-    // A click that raised an error is remembered; a plain typing is not.
-    expect(foldedRunLine(clicked, "zh")).toBe(
-      "点了按钮「Sign in」，控制台报了 1 个错误",
-    );
+    expect(foldedRunLine(consoleRead, "zh")).toBeNull();
+    expect(foldedRunLine(network, "en")).toBeNull();
+    expect(foldedRunLine(clicked, "zh")).toBeNull();
     expect(foldedRunLine(typed, "zh")).toBeNull();
   });
 
   it("looking at one page twice in a row folds to one line", () => {
     const body = buildCompactionBody([opened, tree, typed, clicked], "zh");
     expect(body.match(/看过页面/gu)?.length).toBe(1);
-    expect(body).toContain("点了按钮「Sign in」，控制台报了 1 个错误");
+    expect(body).not.toContain("TypeError");
   });
 });
 

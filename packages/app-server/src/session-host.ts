@@ -17,6 +17,7 @@ import {
   readSessionTitle,
   readSessionTopics,
   resolveEffectiveWorkspace,
+  type ServerHost,
   type TerminalRecord,
   type TerminalRecordBlock,
   V2RecordPersister,
@@ -39,6 +40,7 @@ import {
   sealOpenDispatch,
 } from "./dispatch-recovery.js";
 import { DreamTrigger } from "./dream-trigger.js";
+import { reapOrphanedServers, ServerJournal } from "./server-recovery.js";
 import { SessionImpl } from "./session.js";
 import {
   DEFAULT_HIT_LIMIT,
@@ -91,6 +93,9 @@ class SessionHostImpl implements SessionHost {
   /** Composer predictions (2026-10-10): on unless the user turned them off. */
   /** The desktop's browser pages (ADR 0083); null without them. */
   private browserProvider: ((sessionId: string) => BrowserHost) | null = null;
+  /** The desktop's launcher (ADR 0083 §5); null without one. */
+  private serverProvider: ((sessionId: string) => ServerHost) | null = null;
+  private serverJournalInstance: ServerJournal | null = null;
   private readonly predictionsHolder = { current: true };
   /** The models and 板砖's effort (ADR 0081), live the same way: seeded from
    *  the config, read by each session at a turn's or a dispatch's start. */
@@ -398,6 +403,14 @@ class SessionHostImpl implements SessionHost {
     this.browserProvider = provider;
   }
 
+  /** The desktop's launcher (ADR 0083 §5): each session opened from here on
+   *  gets its dev servers, and dev_server, through this. */
+  setServerProvider(
+    provider: ((sessionId: string) => ServerHost) | null,
+  ): void {
+    this.serverProvider = provider;
+  }
+
   /** Update the composer-prediction switch (Settings, 2026-10-10). The next
    *  finished turn — in this session or any later one — reads the new
    *  value. Persistence is the caller's job. */
@@ -413,7 +426,29 @@ class SessionHostImpl implements SessionHost {
     this.modelsHolder.current = { ...this.modelsHolder.current, ...models };
   }
 
+  /** The launcher's record of its servers (ADR 0083 §5): the desktop's
+   *  main journals each server it starts here, so a relaunch can end what
+   *  an exit left running. */
+  serverJournal(): ServerJournal {
+    this.serverJournalInstance ??= new ServerJournal(this.serverJournalFile());
+    return this.serverJournalInstance;
+  }
+
+  private serverJournalFile(): string {
+    return join(dispatchJournalDir(this.config.transcriptDir), "servers.json");
+  }
+
   async reapOrphanedProcesses(): Promise<void> {
+    try {
+      const servers = await reapOrphanedServers(this.serverJournalFile());
+      if (servers.ended > 0) {
+        console.log(
+          `[herta] dev servers left by the last exit, ended: ${servers.ended}`,
+        );
+      }
+    } catch (err) {
+      console.error("[herta] reaping dev servers failed:", err);
+    }
     try {
       const reaped = await reapOrphanedDispatches(
         dispatchJournalDir(this.config.transcriptDir),
@@ -474,6 +509,7 @@ class SessionHostImpl implements SessionHost {
       composerPredictions: () => this.predictionsHolder.current,
       models: () => this.modelsHolder.current,
       browser: this.browserProvider?.(sessionId) ?? null,
+      servers: this.serverProvider?.(sessionId) ?? null,
       persister,
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     });
@@ -550,6 +586,7 @@ class SessionHostImpl implements SessionHost {
       composerPredictions: () => this.predictionsHolder.current,
       models: () => this.modelsHolder.current,
       browser: this.browserProvider?.(opts.sessionId) ?? null,
+      servers: this.serverProvider?.(opts.sessionId) ?? null,
       persister,
       initialRecord: record,
       // How the last turn ENDED, when the file recorded it. Its absence is
@@ -559,6 +596,15 @@ class SessionHostImpl implements SessionHost {
       ...(lang !== undefined ? { lang } : {}),
     });
     this._active = this.wrapSession(session);
+    // Servers the last exit left running, ended at this launch: the session
+    // they belonged to hears it (ADR 0083 §5).
+    if (this.serverProvider !== null) {
+      void this.serverJournal()
+        .takeReaped(opts.sessionId)
+        .then((names) => {
+          if (names.length > 0) session.noteServer?.({ kind: "reaped", names });
+        });
+    }
     return this._active;
   }
 

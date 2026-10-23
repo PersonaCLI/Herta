@@ -451,6 +451,13 @@ export function requestCommand(request: PermissionRequest): string | undefined {
       ? command
       : undefined;
   }
+  // A dev server's start runs its launcher entry's argv, which the rule
+  // derived and handed over (ADR 0083 §5): the card shows it, and a review
+  // reads it as it would read run_command's.
+  if (request.call.tool === "dev_server") {
+    const argv = request.argv ?? [];
+    return argv.length > 0 ? argv.join(" ") : undefined;
+  }
   if (request.call.tool !== "run_command") return undefined;
   const argv = (input as { argv?: unknown }).argv;
   if (!Array.isArray(argv) || argv.length === 0) return undefined;

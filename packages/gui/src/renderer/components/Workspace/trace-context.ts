@@ -407,6 +407,8 @@ export interface SegmentTally {
   readonly appPages: readonly string[];
   /** The other page steps: reads, clicks, typing, screenshots. */
   readonly pageSteps: number;
+  /** Dev servers started (ADR 0083 §5), by name, in first-start order. */
+  readonly servers: readonly string[];
 }
 
 export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
@@ -422,6 +424,7 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
   const pages: string[] = [];
   const appPages: string[] = [];
   let pageSteps = 0;
+  const servers: string[] = [];
   for (const op of ops) {
     switch (op.verb) {
       case "Reading":
@@ -475,6 +478,9 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
       case "Taking screenshot":
         pageSteps += 1;
         break;
+      case "Starting dev server":
+        if (!servers.includes(op.arg)) servers.push(op.arg);
+        break;
       default:
         break;
     }
@@ -492,6 +498,7 @@ export function tallySegment(ops: readonly TraceOp[]): SegmentTally {
     pages,
     appPages,
     pageSteps,
+    servers,
   };
 }
 

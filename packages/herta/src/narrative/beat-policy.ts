@@ -59,6 +59,7 @@ export function workflowKindForBeat(tool: string): string | null {
     case "browser_read":
     case "browser_act":
     case "browser_screenshot":
+    case "dev_server":
       return "browser";
     default:
       return null;

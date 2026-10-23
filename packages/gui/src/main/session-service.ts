@@ -19,7 +19,7 @@ import {
   type UndoTarget,
   type UndoTurnEditsResult,
 } from "@herta/app-server";
-import { type BrowserHost, errorMessage } from "@herta/core";
+import { type BrowserHost, errorMessage, type ServerHost } from "@herta/core";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -606,6 +606,15 @@ export type SessionServiceHooks = SettingsHooks & {
     driverFor(sessionId: string): BrowserHost;
     closeSession(sessionId: string): void;
   };
+  /** The window's dev servers (ADR 0083 §5): each session's launcher, for
+   *  dev_server; a deleted session's servers stop. */
+  readonly servers?: {
+    forSession(sessionId: string): ServerHost;
+    closeSession(sessionId: string): void;
+    attachJournal(
+      journal: ReturnType<NonNullable<SessionHost["serverJournal"]>> | null,
+    ): void;
+  };
 };
 
 /** Wires the SessionHost + ipcMain handlers to a single window's webContents.
@@ -918,7 +927,10 @@ export function createSessionService(
       // Same id gate as CMD.open — deleteSession feeds rmSync path joins.
       if (!isSafeSessionId(id)) return { ok: false, wasActive: false };
       const result = await activation.deleteAndReconcile(id);
-      if (result.ok) hooks.browser?.closeSession(id);
+      if (result.ok) {
+        hooks.browser?.closeSession(id);
+        hooks.servers?.closeSession(id);
+      }
       return result;
     });
     // Rename and export (ADR 0072 §3), from the sidebar's session menu —
@@ -1509,6 +1521,12 @@ export function createSessionService(
       const browser = hooks.browser;
       host.setBrowserProvider?.(
         browser !== undefined ? (sid) => browser.driverFor(sid) : null,
+      );
+      // And its dev servers (ADR 0083 §5), journaled for the next launch.
+      const servers = hooks.servers;
+      servers?.attachJournal(host.serverJournal?.() ?? null);
+      host.setServerProvider?.(
+        servers !== undefined ? (sid) => servers.forSession(sid) : null,
       );
       // Launch lands on the connect screen (接入黑塔空间站) rather than
       // auto-resuming the latest session: the user explicitly opens one from the

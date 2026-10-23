@@ -1,8 +1,10 @@
 import { type BrowserOpVerb, browserOpVerb } from "@herta/core/browser-host";
+import { type ServerOpVerb, serverOpVerb } from "@herta/core/server-host";
 
 /** The op verbs a record row can carry for a live call. */
 export type LiveOpVerb =
   | BrowserOpVerb
+  | ServerOpVerb
   | "Reading"
   | "Writing"
   | "Running"
@@ -62,6 +64,6 @@ export function opVerbOf(
     case "web_fetch":
       return "Reading web page";
     default:
-      return browserOpVerb(tool, summary);
+      return browserOpVerb(tool, summary) ?? serverOpVerb(tool, summary);
   }
 }

@@ -196,6 +196,21 @@ export {
 } from "./program-identity.js";
 export { ReadLedger, type ReadLedgerEntry } from "./read-ledger.js";
 export {
+  isServerOpVerb,
+  type LaunchEntry,
+  type ServerFailure,
+  type ServerHost,
+  ServerHostError,
+  type ServerLogs,
+  type ServerOpVerb,
+  type ServerStarted,
+  type ServerStarter,
+  type ServerState,
+  type ServerStatus,
+  serverOpArg,
+  serverOpVerb,
+} from "./server-host.js";
+export {
   isCacheableProgram,
   permissionCacheScope,
   SessionApprovalCache,

@@ -1,16 +1,13 @@
-import type {
-  EvidenceSection,
-  SystemBlock,
-  SystemBlockDigest,
-} from "@herta/core";
+import type { SystemBlock, SystemBlockDigest } from "@herta/core";
 import type { PromptLang } from "./prompt-lang.js";
 
 /**
  * The page steps' rows as Herta reads them (ADR 0083 §10, in ADR 0079's
- * grammar): what 板砖 opened, read, did and saw, in the session's language.
- * A page reads as host, port and path — never a query, a ref or a stored
- * path — its elements by their role words and names, a password masked.
- * Rebuilt from the digest and the evidence, never from the canonical body.
+ * grammar): what 板砖 did on the page, in the session's language — never
+ * what the page held (owner 2026-10-23: the browser is 板砖's work). A page
+ * reads as host, port and path — never a query, a ref or a stored path —
+ * an element by its role word and name, a password masked. Rebuilt from
+ * the digest, never from the canonical body.
  */
 
 type PageDigest = Extract<
@@ -18,7 +15,6 @@ type PageDigest = Extract<
   { kind: "page-open" | "page-read" | "page-act" | "page-shot" }
 >;
 type ActDigest = Extract<SystemBlockDigest, { kind: "page-act" }>;
-type PageSection = Extract<EvidenceSection, { kind: "page" }>;
 
 export function isPageDigest(
   d: SystemBlockDigest | undefined,
@@ -152,36 +148,6 @@ export function pageElementForHerta(
     : head;
 }
 
-const more = (n: number, lang: PromptLang): string =>
-  n > 0
-    ? lang === "en"
-      ? ` (${n} more not listed)`
-      : `（还有 ${n} 个没列出）`
-    : "";
-
-/** A step's console errors (the row's evidence), as lines under it. */
-function consoleLines(
-  errors: number,
-  section: PageSection | undefined,
-  lang: PromptLang,
-): string[] {
-  if (errors === 0 || section === undefined) return [];
-  const items = section.text.split("\n").filter((l) => l.length > 0);
-  const zh = lang !== "en";
-  if (items.length === 1 && section.omitted === 0)
-    return [
-      zh
-        ? `控制台 1 个错误：${items[0]}`
-        : `The console: 1 error — ${items[0]}`,
-    ];
-  return [
-    zh
-      ? `控制台 ${errors} 个错误：${more(section.omitted, lang)}`
-      : `The console: ${errors} errors:${more(section.omitted, lang)}`,
-    ...items,
-  ];
-}
-
 const resizeWords = (d: ActDigest, lang: PromptLang): string => {
   const zh = lang !== "en";
   const scheme =
@@ -299,118 +265,54 @@ const pageName = (route: string, title: string, lang: PromptLang): string =>
     : `${route}${title !== "" ? `「${title}」` : ""}`;
 
 /**
- * One page row as she reads it, from its digest and its evidence. Every
- * page row says something: a read that found nothing says so.
+ * One page row as she reads it: the step, never what a read returned. The
+ * browser is 板砖's work (owner 2026-10-23): a page's elements, its text,
+ * its console and its network are 板砖's working material, as a file's
+ * text is when 板砖 reads one. What 板砖 learns there reaches her through
+ * its findings and its report.
  */
 export function pageRowForHerta(
-  block: SystemBlock,
+  _block: SystemBlock,
   d: PageDigest,
   lang: PromptLang,
 ): string {
   const zh = lang !== "en";
-  const section = block.evidence?.find(
-    (e): e is PageSection => e.kind === "page",
-  );
   switch (d.kind) {
-    case "page-open": {
-      const status =
-        d.status !== null && d.status >= 400
-          ? `${zh ? "，" : ", "}HTTP ${d.status}`
-          : "";
-      return [
-        `${openVerb(d.go, lang)} ${pageName(d.route, d.title, lang)}${status}`,
-        ...consoleLines(d.errors, section, lang),
-      ].join("\n");
-    }
+    case "page-open":
+      return `${openVerb(d.go, lang)} ${pageName(d.route, d.title, lang)}`;
     case "page-act":
-      return [actLine(d, lang), ...consoleLines(d.errors, section, lang)].join(
-        "\n",
-      );
+      return actLine(d, lang);
     case "page-shot":
       return d.region
         ? zh
-          ? `截了页面 ${d.route} 的一块（${d.width}×${d.height}）`
-          : `Took a close-up of part of ${d.route} (${d.width}×${d.height})`
+          ? `截了页面 ${d.route} 的一块`
+          : `Took a close-up of part of ${d.route}`
         : zh
-          ? `截了一张页面图 ${d.route}（${d.width}×${d.height}）`
-          : `Took a screenshot of ${d.route} (${d.width}×${d.height})`;
-    case "page-read": {
-      const lines = (section?.text ?? "")
-        .split("\n")
-        .filter((l) => l.length > 0);
-      const omitted = section?.omitted ?? 0;
+          ? `截了一张页面图 ${d.route}`
+          : `Took a screenshot of ${d.route}`;
+    case "page-read":
       switch (d.mode) {
-        case "tree": {
-          if (lines.length === 0)
-            return zh
-              ? d.all === true
-                ? "页面上什么元素也没有"
-                : "页面上没有能操作的元素"
-              : d.all === true
-                ? "Nothing on the page"
-                : "Nothing on the page to act on";
-          const items = lines.map((l) => pageElementForHerta(l, lang));
+        case "tree":
+          return zh ? "看了页面上的元素" : "Read the page's elements";
+        case "find":
           return zh
-            ? `${d.all === true ? "页面上的元素" : "页面上能操作的"}：${items.join("、")}${more(omitted, lang)}`
-            : `${d.all === true ? "On the page" : "On the page you can act on"}: ${items.join(", ")}${more(omitted, lang)}`;
-        }
-        case "find": {
-          const q = d.query ?? "";
-          if (lines.length === 0)
-            return zh
-              ? `页面上没有名字含「${q}」的元素`
-              : `Nothing on the page is named with "${q}"`;
-          const items = lines.map((l) => pageElementForHerta(l, lang));
-          return zh
-            ? `页面上名字含「${q}」的：${items.join("、")}${more(omitted, lang)}`
-            : `On the page, named with "${q}": ${items.join(", ")}${more(omitted, lang)}`;
-        }
-        case "text": {
-          const text = section?.text ?? "";
-          if (text === "")
-            return zh ? "页面上没有文字" : "The page has no text";
-          return [
-            zh ? "页面文字：" : "The page's text:",
-            text,
-            ...(omitted > 0
-              ? [zh ? "……（后面还有，没贴全）" : "…(more, not shown)"]
-              : []),
-          ].join("\n");
-        }
-        case "console": {
-          const errors = d.failures ?? lines.length;
-          if (errors === 0)
-            return zh
-              ? `控制台没有错误${d.count > 0 ? `（${d.count} 条消息）` : ""}`
-              : `The console: no errors${d.count > 0 ? ` (${d.count} message${d.count === 1 ? "" : "s"})` : ""}`;
-          return consoleLines(errors, section, lang).join("\n");
-        }
-        case "network": {
-          const failed = d.failures ?? lines.length;
-          if (failed === 0)
-            return zh
-              ? `网络：${d.count} 个请求，没有失败的`
-              : `Network: ${d.count} request${d.count === 1 ? "" : "s"}, none failed`;
-          if (lines.length === 1 && omitted === 0)
-            return zh ? `网络：${lines[0]}` : `Network: ${lines[0]}`;
-          return [
-            zh
-              ? `网络：${failed} 个请求失败：${more(omitted, lang)}`
-              : `Network: ${failed} requests failed:${more(omitted, lang)}`,
-            ...lines,
-          ].join("\n");
-        }
+            ? `在页面上找了「${d.query ?? ""}」`
+            : `Looked on the page for "${d.query ?? ""}"`;
+        case "text":
+          return zh ? "读了页面文字" : "Read the page's text";
+        case "console":
+          return zh ? "看了控制台" : "Read the console";
+        case "network":
+          return zh ? "看了网络请求" : "Read the network requests";
       }
-    }
   }
 }
 
 /**
- * A page row folded into what came of it (ADR 0083 §10): the page looked
- * at (`看过页面 localhost:5173/login「Vite + React」`), the picture taken, the
- * console and the network as found, and a step that moved the page or
- * raised errors. Null leaves the row out: a click that changed nothing to
- * remember.
+ * A page row folded (ADR 0083 §10): the page looked at
+ * (`看过页面 localhost:5173/login「Vite + React」`), the picture taken, and
+ * a step that moved the page. Never what a read returned, as above. Null
+ * leaves the row out.
  */
 export function pageFoldLine(d: PageDigest, lang: PromptLang): string | null {
   const zh = lang !== "en";
@@ -420,48 +322,14 @@ export function pageFoldLine(d: PageDigest, lang: PromptLang): string | null {
       : `Looked at ${pageName(route, title, lang)}`;
   switch (d.kind) {
     case "page-open":
-      return `${looked(d.route, d.title)}${
-        d.status !== null && d.status >= 400
-          ? zh
-            ? `（HTTP ${d.status}）`
-            : ` (HTTP ${d.status})`
-          : ""
-      }${d.errors > 0 ? (zh ? `，控制台报了 ${d.errors} 个错误` : `; the console showed ${d.errors} error${d.errors === 1 ? "" : "s"}`) : ""}`;
+      return looked(d.route, d.title);
     case "page-shot":
       return zh ? `截过图（${d.route}）` : `Took a screenshot of ${d.route}`;
     case "page-act":
-      if (!d.navigated && d.errors === 0) return null;
-      return `${actLine(d, lang)}${
-        d.errors > 0
-          ? zh
-            ? `，控制台报了 ${d.errors} 个错误`
-            : `; the console showed ${d.errors} error${d.errors === 1 ? "" : "s"}`
-          : ""
-      }`;
+      return d.navigated ? actLine(d, lang) : null;
     case "page-read":
-      switch (d.mode) {
-        case "console": {
-          const n = d.failures ?? 0;
-          return n === 0
-            ? zh
-              ? "看过控制台，没有错误"
-              : "Checked the console: no errors"
-            : zh
-              ? `控制台报过 ${n} 个错误（原文不在手边）`
-              : `The console showed ${n} error${n === 1 ? "" : "s"} (not at hand)`;
-        }
-        case "network": {
-          const n = d.failures ?? 0;
-          return n === 0
-            ? zh
-              ? "看过网络请求，没有失败的"
-              : "Checked the network: no failed requests"
-            : zh
-              ? `网络上有 ${n} 个请求失败（原文不在手边）`
-              : `${n} request${n === 1 ? "" : "s"} failed on the network (not at hand)`;
-        }
-        default:
-          return looked(d.route, d.title);
-      }
+      return d.mode === "console" || d.mode === "network"
+        ? null
+        : looked(d.route, d.title);
   }
 }

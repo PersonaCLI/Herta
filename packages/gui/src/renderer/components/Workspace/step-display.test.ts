@@ -1009,3 +1009,53 @@ describe("stepDisplayBody — the page steps (ADR 0083 §10)", () => {
     );
   });
 });
+
+describe("stepDisplayBody — the launcher (ADR 0083 §5)", () => {
+  const tz = (key: MessageKey): string => zh[key];
+  const te = (key: MessageKey): string => en[key];
+
+  it("names the server and where it answers; who started it when it was you", () => {
+    expect(
+      stepDisplayBody(
+        sys("Starting dev server web", {
+          kind: "op",
+          verb: "Starting dev server",
+          arg: "web",
+        }),
+        tz,
+      ),
+    ).toBe("启动开发服务器 web");
+    const ready = sys("↳ dev server web: ready at localhost:5173", {
+      kind: "server",
+      action: "start",
+      by: "banzhuan",
+      name: "web",
+      command: "npm run dev",
+      route: "localhost:5173",
+      already: false,
+    });
+    expect(stepDisplayBody(ready, tz)).toBe(
+      "↳ 开发服务器 web · 已就绪 · localhost:5173",
+    );
+    const yours = sys("开拓者启动了开发服务器 web", {
+      kind: "server",
+      action: "start",
+      by: "trailblazer",
+      name: "web",
+      command: "npm run dev",
+      route: "localhost:5173",
+      already: false,
+    });
+    expect(stepDisplayBody(yours, te)).toBe(
+      "↳ dev server web · started by you · localhost:5173",
+    );
+    const reaped = sys("上次应用退出时…", {
+      kind: "server",
+      action: "reaped",
+      names: ["web", "api"],
+    });
+    expect(stepDisplayBody(reaped, te)).toBe(
+      "↳ Dev servers left running at the last exit were stopped: web, api",
+    );
+  });
+});

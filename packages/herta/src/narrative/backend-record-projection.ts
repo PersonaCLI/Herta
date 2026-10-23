@@ -27,11 +27,15 @@ import {
   composeMarkerSummary,
   countDiffLines as countDiffLinesShared,
   type MarkerSummaryLabels,
+  serverOpArg,
+  serverOpVerb,
 } from "@herta/core";
 import { boundedTail } from "./bounded-tail.js";
 import { sanitizeActorText } from "./escape.js";
 import type { GitOutcome } from "./git-outcome.js";
 import { projectPageResult } from "./page-record-projection.js";
+import { isPageDigest } from "./page-voice.js";
+import { projectServerResult } from "./server-record-projection.js";
 
 /** system-body sanitize for one string field (see `sanitizeSystemBlock`). */
 export function cleanBody(s: string): string {
@@ -180,6 +184,33 @@ export function sanitizeDigest(digest: SystemBlockDigest): SystemBlockDigest {
         route: cleanBody(digest.route),
         path: cleanBody(digest.path),
       };
+    case "server":
+      // Names and commands from herta.launch.json, which 板砖 may write —
+      // and a page it read could steer what it writes (ADR 0083 §5).
+      switch (digest.action) {
+        case "start":
+          return {
+            ...digest,
+            name: cleanBody(digest.name),
+            command: cleanBody(digest.command),
+            route: cleanBody(digest.route),
+          };
+        case "stop":
+        case "logs":
+          return { ...digest, name: cleanBody(digest.name) };
+        case "list":
+          return {
+            ...digest,
+            entries: digest.entries.map((e) => ({
+              ...e,
+              name: cleanBody(e.name),
+              route: cleanBody(e.route),
+            })),
+          };
+        case "reaped":
+          return { ...digest, names: digest.names.map(cleanBody) };
+      }
+      return digest;
     case "undo":
       // Paths 板砖 wrote, or its commands touched (ADR 0074): backend-derived
       // like every path here. The results and flags are harness-made.
@@ -485,6 +516,20 @@ export function projectWebFetchResult(data: WebFetchResultData): SystemBlock {
 }
 
 /**
+ * Whether a row's detail becomes the run's done-marker tail (the last
+ * 板砖 row with one): a command's output, an excerpt, a search's hits. A
+ * page row's never does — what a read returned is 板砖's working material,
+ * not Herta's (owner 2026-10-23), and the marker reaches her verdict.
+ */
+export function ridesDoneMarker(block: SystemBlock): boolean {
+  return (
+    block.label === "差分协处理器" &&
+    block.evidenceDetail !== undefined &&
+    !isPageDigest(block.digest)
+  );
+}
+
+/**
  * Pure projection from a backend-layer bus event to a `→ 差分协处理器`
  * or `→ 系统` SystemBlock. Returns `null` for events that should not
  * appear in TerminalRecord — actor-layer events (D6), happy-path tool
@@ -523,7 +568,9 @@ export function projectBackendEventUnsanitized(
               .trim()
           : browserOpVerb(event.tool) !== null
             ? browserOpArg(event.tool, event.inputSummary)
-            : event.inputSummary.trim();
+            : serverOpVerb(event.tool) !== null
+              ? serverOpArg(event.inputSummary)
+              : event.inputSummary.trim();
       const body = `${label} ${arg}`.trim();
       return {
         kind: "system",
@@ -632,6 +679,11 @@ export function projectBackendEventUnsanitized(
         // opened, what was read, what was done, the picture taken.
         if (browserOpVerb(event.tool) !== null) {
           return projectPageResult(event.tool, event.result.data);
+        }
+        // The launcher (ADR 0083 §5): a server started, stopped, listed,
+        // its log read.
+        if (event.tool === "dev_server") {
+          return projectServerResult(event.result.data);
         }
         if (event.tool === "web_fetch") {
           const data = event.result.data as WebFetchResultData | undefined;
@@ -958,7 +1010,9 @@ export function workflowLabel(
     default:
       // The page steps (ADR 0083 §10): the verb follows the mode or action
       // the summary leads with — shared with the desktop's live feed.
-      return browserOpVerb(tool, inputSummary);
+      return (
+        browserOpVerb(tool, inputSummary) ?? serverOpVerb(tool, inputSummary)
+      );
   }
 }
 

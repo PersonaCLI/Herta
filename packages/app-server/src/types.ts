@@ -3,11 +3,13 @@ import type {
   ApprovalOverlayState,
   BrowserHost,
   RepoContextSnapshot,
+  ServerHost,
   SessionTopic,
   TerminalRecord,
   TerminalRecordBlock,
   UndoFileResult,
 } from "@herta/core";
+import type { ServerNote } from "@herta/herta";
 import type {
   BranchList,
   CommitDescription,
@@ -648,6 +650,23 @@ export interface SessionHost {
   setBrowserProvider?(
     provider: ((sessionId: string) => BrowserHost) | null,
   ): void;
+  /** The desktop's launcher (ADR 0083 §5): each session opened after this
+   *  gets its dev servers from the provider, and `dev_server` with them.
+   *  OPTIONAL, as above. */
+  setServerProvider?(
+    provider: ((sessionId: string) => ServerHost) | null,
+  ): void;
+  /** Where the launcher journals each server it starts (ADR 0083 §5), so a
+   *  relaunch ends what an exit left running. OPTIONAL, as above. */
+  serverJournal?(): {
+    spawned(s: {
+      readonly pid: number;
+      readonly startedAt: number;
+      readonly name: string;
+      readonly sessionId: string;
+    }): Promise<void>;
+    exited(pid: number): Promise<void>;
+  };
   /** Update the models and 板砖's effort live (ADR 0081): Herta's model
    *  applies from the next turn, 板砖's model and effort from the next
    *  dispatch — in this session or any later one. A field left out keeps its
@@ -840,6 +859,12 @@ export interface Session {
    *  `turn_in_progress` while a turn is in flight — the underlying
    *  appendSystemNote is only safe between turns. */
   setWorkspace(workspace: string): Promise<WorkspaceSetResult>;
+  /** A launcher event outside 板砖's steps (ADR 0083 §5, §10) — the
+   *  Trailblazer's Run or Stop, or servers a relaunch ended — as a `→ 系统`
+   *  row: the world Herta shares changed. Appended between turns; one sent
+   *  mid-turn waits for the turn's end. OPTIONAL: a session without a
+   *  launcher has none to note. */
+  noteServer?(note: ServerNote): void;
   /** Restore the managed-sandbox default backend workspace. Persisted +
    *  broadcast (with `isDefault: true`). Idle-only, like setWorkspace. */
   resetWorkspace(): Promise<WorkspaceSetResult>;

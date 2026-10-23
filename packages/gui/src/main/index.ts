@@ -39,6 +39,7 @@ import {
   registerAttachmentScheme,
 } from "./attachment-protocol.js";
 import { PageHost, pageSession } from "./browser/page-host.js";
+import { ServerRegistry } from "./browser/server-registry.js";
 import { buildCsp } from "./csp.js";
 import createDocumentWorker from "./document-worker?nodeWorker";
 import { hideToTray } from "./hide-to-tray.js";
@@ -416,8 +417,14 @@ function createWindow(): BrowserWindow {
     process.platform === "darwin",
   );
   registerPageHandlers(pages);
+  // The window's dev servers (ADR 0083 §5): one launcher per session; a
+  // server that answers opens the page tab when the page is not elsewhere.
+  const servers = new ServerRegistry({
+    ready: (sessionId, url) => pages.openOn(sessionId, url),
+  });
   const service = createSessionService(win.webContents, win, {
     browser: pages,
+    servers,
     // Settings → Language: the tray tooltip is OS-rendered on hover, so it
     // must be re-pushed when the locale changes (user 2026-07-04 — it stayed
     // 黑塔 after switching to English until restart). The menu labels need the
@@ -501,7 +508,11 @@ function createWindow(): BrowserWindow {
       mainService = null;
     }
     pages.dispose();
-    pendingDispose = service.dispose().catch(() => undefined);
+    // The servers stop with the window, before the app may exit.
+    pendingDispose = Promise.all([service.dispose(), servers.dispose()]).then(
+      () => undefined,
+      () => undefined,
+    );
   });
 
   // Maximize-state → renderer (drives the custom max/restore glyph).

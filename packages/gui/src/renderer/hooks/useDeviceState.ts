@@ -72,6 +72,13 @@ function fineWorkingState(record: TerminalRecord): BanzhuanDeviceState {
       case "Choosing":
       case "Resizing page":
         return "verifying";
+      // The launcher (ADR 0083 §5): a server is a command that runs.
+      case "Starting dev server":
+      case "Stopping dev server":
+        return "runningCommand";
+      case "Reading server log":
+      case "Listing dev servers":
+        return "reading";
       case "Writing":
         return "writing";
       case "Running":

@@ -278,7 +278,7 @@ export function browserNavigateTool(opts: {
       return {
         name: "browser_navigate",
         description:
-          "Open a page of the app running on this machine in the browser the Trailblazer watches in the viewer, or step back, forward or reload. Returns the title, the HTTP status, new console errors, and the elements you can act on, each with a ref for browser_act. Only this machine's pages (localhost, 127.0.0.1): for a public page use web_fetch. Start the app's dev server first if nothing answers.",
+          "Open a page of the app running on this machine in the browser the Trailblazer watches in the viewer, or step back, forward or reload. Returns the title, the HTTP status, new console errors, and the elements you can act on, each with a ref for browser_act. Only this machine's pages (localhost, 127.0.0.1): for a public page use web_fetch. Start the app's dev server first if nothing answers (dev_server). What the page shows you stays with you: report what matters with report_finding.",
         inputSchema: browserNavigateJsonSchema,
       };
     },
@@ -343,7 +343,7 @@ export function browserReadTool(opts: {
       return {
         name: "browser_read",
         description:
-          "Read the open page: its elements with refs (tree), the elements whose name holds a text (find), its visible text (text), the console since the last read (console), or the last requests with failures marked (network). A long tree is saved whole under .herta/browser/ and you read the start; read the rest from that file.",
+          "Read the open page: its elements with refs (tree), the elements whose name holds a text (find), its visible text (text), the console since the last read (console), or the last requests with failures marked (network). A long tree is saved whole under .herta/browser/ and you read the start; read the rest from that file. What a read returns stays with you: state what matters — an error, a failed request, what the page shows — with report_finding, or it is not reported.",
         inputSchema: browserReadJsonSchema,
       };
     },

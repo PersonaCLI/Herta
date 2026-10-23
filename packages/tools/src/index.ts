@@ -164,6 +164,27 @@ export { globToRegExp } from "./glob/glob-to-regex.js";
 export type { GlobData, GlobFileEntry } from "./glob/index.js";
 export { globTool } from "./glob/index.js";
 export type { GlobInput } from "./glob/schema.js";
+// The launcher (ADR 0083 §5): herta.launch.json, the session's dev servers,
+// and dev_server.
+export {
+  entryCommand,
+  entryUrl,
+  LAUNCH_FILE,
+  type LaunchFileResult,
+  readLaunchFile,
+} from "./launcher/launch-file.js";
+export {
+  Launcher,
+  type LauncherOptions,
+  portAnswers,
+  READY_TIMEOUT_MS,
+  SERVER_LOG_DIR,
+} from "./launcher/launcher.js";
+export {
+  createDevServer,
+  type DevServerData,
+  registerDevServer,
+} from "./launcher/tool.js";
 export type { MemorySaveData } from "./memory-save/index.js";
 export { memorySaveTool } from "./memory-save/index.js";
 export type { MemorySaveInput } from "./memory-save/schema.js";

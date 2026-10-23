@@ -42,6 +42,7 @@ import {
   narrativeDirFor,
   type ProviderAdapter,
   RulePermissionEngine,
+  type ServerHost,
   SessionApprovalCache,
   type TerminalRecord,
   type TerminalRecordBlock,
@@ -103,6 +104,7 @@ import {
   primeShellPaths,
   probeRepoState,
   registerBrowserRules,
+  registerDevServer,
   registerEditFileRule,
   registerMinimalRules,
   registerRunCommandRule,
@@ -294,6 +296,9 @@ export interface BackendStackOpts {
   /** The session's browser page (ADR 0083): the desktop's main hands one
    *  in, and the page steps mount with their rules. The CLI has none. */
   readonly browser?: BrowserHost | null;
+  /** The session's dev servers (ADR 0083 §5): the desktop's main hands a
+   *  launcher; the CLI none, and then there is no dev_server. */
+  readonly servers?: ServerHost | null;
   /** Test seam for the host-note decision (ADR 0044); defaults to
    *  `process.platform`. On "win32" the STANDARD contract carries
    *  `windowsBackendHostNote` — the minimal contract never does (it runs on
@@ -510,6 +515,15 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     backendTools.register(browserNavigateTool({ host: browser }));
     backendTools.register(browserReadTool({ host: browser }));
     registerBrowserRules(permissions, browser);
+  }
+  // The launcher (ADR 0083 §5): a start judged as run_command would judge
+  // the entry's argv.
+  if (opts.servers != null) {
+    registerDevServer(
+      permissions,
+      (t) => backendTools.register(t),
+      opts.servers,
+    );
   }
   let browserEyes: boolean | null = null;
 

@@ -388,6 +388,7 @@ describe("tallySegment", () => {
       pages: [],
       appPages: [],
       pageSteps: 0,
+      servers: [],
     });
   });
 
@@ -421,5 +422,18 @@ describe("tallySegment", () => {
     // A history step is a step, not a page.
     expect(tally.pageSteps).toBe(5);
     expect(tally.pages).toEqual([]);
+  });
+
+  it("names the dev servers started (ADR 0083 §5)", () => {
+    const tally = tallySegment(
+      opsOf([
+        user(),
+        op("Starting dev server", "web"),
+        op("Reading server log", "web"),
+        op("Starting dev server", "web"),
+        op("Starting dev server", "api"),
+      ]),
+    );
+    expect(tally.servers).toEqual(["web", "api"]);
   });
 });

@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AskResolver, BrowserHost } from "@herta/core";
+import type { AskResolver, BrowserHost, ServerHost } from "@herta/core";
 import { FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -349,6 +349,49 @@ describe("createBackendStack", () => {
       .backendTools.list()
       .map((t) => t.name);
     expect(without.some((n) => n.startsWith("browser_"))).toBe(false);
+  });
+
+  it("mounts dev_server with a launcher: a start asks as run_command would, a list is free (ADR 0083 §5)", async () => {
+    const ws = mkWorkspace();
+    writeFileSync(
+      join(ws, "herta.launch.json"),
+      JSON.stringify({
+        version: 1,
+        servers: [
+          { name: "web", command: "npm", args: ["run", "dev"], port: 5173 },
+        ],
+      }),
+    );
+    const servers = {
+      list: () => [],
+      status: () => null,
+    } as unknown as ServerHost;
+    const build = (host: ServerHost | null) =>
+      createBackendStack({
+        wsHolder: { current: ws },
+        workspaceRoot: ws,
+        lang: "zh",
+        wantMinimal: false,
+        backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: () => "deepseek-v4-pro",
+        digestModel: null,
+        servers: host,
+        makeAsk: () => noAsk,
+      });
+    const stack = build(servers);
+    expect(stack.backendTools.get("dev_server")).toBeDefined();
+    const ctx = {
+      sessionId: "s",
+      signal: new AbortController().signal,
+      workspaceRoot: ws,
+    } as unknown as Parameters<typeof stack.permissions.check>[1];
+    const check = (input: unknown) =>
+      stack.permissions.check({ id: "1", tool: "dev_server", input }, ctx);
+    expect((await check({ action: "list" })).kind).toBe("allow");
+    expect((await check({ action: "start", name: "web" })).kind).not.toBe(
+      "allow",
+    );
+    expect(build(null).backendTools.get("dev_server")).toBeUndefined();
   });
 
   // ADR 0044: the standard contract on a Windows host carries the host note

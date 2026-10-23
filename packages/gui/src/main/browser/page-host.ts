@@ -203,6 +203,16 @@ export class PageHost {
     else if (to.go === "stop") wc.stop();
   }
 
+  /** A dev server answers (ADR 0083 §5): the page tab opens on it — unless
+   *  the page is already somewhere, which is the Trailblazer's place or
+   *  板砖's, not the launcher's to move. */
+  openOn(sessionId: string, url: string): void {
+    const at = this.pages.get(sessionId)?.view.webContents.getURL() ?? "";
+    if (at !== "" && at !== "about:blank") return;
+    this.navigate(sessionId, { url });
+    this.events.opened(sessionId);
+  }
+
   /** The page's address in the OS browser — read here, never taken from
    *  the renderer, and only an http(s) one. */
   async openExternally(sessionId: string): Promise<void> {

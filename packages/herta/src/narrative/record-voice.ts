@@ -2,10 +2,12 @@ import {
   type DoneMarkerSummary,
   type EvidenceSection,
   isBrowserOpVerb,
+  isServerOpVerb,
   type SystemBlock,
 } from "@herta/core";
 import { isPageDigest, pageFoldLine, pageRowForHerta } from "./page-voice.js";
 import type { PromptLang } from "./prompt-lang.js";
+import { serverFoldLine, serverRowForHerta } from "./server-voice.js";
 
 /**
  * 板砖's rows as Herta reads them (ADR 0079 §2, owner 2026-10-16: "the
@@ -181,12 +183,6 @@ const TEXTS: Record<PromptLang, Texts> = {
       提示: "提示：",
       错误: "错误：",
       中断时: "中断时：",
-      // A page row's detail, when the done-marker carries it (ADR 0083).
-      页面元素: "页面元素：",
-      匹配元素: "名字相符的元素：",
-      页面文字: "页面文字：",
-      控制台错误: "控制台错误：",
-      失败的请求: "失败的请求：",
     },
     ran: (cmd, exit) =>
       exit === "0" ? `运行 \`${cmd}\`` : `运行 \`${cmd}\`（退出码 ${exit}）`,
@@ -295,11 +291,6 @@ const TEXTS: Record<PromptLang, Texts> = {
       提示: "Hint: ",
       错误: "Error: ",
       中断时: "When it stopped: ",
-      页面元素: "Elements on the page: ",
-      匹配元素: "Matching elements: ",
-      页面文字: "The page's text: ",
-      控制台错误: "Console errors: ",
-      失败的请求: "Failed requests: ",
     },
     ran: (cmd, exit) =>
       exit === "0" ? `ran \`${cmd}\`` : `ran \`${cmd}\` (exit code ${exit})`,
@@ -413,12 +404,6 @@ export function detailForHerta(
     .map((line) => {
       if (/^…\(truncated(?:, full log: .*)?\)$/u.test(line))
         return t.moreNotShown;
-      // A page read's note of what its bound left out (ADR 0083).
-      const omitted = /^（另有 (\d+) 个未列出）$/u.exec(line);
-      if (omitted !== null)
-        return lang === "en"
-          ? `(${omitted[1]} more not listed)`
-          : `（还有 ${omitted[1]} 个没列出）`;
       if (!line.startsWith("↳ ")) return line;
       if (line === "↳ 输出:") return t.output;
       const excerpt = /^↳ 摘录 (.+):(\d+)-(\d+)$/u.exec(line);
@@ -539,9 +524,11 @@ export function systemRowForHerta(
   // element, the error — so its op row says nothing more (ADR 0083 §10).
   if (isPageDigest(d))
     return { ...rest, body: pageRowForHerta(block, d, lang) };
+  if (d.kind === "server")
+    return { ...rest, body: serverRowForHerta(block, d, lang) };
   switch (d.kind) {
     case "op": {
-      if (isBrowserOpVerb(d.verb)) return null;
+      if (isBrowserOpVerb(d.verb) || isServerOpVerb(d.verb)) return null;
       const verb = t.verb[d.verb];
       if (verb === null) return null;
       const arg = opArg(d.verb, d.arg, lang);
@@ -730,6 +717,16 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     browser_load_failed: "那个地址没有回应",
     browser_password_refused: "密码只在本机的页面上输入",
     browser_unavailable: "页面不在了",
+    // The launcher (ADR 0083 §5, §10).
+    no_launch_file: "工作区里没有 herta.launch.json",
+    bad_launch_file: "herta.launch.json 写得不对",
+    no_server_entry: "herta.launch.json 里没有这个服务器",
+    server_spawn_failed: "服务器启动不了",
+    server_exited: "服务器还没起来就退出了",
+    server_timeout: "服务器 60 秒内没起来",
+    server_aborted: "启动半路被停下了",
+    server_not_running: "那个服务器没在跑",
+    unsafe_shim_arg: "参数里有 Windows 不能安全传过去的字符",
   },
   en: {
     invalid_input: "bad arguments",
@@ -783,6 +780,15 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     browser_password_refused:
       "a password is typed only on this machine's pages",
     browser_unavailable: "the page went away",
+    no_launch_file: "there is no herta.launch.json in the workspace",
+    bad_launch_file: "herta.launch.json is malformed",
+    no_server_entry: "herta.launch.json names no such server",
+    server_spawn_failed: "the server could not be started",
+    server_exited: "the server exited before it was up",
+    server_timeout: "the server was not up within 60 seconds",
+    server_aborted: "the start was stopped half-way",
+    server_not_running: "that server is not running",
+    unsafe_shim_arg: "an argument cannot pass safely through Windows",
   },
 };
 
@@ -829,6 +835,7 @@ export function foldedRunLine(
   const d = block.digest;
   if (d === undefined) return null;
   if (isPageDigest(d)) return pageFoldLine(d, lang);
+  if (d.kind === "server") return serverFoldLine(d, lang);
   switch (d.kind) {
     case "op":
       return null;

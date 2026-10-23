@@ -29,6 +29,7 @@ import {
   readUndoIndex,
   restoreUndo,
   resumableRun,
+  type ServerHost,
   type SessionTopic,
   type SystemBlock,
   type TerminalRecord,
@@ -45,8 +46,10 @@ import {
   type MetaThinkCorpus,
   type OpeningChoice,
   type PromptLang,
+  type ServerNote,
   type StaticHertaPrefix,
   sanitizeSystemBlock,
+  serverNoteBlock,
   V2ActorDriver,
 } from "@herta/herta";
 import { type ApiKey, deepseekVisionCaptioner } from "@herta/providers";
@@ -668,6 +671,32 @@ export class SessionImpl implements Session {
    * opening) and from submitText (a front-end that never plays openings, e.g.
    * the CLI — the note lands before the first user block).
    */
+  /** Launcher events waiting for a moment between turns (ADR 0083 §5). */
+  private readonly pendingServerNotes: ServerNote[] = [];
+
+  noteServer(note: ServerNote): void {
+    this.pendingServerNotes.push(note);
+    this.flushServerNotes();
+  }
+
+  /** Between turns only, and after a new session's opening is in the
+   *  record — the same ordering the contract note keeps (above). The names
+   *  and commands come from herta.launch.json: sanitized at construction,
+   *  the one gate on a system block. */
+  private flushServerNotes(): void {
+    if (
+      this.pendingServerNotes.length === 0 ||
+      this.currentTurn !== null ||
+      this.undoing ||
+      this.pendingOpening !== null
+    )
+      return;
+    for (const note of this.pendingServerNotes.splice(0)) {
+      this.driver.appendSystemBlock(sanitizeSystemBlock(serverNoteBlock(note)));
+    }
+    this._record = this.driver.getRecord();
+  }
+
   private flushContractNote(): void {
     const note = this.pendingContractNote;
     if (note === null || this.currentTurn !== null) return;
@@ -774,6 +803,8 @@ export class SessionImpl implements Session {
       // entry replacing `currentTurn` mid-turn is what the callers' gates
       // forbid; the check keeps a wrong release impossible regardless.)
       if (this.currentTurn?.turnId === turnId) this.currentTurn = null;
+      // A launcher event that came mid-turn lands now (ADR 0083 §5).
+      this.flushServerNotes();
       // A dispatch, a Stop or a 继续 may have changed what can be continued
       // (ADR 0071 §1.4).
       void this.refreshResumable();
@@ -1066,6 +1097,7 @@ export class SessionImpl implements Session {
       } finally {
         this.undoing = false;
         landed();
+        this.flushServerNotes();
       }
     }
   }
@@ -1334,6 +1366,7 @@ export class SessionImpl implements Session {
       // No seed to stream (resumed session, or a new one without an opening)
       // — but a deferred contract note still wants the record (ADR 0044).
       this.flushContractNote();
+      this.flushServerNotes();
       return;
     }
     // Single-turn invariant (see submitText): don't stream the opening over an
@@ -1379,6 +1412,7 @@ export class SessionImpl implements Session {
     // durable either way): the contract-fallback note follows it into the
     // record, so the user reads the opening first and the notice second.
     this.flushContractNote();
+    this.flushServerNotes();
   }
 
   async interrupt(opts?: {
@@ -2025,6 +2059,9 @@ export class SessionImpl implements Session {
     /** The session's browser page (ADR 0083), from the host's provider.
      *  Absent = no page steps (tests, the CLI). */
     browser?: BrowserHost | null;
+    /** The session's dev servers (ADR 0083 §5), from the host's provider.
+     *  Absent = no dev_server (tests, the CLI). */
+    servers?: ServerHost | null;
     /** Live getter for the models and 板砖's effort (from the host's holder,
      *  ADR 0081). Absent = the config's, fixed (tests). */
     models?: () => SessionModels;
@@ -2173,6 +2210,8 @@ export class SessionImpl implements Session {
           : null,
       // The page the Trailblazer watches (ADR 0083), when the host has one.
       browser: opts.browser ?? null,
+      // Its dev servers (ADR 0083 §5), when the host has a launcher.
+      servers: opts.servers ?? null,
       makeAsk: ({ cache, workspacePermissions }) => {
         overlayResolver = new OverlayAskResolver({
           cache,
@@ -2467,7 +2506,12 @@ export class SessionImpl implements Session {
       bus,
       // ADR 0067: the git tools follow the workspace, the digest tool waits
       // for a document — both decided by the backend stack.
-      onWorkspaceChanged: () => backend.refreshGitTools(),
+      // The session's dev servers stop when its workspace moves (ADR 0083
+      // §5): they serve the folder that was.
+      onWorkspaceChanged: () => {
+        backend.refreshGitTools();
+        void opts.servers?.stopAll();
+      },
       onDocumentAttached: () => backend.mountDigestTool(),
       sessionId,
       workspaceRoot,

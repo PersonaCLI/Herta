@@ -1,4 +1,5 @@
 import { browserOpArg } from "@herta/core/browser-host";
+import { serverOpArg } from "@herta/core/server-host";
 import { useEffect, useMemo } from "react";
 import { opVerbOf } from "../../../shared/op-verb.js";
 import { useApprovalPending } from "../../hooks/useApprovalPending.js";
@@ -87,7 +88,9 @@ export function stepOf(
             .trim()
         : view.tool.startsWith("browser_")
           ? browserOpArg(view.tool, view.summary)
-          : view.summary.trim()
+          : view.tool === "dev_server"
+            ? serverOpArg(view.summary)
+            : view.summary.trim()
       : verb === "Running"
         ? withoutWorkspaceCd(view.commandLine ?? "", workspace)
         : workspaceRelative(view.path ?? "", workspace);

@@ -12,7 +12,8 @@
     "./banzhuan-alias": "./dist/text/banzhuan-alias.js",
     "./marker-summary": "./dist/text/marker-summary.js",
     "./repo-path": "./dist/text/repo-path.js",
-    "./browser-host": "./dist/browser-host.js"
+    "./browser-host": "./dist/browser-host.js",
+    "./server-host": "./dist/server-host.js"
   },
   "files": [
     "dist"

@@ -73,7 +73,54 @@ export const VERB_KEY: Record<string, MessageKey> = {
   Choosing: "activity.verb.choosing",
   "Resizing page": "activity.verb.resizingPage",
   "Taking screenshot": "activity.verb.takingScreenshot",
+  // The launcher (ADR 0083 §5).
+  "Starting dev server": "activity.verb.startingServer",
+  "Stopping dev server": "activity.verb.stoppingServer",
+  "Reading server log": "activity.verb.readingServerLog",
+  "Listing dev servers": "activity.verb.listingServers",
 };
+
+type ServerDigest = Extract<
+  NonNullable<SystemBlock["digest"]>,
+  { kind: "server" }
+>;
+
+/** A launcher row (ADR 0083 §5), localized from its digest: the server's
+ *  name, command and address are data and stay verbatim. */
+function serverStepBody(
+  d: ServerDigest,
+  t: (key: MessageKey) => string,
+): string {
+  const label = t("activity.server.label");
+  switch (d.action) {
+    case "start":
+      return d.already
+        ? `↳ ${label} ${d.name} · ${t("activity.server.already").replace("{route}", d.route)}`
+        : `↳ ${label} ${d.name} · ${
+            d.by === "trailblazer"
+              ? t("activity.server.startedByYou")
+              : t("activity.server.ready")
+          } · ${d.route}`;
+    case "stop":
+      return `↳ ${label} ${d.name} · ${
+        !d.wasRunning
+          ? t("activity.server.notRunning")
+          : d.by === "trailblazer"
+            ? t("activity.server.stoppedByYou")
+            : t("activity.server.stopped")
+      }`;
+    case "logs":
+      return `↳ ${label} ${d.name} · ${t(`activity.server.state.${d.state}`)}${
+        d.state === "exited" && d.exitCode != null ? ` (${d.exitCode})` : ""
+      }`;
+    case "list":
+      return `↳ ${d.entries
+        .map((e) => `${e.name} · ${t(`activity.server.state.${e.state}`)}`)
+        .join(" / ")}`;
+    case "reaped":
+      return `↳ ${t("activity.server.reaped").replace("{names}", d.names.join(", "))}`;
+  }
+}
 
 type PageDigest = Extract<
   NonNullable<SystemBlock["digest"]>,
@@ -359,6 +406,8 @@ export function stepDisplayBody(
     case "page-act":
     case "page-shot":
       return pageStepBody(d, t);
+    case "server":
+      return serverStepBody(d, t);
     case "digest":
       // "↳ digest <path> · 27 chunks (cached)" → localized chrome; the path is
       // data (ADR 0043).

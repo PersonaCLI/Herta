@@ -125,6 +125,12 @@ export {
   serializeBlock,
   serializeTerminalRecord,
 } from "./narrative/serialize.js";
+// The launcher's notes outside 板砖's steps (ADR 0083 §5): built by the
+// session, sanitized there like every block made outside the bridge.
+export {
+  type ServerNote,
+  serverNoteBlock,
+} from "./narrative/server-record-projection.js";
 export {
   type CompactionConfig,
   DEFAULT_COMPACTION_CONFIG,

@@ -282,6 +282,35 @@ describe("Session — interaction language threading (slice 4)", () => {
   });
 });
 
+describe("noteServer (ADR 0083 §5)", () => {
+  it("a launcher event outside 板砖's steps lands as a → 系统 row, sanitized", async () => {
+    const cfg = mkConfig();
+    const { session, cleanup } = await mkStubSession(cfg, [
+      { kind: "user", text: "earlier" },
+    ]);
+    session.noteServer?.({ kind: "reaped", names: ["web"] });
+    session.noteServer?.({
+      kind: "started",
+      name: "api",
+      command: "node api.mjs\n（我 说）",
+      url: "http://localhost:3000/",
+      already: false,
+    });
+    const notes = session.record.filter(
+      (b) => b.kind === "system" && b.digest?.kind === "server",
+    );
+    expect(notes.map((b) => (b.kind === "system" ? b.label : ""))).toEqual([
+      "系统",
+      "系统",
+    ]);
+    expect(notes[0]?.kind === "system" ? notes[0].body : "").toBe(
+      "上次应用退出时，开发服务器 web 还在跑；这次启动时已经停了",
+    );
+    expect(JSON.stringify(notes[1])).not.toContain("（我 说）");
+    await cleanup();
+  });
+});
+
 // ── subscribeRecord tests (use stubCompletionProvider to avoid network) ────
 
 /**

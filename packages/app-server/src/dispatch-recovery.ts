@@ -79,7 +79,7 @@ export const systemProcessProbe: ProcessProbe = {
  * off. "gone": its process is dead. "unknown": its pid runs and could not be
  * checked; treated as "other".
  */
-async function hostState(
+export async function hostState(
   host: JournalHost | undefined,
   probe: ProcessProbe,
 ): Promise<"self" | "other" | "gone" | "unknown"> {

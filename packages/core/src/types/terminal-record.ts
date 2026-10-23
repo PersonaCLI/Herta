@@ -1,5 +1,6 @@
 import type { ExecutionStatus } from "../bridge/types.js";
 import type { BrowserOpVerb } from "../browser-host.js";
+import type { ServerOpVerb } from "../server-host.js";
 
 /**
  * Canonical system-block labels emitted by the v0.2 harness into
@@ -245,7 +246,9 @@ export type SystemBlockDigest =
         /** web_fetch (ADR 0080): the arg is the URL. */
         | "Reading web page"
         /** The page steps (ADR 0083 §10): `browserOpVerb` names them. */
-        | BrowserOpVerb;
+        | BrowserOpVerb
+        /** `dev_server` (ADR 0083 §5, §10): `serverOpVerb` names them. */
+        | ServerOpVerb;
       readonly arg: string;
       /** The command runs tests — recognised at dispatch from the WHOLE
        *  input (`arg` is the 80-char header, which can cut the test run off),
@@ -570,6 +573,56 @@ export type SystemBlockDigest =
       readonly preset?: "phone" | "tablet" | "desktop";
       readonly scheme?: "light" | "dark";
       readonly errors: number;
+    }
+  | {
+      /** A dev server started from `herta.launch.json` (ADR 0083 §5) — by
+       *  板砖's `dev_server` or the Trailblazer's Run. `route` is where it
+       *  answers (`localhost:5173`); `already` says its port answered before
+       *  anything was started, so nothing was. */
+      readonly kind: "server";
+      readonly action: "start";
+      readonly by: "banzhuan" | "trailblazer";
+      readonly name: string;
+      /** `npm run dev`, as the entry wrote it. */
+      readonly command: string;
+      readonly route: string;
+      readonly already: boolean;
+    }
+  | {
+      /** A dev server stopped, by 板砖 or the Trailblazer. `wasRunning`
+       *  false: it had already ended. */
+      readonly kind: "server";
+      readonly action: "stop";
+      readonly by: "banzhuan" | "trailblazer";
+      readonly name: string;
+      readonly wasRunning: boolean;
+    }
+  | {
+      /** 板砖 read a dev server's log; the output rides the two-state lane
+       *  (`output`), as a background command's does. */
+      readonly kind: "server";
+      readonly action: "logs";
+      readonly name: string;
+      readonly state: "starting" | "ready" | "exited" | "stopped";
+      readonly exitCode?: number | null;
+    }
+  | {
+      /** 板砖 listed the launcher's entries and what runs. */
+      readonly kind: "server";
+      readonly action: "list";
+      readonly entries: readonly {
+        readonly name: string;
+        /** `idle`: in the file, never started this session. */
+        readonly state: "starting" | "ready" | "exited" | "stopped" | "idle";
+        readonly route: string;
+      }[];
+    }
+  | {
+      /** Servers the app's last exit left running, ended at this launch
+       *  (ADR 0083 §5, as ADR 0071 does for a run's processes). */
+      readonly kind: "server";
+      readonly action: "reaped";
+      readonly names: readonly string[];
     }
   | {
       /** A screenshot 板砖 took (browser_screenshot): what it saw, kept,

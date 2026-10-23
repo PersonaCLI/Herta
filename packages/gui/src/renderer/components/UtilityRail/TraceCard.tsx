@@ -508,6 +508,17 @@ export function segmentSummary(segment: TraceSegment, t: T): string {
     );
   }
   counted(tally.pageSteps, "trace.sum.pageStepOne", "trace.sum.pageStepMany");
+  const [firstServer] = tally.servers;
+  if (firstServer !== undefined) {
+    parts.push(
+      tally.servers.length === 1
+        ? t("trace.sum.serverOne", { name: firstServer })
+        : t("trace.sum.serverMany", {
+            name: firstServer,
+            n: String(tally.servers.length),
+          }),
+    );
+  }
   counted(tally.digests, "trace.sum.digestOne", "trace.sum.digestMany");
   counted(tally.memories, "trace.sum.memoryOne", "trace.sum.memoryMany");
   counted(tally.stops, "trace.sum.stopOne", "trace.sum.stopMany");

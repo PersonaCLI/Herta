@@ -1,4 +1,5 @@
 import { isBrowserOpVerb } from "@herta/core/browser-host";
+import { isServerOpVerb } from "@herta/core/server-host";
 /**
  * Which phase of a run an operation belongs to — 探索 (looking), 修改
  * (changing), 验证 (checking) — for the rail's trace card (ADR 0073).
@@ -23,7 +24,7 @@ export function opPhase(verb: string, arg: string): TracePhase {
       return "verify";
     default:
       // A page step looks at the running app: checking the work (ADR 0083).
-      if (isBrowserOpVerb(verb)) return "verify";
+      if (isBrowserOpVerb(verb) || isServerOpVerb(verb)) return "verify";
       // Reading, Searching, Inspecting, Digesting — and a legacy Planning
       // row — are all looking.
       return "explore";

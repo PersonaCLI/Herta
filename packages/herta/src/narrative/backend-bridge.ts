@@ -25,6 +25,7 @@ import {
   buildDoneMarker,
   buildNoopMarker,
   projectBackendEvent,
+  ridesDoneMarker,
   sanitizeSystemBlock,
 } from "./backend-record-projection.js";
 import {
@@ -418,10 +419,7 @@ async function invokeBanzhuanBridgeInner(
         if (projected !== null) {
           projectedAny = true;
           current = [...current, projected];
-          if (
-            projected.label === "差分协处理器" &&
-            projected.evidenceDetail !== undefined
-          ) {
+          if (ridesDoneMarker(projected)) {
             lastCommandTail = projected.evidenceDetail;
             lastCommandEvidence = projected.evidence;
           }

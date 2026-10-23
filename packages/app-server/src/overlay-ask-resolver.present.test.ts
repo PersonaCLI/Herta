@@ -74,6 +74,23 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
     expect(pending[0]?.command).toBe("npm install left-pad");
   });
 
+  it("a dev server's start shows the launcher entry's command (ADR 0083 §5)", () => {
+    const { resolver, pending } = makeResolver();
+    void resolver.present(
+      makeRequest({
+        call: {
+          id: "c",
+          tool: "dev_server",
+          input: { action: "start", name: "web" },
+        },
+        risk: "network",
+        argv: ["npm", "run", "dev"],
+      }),
+      new AbortController().signal,
+    );
+    expect(pending[0]?.command).toBe("npm run dev");
+  });
+
   it("minimal contract (ADR 0040): bash asks carry the command line verbatim", () => {
     const dir = mkdtempSync(join(tmpdir(), "herta-oar-bash-"));
     try {

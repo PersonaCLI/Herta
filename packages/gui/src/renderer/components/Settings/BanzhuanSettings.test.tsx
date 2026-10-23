@@ -286,13 +286,30 @@ describe("BanzhuanSettings", () => {
       );
       fireEvent.click(screen.getByRole("button", { name: "Clear" }));
       expect(clear).not.toHaveBeenCalled();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Press again to clear" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Confirm clear" }));
       await waitFor(() => expect(clear).toHaveBeenCalledTimes(1));
+      // Cleared is an answer: a press on it does not arm again.
+      fireEvent.click(await screen.findByRole("button", { name: "Cleared" }));
+      expect(screen.getByRole("button", { name: "Cleared" })).toBeTruthy();
+      expect(clear).toHaveBeenCalledTimes(1);
+    });
+
+    it("armed, a press anywhere else takes it back at once", () => {
+      const mock = createMockHertaBridge();
+      const clear = vi.fn(async () => true);
+      const bridge: HertaBridge = { ...mock.bridge, pageClearData: clear };
+      renderWithLocale(
+        <HertaBridgeProvider bridge={bridge}>
+          <BanzhuanSettings />
+        </HertaBridgeProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Clear" }));
       expect(
-        await screen.findByRole("button", { name: "Cleared" }),
+        screen.getByRole("button", { name: "Confirm clear" }),
       ).toBeTruthy();
+      fireEvent.pointerDown(document.body);
+      expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
+      expect(clear).not.toHaveBeenCalled();
     });
 
     it("is not offered without a page tab", () => {

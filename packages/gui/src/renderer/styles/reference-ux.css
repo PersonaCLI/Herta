@@ -2587,14 +2587,17 @@ button.agent-preview {
   position: fixed;
   top: 0;
   right: 0;
-  height: 40px;
+  /* The top bar's own height, so the caption glyphs sit on the bar icons'
+     centre line (owner 2026-10-24: at 40px they rode 6px high) and the
+     close button keeps the window's corner. */
+  height: var(--topbar-h, 52px);
   display: flex;
   z-index: 4000;
   -webkit-app-region: no-drag;
 }
 .window-controls__btn {
   width: 46px;
-  height: 40px;
+  height: 100%;
   border: 0;
   padding: 0;
   background: transparent;
@@ -9266,25 +9269,11 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
   padding: 14px 12px;
   font-size: 12.5px;
 }
-.page-servers__hint {
-  margin: 0 0 2px;
-  color: var(--muted-slate);
-}
-.page-servers__nofile {
-  padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  color: var(--muted-slate);
-  line-height: 1.6;
-}
-.page-servers__nofile p { margin: 0 0 6px; }
-.page-servers__example,
 .page-server__cmd {
   font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.page-servers__example { color: var(--ink); }
 .page-server {
   padding: 9px 10px;
   border: 1px solid var(--hairline);

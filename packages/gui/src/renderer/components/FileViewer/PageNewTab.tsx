@@ -6,10 +6,6 @@ import { useT } from "../../i18n/LocaleProvider.js";
 import { REASON_KEY } from "../Approval/risk-label.js";
 import { useFileViewerOpen } from "./file-viewer-context.js";
 
-/** What the page offers to write when there is no launch file. */
-const LAUNCH_EXAMPLE =
-  '{ "version": 1, "servers": [ { "name": "web", "command": "npm", "args": ["run", "dev"], "port": 5173 } ] }';
-
 const STATE_KEY: Record<ServerEntryView["state"], MessageKey> = {
   idle: "page.servers.state.idle",
   starting: "page.servers.state.starting",
@@ -33,14 +29,15 @@ function routeOf(url: string): string {
  * workspace's launcher entries, a card each, with Run and Stop. A Run is
  * classified in the session as run_command would classify the command; an
  * ask-class one shows its command and why it asks, here in the card, on
- * its first start in the session (question 8). Without a launch file, how
- * to make one.
+ * its first start in the session (question 8). With no server to list it
+ * shows nothing (owner 2026-10-24: the hint and the how-to read as
+ * clutter); a launch file that does not parse says so in one line.
  */
 export function PageNewTab({
   sessionId,
 }: {
   readonly sessionId: string;
-}): JSX.Element {
+}): JSX.Element | null {
   const t = useT();
   const { bridge } = useHertaBridge();
   const openFile = useFileViewerOpen();
@@ -110,27 +107,18 @@ export function PageNewTab({
     }
   };
 
-  if (listing === null || (!listing.ok && listing.reason === "no_launcher")) {
-    return <p className="page-view__empty">{t("page.empty")}</p>;
-  }
+  if (listing === null) return null;
   if (!listing.ok) {
+    if (listing.reason !== "bad_launch_file") return null;
     return (
-      <div className="page-servers">
-        <p className="page-servers__hint">{t("page.empty")}</p>
-        <div className="page-servers__nofile">
-          <p>
-            {listing.reason === "no_launch_file"
-              ? t("page.servers.noFile")
-              : `${t("page.servers.badFile")}${listing.message ?? ""}`}
-          </p>
-          <code className="page-servers__example">{LAUNCH_EXAMPLE}</code>
-        </div>
-      </div>
+      <p className="page-view__empty">
+        {`${t("page.servers.badFile")}${listing.message ?? ""}`}
+      </p>
     );
   }
+  if (listing.entries.length === 0) return null;
   return (
     <div className="page-servers">
-      <p className="page-servers__hint">{t("page.empty")}</p>
       {listing.entries.map((e) => {
         const running = e.state === "starting" || e.state === "ready";
         const pending = busy === e.name;

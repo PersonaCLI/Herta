@@ -223,18 +223,12 @@ describe("the browser page tab (ADR 0083)", () => {
       runShortcut("openBrowser");
     });
     await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
-    expect(
-      screen.getByText("Type an address above to open a page."),
-    ).toBeTruthy();
     emit({ canGoBack: true });
     expect((screen.getByLabelText("Address") as HTMLInputElement).value).toBe(
       "http://localhost:5173/login",
     );
     expect(screen.getByLabelText("Back")).not.toBeDisabled();
     expect(screen.getByLabelText("Forward")).toBeDisabled();
-    expect(
-      screen.queryByText("Type an address above to open a page."),
-    ).toBeNull();
     // Another session's page says nothing here.
     emit({ sessionId: "s2", url: "http://localhost:3000/" });
     expect((screen.getByLabelText("Address") as HTMLInputElement).value).toBe(
@@ -340,11 +334,9 @@ describe("the browser page tab (ADR 0083)", () => {
       expect(await screen.findByText("web")).toBeTruthy();
       expect(screen.getByText("npm run dev")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
-      expect(
-        await screen.findByRole("button", { name: "Run it" }),
-      ).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Run" })).toBeTruthy();
       expect(start).toHaveBeenLastCalledWith("s1", "web", false);
-      fireEvent.click(screen.getByRole("button", { name: "Run it" }));
+      fireEvent.click(screen.getByRole("button", { name: "Run" }));
       await waitFor(() =>
         expect(start).toHaveBeenLastCalledWith("s1", "web", true),
       );
@@ -379,7 +371,7 @@ describe("the browser page tab (ADR 0083)", () => {
       await waitFor(() => expect(tabNames()).toContain("web · Log"));
     });
 
-    it("without a launch file, says how to make one", async () => {
+    it("without a launch file it shows nothing (owner 2026-10-24)", async () => {
       const mock = createMockHertaBridge();
       withPage(mock);
       Object.assign(mock.bridge, {
@@ -394,9 +386,9 @@ describe("the browser page tab (ADR 0083)", () => {
       act(() => {
         runShortcut("openBrowser");
       });
-      expect(
-        await screen.findByText(/no herta.launch.json at the workspace root/),
-      ).toBeTruthy();
+      await waitFor(() => expect(mock.bridge.serversList).toHaveBeenCalled());
+      expect(document.querySelector(".page-servers")).toBeNull();
+      expect(document.querySelector(".page-view__empty")).toBeNull();
     });
   });
 });

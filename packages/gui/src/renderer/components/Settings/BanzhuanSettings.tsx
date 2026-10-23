@@ -106,17 +106,36 @@ function ClearBrowserData(props: {
   const [state, setState] = useState<
     "idle" | "armed" | "busy" | "done" | "failed"
   >("idle");
+  const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (state !== "armed" && state !== "done" && state !== "failed") return;
     const timer = window.setTimeout(() => setState("idle"), 4000);
     return () => window.clearTimeout(timer);
   }, [state]);
+  // Armed, a press anywhere else takes it back at once (owner 2026-10-24:
+  // it waited out the timer).
+  useEffect(() => {
+    if (state !== "armed") return;
+    const away = (e: PointerEvent): void => {
+      if (!(e.target instanceof Node && button.current?.contains(e.target)))
+        setState("idle");
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [state]);
   return (
     <button
+      ref={button}
       type="button"
       className={`settings-btn${state === "armed" ? " settings-btn--danger" : ""}`}
       disabled={state === "busy"}
+      onBlur={() => {
+        if (state === "armed") setState("idle");
+      }}
       onClick={() => {
+        // Cleared is an answer, not a new start (owner 2026-10-24: a press
+        // on 已清除 armed it again).
+        if (state === "done") return;
         if (state !== "armed") {
           setState("armed");
           return;

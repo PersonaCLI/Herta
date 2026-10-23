@@ -971,7 +971,7 @@ describe("stepDisplayBody — the page steps (ADR 0083 §10)", () => {
       errors: 0,
     });
     expect(stepDisplayBody(typed, tz)).toBe(
-      '↳ 在 textbox "Password" 输入了 "••••••"，按了回车',
+      '↳ 在 textbox "Password" 输入了 "••••••"，并按下回车',
     );
     expect(stepDisplayBody(typed, te)).toBe(
       '↳ Typed "••••••" into textbox "Password", then pressed Enter',

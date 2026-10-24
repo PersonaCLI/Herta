@@ -209,6 +209,15 @@ export class PageInstrument {
     return this.onPicked !== null;
   }
 
+  /** The pointer is over the page at (x, y), in its CSS pixels: the inspect
+   *  highlight follows it, and a click picks what it hovers. */
+  hoverAt(x: number, y: number): void {
+    if (this.onPicked === null) return;
+    void this.cdp
+      .sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
+      .catch(() => undefined);
+  }
+
   private async picked(backendNodeId: number): Promise<void> {
     const done = this.onPicked;
     if (done === null) return;

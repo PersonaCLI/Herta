@@ -536,6 +536,26 @@ describe("receipts and labels", () => {
   it("an unknown label keeps its words without the arrow", () => {
     expect(detailForHerta("↳ 待办: x", "zh")).toBe("待办: x");
   });
+
+  it("a finding citing a stored page step names it, as the folded row does (ADR 0083 step 7 lab)", () => {
+    const finding =
+      "标题发白（src/index.css:58-68, .herta/browser/s1/shot-7.png, .herta/browser/s1/console-3.txt:2）";
+    for (const detail of [
+      detailForHerta(`↳ 结论: ${finding}`, "zh"),
+      detailForHerta(`↳ 结论: ${finding}`, "zh", [
+        { kind: "findings", items: [finding] },
+      ]),
+    ]) {
+      expect(detail).not.toContain(".herta");
+      expect(detail).toContain("截图 7");
+      expect(detail).toContain("src/index.css:58-68");
+    }
+    expect(
+      detailForHerta(`↳ 结论: ${finding}`, "en", [
+        { kind: "findings", items: [finding] },
+      ]),
+    ).toContain("screenshot 7");
+  });
 });
 
 describe("the web rows (ADR 0080)", () => {

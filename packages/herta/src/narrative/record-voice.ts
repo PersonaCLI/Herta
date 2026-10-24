@@ -432,7 +432,10 @@ export function detailForHerta(
           }
           if (label === "结论" || label === "风险") {
             const listed = items(label === "结论" ? "findings" : "risks");
-            return `${plain}${listed !== null ? listed.join(sep) : rest}`;
+            // A finding cites what a page step stored by its name, as the
+            // folded row does (ADR 0083 §10): the step 7 lab found the
+            // verdict turn's marker carrying `.herta/browser/…/shot-7.png`.
+            return `${plain}${namePages(listed !== null ? listed.join(sep) : rest, lang)}`;
           }
           return `${plain}${rest}`;
         }

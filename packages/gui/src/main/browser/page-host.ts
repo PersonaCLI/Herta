@@ -3,6 +3,7 @@ import {
   type BrowserWindow,
   type NativeImage,
   type Session,
+  screen,
   session,
   shell,
   WebContentsView,
@@ -56,6 +57,9 @@ interface LivePage {
   size: { width: number; height: number };
 }
 
+/** How often the picker follows the pointer over the page. */
+const PICK_FOLLOW_MS = 33;
+
 /** How often the shown page's still frame is refreshed. A page taken off
  *  the window cannot be captured, so the frame a freeze shows is the last
  *  one taken while it was shown (spike, 2026-10-23). The capture is an
@@ -105,6 +109,8 @@ export class PageHost {
   private still: { readonly id: string; readonly image: NativeImage } | null =
     null;
   private stillTimer: ReturnType<typeof setInterval> | null = null;
+  /** The picker following the pointer, while a pick is on. */
+  private pickFollow: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly win: BrowserWindow,
@@ -242,6 +248,7 @@ export class PageHost {
    *  an element for the composer; off, or Escape, ends it. A navigation
    *  ends it too. */
   pick(sessionId: string, on: boolean): void {
+    this.stopFollow();
     const page = this.pages.get(sessionId);
     if (page === undefined) {
       if (on) this.events.picked?.(sessionId, null);
@@ -250,6 +257,7 @@ export class PageHost {
     if (!on) {
       void page.instrument.stopPick();
       this.events.picked?.(sessionId, null);
+      this.focusApp();
       return;
     }
     const wc = page.view.webContents;
@@ -258,14 +266,65 @@ export class PageHost {
     });
     if (!wc.isFocused()) wc.focus();
     void page.instrument
-      .startPick(({ element, html }) =>
+      .startPick(({ element, html }) => {
+        this.stopFollow();
         this.events.picked?.(sessionId, {
           element,
           route: routeOf(wc.getURL()),
           html: redactSecrets(html.replace(/\s+/g, " ").trim()).slice(0, 400),
-        }),
-      )
-      .catch(() => this.events.picked?.(sessionId, null));
+        });
+        this.focusApp();
+      })
+      .then(() => this.followPointer(sessionId, page))
+      .catch(() => {
+        this.stopFollow();
+        this.events.picked?.(sessionId, null);
+      });
+  }
+
+  /**
+   * While a pick is on, the pointer's place over the page is handed to it
+   * from here. The page's view did not always receive the pointer's moves
+   * — the step 7 lab (2026-10-24) saw its clicks arrive and no move, so
+   * nothing highlighted — and Chromium's inspect tool picks the node the
+   * last move hovered, so a click picked nothing either.
+   */
+  private followPointer(sessionId: string, page: LivePage): void {
+    this.stopFollow();
+    let last = "";
+    this.pickFollow = setInterval(() => {
+      if (!page.instrument.picking || page.view.webContents.isDestroyed()) {
+        this.stopFollow();
+        return;
+      }
+      if (this.onWindow !== sessionId || !this.placed) return;
+      const cursor = screen.getCursorScreenPoint();
+      const content = this.win.getContentBounds();
+      const box = page.view.getBounds();
+      const zoom = page.view.webContents.getZoomFactor();
+      const x = Math.round((cursor.x - content.x - box.x) / zoom);
+      const y = Math.round((cursor.y - content.y - box.y) / zoom);
+      if (x < 0 || y < 0 || x * zoom >= box.width || y * zoom >= box.height)
+        return;
+      const at = `${x},${y}`;
+      if (at === last) return;
+      last = at;
+      page.instrument.hoverAt(x, y);
+    }, PICK_FOLLOW_MS);
+  }
+
+  /** The keys go back to the app once a pick ends: the chip is in the
+   *  composer, and Enter sends it (the step 7 lab: the page kept the keys,
+   *  and Enter went to the page). */
+  private focusApp(): void {
+    if (!this.win.isDestroyed() && !this.win.webContents.isDestroyed())
+      this.win.webContents.focus();
+  }
+
+  private stopFollow(): void {
+    if (this.pickFollow === null) return;
+    clearInterval(this.pickFollow);
+    this.pickFollow = null;
   }
 
   /** The Trailblazer closed the page tab (owner, 2026-10-23): the page
@@ -277,6 +336,7 @@ export class PageHost {
   }
 
   dispose(): void {
+    this.stopFollow();
     this.stopStills();
     this.still = null;
     for (const id of [...this.pages.keys()]) this.close(id);

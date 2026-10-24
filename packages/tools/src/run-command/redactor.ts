@@ -38,13 +38,32 @@ const ENV_SECRET_RE =
  *  with a copy (`new RegExp(re.source)`), never `.test` on these. */
 export const TOKEN_SECRET_PATTERNS = PATTERNS;
 
+// A value that reads a secret rather than holds one: a member access or a
+// call (`form.elements.password.value;`, `process.env.API_KEY`,
+// `os.getenv(`), or the rest of a comparison, an arrow or a parenthesized
+// expression (`password === x`, `secret = (s) => …`).
+// The page-app lab (ADR 0083 step 7, 2026-10-24) found a sign-in form's
+// `const password = form.elements.password.value;` masked in every read,
+// and both agents spent a run on the line they could not see. A bare word,
+// a quoted value and a one-dot value (`p.ssw0rd`) are still taken for a
+// secret.
+const CODE_REFERENCE_RE =
+  /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*\]|\([^)\n]*\)?)+[;,)]*$/;
+
+function readsASecret(value: string): boolean {
+  if (/^[=>(]/u.test(value)) return true;
+  if (!CODE_REFERENCE_RE.test(value)) return false;
+  const accesses = value.match(/\??\.[A-Za-z_$]/g)?.length ?? 0;
+  return accesses >= 2 || /[()[\];]/.test(value);
+}
+
 export function redactSecrets(text: string): string {
   let out = text.replace(PEM_BLOCK_RE, "[REDACTED:private_key]");
   for (const { kind, re } of PATTERNS) {
     out = out.replace(re, `[REDACTED:${kind}]`);
   }
-  out = out.replace(ENV_SECRET_RE, (_m, key, sep) => {
-    return `${key}${sep}[REDACTED:env_secret]`;
-  });
+  out = out.replace(ENV_SECRET_RE, (match, key, sep, value: string) =>
+    readsASecret(value) ? match : `${key}${sep}[REDACTED:env_secret]`,
+  );
   return out;
 }

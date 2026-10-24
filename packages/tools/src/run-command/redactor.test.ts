@@ -108,6 +108,27 @@ describe("redactSecrets", () => {
     expect(redactSecrets("hello world")).toBe("hello world");
   });
 
+  it("leaves code that reads a secret, and still masks one written down (page-app lab, 2026-10-24)", () => {
+    for (const line of [
+      "const password = form.elements.password.value;",
+      "API_KEY = process.env.API_KEY",
+      'token = os.getenv("TOKEN")',
+      "if (password === confirmPassword) return;",
+      "const isSecret = (secret) => secret.length > 0;",
+    ])
+      expect(redactSecrets(line)).toBe(line);
+    expect(redactSecrets("password=hunter2")).toBe(
+      "password=[REDACTED:env_secret]",
+    );
+    expect(redactSecrets("PASSWORD=p.ssw0rd")).toBe(
+      "PASSWORD=[REDACTED:env_secret]",
+    );
+    expect(redactSecrets('const password = "hunter2";')).not.toContain(
+      "hunter2",
+    );
+    expect(redactSecrets("db.password=s3cret")).not.toContain("s3cret");
+  });
+
   it("redacts only the secret in multi-line text", () => {
     const r = redactSecrets("line1\nAKIAIOSFODNN7EXAMPLE\nline3");
     expect(r).toContain("line1");

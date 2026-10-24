@@ -69,6 +69,34 @@ describe("readWorkspaceFileBounded (ADR 0050 §2)", () => {
     if (!r.ok) expect(r.reason).toBe("not_found");
   });
 
+  it("a missing file under a root reached through a link is still not_found (2026-10-24)", async () => {
+    // macOS's os.tmpdir() is such a root on its own (`/var` → `/private/var`);
+    // a link makes the case on every platform.
+    const ws = await mkRoot();
+    const elsewhere = await mkRoot();
+    const link = join(elsewhere, "ws-link");
+    try {
+      await symlink(ws, link, "junction");
+    } catch {
+      return; // no symlink privilege on this machine — nothing to prove
+    }
+    const r = await resolveInsideWorkspace(link, "src/gone.txt");
+    expect(r).toEqual({ kind: "missing", relative: "src/gone.txt" });
+  });
+
+  it("a missing name under an in-workspace link that escapes is refused, as an existing one is", async () => {
+    const ws = await mkRoot();
+    const outside = await mkRoot();
+    try {
+      await symlink(outside, join(ws, "escape"), "junction");
+    } catch {
+      return; // no symlink privilege on this machine — nothing to prove
+    }
+    const r = await readWorkspaceFileBounded(ws, "escape/gone.txt");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("outside_workspace");
+  });
+
   it("a directory is not_a_file", async () => {
     const ws = await mkRoot();
     await mkdir(join(ws, "dir"));

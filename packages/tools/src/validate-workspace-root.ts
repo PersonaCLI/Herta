@@ -123,6 +123,12 @@ function eqOrInsideSlash(child: string, parent: string): boolean {
  * project canonicalized to `/var/home/<user>/…`, matched the `/var` entry, and
  * was refused: on those systems not one folder could be opened. `home` is
  * empty when the caller has none, and then nothing is exempt.
+ *
+ * Each spelling answers for itself (2026-10-24): a scratch exception one
+ * spelling earns never covers the other's refusal. As one shared exemption, a
+ * raw `/var/folders/…` or `/var/www/…` let through whatever the path LANDED
+ * on — `/var/www/../../etc` as typed, or a link sitting there that points at
+ * /etc — and /etc opened as a workspace.
  */
 export function isRefusedSystemDir(
   canonical: string,
@@ -130,16 +136,11 @@ export function isRefusedSystemDir(
   home: string,
 ): boolean {
   if (home.length > 0 && eqOrInsideSlash(canonical, home)) return false;
-  const isScratch = SCRATCH_EXCEPTIONS.some(
-    (p) => eqOrInsideSlash(canonical, p) || eqOrInsideSlash(raw, p),
+  return [canonical, raw].some(
+    (p) =>
+      !SCRATCH_EXCEPTIONS.some((s) => eqOrInsideSlash(p, s)) &&
+      SYSTEM_DIRS.some((dir) => eqOrInsideSlash(p, dir.replace(/\\/g, "/"))),
   );
-  if (isScratch) return false;
-  return SYSTEM_DIRS.some((dir) => {
-    const dirSlash = dir.replace(/\\/g, "/");
-    return (
-      eqOrInsideSlash(canonical, dirSlash) || eqOrInsideSlash(raw, dirSlash)
-    );
-  });
 }
 
 /**
@@ -197,7 +198,15 @@ export function validateWorkspaceRoot(
   // Match against the resolved path AND the raw, slash-normalized input so a
   // POSIX-style system path (e.g. "/etc") is rejected even on Windows, where
   // resolve() would rewrite it onto the current drive (C:\etc) and lose intent.
-  const rawNormalized = input.replace(/\\/g, "/");
+  //
+  // On macOS the spelling the OS itself hands back for /tmp and /var (a
+  // folder picker, a shell's physical cwd: `/private/tmp/proj`) is judged as
+  // the canonical one is (2026-10-24), not refused for sitting under the
+  // `/private` entry: `/private/etc` is still `/etc`, and `/private` itself
+  // keeps its entry. Linux has no such links, so nothing is stripped there.
+  const rawSlash = input.replace(/\\/g, "/");
+  const rawNormalized =
+    process.platform === "darwin" ? stripPrivatePrefix(rawSlash) : rawSlash;
   // Both forms, because each catches what the other cannot: the canonical one
   // catches a symlink the user made that points into /etc, the raw one catches
   // a POSIX system path typed on Windows, where resolve() would rewrite "/etc"

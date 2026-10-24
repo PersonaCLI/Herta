@@ -15,8 +15,24 @@ function mkDir(prefix: string): string {
 }
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
-const until = async (ok: () => boolean): Promise<boolean> => {
-  for (let i = 0; i < 400 && !ok(); i += 1) await sleep(5);
+const until = async (ok: () => boolean, tries = 400): Promise<boolean> => {
+  for (let i = 0; i < tries && !ok(); i += 1) await sleep(5);
+  return ok();
+};
+/** `until`, writing again between waits. macOS watches a directory through
+ *  FSEvents, whose stream starts on a thread of its own and reports only
+ *  what happens after it starts: under suite load the one write made as the
+ *  watcher is armed can land first and never be reported (2026-10-24, a full
+ *  run on the Mac). "Does a write here fire" is the claim, so the write is
+ *  repeated until the answer is in. */
+const untilFiredBy = async (
+  ok: () => boolean,
+  write: () => void,
+): Promise<boolean> => {
+  for (let i = 0; i < 20 && !ok(); i += 1) {
+    write();
+    await until(ok, 40);
+  }
   return ok();
 };
 
@@ -42,11 +58,19 @@ describe("watchGitDir (ADR 0058 amendment — the git dir, never the worktree)",
         if (fired === seen) return seen;
       }
     };
-    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/side\n");
-    expect(await until(() => fired >= 1)).toBe(true);
+    expect(
+      await untilFiredBy(
+        () => fired >= 1,
+        () => writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/side\n"),
+      ),
+    ).toBe(true);
     const before = await settled();
-    writeFileSync(join(gitDir, "refs", "heads", "main"), "abc\n");
-    expect(await until(() => fired > before)).toBe(true);
+    expect(
+      await untilFiredBy(
+        () => fired > before,
+        () => writeFileSync(join(gitDir, "refs", "heads", "main"), "abc\n"),
+      ),
+    ).toBe(true);
 
     // The worktree is not watched: an edit there is the focus refresh's job.
     const quiet = await settled();
@@ -72,8 +96,12 @@ describe("watchGitDir (ADR 0058 amendment — the git dir, never the worktree)",
       if (g === true) gone += 1;
       else plain += 1;
     });
-    writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/side\n");
-    expect(await until(() => plain >= 1)).toBe(true);
+    expect(
+      await untilFiredBy(
+        () => plain >= 1,
+        () => writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/side\n"),
+      ),
+    ).toBe(true);
     // `rm -rf .git` from beside the app.
     rmSync(gitDir, { recursive: true, force: true });
     expect(await until(() => gone >= 1)).toBe(true);

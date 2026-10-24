@@ -185,7 +185,7 @@ describe("sanitizeCreateOpts (IPC boundary, audit 2026-07-13 T1.2)", () => {
   });
 
   it("resolves and passes a legitimate override", () => {
-    const ws = mkdtempSync(join(tmpdir(), "herta-create-ws-"));
+    const ws = realpathSync(mkdtempSync(join(tmpdir(), "herta-create-ws-")));
     expect(sanitizeCreateOpts({ backendWorkspace: ws }, home)).toEqual({
       backendWorkspace: ws,
     });

@@ -2,6 +2,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -23,7 +24,7 @@ afterEach(() => {
 });
 
 function workspace(): string {
-  const d = mkdtempSync(join(tmpdir(), "herta-launcher-"));
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "herta-launcher-")));
   dirs.push(d);
   return d;
 }

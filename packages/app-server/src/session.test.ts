@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -93,7 +94,9 @@ afterEach(async () => {
 });
 
 function mkConfig(): AppServerConfig {
-  const root = mkdtempSync(join(tmpdir(), "herta-app-server-session-test-"));
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), "herta-app-server-session-test-")),
+  );
   tmpDirs.push(root);
   return {
     workspaceRoot: root,

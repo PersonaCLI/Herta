@@ -28,7 +28,13 @@
  *   - Each block is emitted exactly once — no double-emission window.
  */
 
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readUndoIndex, undoSegments, undoStoreDir } from "@herta/core";
@@ -58,7 +64,7 @@ function throwingCompletionProvider(): {
 }
 
 function mkConfig(): AppServerConfig {
-  const root = mkdtempSync(join(tmpdir(), "herta-e2e-test-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "herta-e2e-test-")));
   return {
     workspaceRoot: root,
     transcriptDir: join(root, ".herta", "transcript", "v2"),

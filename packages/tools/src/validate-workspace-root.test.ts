@@ -21,7 +21,9 @@ import {
 describe("validateWorkspaceRoot", () => {
   let tmp: string;
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "ws-val-"));
+    // Canonical, as every root the validator hands back is (audit S8) —
+    // macOS's os.tmpdir() is reached through `/var` → `/private/var`.
+    tmp = realpathSync.native(mkdtempSync(join(tmpdir(), "ws-val-")));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
@@ -70,6 +72,36 @@ describe("validateWorkspaceRoot", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe("ws_forbidden_root");
   });
+  // Windows resolves these onto the drive (C:\etc), which is no system
+  // directory there; the decision itself is pinned platform-free below.
+  it.skipIf(process.platform === "win32")(
+    "a `..` cannot walk out of a scratch exception into a system dir (2026-10-24)",
+    () => {
+      for (const p of ["/var/folders/../../etc", "/var/www/../../etc"]) {
+        const r = validateWorkspaceRoot(p, { home: tmp });
+        expect(r.ok, p).toBe(false);
+        if (!r.ok) expect(r.code, p).toBe("ws_forbidden_root");
+      }
+    },
+  );
+  it.runIf(process.platform === "darwin")(
+    "macOS: /tmp spelled as the OS hands it back (/private/tmp) is judged as /tmp is (2026-10-24)",
+    () => {
+      expect(validateWorkspaceRoot("/private/tmp", { home: tmp })).toEqual({
+        ok: true,
+        resolved: "/private/tmp",
+      });
+      for (const p of ["/private", "/private/etc", "/private/var/log"]) {
+        const r = validateWorkspaceRoot(p, { home: tmp });
+        expect(r.ok, p).toBe(false);
+        if (!r.ok) expect(r.code, p).toBe("ws_forbidden_root");
+      }
+      const walked = validateWorkspaceRoot("/private/var/folders/../../etc", {
+        home: tmp,
+      });
+      expect(walked.ok).toBe(false);
+    },
+  );
   it("rejects a System32 segment on any drive", () => {
     const r = validateWorkspaceRoot(join("D:\\", "x", "System32"), {
       home: tmp,
@@ -111,6 +143,20 @@ describe("isRefusedSystemDir — layouts a test machine cannot build (2026-09-23
         "/var/folders/ab/T/x",
         "/Users/u",
       ),
+    ).toBe(false);
+  });
+
+  it("a scratch spelling never exempts where the path lands (2026-10-24)", () => {
+    // Typed through a scratch dir, landing in /etc: by `..`, or by a link.
+    expect(isRefusedSystemDir("/etc", "/var/www/../../etc", "/home/u")).toBe(
+      true,
+    );
+    expect(
+      isRefusedSystemDir("/etc", "/var/folders/ab/T/sneaky", "/Users/u"),
+    ).toBe(true);
+    // A scratch spelling landing on a scratch or ordinary dir stays allowed.
+    expect(
+      isRefusedSystemDir("/srv/www/site", "/var/www/site", "/home/u"),
     ).toBe(false);
   });
 

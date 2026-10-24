@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function workspace(servers: unknown[]): string {
-  const d = mkdtempSync(join(tmpdir(), "herta-devserver-"));
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "herta-devserver-")));
   dirs.push(d);
   writeFileSync(
     join(d, "herta.launch.json"),

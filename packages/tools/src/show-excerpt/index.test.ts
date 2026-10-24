@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -20,7 +26,7 @@ let root: string;
 const recorded: Array<{ path: string; sha: string }> = [];
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "show-excerpt-"));
+  root = realpathSync(mkdtempSync(join(tmpdir(), "show-excerpt-")));
   recorded.length = 0;
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));

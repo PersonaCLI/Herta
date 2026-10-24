@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AskResolver, BrowserHost, ServerHost } from "@herta/core";
@@ -119,7 +125,7 @@ afterEach(() => {
 });
 
 function mkWorkspace(): string {
-  const dir = mkdtempSync(join(tmpdir(), "herta-wiring-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "herta-wiring-")));
   tmpDirs.push(dir);
   return dir;
 }

@@ -1,4 +1,10 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -116,7 +122,7 @@ afterEach(() => {
 
 describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   it("navigate opens the page and returns the elements with refs, framed as page data", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     const r = await browserNavigateTool({ host }).run(
       call("browser_navigate", { url: "localhost:5173/login" }),
@@ -138,7 +144,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("navigate takes url or go, never both", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const r = await browserNavigateTool({ host: fakeHost() }).run(
       call("browser_navigate", { url: "localhost:5173", go: "back" }),
       ctx(),
@@ -150,7 +156,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("a long tree is saved whole and 板砖 reads the start; page text is redacted", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     host.url = "http://localhost:5173/login";
     const tree = await browserReadTool({ host }).run(
@@ -172,7 +178,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("read before any page fails with the move that fixes it; find needs a query", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     const r = await browserReadTool({ host }).run(
       call("browser_read", { mode: "tree" }),
@@ -191,7 +197,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("act: a click names its target and the console error it caused; a password is masked; a stale ref fails hard", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     host.url = "http://localhost:5173/login";
     const tool = browserActTool({ host, eyes: false });
@@ -223,7 +229,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("without eyes there are no coordinates; with them a click may take x/y", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     host.url = "http://localhost:5173/";
     const blind = browserActTool({ host, eyes: false });
@@ -246,7 +252,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("a screenshot is stored, at most 40 kept; the image reaches only a model with eyes", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     host.url = "http://localhost:5173/";
     const seeing = browserScreenshotTool({ host, eyes: true });
@@ -267,7 +273,7 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
   });
 
   it("a console or network read is stored a line an entry, and a finding can cite its lines (owner 2026-10-23)", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost({
       async read(req: PageReadRequest) {
         return {
@@ -382,7 +388,7 @@ describe("registerBrowserRules (ADR 0083 §7)", () => {
   };
 
   it("loopback is free; another host is refused with what to use instead", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     const engine = engineWith(host);
     for (const url of [
@@ -408,7 +414,7 @@ describe("registerBrowserRules (ADR 0083 §7)", () => {
   });
 
   it("every other step is judged by where the page is NOW — the Trailblazer may have taken it anywhere", async () => {
-    ws = mkdtempSync(join(tmpdir(), "browser-"));
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();
     const engine = engineWith(host);
     expect(

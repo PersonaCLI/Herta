@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isPathInside } from "@herta/core";
 
 /**
@@ -101,12 +101,19 @@ export async function resolveInsideWorkspace(
   try {
     real = await fs.realpath(candidate);
   } catch {
-    // No inode to judge — fall back to the unresolved spelling: an
-    // in-workspace name is a missing file, an outside one is refused.
-    return isInside(candidate)
+    // No inode to judge — judge where the name WOULD land: its deepest
+    // existing ancestor realpath-ed, the missing tail re-joined. The bare
+    // spelling was compared against the realpath-ed root, so a root reached
+    // through a link (macOS's `/var` → `/private/var`, a symlinked checkout)
+    // called every missing file outside (2026-10-24); and a missing name
+    // under an in-workspace link that escapes is refused, as an existing
+    // one is. An in-workspace name is a missing file, an outside one is
+    // refused.
+    const landing = await realpathViaExistingAncestor(candidate);
+    return isInside(landing)
       ? {
           kind: "missing",
-          relative: candidate
+          relative: landing
             .slice(realRoot.length)
             .replace(/^[\\/]/, "")
             .split(sep)
@@ -121,6 +128,26 @@ export async function resolveInsideWorkspace(
     .split(sep)
     .join("/");
   return { kind: "ok", abs: real, relative };
+}
+
+/** A name with no inode, canonicalized through its deepest existing
+ *  ancestor with the missing tail re-joined. Bounded by path depth; the
+ *  bare spelling when nothing resolves, which the jail then judges as
+ *  written. */
+async function realpathViaExistingAncestor(candidate: string): Promise<string> {
+  const tail: string[] = [];
+  let dir = candidate;
+  while (true) {
+    const parent = dirname(dir);
+    if (parent === dir) return candidate;
+    tail.unshift(basename(dir));
+    dir = parent;
+    try {
+      return join(await fs.realpath(dir), ...tail);
+    } catch {
+      // not there either — climb
+    }
+  }
 }
 
 export async function readWorkspaceFileBounded(

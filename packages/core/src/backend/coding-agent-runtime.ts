@@ -915,13 +915,19 @@ export class CodingAgentRuntime {
           // they had explicitly refused was done, the denial surviving only
           // as a residual-risk line. A refusal now CAPS the status.
           //
-          // "Landed" is mutations/verification — deliberately NOT
-          // `hasOkEvidence`, which would call a run that only READ things
-          // "partial" instead of 受阻 (and see 1.2 on that counting
-          // generally).
+          // "Landed" is mutations, verification or findings — deliberately
+          // NOT `hasOkEvidence`, which would call a run that only READ
+          // things "partial" instead of 受阻 (and see 1.2 on that counting
+          // generally). Findings count (owner 2026-10-24): a run that
+          // answered its brief while one side command was refused — a
+          // write into `.herta`, a probe the Trailblazer declined — was
+          // marked 卡住了, and Herta read six findings that answered the
+          // question as a failed run (ADR 0083 step 7 lab). 受阻 means the
+          // refusal left nothing: no change, no test, no finding.
           const landed =
             partialReport.changedFiles.length > 0 ||
-            partialReport.tests.length > 0;
+            partialReport.tests.length > 0 ||
+            findings.size > 0;
           builder.setStatus(landed ? "partial" : "blocked");
         } else {
           // Only SUCCESSFUL tool results (or harvested tests/files) argue

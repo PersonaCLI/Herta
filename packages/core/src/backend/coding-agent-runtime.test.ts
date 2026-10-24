@@ -875,6 +875,93 @@ describe("CodingAgentRuntime.runBrief", () => {
     ).toBe(false);
   });
 
+  it("a refused side command does not mark a run that still found its answer blocked (owner 2026-10-24)", async () => {
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: { id: "tc1", tool: "run_command", input: {} },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          {
+            type: "tool-call-request",
+            call: { id: "tc2", tool: "report_finding", input: {} },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "found it" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const tools = new InMemoryToolRegistry();
+    tools.register({
+      name: "run_command",
+      schema: () => ({
+        name: "run_command",
+        description: "run a command",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({ ok: true, summary: "should not run" }),
+    });
+    tools.register({
+      name: "report_finding",
+      schema: () => ({
+        name: "report_finding",
+        description: "report a finding",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async (_input, ctx) => {
+        ctx.findings?.add({
+          claim: "the phone card is hard-coded white",
+          cites: ["src/index.css:66"],
+        });
+        return { ok: true, summary: "noted" };
+      },
+    });
+    // The command is refused by policy (a write into the harness's state);
+    // the finding is allowed.
+    const engine = {
+      check: async (
+        call: { id: string; tool: string },
+        ctx: { bus: InMemoryEventBus<AgentEvent> },
+      ) => {
+        if (call.tool !== "run_command") return { kind: "allow" as const };
+        ctx.bus.publish({
+          type: "permission.resolved",
+          layer: "backend",
+          id: "perm-1",
+          tool: "run_command",
+          decision: "blocked",
+          risk: "workspace_write",
+          code: "command_blocked",
+        } as never);
+        return { kind: "deny" as const, code: "command_blocked" as const };
+      },
+    } as unknown as PermissionEngine;
+    const runtime = new CodingAgentRuntime({
+      sessionId: "s-1",
+      provider,
+      tools,
+      permissions: engine,
+      backendBuilder: new BackendContextBuilder({ tools }),
+      bus: new InMemoryEventBus<AgentEvent>(),
+      clock: () => new Date("2026-05-07T00:00:00.000Z"),
+      workspaceRoot: wsRoot,
+      memory: new NoopMemoryManager(),
+    });
+
+    const report = await runtime.runBrief(sampleBrief);
+
+    // Nothing else landed: only the finding keeps it from 受阻.
+    expect(report.status).toBe("partial");
+    expect(report.changedFiles).toHaveLength(0);
+  });
+
   it("a run whose only mutation is DENIED reports status 'blocked' with no changed files", async () => {
     const provider = new FakeProvider({
       turns: [

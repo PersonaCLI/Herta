@@ -7992,6 +7992,11 @@ button.commit-view__path:hover {
 /* An armed destructive press (Clear browser data, ADR 0083 §8): the second
    press does it. The key-delete link's red, in both themes. */
 .settings-btn--danger { color: #b23b3b; border-color: rgba(178, 59, 59, 0.4); }
+/* A button whose label changes in place keeps one width: every label sits
+   in the same cell, the others hidden (owner 2026-10-24). */
+.settings-btn__stack { display: inline-grid; }
+.settings-btn__stack > span { grid-area: 1 / 1; text-align: center; }
+.settings-btn__stack > .is-off { visibility: hidden; }
 .settings-key-delete {
   margin: 12px 0 0;
   padding: 0;

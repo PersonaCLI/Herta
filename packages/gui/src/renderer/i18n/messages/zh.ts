@@ -504,6 +504,7 @@ export const zh = {
   "banzhuan.browserData.clear": "清除",
   "banzhuan.browserData.confirm": "确认清除",
   "banzhuan.browserData.done": "已清除",
+  "banzhuan.browserData.failed": "清除失败",
   "activity.verb.startingServer": "启动开发服务器",
   "activity.verb.stoppingServer": "停止开发服务器",
   "activity.verb.readingServerLog": "读取服务器日志",

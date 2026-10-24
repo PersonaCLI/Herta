@@ -528,6 +528,7 @@ export const en = {
   "banzhuan.browserData.clear": "Clear",
   "banzhuan.browserData.confirm": "Confirm clear",
   "banzhuan.browserData.done": "Cleared",
+  "banzhuan.browserData.failed": "Clear failed",
   "activity.verb.startingServer": "Starting dev server",
   "activity.verb.stoppingServer": "Stopping dev server",
   "activity.verb.readingServerLog": "Reading server log",

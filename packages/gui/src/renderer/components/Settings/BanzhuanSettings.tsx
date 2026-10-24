@@ -99,6 +99,13 @@ function metaFor(state: BanzhuanDeviceState): StateMeta {
 /** The page partition's data, cleared (ADR 0083 §8). It signs the
  *  Trailblazer and 板砖 out of every page, so a first press arms it and a
  *  second one, within a few seconds, clears. */
+const LABEL = {
+  idle: "banzhuan.browserData.clear",
+  armed: "banzhuan.browserData.confirm",
+  done: "banzhuan.browserData.done",
+  failed: "banzhuan.browserData.failed",
+} as const satisfies Record<string, MessageKey>;
+
 function ClearBrowserData(props: {
   readonly clear: () => Promise<boolean>;
 }): JSX.Element {
@@ -107,6 +114,8 @@ function ClearBrowserData(props: {
     "idle" | "armed" | "busy" | "done" | "failed"
   >("idle");
   const button = useRef<HTMLButtonElement>(null);
+  // While it clears, the confirm it was given stays on the button.
+  const shown = state === "busy" ? "armed" : state;
   useEffect(() => {
     if (state !== "armed" && state !== "done" && state !== "failed") return;
     const timer = window.setTimeout(() => setState("idle"), 4000);
@@ -147,13 +156,20 @@ function ClearBrowserData(props: {
         );
       }}
     >
-      {state === "armed"
-        ? t("banzhuan.browserData.confirm")
-        : state === "done"
-          ? t("banzhuan.browserData.done")
-          : state === "failed"
-            ? t("common.couldntSave")
-            : t("banzhuan.browserData.clear")}
+      {/* Every label in one cell, the others hidden: the button keeps the
+          widest one's width, so the row's text beside it does not re-wrap
+          as the label changes (owner 2026-10-24). */}
+      <span className="settings-btn__stack">
+        {(["idle", "armed", "done", "failed"] as const).map((k) => (
+          <span
+            key={k}
+            className={k === shown ? undefined : "is-off"}
+            aria-hidden={k === shown ? undefined : true}
+          >
+            {t(LABEL[k])}
+          </span>
+        ))}
+      </span>
     </button>
   );
 }

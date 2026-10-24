@@ -294,6 +294,32 @@ describe("BanzhuanSettings", () => {
       expect(clear).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps one width: every label is in the button, one shown (owner 2026-10-24)", () => {
+      const mock = createMockHertaBridge();
+      const bridge: HertaBridge = {
+        ...mock.bridge,
+        pageClearData: vi.fn(async () => true),
+      };
+      renderWithLocale(
+        <HertaBridgeProvider bridge={bridge}>
+          <BanzhuanSettings />
+        </HertaBridgeProvider>,
+      );
+      const button = screen.getByRole("button", { name: "Clear" });
+      const labels = [
+        ...button.querySelectorAll(".settings-btn__stack > span"),
+      ];
+      expect(labels.map((l) => l.textContent)).toEqual([
+        "Clear",
+        "Confirm clear",
+        "Cleared",
+        "Clear failed",
+      ]);
+      expect(
+        labels.filter((l) => !l.classList.contains("is-off")),
+      ).toHaveLength(1);
+    });
+
     it("armed, a press anywhere else takes it back at once", () => {
       const mock = createMockHertaBridge();
       const clear = vi.fn(async () => true);

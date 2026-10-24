@@ -331,6 +331,14 @@ function createWindow(): BrowserWindow {
     // macOS "hidden" still yields the native inset traffic lights and the
     // renderer skips its custom buttons.
     titleBarStyle: "hidden",
+    // macOS only: the lights on the top bar's middle line. Left at the OS
+    // inset they sat at y 8–24, centred 10px above the bar's icons, which
+    // are centred in its 52px (`--topbar-h`; owner 2026-10-24). Electron
+    // lays the buttons one point up and left of the point given (measured:
+    // {8, 18} put the close button at 7,17), so this puts it at 8,18 —
+    // centred at 26, and at the OS's own x, so the 86px the bar keeps for
+    // the lights (`.app.is-mac .topbar`) still holds.
+    trafficLightPosition: { x: 9, y: 19 },
     // Window/taskbar icon (user 2026-07-06): the rounded Herta icon, bundled
     // from resources/ (reference_UX_design/ never ships). The future
     // installer icon comes from the same file via the packager config.

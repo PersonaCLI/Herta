@@ -865,7 +865,7 @@ export const zh = {
   "shortcut.openSettings": "设置",
   "shortcut.closeTab": "关闭查看器标签",
   "shortcut.showShortcuts": "快捷键",
-  "shortcut.openBrowser": "打开浏览器",
+  "shortcut.openBrowser": "浏览器",
   "shortcut.focusComposer": "聚焦输入框",
   "shortcut.send": "发送",
   "shortcut.newline": "换行",

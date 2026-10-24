@@ -397,9 +397,7 @@ describe("TopBar new-session mid-turn guard (2026-07-12)", () => {
       </HertaBridgeProvider>,
     );
     // No session yet: no page to open.
-    expect(
-      screen.queryByRole("button", { name: "Open the browser" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browser" })).toBeNull();
     act(() => {
       mock.emitReset({
         sessionId: "s-1",
@@ -411,7 +409,7 @@ describe("TopBar new-session mid-turn guard (2026-07-12)", () => {
         backendWorkspaceIsDefault: true,
       });
     });
-    fireEvent.click(screen.getByRole("button", { name: "Open the browser" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browser" }));
     expect(opened).toHaveBeenCalledTimes(1);
   });
 });

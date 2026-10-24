@@ -875,7 +875,7 @@ export const en = {
   "shortcut.openSettings": "Settings",
   "shortcut.closeTab": "Close the viewer tab",
   "shortcut.showShortcuts": "Keyboard shortcuts",
-  "shortcut.openBrowser": "Open the browser",
+  "shortcut.openBrowser": "Browser",
   "shortcut.focusComposer": "Focus the composer",
   "shortcut.send": "Send",
   "shortcut.newline": "New line",

@@ -23,6 +23,11 @@ interface ServerJournalLike {
 export class ServerRegistry {
   private readonly launchers = new Map<string, Launcher>();
   private journal: ServerJournalLike | null = null;
+  /** Set as the window closes. What the launchers report after that — the
+   *  servers' own exits as `dispose` stops them — has no window to reach,
+   *  and the report into a destroyed window threw in main (Mac check,
+   *  2026-10-24). The journal still hears every exit. */
+  private disposed = false;
 
   constructor(
     private readonly events: {
@@ -45,6 +50,7 @@ export class ServerRegistry {
       onSpawn: (s) => void this.journal?.spawned({ ...s, sessionId }),
       onExit: (pid) => void this.journal?.exited(pid),
       onChange: (status) => {
+        if (this.disposed) return;
         this.events.changed?.(sessionId, status);
         if (status.state === "ready")
           this.events.ready?.(sessionId, status.url);
@@ -64,6 +70,7 @@ export class ServerRegistry {
 
   /** The window or the app closes: every server stops. */
   async dispose(): Promise<void> {
+    this.disposed = true;
     const all = [...this.launchers.values()];
     this.launchers.clear();
     await Promise.allSettled(all.map((l) => l.stopAll()));

@@ -1,6 +1,8 @@
 import { redactSecrets } from "@herta/tools";
 import {
   type BrowserWindow,
+  type IpcMain,
+  ipcMain,
   type NativeImage,
   type Session,
   screen,
@@ -8,6 +10,7 @@ import {
   shell,
   WebContentsView,
 } from "electron";
+import { CMD } from "../../preload/channels.js";
 import {
   type PageBounds,
   type PageNavigation,
@@ -363,7 +366,12 @@ export class PageHost {
     }
     if (page === undefined) return;
     this.giveBackFocus(page);
-    this.win.contentView.removeChildView(page.view);
+    // A window that closed takes its child views with it, and every getter
+    // on it throws, `contentView` included: the window's `closed` disposes
+    // this host, and the throw skipped the servers' stop after it (Mac
+    // check, 2026-10-24).
+    if (!this.win.isDestroyed())
+      this.win.contentView.removeChildView(page.view);
   }
 
   /** Still on the window, outside what it shows, at its last size. */
@@ -380,12 +388,7 @@ export class PageHost {
    *  cheat sheet opened over it (spike, 2026-10-23). The app takes it back. */
   private giveBackFocus(page: LivePage): void {
     const wc = page.view.webContents;
-    if (
-      !wc.isDestroyed() &&
-      wc.isFocused() &&
-      !this.win.webContents.isDestroyed()
-    )
-      this.win.webContents.focus();
+    if (!wc.isDestroyed() && wc.isFocused()) this.focusApp();
   }
 
   private startStills(id: string, page: LivePage): void {
@@ -511,6 +514,98 @@ export class PageHost {
       this.close(oldest[0]);
     }
   }
+}
+
+/** The part of `ipcMain` the page's IPC uses; injectable for tests. */
+export type PageIpc = Pick<
+  IpcMain,
+  "on" | "handle" | "removeAllListeners" | "removeHandler"
+>;
+
+/**
+ * The browser page's IPC (ADR 0083), re-run per createWindow: macOS reopens
+ * a window from the Dock after the last one closed, in the same process.
+ * Every registration replaces its channel's last one. The hand-kept list of
+ * removals this had missed `pageClearData`, so the second window died
+ * registering it twice, and `pageClose` / `pagePick`, whose listeners
+ * stacked and still called the closed window's pages (Mac check,
+ * 2026-10-24).
+ */
+export function registerPageHandlers(
+  pages: PageHost,
+  ipc: PageIpc = ipcMain,
+): void {
+  const on: PageIpc["on"] = (channel, listener) => {
+    ipc.removeAllListeners(channel);
+    return ipc.on(channel, listener);
+  };
+  const handle: PageIpc["handle"] = (channel, listener) => {
+    ipc.removeHandler(channel);
+    ipc.handle(channel, listener);
+  };
+  on(CMD.pageShow, (_e, sessionId: unknown, bounds: unknown) => {
+    const b = pageBoundsOf(bounds);
+    if (typeof sessionId === "string" && b !== null) pages.show(sessionId, b);
+  });
+  on(CMD.pageHide, () => pages.hide());
+  on(CMD.pageClose, (_e, sessionId: unknown) => {
+    if (typeof sessionId === "string") pages.closePage(sessionId);
+  });
+  on(CMD.pagePick, (_e, sessionId: unknown, picking: unknown) => {
+    if (typeof sessionId === "string") pages.pick(sessionId, picking === true);
+  });
+  on(CMD.pageNavigate, (_e, sessionId: unknown, to: unknown) => {
+    const move = pageNavigationOf(to);
+    if (typeof sessionId === "string" && move !== null)
+      pages.navigate(sessionId, move);
+  });
+  handle(CMD.pageFreeze, () => pages.freeze());
+  // Settings' "Clear browser data" (ADR 0083 §8): the page partition only,
+  // never the app's own session.
+  handle(CMD.pageClearData, async () => {
+    try {
+      const s = pageSession();
+      await s.clearStorageData();
+      await s.clearCache();
+      await s.clearAuthCache();
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  handle(CMD.pageState, (_e, sessionId: unknown) =>
+    typeof sessionId === "string" ? pages.state(sessionId) : null,
+  );
+  handle(CMD.pageOpenExternal, (_e, sessionId: unknown) =>
+    typeof sessionId === "string" ? pages.openExternally(sessionId) : undefined,
+  );
+}
+
+const finite = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n);
+
+/** What the renderer sent as the page tab's box, or null when it is not one. */
+function pageBoundsOf(value: unknown): PageBounds | null {
+  if (typeof value !== "object" || value === null) return null;
+  const b = value as Record<string, unknown>;
+  return finite(b.x) && finite(b.y) && finite(b.width) && finite(b.height)
+    ? { x: b.x, y: b.y, width: b.width, height: b.height }
+    : null;
+}
+
+/** What the renderer asked of the page, or null when it is not a move. */
+function pageNavigationOf(value: unknown): PageNavigation | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.url === "string") return { url: v.url.slice(0, 4096) };
+  if (
+    v.go === "back" ||
+    v.go === "forward" ||
+    v.go === "reload" ||
+    v.go === "stop"
+  )
+    return { go: v.go };
+  return null;
 }
 
 function stateOf(sessionId: string, view: WebContentsView): PageState {

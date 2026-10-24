@@ -18,7 +18,6 @@ import {
 } from "electron";
 import hertaIcon from "../../resources/herta-icon.png?asset";
 import { CMD, EVT } from "../preload/channels.js";
-import type { PageBounds, PageNavigation } from "../shared/browser-page.js";
 import { isAllowedExternalUrl } from "../shared/links.js";
 import {
   defaultCloseToTray,
@@ -38,7 +37,11 @@ import {
   registerAttachmentProtocol,
   registerAttachmentScheme,
 } from "./attachment-protocol.js";
-import { PageHost, pageSession } from "./browser/page-host.js";
+import {
+  PageHost,
+  pageSession,
+  registerPageHandlers,
+} from "./browser/page-host.js";
 import { ServerRegistry } from "./browser/server-registry.js";
 import { buildCsp } from "./csp.js";
 import createDocumentWorker from "./document-worker?nodeWorker";
@@ -396,27 +399,25 @@ function createWindow(): BrowserWindow {
   // `before-quit` can hold app exit until the session flushes (a window close
   // mid-stream raced `app.quit()` against the async closeActiveSession —
   // persistence inside it could be truncated).
+  // To the renderer while the window is there. The pages and servers below
+  // can call back after it closed (a page's own events, a server's exit as
+  // the window stops it), and every getter on a destroyed window throws,
+  // `webContents` included — so the window is asked first (Mac check,
+  // 2026-10-24).
+  const toRenderer = (channel: string, ...args: unknown[]): void => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed())
+      win.webContents.send(channel, ...args);
+  };
   // The browser pages of this window (ADR 0083): main owns them, and the
   // session service hands each session its page for 板砖's steps.
   const pages = new PageHost(
     win,
     {
-      state: (state) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pageState, state);
-      },
-      command: (id) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pageCommand, id);
-      },
-      opened: (sessionId) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pageOpen, sessionId);
-      },
-      picked: (sessionId, pick) => {
-        if (!win.webContents.isDestroyed())
-          win.webContents.send(EVT.pagePicked, { sessionId, pick });
-      },
+      state: (state) => toRenderer(EVT.pageState, state),
+      command: (id) => toRenderer(EVT.pageCommand, id),
+      opened: (sessionId) => toRenderer(EVT.pageOpen, sessionId),
+      picked: (sessionId, pick) =>
+        toRenderer(EVT.pagePicked, { sessionId, pick }),
     },
     process.platform === "darwin",
   );
@@ -425,10 +426,7 @@ function createWindow(): BrowserWindow {
   // server that answers opens the page tab when the page is not elsewhere.
   const servers = new ServerRegistry({
     ready: (sessionId, url) => pages.openOn(sessionId, url),
-    changed: (sessionId) => {
-      if (!win.webContents.isDestroyed())
-        win.webContents.send(EVT.serversChanged, sessionId);
-    },
+    changed: (sessionId) => toRenderer(EVT.serversChanged, sessionId),
   });
   const service = createSessionService(win.webContents, win, {
     browser: pages,
@@ -582,80 +580,6 @@ function registerUpdateHandlers(): void {
     () => updateService?.current() ?? { phase: "idle" },
   );
   ipcMain.handle(CMD.appVersion, () => appVersion());
-}
-
-const finite = (n: unknown): n is number =>
-  typeof n === "number" && Number.isFinite(n);
-
-/** What the renderer sent as the page tab's box, or null when it is not one. */
-function pageBoundsOf(value: unknown): PageBounds | null {
-  if (typeof value !== "object" || value === null) return null;
-  const b = value as Record<string, unknown>;
-  return finite(b.x) && finite(b.y) && finite(b.width) && finite(b.height)
-    ? { x: b.x, y: b.y, width: b.width, height: b.height }
-    : null;
-}
-
-/** What the renderer asked of the page, or null when it is not a move. */
-function pageNavigationOf(value: unknown): PageNavigation | null {
-  if (typeof value !== "object" || value === null) return null;
-  const v = value as Record<string, unknown>;
-  if (typeof v.url === "string") return { url: v.url.slice(0, 4096) };
-  if (
-    v.go === "back" ||
-    v.go === "forward" ||
-    v.go === "reload" ||
-    v.go === "stop"
-  )
-    return { go: v.go };
-  return null;
-}
-
-/** The browser page's IPC (ADR 0083). Idempotent and re-run per
- *  createWindow, like the window controls below. */
-function registerPageHandlers(pages: PageHost): void {
-  ipcMain.removeAllListeners(CMD.pageShow);
-  ipcMain.removeAllListeners(CMD.pageHide);
-  ipcMain.removeAllListeners(CMD.pageNavigate);
-  ipcMain.removeHandler(CMD.pageFreeze);
-  ipcMain.removeHandler(CMD.pageState);
-  ipcMain.removeHandler(CMD.pageOpenExternal);
-  ipcMain.on(CMD.pageShow, (_e, sessionId: unknown, bounds: unknown) => {
-    const b = pageBoundsOf(bounds);
-    if (typeof sessionId === "string" && b !== null) pages.show(sessionId, b);
-  });
-  ipcMain.on(CMD.pageHide, () => pages.hide());
-  ipcMain.on(CMD.pageClose, (_e, sessionId: unknown) => {
-    if (typeof sessionId === "string") pages.closePage(sessionId);
-  });
-  ipcMain.on(CMD.pagePick, (_e, sessionId: unknown, on: unknown) => {
-    if (typeof sessionId === "string") pages.pick(sessionId, on === true);
-  });
-  ipcMain.on(CMD.pageNavigate, (_e, sessionId: unknown, to: unknown) => {
-    const move = pageNavigationOf(to);
-    if (typeof sessionId === "string" && move !== null)
-      pages.navigate(sessionId, move);
-  });
-  ipcMain.handle(CMD.pageFreeze, () => pages.freeze());
-  // Settings' "Clear browser data" (ADR 0083 §8): the page partition only,
-  // never the app's own session.
-  ipcMain.handle(CMD.pageClearData, async () => {
-    try {
-      const s = pageSession();
-      await s.clearStorageData();
-      await s.clearCache();
-      await s.clearAuthCache();
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  ipcMain.handle(CMD.pageState, (_e, sessionId: unknown) =>
-    typeof sessionId === "string" ? pages.state(sessionId) : null,
-  );
-  ipcMain.handle(CMD.pageOpenExternal, (_e, sessionId: unknown) =>
-    typeof sessionId === "string" ? pages.openExternally(sessionId) : undefined,
-  );
 }
 
 /** Custom caption-button IPC (acts on the current window). Idempotent and

@@ -3,12 +3,13 @@
   - "website"
 
 # pnpm 10+ blocks dependency build scripts by default and (v11) ignores the
-# package.json "pnpm" field entirely — without this allow-list, a plain-pnpm
-# install skips electron's postinstall, the binary never downloads, and
-# `electron-vite dev` dies with "Error: Electron uninstall". The corepack-
+# package.json "pnpm" field entirely — this allow-list lets a plain-pnpm
+# install run the two dependencies that still build on install. The corepack-
 # pinned pnpm 9.15 ignores these keys (it runs build scripts by default).
+# electron is not here: electron 43 has no install script and fetches its
+# binary only when something requires it, which electron-vite never does.
+# packages/gui's predev/prepreview run its `install-electron` instead.
 onlyBuiltDependencies:
-  - electron
   - esbuild
   - better-sqlite3
 

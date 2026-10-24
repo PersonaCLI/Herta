@@ -11,9 +11,10 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "predev": "tsc -b ../..",
+    "predev": "install-electron && tsc -b ../..",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "prepreview": "install-electron",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "checkvoice": "node scripts/check-voice-payload.mjs",

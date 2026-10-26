@@ -8,8 +8,11 @@ import type {
   ToolContext,
 } from "@herta/core";
 import { formatInputIssues } from "../input-issues.js";
-import { splitShellSegments } from "../run-command/classifier.js";
-import { checkReaderArgvPaths } from "../run-command/reader-guard.js";
+import type { SafePathDenied } from "../path-safety.js";
+import {
+  checkReaderArgvPaths,
+  checkReadPaths,
+} from "../run-command/reader-guard.js";
 import { previewHeredocWrites } from "./heredoc-write.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
 import { readRedirectTargets, writesUndoable } from "./redirect-writes.js";
@@ -56,7 +59,7 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
     const shell = ctx.bg.getInternal(SHELL_BG_ID);
     const cwd =
       shell instanceof PersistentShell ? shell.cwd : ctx.workspaceRoot;
-    const { verdict, codes } = classifyShellCommandDetailed(
+    const { verdict, codes, steps } = classifyShellCommandDetailed(
       parsed.data.command,
       {
         workspaceRoot: ctx.workspaceRoot,
@@ -151,38 +154,69 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
         cwd,
       };
     }
-    // allow → realpath the reader operands of every segment (async guard).
-    //
-    // The words are peeled the same way the CLASSIFIER peels them. They were
-    // not, and the two layers disagreeing about where the command starts was
-    // enough to switch this guard off entirely: `time cat out/win.ini` (or
-    // `{ cat …; }`, `if cat …`, `! cat …`, `command cat …`) handed
-    // checkReaderArgvPaths a first word of `time`, which is not a
-    // PATH_READER_CMD, so it returned no candidates — and the junction-escape
-    // this guard exists for (audit T3.4) went unchecked behind one harmless
-    // extra word (red team 2026-08-24).
-    for (const segment of splitShellSegments(parsed.data.command)) {
-      const { words } = tokenize(segment);
-      if (words.length === 0) continue;
-      const denial = await checkReaderArgvPaths(
-        ctx.workspaceRoot,
-        cwd,
-        peelReaderHead(words),
-      );
-      if (denial !== null) {
-        // A refused READ (2026-08-26): the reader guard only runs on
-        // read-classified segments, so this deny withholds information, not
-        // a mutation — the status gate must not cap a completed brief on it.
-        return {
-          kind: "deny",
-          code: denial.code,
-          reason: denial.message,
-          risk: "workspace_read",
-        };
-      }
+    // allow → realpath what every command of the line reads (async guard).
+    const denial = await checkLineReads(ctx.workspaceRoot, steps ?? []);
+    if (denial !== null) {
+      // A refused READ (2026-08-26): the reader guard only runs on
+      // read-classified segments, so this deny withholds information, not
+      // a mutation — the status gate must not cap a completed brief on it.
+      return {
+        kind: "deny",
+        code: denial.code,
+        reason: denial.message,
+        risk: "workspace_read",
+      };
     }
     return { kind: "allow" };
   };
+}
+
+/**
+ * What an allowed line READS, realpath-ed (audit T3.4): each command's
+ * reader operands and its `<` input redirects, whose target the tokenizer
+ * keeps out of the words (Mac findings 2026-10-24, item 4: `cat < notes`
+ * read through a link the guard refused for `cat notes`). The commands are
+ * the classifier's `steps` — substitution bodies, unrolled loop items, each
+ * from the directory a `cd` before it moved to — never the raw line, which
+ * hid all three from this check. The first denial, or null. The rule asks
+ * it, and the tool asks again just before the line runs, against a link
+ * swapped in between.
+ *
+ * The words are peeled the same way the CLASSIFIER peels them. They were
+ * not, and the two layers disagreeing about where the command starts was
+ * enough to switch this guard off entirely: `time cat out/win.ini` (or
+ * `{ cat …; }`, `if cat …`, `! cat …`, `command cat …`) handed
+ * checkReaderArgvPaths a first word of `time`, which is not a
+ * PATH_READER_CMD, so it returned no candidates — and the junction-escape
+ * this guard exists for (audit T3.4) went unchecked behind one harmless
+ * extra word (red team 2026-08-24).
+ */
+export async function checkLineReads(
+  workspaceRoot: string,
+  steps: ReadonlyArray<{ text: string; cwd: string }>,
+): Promise<SafePathDenied | null> {
+  for (const { text, cwd } of steps) {
+    const { words, redirects } = tokenize(text);
+    if (words.length > 0) {
+      const denial = await checkReaderArgvPaths(
+        workspaceRoot,
+        cwd,
+        peelReaderHead(words),
+      );
+      if (denial !== null) return denial;
+    }
+    const inputs = redirects
+      .filter((r) => r.kind === "in")
+      .map((r) => r.target);
+    const denial = await checkReadPaths(
+      workspaceRoot,
+      cwd,
+      inputs,
+      (path) => `input redirect < ${path}`,
+    );
+    if (denial !== null) return denial;
+  }
+  return null;
 }
 
 export function registerBashRule(

@@ -1,17 +1,17 @@
 import { isAbsolute, resolve } from "node:path";
-import {
-  isPathInside,
-  type PermissionRule,
-  type RulePermissionEngine,
-  type RuleVerdict,
-  type ToolCallRequest,
-  type ToolContext,
+import type {
+  PermissionRule,
+  RulePermissionEngine,
+  RuleVerdict,
+  ToolCallRequest,
+  ToolContext,
 } from "@herta/core";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import { formatInputIssues } from "../input-issues.js";
 import {
   gitInternalsWrite,
   hertaStateWriteDenial,
+  holdsWorkspace,
   namesHertaState,
   resolveSafePath,
 } from "../path-safety.js";
@@ -45,8 +45,11 @@ export function runCommandWriteGuard(
       namesHertaState(body, workspaceRoot)
         ? "hands a shell a command that names .herta — the harness's own state; no command may change it"
         : null,
+    // As written or canonically: `find …/VERIFY/WS -delete` from another
+    // case of the root reaches `.herta` all the same (Mac findings
+    // 2026-10-24, item 3).
     holds: (operand) =>
-      operand !== "" && isPathInside(at(operand), resolve(workspaceRoot)),
+      operand !== "" && holdsWorkspace(at(operand), resolve(workspaceRoot)),
     patch: (file) => (file === "" ? null : readPatchTargets(at(file))),
     gitInternal: (operand) =>
       operand !== "" && gitInternalsWrite(workspaceRoot, at(operand)),

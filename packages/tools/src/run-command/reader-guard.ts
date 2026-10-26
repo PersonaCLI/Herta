@@ -83,8 +83,25 @@ export async function checkReaderArgvPaths(
 ): Promise<SafePathDenied | null> {
   const candidates = readerPathCandidates(argv);
   if (candidates === null) return null;
+  return checkReadPaths(workspaceRoot, effectiveCwd, candidates);
+}
 
-  for (const cand of candidates) {
+/**
+ * The same realpath check for paths a line READS that are no reader's
+ * operands: a shell's `<` input redirect. `cat notes` was denied when
+ * `notes` linked to a file outside the workspace, and `cat < notes` was
+ * allowed with no card — the tokenizer takes the target out of the words,
+ * so the operand check never saw it (Mac findings 2026-10-24, item 4; every
+ * POSIX shell). `describe` names the path the way the line spelled it.
+ */
+export async function checkReadPaths(
+  workspaceRoot: string,
+  effectiveCwd: string,
+  paths: readonly string[],
+  describe: (path: string) => string = (path) =>
+    `read-only command targets ${path}`,
+): Promise<SafePathDenied | null> {
+  for (const cand of paths) {
     // resolve() (not join) so a Windows DRIVE-RELATIVE operand like `E:.env`
     // canonicalizes the way the OS actually opens it — against drive E's cwd
     // (the workspace) — instead of the literal `E:\HERTA\E:.env` a naive join
@@ -108,7 +125,7 @@ export async function checkReaderArgvPaths(
       return {
         ok: false,
         code: r.code,
-        message: `read-only command targets ${cand} → ${r.message}${hintFor(cand, r.code)}`,
+        message: `${describe(cand)} → ${r.message}${hintFor(cand, r.code)}`,
       };
     }
   }

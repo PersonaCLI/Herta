@@ -190,6 +190,7 @@ export {
 } from "./permission-engine.js";
 export {
   binaryBasename,
+  EXEC_WRAPPER_PROGRAMS,
   pinnedScript,
   RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,

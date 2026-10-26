@@ -13,7 +13,6 @@ import { formatInputIssues } from "../input-issues.js";
 import { splitShellSegments } from "../run-command/classifier.js";
 import { LiveOutput } from "../run-command/live-output.js";
 import { writeRunLog } from "../run-command/logger.js";
-import { checkReaderArgvPaths } from "../run-command/reader-guard.js";
 import { redactSecrets } from "../run-command/redactor.js";
 import { detectTestRun, isTestCommand } from "../run-command/test-detector.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
@@ -22,12 +21,9 @@ import {
   settleRedirectTargets,
   writesAccounted,
 } from "./redirect-writes.js";
+import { checkLineReads } from "./rule.js";
 import { bashInputSchema, bashJsonSchema } from "./schema.js";
-import {
-  classifyShellCommandDetailed,
-  peelReaderHead,
-  tokenize,
-} from "./shell-classifier.js";
+import { classifyShellCommandDetailed, tokenize } from "./shell-classifier.js";
 import { shellPathsFor } from "./shell-paths.js";
 
 export { findBash } from "./find-bash.js";
@@ -225,9 +221,8 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         paths: shellPathsFor(opts.bashPath),
         cwd: sh.cwd,
       };
-      const readOnly =
-        classifyShellCommandDetailed(command, classifyOpts).verdict.kind ===
-        "allow";
+      const classified = classifyShellCommandDetailed(command, classifyOpts);
+      const readOnly = classified.verdict.kind === "allow";
       // What the line's redirections are about to overwrite, read while it
       // is still there (ADR 0074 amendment, 2026-10-08): this contract
       // writes its files with `cat > f <<'EOF'` and `printf … > f`, and undo
@@ -237,31 +232,24 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         : await readRedirectTargets(command, classifyOpts);
 
       // Execution-time reader realpath backstop (TOCTOU, mirrors run_command).
-      // Peeled exactly as the RULE peels (`rule.ts`): the rule learned on
-      // 2026-08-24 that an un-peeled `time cat x` hands the guard a first
-      // word that is no reader and switches it off; this second look kept
-      // the old spelling, so behind one harmless word it re-checked nothing
+      // The RULE's own check (`checkLineReads`): this second look once kept
+      // an older peel, so behind one harmless word it re-checked nothing
       // (perf audit 2026-09-20, found in passing).
-      for (const segment of splitShellSegments(command)) {
-        const { words } = tokenize(segment);
-        if (words.length === 0) continue;
-        const denial = await checkReaderArgvPaths(
-          ctx.workspaceRoot,
-          sh.cwd,
-          peelReaderHead(words),
-        );
-        if (denial !== null) {
-          return {
-            ok: false,
-            error: {
-              code: denial.code,
-              message: denial.message,
-              retryable: false,
-            },
-            summary: `failed: ${denial.code}`,
-            modelText: `Command refused by the harness: ${denial.message}`,
-          };
-        }
+      const denial = await checkLineReads(
+        ctx.workspaceRoot,
+        classified.steps ?? [],
+      );
+      if (denial !== null) {
+        return {
+          ok: false,
+          error: {
+            code: denial.code,
+            message: denial.message,
+            retryable: false,
+          },
+          summary: `failed: ${denial.code}`,
+          modelText: `Command refused by the harness: ${denial.message}`,
+        };
       }
 
       // The live view (ADR 0073): whole lines, redacted as the result is.

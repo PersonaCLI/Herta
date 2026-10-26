@@ -164,7 +164,13 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
   ["pkexec", { valueFlags: new Set(["--user"]) }],
   [
     "env",
-    { valueFlags: new Set(["-u", "--unset", "-C", "-S"]), assignments: true },
+    {
+      // `-P altpath` is BSD env's search path (Mac findings 2026-10-24):
+      // unknown, it read `/bin` as the command and `env -P /bin rm -rf /`
+      // asked. `-S` is a value here and a body in `extractShellReentry`.
+      valueFlags: new Set(["-u", "--unset", "-C", "-S", "-P"]),
+      assignments: true,
+    },
   ],
   ["nice", { valueFlags: new Set(["-n", "--adjustment"]) }],
   ["ionice", { valueFlags: new Set(["-c", "-n", "-p"]) }],
@@ -210,14 +216,29 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
   ["ltrace", { valueFlags: new Set(["-o", "-e", "-p", "-s"]) }],
   ["watch", { valueFlags: new Set(["-n", "--interval", "-d"]) }],
   ["flock", { valueFlags: new Set(["-w", "--timeout", "-E"]), operands: 1 }],
-  ["script", { valueFlags: new Set(["-c", "--command", "-f", "-t"]) }],
+  // BSD `script [-aeFkqr] [-t time] [file [command …]]` runs the command
+  // after its typescript FILE (Mac findings 2026-10-24): modelled on GNU's
+  // `-c` alone, `script -q /dev/null rm -rf /` read `/dev/null` as the
+  // command. GNU's `-c BODY` is `extractShellReentry`'s.
+  [
+    "script",
+    { valueFlags: new Set(["-c", "--command", "-f", "-t", "-T"]), operands: 1 },
+  ],
   ["taskset", { valueFlags: new Set(["-c", "-p"]), operands: 1 }],
   [
     "unshare",
     { valueFlags: new Set(["--map-user", "--map-group", "-S", "-G"]) },
   ],
-  ["busybox", { operands: 1 }],
+  // The applet IS the command: `operands: 1` ate it, so `busybox rm -rf /`
+  // peeled to `/` (2026-10-26, found by the every-wrapper test).
+  ["busybox", {}],
   ["proot", { valueFlags: new Set(["-r", "-b", "-w"]) }],
+  // macOS's own (Mac findings 2026-10-24, item 1): unknown, each hid its
+  // command — `caffeinate rm -rf /` and `arch -arm64 security dump-keychain`
+  // asked as 「未识别的命令」. `arch -arm64` / `-x86_64` are bare flags.
+  ["caffeinate", { valueFlags: new Set(["-t", "-w"]) }],
+  ["arch", { valueFlags: new Set(["-arch", "-d", "-e"]) }],
+  ["sandbox-exec", { valueFlags: new Set(["-f", "-n", "-p", "-D"]) }],
 ]);
 
 /** Bounded wrapper peel: the command a chain of exec-wrappers ends up running,
@@ -638,6 +659,40 @@ function extractShellReentry(argv: readonly string[]): Reentry | null {
           ? { kind: "body", via: `${name} -c`, body }
           : null;
       }
+    }
+    return null;
+  }
+
+  // `env -S STRING` splits STRING into a command and runs it, GNU and BSD
+  // alike: the peel steps over `-S`'s value as an option's, so `env -S 'rm
+  // -rf /'` ran unread (2026-10-26). The words after STRING are its
+  // arguments.
+  if (name === "env") {
+    for (let i = 1; i < argv.length; i++) {
+      const a = argv[i] as string;
+      if (a === "--") return null;
+      const glued = /^(?:-[0iv]*S|--split-string=)(.+)$/s.exec(a);
+      const body =
+        glued !== null
+          ? (glued[1] as string)
+          : /^(?:-[0iv]*S|--split-string)$/.test(a)
+            ? argv[++i]
+            : undefined;
+      if (body !== undefined) {
+        return body.length > 0
+          ? {
+              kind: "body",
+              via: "env -S",
+              body: [body, ...argv.slice(i + 1)].join(" "),
+            }
+          : null;
+      }
+      if (["-u", "--unset", "-C", "-P"].includes(a)) {
+        i += 1;
+        continue;
+      }
+      if (a.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) continue;
+      return null; // the command: the peel's to read
     }
     return null;
   }
@@ -1486,8 +1541,11 @@ function opaqueShape(
  * …`) and every command of a shell body (`cmd //c "npx -y …"`, `bash -c
  * "terraform destroy …"`) are classified in their own right. Only a class
  * in ESCALATING_CODES is taken — a harmless inside never lends the wrapper
- * an allow — and the most severe one found wins. Bounded by the re-entry
- * depth cap, past which the block tier has already failed closed.
+ * an allow — and the most severe one found wins. A BLOCK inside blocks the
+ * line: keeping asks only made `["nohup", "rm", "-rf", "/"]` and
+ * `/usr/bin/time -l rm -rf /` asks on the argv contract, where the bash
+ * lane's body scan blocked them (Mac findings 2026-10-24). Bounded by the
+ * re-entry depth cap, past which the block tier has already failed closed.
  */
 function innerEscalation(
   argv: readonly string[],
@@ -1500,7 +1558,12 @@ function innerEscalation(
     verdict: Extract<Verdict, { kind: "ask" }>;
     via: string;
   }> = [];
+  const blocked: Verdict[] = [];
   const take = (v: Verdict, via: string): void => {
+    if (v.kind === "block") {
+      blocked.push({ ...v, reason: `${via}: ${v.reason}` });
+      return;
+    }
     if (v.kind === "ask" && ESCALATING_CODES.includes(v.code)) {
       found.push({ verdict: v, via });
     }
@@ -1526,6 +1589,7 @@ function innerEscalation(
       );
     }
   }
+  if (blocked.length > 0) return blocked[0] as Verdict;
   if (found.length === 0) return null;
   found.sort(
     (a, b) =>
@@ -2328,25 +2392,36 @@ export function classifyCommand(
   // tier the command earned, a write into it is refused outright — the same
   // hard line the editors draw, since a card for it would be one click from
   // the agent granting itself rules or trust.
-  for (const operand of writtenOperands(argv)) {
-    const denial = guard.path(operand);
-    if (denial !== null) {
-      return { kind: "block", code: "command_blocked", reason: denial };
+  //
+  // The line as written AND the command its exec-wrappers run: judging only
+  // the first word let `caffeinate cp x .herta/permissions.json` — or `sudo`,
+  // `timeout 5`, `nohup` in front of any writer — past every guard below
+  // (Mac findings 2026-10-24, item 1).
+  const peeled = peelExecWrappers(argv);
+  const forms = peeled !== null && peeled.length > 0 ? [argv, peeled] : [argv];
+  for (const form of forms) {
+    for (const operand of writtenOperands(form)) {
+      const denial = guard.path(operand);
+      if (denial !== null) {
+        return { kind: "block", code: "command_blocked", reason: denial };
+      }
     }
   }
-  const reentry = extractShellReentry(argv);
-  if (reentry?.kind === "body") {
+  const reentries = forms.map(extractShellReentry);
+  for (const reentry of reentries) {
+    if (reentry?.kind !== "body") continue;
     const denial = guard.body(reentry.body);
     if (denial !== null) {
       return { kind: "block", code: "command_blocked", reason: denial };
     }
   }
   if (verdict.kind === "ask") {
-    return (
-      harnessReach(argv, guard) ??
-      gitInternalsReach(argv, verdict, guard, reentry) ??
-      verdict
-    );
+    for (const [i, form] of forms.entries()) {
+      const reached =
+        harnessReach(form, guard) ??
+        gitInternalsReach(form, verdict, guard, reentries[i] ?? null);
+      if (reached !== null) return reached;
+    }
   }
   return verdict;
 }
@@ -2498,7 +2573,12 @@ function pathTouchesHerta(p: string): boolean {
 /** Verbs whose every non-flag operand is a path they create, change, move or
  *  remove. `cp`/`install` sources are only read, but a copy OUT of `.herta`
  *  has no honest use a reader tool does not serve, and naming the destination
- *  alone would miss `-t DIR` spellings. */
+ *  alone would miss `-t DIR` spellings. `ditto` (macOS's cp), `plutil` (it
+ *  rewrites a plist in place, or into `-o FILE`) and `rsync` were missing, so
+ *  `ditto x .herta/permissions.json` asked as unknown where `cp` blocked, and
+ *  `ditto x .git/hooks/pre-commit` skipped the git-internals class (Mac
+ *  findings 2026-10-24, item 2). A plutil key path or an rsync `-e` value
+ *  read as an operand names no file there, so it costs nothing. */
 const PATH_WRITING_VERBS: ReadonlySet<string> = new Set([
   "rm",
   "rmdir",
@@ -2521,6 +2601,9 @@ const PATH_WRITING_VERBS: ReadonlySet<string> = new Set([
   "rd",
   "remove-item",
   "ri",
+  "ditto",
+  "plutil",
+  "rsync",
 ]);
 
 /**
@@ -3411,7 +3494,13 @@ function classifyCommandTiers(
       reason: `${id} ends processes: ${argv.slice(1).join(" ")}`,
     };
   }
-  if (["mkdir", "touch", "cp", "mv", "ln", "rename"].includes(id)) {
+  // `ditto` is macOS's cp, and an rsync that reached no other machine (that
+  // is the network class above) is a copy too (2026-10-26).
+  if (
+    ["mkdir", "touch", "cp", "mv", "ln", "rename", "ditto", "rsync"].includes(
+      id,
+    )
+  ) {
     const out = outsideOperand(argv, live);
     if (out !== null) return outsideAsk(id, out);
     return {

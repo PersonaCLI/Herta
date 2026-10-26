@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryEventBus } from "./event-bus.js";
+import { EXEC_WRAPPER_PROGRAMS } from "./program-identity.js";
 import {
   permissionCacheScope,
   SessionApprovalCache,
@@ -174,6 +175,18 @@ describe("permissionCacheScope — command wrappers (audit S5)", () => {
       "env",
     ]) {
       expect(scopeFor([w, "600", "npm", "run", "build"])).toBeUndefined();
+    }
+  });
+
+  it("refuses every exec-wrapper the classifier peels — macOS's own included (Mac findings 2026-10-24)", () => {
+    // One remembered `caffeinate -i npm run build` covered `caffeinate rm
+    // -rf /`: the shared list was the classifier's alone.
+    for (const w of EXEC_WRAPPER_PROGRAMS) {
+      expect(scopeFor([w, "npm", "run", "build"]), w).toBeUndefined();
+    }
+    for (const w of ["caffeinate", "arch", "sandbox-exec", "watch", "flock"]) {
+      expect(EXEC_WRAPPER_PROGRAMS.has(w), w).toBe(true);
+      expect(scopeFor([`/usr/bin/${w}`, "-i", "make"]), w).toBeUndefined();
     }
   });
 

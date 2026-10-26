@@ -26,7 +26,12 @@ import { findBash } from "./find-bash.js";
 // alongside the runner/spawn tests.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
-import { bashTool, registerBashRule, SHELL_BG_ID } from "./index.js";
+import {
+  bashTool,
+  makeBashRule,
+  registerBashRule,
+  SHELL_BG_ID,
+} from "./index.js";
 import { PersistentShell } from "./persistent-shell.js";
 import { bashJsonSchema, bashZodJsonSchema } from "./schema.js";
 
@@ -588,3 +593,92 @@ describe("bash runsTests (ADR 0073 amendment 2026-10-08)", () => {
     expect(tool.runsTests?.(null)).toBe(false);
   });
 });
+
+describe("what an allowed line reads is realpath-ed: input redirects, substitutions, loop items, a cd before it (Mac findings 2026-10-24, item 4)", () => {
+  // `cat notes` was refused when `notes` led out of the workspace, and each
+  // line below read the same file with no card: the tokenizer keeps a `<`
+  // target out of the words, and the check re-walked the raw line, so it
+  // never saw a substitution's body, a loop item or the directory a `cd`
+  // moved to.
+  const READS = [
+    "cat < escape/secret.txt",
+    "sort <escape/secret.txt",
+    "wc -l 0< escape/secret.txt",
+    'echo "$(cat escape/secret.txt)"',
+    "echo $(cat < escape/secret.txt)",
+    "cd escape && cat secret.txt",
+    "cd escape; cat < secret.txt",
+    "for f in escape/secret.txt; do cat $f; done",
+  ];
+
+  it("the rule refuses each, and still allows the same reads inside", async () => {
+    ws = await mkTmpWorkspace({ "a.txt": "inside\n" });
+    const outside = `${ws.root}-sneak`;
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+    try {
+      try {
+        symlinkSync(outside, join(ws.root, "escape"), "junction");
+      } catch {
+        return; // environment cannot create directory links; skip
+      }
+      const rule = makeBashRule({ bashPath: null });
+      const ctx = ctxFor(ws.root);
+      // Anti-vacuous: the operand form was already refused.
+      expect((await rule(call("cat escape/secret.txt"), ctx)).kind).toBe(
+        "deny",
+      );
+      for (const cmd of READS) {
+        const v = await rule(call(cmd), ctx);
+        expect(v.kind, cmd).toBe("deny");
+        expect(v.kind === "deny" ? v.code : "", cmd).toBe(
+          "path_outside_workspace",
+        );
+      }
+      for (const cmd of [
+        "cat < a.txt",
+        "wc -l < a.txt",
+        'echo "$(cat a.txt)"',
+        "for f in a.txt; do cat $f; done",
+      ]) {
+        expect((await rule(call(cmd), ctx)).kind, cmd).toBe("allow");
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+d(
+  "the run-time read check sees what the rule sees (Mac findings 2026-10-24, item 4)",
+  () => {
+    it("`cat < link` and `cd link && cat` are refused at run time too, not run", async () => {
+      ws = await mkTmpWorkspace({ "a.txt": "inside\n" });
+      const outside = `${ws.root}-sneak`;
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+      const ctx = ctxFor(ws.root);
+      try {
+        try {
+          symlinkSync(outside, join(ws.root, "escape"), "junction");
+        } catch {
+          return;
+        }
+        const tool = bashTool({ bashPath: BASH as string });
+        for (const [i, cmd] of [
+          "cat < escape/secret.txt",
+          "cd escape && cat secret.txt",
+          'echo "$(cat escape/secret.txt)"',
+        ].entries()) {
+          const r = await tool.run(call(cmd, `r${i}`), ctx, noopProgress);
+          expect(r.ok, cmd).toBe(false);
+          expect(r.error?.code, cmd).toBe("path_outside_workspace");
+          expect(r.modelText ?? "", cmd).not.toContain("OUTSIDE-SECRET");
+        }
+      } finally {
+        await ctx.bg.stopAll();
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+  },
+);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyCommand } from "../run-command/classifier.js";
+import { runCommandWriteGuard } from "../run-command/rule.js";
 import {
   classifyShellCommand,
   classifyShellCommandDetailed,
@@ -1435,5 +1436,128 @@ describe("stripShellComments — what a reviewer reads (ADR 0075, 2026-10-09)", 
     expect(stripShellComments("cat <<-EOF\n\t# kept\n\tEOF\n# gone")).toBe(
       "cat <<-EOF\n\t# kept\n\tEOF",
     );
+  });
+});
+
+describe("classifyShellCommand — another spelling of the workspace is the workspace (Mac findings 2026-10-24, item 3)", () => {
+  // The command lanes judged containment by spelling: a path into the
+  // workspace through a link from outside — or, on a Mac, in another case of
+  // the root — read as "outside", so `.herta` was not refused, `.git` lost
+  // its class, and a `find … -delete` from it went to the reviewer as a
+  // plain write.
+  async function fixture(
+    spell: (base: string, root: string) => Promise<string | null>,
+  ) {
+    const { mkdtemp, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const base = await mkdtemp(join(tmpdir(), "herta-spelling-"));
+    const root = join(base, "verify", "ws");
+    await mkdir(join(root, ".herta"), { recursive: true });
+    await mkdir(join(root, ".git", "hooks"), { recursive: true });
+    return { base, root, other: await spell(base, root) };
+  }
+  const verdicts = (root: string, other: string) => {
+    const local = { workspaceRoot: root, paths };
+    const at = paths.toShell(other);
+    const code = (cmd: string): string => {
+      const v = classifyShellCommand(cmd, local);
+      return v.kind === "ask" ? v.code : v.kind;
+    };
+    expect(code(`echo x > ${at}/.herta/permissions.json`)).toBe("block");
+    expect(code(`cp x ${at}/.herta/permissions.json`)).toBe("block");
+    expect(code(`echo x > ${at}/.git/hooks/pre-commit`)).toBe(
+      "command_ask_git_internals",
+    );
+    expect(code(`find ${at} -name permissions.json -delete`)).toBe(
+      "command_ask_harness_state",
+    );
+    expect(code(`cd ${at}/.herta`)).toBe("command_ask_harness_state");
+    // An ordinary file there is an ordinary write in the workspace.
+    expect(code(`echo x > ${at}/notes.txt`)).toBe("command_ask_write");
+    // run_command's guard draws the same line for the find.
+    const v = classifyCommand(
+      ["find", other, "-name", "permissions.json", "-delete"],
+      { writeGuard: runCommandWriteGuard(root, root) },
+    );
+    expect(v.kind === "ask" ? v.code : v.kind).toBe(
+      "command_ask_harness_state",
+    );
+  };
+
+  it("a link from outside into the root", async () => {
+    const { rm, symlink } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const f = await fixture(async (base, root) => {
+      const alias = join(base, "alias");
+      await symlink(
+        root,
+        alias,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      return alias;
+    });
+    try {
+      verdicts(f.root, f.other as string);
+    } finally {
+      await rm(f.base, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "another case of the root, on a case-insensitive disk",
+    async () => {
+      const { existsSync } = await import("node:fs");
+      const { rm } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const f = await fixture(async (base) => join(base, "VERIFY", "WS"));
+      try {
+        // A case-sensitive volume has no such folder: nothing to show.
+        if (!existsSync(f.other as string)) return;
+        verdicts(f.root, f.other as string);
+      } finally {
+        await rm(f.base, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("classifyShellCommand — macOS's wrappers and writers (Mac findings 2026-10-24, items 1–2)", () => {
+  it.each([
+    "caffeinate rm -rf /",
+    "arch -arm64 rm -rf /",
+    "arch -arm64 security dump-keychain",
+    "sandbox-exec -p '(version 1)' rm -rf /",
+    "script -q /dev/null rm -rf /",
+    "env -P /bin rm -rf /",
+    "env -S 'rm -rf /'",
+    "caffeinate cp x .herta/permissions.json",
+    "ditto x .herta/permissions.json",
+    "plutil -convert json -o .herta/permissions.json x.plist",
+    "rsync -a x .herta/",
+  ])("blocks %s", (cmd) => {
+    expect(kind(cmd)).toBe("block");
+  });
+
+  it("a key spelled with APFS's long s is read as the key (item 5)", () => {
+    expect(kind("cat < .ſſh/id_rſa")).toBe("ask");
+    expect(kind("cat ~/.ſſh/id_rſa")).toBe("ask");
+  });
+
+  it("a wrapped line names no program to remember; ditto into .git is git's class", () => {
+    expect(ask("ditto x .git/hooks/pre-commit").code).toBe(
+      "command_ask_git_internals",
+    );
+    expect(ask("caffeinate cp x .git/hooks/pre-commit").code).toBe(
+      "command_ask_git_internals",
+    );
+    for (const cmd of [
+      "caffeinate -i npm run build",
+      "arch -x86_64 npm test",
+      "sandbox-exec -f build.sb make",
+    ]) {
+      expect(kind(cmd), cmd).toBe("ask");
+      expect(singleProgramArgv(cmd, opts), cmd).toBeNull();
+    }
   });
 });

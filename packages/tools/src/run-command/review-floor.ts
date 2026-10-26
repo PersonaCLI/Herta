@@ -1,5 +1,5 @@
 import { stripShellComments } from "../bash/shell-classifier.js";
-import { isCredentialPath } from "../credential-denylist.js";
+import { foldName, isCredentialPath } from "../credential-denylist.js";
 
 /**
  * The risk a command carries whatever a review model says (ADR 0075,
@@ -163,8 +163,10 @@ export function reviewRiskFloor(
     const reachesOut = codes.some(
       (c) => c === "command_ask_network" || c === "command_ask_download_exec",
     );
-    const asked = userMessages.join("\n").toLowerCase();
-    const named = creds.some((c) => asked.includes(basename(c).toLowerCase()));
+    // Folded alike (`foldName`), so a user who named `id_rsa` named the
+    // `id_rſa` a Mac opens for it.
+    const asked = foldName(userMessages.join("\n"));
+    const named = creds.some((c) => asked.includes(foldName(basename(c))));
     if (reachesOut && !named)
       raise("critical", "sends a credential file no user message names");
   }

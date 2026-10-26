@@ -12,6 +12,7 @@ import {
 } from "node:path";
 import { isPathInside } from "@herta/core";
 import {
+  foldName,
   hasCredentialSequence,
   isCredentialBasename,
   isSensitiveSegment,
@@ -184,10 +185,13 @@ async function realpathViaExistingAncestor(candidate: string): Promise<string> {
  * them case-sensitively and let both through. A case-SENSITIVE APFS volume
  * (a rare, deliberate format) makes this stricter than needed: an unrelated
  * `.GIT` directory is denied there, which is the fail-closed direction.
- * Linux filesystems are case-sensitive, so nothing folds.
+ * Linux filesystems are case-sensitive, so nothing folds. macOS folds as
+ * the credential checks do (`foldName`): APFS opens `objectſ` for `objects`
+ * (Mac findings 2026-10-24, item 5); NTFS does not fold `ſ`.
  */
 function caseNormalize(s: string): string {
-  return isWindows() || process.platform === "darwin" ? s.toLowerCase() : s;
+  if (process.platform === "darwin") return foldName(s);
+  return isWindows() ? s.toLowerCase() : s;
 }
 
 /** The name Win32 will ACTUALLY open for a path component (audit T3.4 review):
@@ -294,13 +298,22 @@ export function gitDirShapeWriteDenial(
 /** The deepest existing ancestor of `candidate`, realpath-ed, with the
  *  not-yet-created suffix re-joined — the sync twin of
  *  {@link realpathViaExistingAncestor}, for the sync shell classifier.
- *  Bounded by path depth; the raw candidate when nothing resolves. */
+ *  Bounded by path depth; the raw candidate when nothing resolves.
+ *
+ *  The NATIVE realpath, which returns the name on disk: JS `realpathSync`
+ *  keeps the input's spelling, so on a case-insensitive disk `…/VERIFY/WS`
+ *  stayed beside `…/verify/ws` and `.herta` writes through it were not
+ *  denied (Mac findings 2026-10-24, item 3). The async twin was already
+ *  native. On macOS the Data volume's firmlink spelling is folded too, and
+ *  the name is taken in NFC — APFS opens either normalization. */
 function realpathSyncViaExistingAncestor(candidate: string): string {
   let dir = candidate;
   const suffix: string[] = [];
   while (true) {
     try {
-      return join(realpathSync(dir), ...suffix.reverse());
+      return darwinCanonical(
+        join(realpathSync.native(dir), ...suffix.reverse()),
+      );
     } catch {
       const parent = dirname(dir);
       if (parent === dir) return candidate;
@@ -308,6 +321,65 @@ function realpathSyncViaExistingAncestor(candidate: string): string {
       dir = parent;
     }
   }
+}
+
+/** `/System/Volumes/Data/Users/x` IS `/Users/x` on macOS — the firmlink,
+ *  which even the native realpath leaves as spelled — and an NFD name is the
+ *  NFC one. Identity elsewhere. */
+function darwinCanonical(p: string): string {
+  if (process.platform !== "darwin") return p;
+  const DATA = "/System/Volumes/Data";
+  const unlinked = p.startsWith(`${DATA}/`) ? p.slice(DATA.length) : p;
+  return unlinked.normalize("NFC");
+}
+
+/** Both on one UNC share or neither: canonicalizing a share the workspace
+ *  is not on would block the main thread on a network timeout for nothing
+ *  (ADR 0068), and it cannot be the workspace. */
+function mayShareSpelling(root: string, target: string): boolean {
+  const unc = (p: string): boolean => /^(\\\\|\/\/)/.test(p);
+  return unc(root) === unc(target);
+}
+
+/**
+ * Where `target` lands in the workspace, spelled from `workspaceRoot` — or
+ * null when it lands outside. Inside as written, or once both are
+ * canonicalized: another case of the root on a case-insensitive disk, an
+ * 8.3 name, `/tmp` for `/private/tmp`, the macOS firmlink spelling, a link
+ * from outside into the workspace. Those are the same place, and the
+ * command lanes judged them lexically, so `echo x > …/VERIFY/WS/.herta/…`
+ * asked as "outside" where the root's own spelling blocked, and `find
+ * …/VERIFY/WS -name permissions.json -delete` went to the reviewer as a
+ * plain write (Mac findings 2026-10-24, item 3). A target inside as written
+ * comes back as written: a link from inside to outside keeps the lexical
+ * answer it always had.
+ */
+export function workspaceSpelling(
+  workspaceRoot: string,
+  target: string,
+): string | null {
+  const abs = resolve(target);
+  if (isPathInside(workspaceRoot, abs)) return abs;
+  if (!mayShareSpelling(workspaceRoot, abs)) return null;
+  const root = realpathSyncViaExistingAncestor(resolve(workspaceRoot));
+  const landed = realpathSyncViaExistingAncestor(abs);
+  if (!isPathInside(root, landed)) return null;
+  const rel = relativePath(root, landed);
+  return rel === ""
+    ? resolve(workspaceRoot)
+    : join(resolve(workspaceRoot), rel);
+}
+
+/** `dir` is the workspace root or a directory above it — as written or
+ *  canonically ({@link workspaceSpelling}'s spellings): a walk from there
+ *  reaches `.herta`. */
+export function holdsWorkspace(dir: string, workspaceRoot: string): boolean {
+  if (isPathInside(dir, workspaceRoot)) return true;
+  if (!mayShareSpelling(workspaceRoot, dir)) return false;
+  return isPathInside(
+    realpathSyncViaExistingAncestor(resolve(dir)),
+    realpathSyncViaExistingAncestor(resolve(workspaceRoot)),
+  );
 }
 
 /** True when a path RELATIVE to the workspace passes through a directory

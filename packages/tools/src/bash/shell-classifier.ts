@@ -1,5 +1,5 @@
 import { relative, resolve } from "node:path";
-import { isPathInside, type RiskLevel } from "@herta/core";
+import { EXEC_WRAPPER_PROGRAMS, type RiskLevel } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import {
@@ -7,7 +7,9 @@ import {
   gitInternalsWrite,
   globReachesHertaState,
   hertaStateWriteDenial,
+  holdsWorkspace,
   namesHertaState,
+  workspaceSpelling,
 } from "../path-safety.js";
 import {
   classifyCommand,
@@ -280,6 +282,16 @@ export interface ShellVerdictDetail {
   verdict: Verdict;
   /** Segments actually classified (for tests / diagnostics). */
   segments: string[];
+  /**
+   * Every command the verdict judged, as it judged it — a substitution's
+   * body on its own, a loop body once per item, each with the directory the
+   * classifier followed it to. What an allowed line READS is realpath-ed
+   * from these (`checkLineReads`): re-walking the raw line instead left
+   * `echo "$(cat link)"`, `cd linked && cat secret` and `for f in link; do
+   * cat $f; done` reading through a link out of the workspace with no card
+   * (2026-10-26, found beside Mac findings item 4).
+   */
+  steps?: Array<{ text: string; cwd: string }>;
   /** For an ask: the DISTINCT ask-class codes of every asking segment,
    *  highest-risk first (the verdict's `code` is the first). A chained line
    *  is the minimal contract's normal shape, and `kill 574; curl localhost`
@@ -341,6 +353,7 @@ export function classifyShellCommandDetailed(
   const asks: Array<Extract<Verdict, { kind: "ask" }>> = [];
   const segmentCodes = new Set<string>();
   const classified: string[] = [];
+  const steps: Array<{ text: string; cwd: string }> = [];
   // A `cd` INSIDE the workspace moves the cwd for the segments after it on
   // this line (`cd src/lib; cd ../../test` is fine; `cd src && cd ../..` is
   // not) — the classifier follows the shell as far as it can see.
@@ -360,6 +373,7 @@ export function classifyShellCommandDetailed(
     let nextCwd: string | undefined;
     let cwdConflict = false;
     for (const variant of variants) {
+      steps.push({ text: variant, cwd });
       const r = classifySegment(variant, { ...opts, cwd });
       if (r.verdict.kind === "block")
         return { verdict: r.verdict, segments: classified };
@@ -384,7 +398,7 @@ export function classifyShellCommandDetailed(
     }
   }
   if (asks.length === 0)
-    return { verdict: { kind: "allow" }, segments: classified };
+    return { verdict: { kind: "allow" }, segments: classified, steps };
   // Highest risk wins; reasons joined (deduped) so the prompt says it all.
   asks.sort((a, b) => RISK_RANK[b.risk] - RISK_RANK[a.risk]);
   const top = asks[0] as Extract<Verdict, { kind: "ask" }>;
@@ -405,6 +419,7 @@ export function classifyShellCommandDetailed(
       ...(consequence !== undefined ? { consequence } : {}),
     },
     segments: classified,
+    steps,
     codes,
   };
 }
@@ -661,30 +676,10 @@ const SCOPE_OPAQUE_HEADS = new Set([
   "source",
   ".",
   "exec",
-  // Wrapper programs: the payload is the argument, not the head.
-  "sudo",
-  "doas",
-  "pkexec",
-  "su",
-  "runuser",
-  "env",
-  "nice",
-  "ionice",
-  "nohup",
-  "setsid",
-  "stdbuf",
-  "timeout",
-  "xargs",
-  "watch",
-  "flock",
-  "script",
-  "chroot",
-  "strace",
-  "ltrace",
-  "taskset",
-  "unshare",
-  "busybox",
-  "time",
+  // Wrapper programs: the payload is the argument, not the head. The shared
+  // list — a hand copy here missed macOS's `caffeinate`, `arch` and
+  // `sandbox-exec` (Mac findings 2026-10-24).
+  ...EXEC_WRAPPER_PROGRAMS,
   // Taken out of scopeNoise() when `-execdir` / `--pre` were understood as
   // exec knobs — but removing them from "noise" only made them NAME the
   // scope. They have to be opaque: a remembered `find` covered
@@ -1321,7 +1316,7 @@ function classifySegment(
       // reaches `.herta` as surely as `find .` does.
       holds: (operand) => {
         const native = nativeOf(spelled(operand), opts);
-        return native !== null && isPathInside(native, opts.workspaceRoot);
+        return native !== null && holdsWorkspace(native, opts.workspaceRoot);
       },
       // A patch may sit outside the workspace (`/tmp/p.patch`): resolved like
       // any token, read wherever it is; a token no path resolves stays null.
@@ -1343,12 +1338,13 @@ function classifySegment(
  *  null when it leaves (or cannot be resolved as a path). */
 function destinationOf(token: string, opts: ShellClassifyOpts): string | null {
   const t = token.replace(/^["']|["']$/g, "");
+  // Spelled from the root, so `cd …/VERIFY/WS/.herta` is the `cd .herta` it
+  // is, and later relative paths resolve where the shell really is.
   const native = opts.paths.toNative(t);
-  if (native !== null)
-    return isPathInside(opts.workspaceRoot, native) ? native : null;
+  if (native !== null) return workspaceSpelling(opts.workspaceRoot, native);
   if (/^[\\/]/.test(t)) return null;
   const resolved = resolveNative(opts.cwd ?? opts.workspaceRoot, t);
-  return isPathInside(opts.workspaceRoot, resolved) ? resolved : null;
+  return workspaceSpelling(opts.workspaceRoot, resolved);
 }
 
 /** A `cd` that leaves the workspace. WRITE risk and its own class
@@ -1615,12 +1611,17 @@ function leavesWorkspace(token: string, opts: ShellClassifyOpts): boolean {
   // now means treated as leaving, which costs an approval card on the honest
   // `> $LOG` and buys the guarantee back.
   if (/[$`]/.test(t)) return true;
+  // Inside as the filesystem sees it (`workspaceSpelling`): another case of
+  // the root, `/tmp` for `/private/tmp`, is the workspace (Mac findings
+  // 2026-10-24, item 3).
   const native = opts.paths.toNative(t);
-  if (native !== null) return !isPathInside(opts.workspaceRoot, native);
+  if (native !== null) {
+    return workspaceSpelling(opts.workspaceRoot, native) === null;
+  }
   if (/^[\\/]/.test(t)) return true; // some other absolute spelling
   const base = opts.cwd ?? opts.workspaceRoot;
   const resolved = resolveNative(base, t);
-  return !isPathInside(opts.workspaceRoot, resolved);
+  return workspaceSpelling(opts.workspaceRoot, resolved) === null;
 }
 
 /** Bare-repo shape denial for an out-redirect target (ADR 0049 §6), or null.
@@ -1638,8 +1639,9 @@ function redirectGitShapeDenial(
     if (/^[\\/]/.test(t)) return null; // unmappable absolute spelling
     native = resolveNative(opts.cwd ?? opts.workspaceRoot, t);
   }
-  if (!isPathInside(opts.workspaceRoot, native)) return null;
-  return gitDirShapeWriteDenial(opts.workspaceRoot, resolve(native));
+  const inside = workspaceSpelling(opts.workspaceRoot, native);
+  if (inside === null) return null;
+  return gitDirShapeWriteDenial(opts.workspaceRoot, inside);
 }
 
 /**
@@ -1648,14 +1650,18 @@ function redirectGitShapeDenial(
  * a location inside the workspace; null when it leaves it, is `~`, carries
  * a variable/substitution, or is not a path claim at all. Shared by the
  * heredoc-write preview (bash/heredoc-write.ts), which needs the same
- * answer the redirect classifier gives.
+ * answer the redirect classifier gives. `native` is spelled from the root
+ * (`workspaceSpelling`): a token in another case of the root lands on the
+ * same files, and is judged — and previewed — as them.
  */
 export function resolveWorkspacePath(
   token: string,
   opts: ShellClassifyOpts,
 ): { native: string; relative: string } | null {
-  const native = nativeOf(token, opts);
-  if (native === null || !isPathInside(opts.workspaceRoot, native)) return null;
+  const named = nativeOf(token, opts);
+  const native =
+    named === null ? null : workspaceSpelling(opts.workspaceRoot, named);
+  if (native === null) return null;
   const rel = relativePath(opts.workspaceRoot, native);
   return { native, relative: rel === "" ? "." : rel };
 }
@@ -1720,9 +1726,10 @@ function relativizeInsideWorkspace(
   token: string,
   opts: ShellClassifyOpts,
 ): string {
-  const native = opts.paths.toNative(token);
+  const named = opts.paths.toNative(token);
+  const native =
+    named === null ? null : workspaceSpelling(opts.workspaceRoot, named);
   if (native === null) return token;
-  if (!isPathInside(opts.workspaceRoot, native)) return token;
   const rel = relativePath(opts.workspaceRoot, native);
   return rel === "" ? "." : rel;
 }

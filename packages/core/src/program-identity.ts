@@ -28,6 +28,49 @@ export const SCRIPT_INTERPRETERS: ReadonlySet<string> = new Set([
   "tsx",
 ]);
 
+/** Programs whose job is to run ANOTHER program named by the words after
+ *  their own options (`sudo rm …`, `timeout 5 node …`, `caffeinate -i npm
+ *  …`). The ONE list: the run_command classifier's wrapper peel (its
+ *  `EXEC_WRAPPERS` specs, a test holds the two equal), the bash lane's
+ *  scope-opaque heads and the task cache all read it. Kept as three hand
+ *  lists, they drifted — macOS's `caffeinate`, `arch` and `sandbox-exec` were
+ *  in none, so `caffeinate rm -rf /` asked instead of blocking, and one
+ *  remembered `caffeinate …` covered every later one (Mac findings
+ *  2026-10-24, item 1); `watch`, `flock`, `strace` and the rest were peeled
+ *  but cached by name. */
+export const EXEC_WRAPPER_PROGRAMS: ReadonlySet<string> = new Set([
+  "sudo",
+  "doas",
+  "pkexec",
+  "env",
+  "nice",
+  "ionice",
+  "nohup",
+  "setsid",
+  "stdbuf",
+  "timeout",
+  "xargs",
+  "command",
+  "builtin",
+  "time",
+  "su",
+  "runuser",
+  "chroot",
+  "strace",
+  "ltrace",
+  "watch",
+  "flock",
+  "script",
+  "taskset",
+  "unshare",
+  "busybox",
+  "proot",
+  // macOS (Mac findings 2026-10-24, item 1).
+  "caffeinate",
+  "arch",
+  "sandbox-exec",
+]);
+
 /** Programs that run what their arguments say. Shells and `-c`-style
  *  wrappers execute arbitrary bodies; env/xargs/sudo-alikes exec their
  *  arguments; npx/make fetch or dispatch code the argv doesn't name. A
@@ -44,18 +87,9 @@ export const RUNS_ITS_ARGUMENTS: ReadonlySet<string> = new Set([
   "cmd",
   "powershell",
   "pwsh",
-  "env",
-  "xargs",
   "npx",
   "make",
-  "sudo",
-  "doas",
-  "pkexec",
-  "nice",
-  "nohup",
-  "timeout",
-  "time",
-  "stdbuf",
+  ...EXEC_WRAPPER_PROGRAMS,
 ]);
 
 /** argv[0] normalized for SET MEMBERSHIP checks only (dir + `.exe` stripped,

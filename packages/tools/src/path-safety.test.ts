@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   globReachesHertaState,
   hertaStateWriteDenial,
+  holdsWorkspace,
   mentionsHertaState,
   namesHertaState,
   resolveSafePath,
+  workspaceSpelling,
 } from "./path-safety.js";
 import { mkTmpWorkspace, type TmpWorkspace } from "./testing/tmp-workspace.js";
 
@@ -668,4 +670,77 @@ describe("resolveSafePath — bare-repo shape guard (ADR 0049 §6)", () => {
     });
     expect((await resolveSafePath(ws.root, "HEAD")).ok).toBe(true);
   });
+});
+
+describe("workspaceSpelling / holdsWorkspace — the same place, however it is spelled (Mac findings 2026-10-24, item 3)", () => {
+  it("a link from outside into the workspace lands inside, spelled from the root", async () => {
+    const base = await mkdtemp(join(tmpdir(), "herta-spelling-"));
+    const ws = join(base, "ws");
+    const alias = join(base, "alias");
+    try {
+      await mkdir(join(ws, ".herta"), { recursive: true });
+      await symlink(
+        ws,
+        alias,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      expect(workspaceSpelling(ws, join(alias, ".herta", "p.json"))).toBe(
+        join(ws, ".herta", "p.json"),
+      );
+      // A name not yet created is re-joined under its existing ancestor.
+      expect(workspaceSpelling(ws, join(alias, "new", "f.txt"))).toBe(
+        join(ws, "new", "f.txt"),
+      );
+      expect(workspaceSpelling(ws, alias)).toBe(ws);
+      expect(workspaceSpelling(ws, join(base, "elsewhere.txt"))).toBeNull();
+      // The root and what holds it; not what it holds.
+      expect(holdsWorkspace(alias, ws)).toBe(true);
+      expect(holdsWorkspace(base, ws)).toBe(true);
+      expect(holdsWorkspace(join(alias, "src"), ws)).toBe(false);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("a link from inside to outside keeps the answer its spelling gives", async () => {
+    const base = await mkdtemp(join(tmpdir(), "herta-spelling-"));
+    const ws = join(base, "ws");
+    const outside = join(base, "outside");
+    try {
+      await mkdir(ws, { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await symlink(
+        outside,
+        join(ws, "out"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      expect(workspaceSpelling(ws, join(ws, "out", "x"))).toBe(
+        join(ws, "out", "x"),
+      );
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "another case of the root is the root, and its .herta is refused",
+    async () => {
+      const { existsSync } = await import("node:fs");
+      const base = await mkdtemp(join(tmpdir(), "herta-spelling-"));
+      const ws = join(base, "verify", "ws");
+      const upper = join(base, "VERIFY", "WS");
+      try {
+        await mkdir(join(ws, ".herta"), { recursive: true });
+        if (!existsSync(upper)) return; // a case-sensitive volume
+        const target = join(upper, ".herta", "permissions.json");
+        expect(hertaStateWriteDenial(ws, target)).not.toBeNull();
+        expect(workspaceSpelling(ws, target)).toBe(
+          join(ws, ".herta", "permissions.json"),
+        );
+        expect(holdsWorkspace(upper, ws)).toBe(true);
+      } finally {
+        await rm(base, { recursive: true, force: true });
+      }
+    },
+  );
 });

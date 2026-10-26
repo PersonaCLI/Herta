@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  foldName,
   isCredentialBasename,
   isCredentialPath,
   isSensitiveSegment,
@@ -111,5 +112,19 @@ describe("isCredentialPath", () => {
     expect(isCredentialPath("packages/tools/credentials.ts")).toBe(false);
     expect(isCredentialPath(".env.example")).toBe(false);
     expect(isCredentialPath("README.md")).toBe(false);
+  });
+});
+
+describe("foldName — a name as a case-folding filesystem opens it (Mac findings 2026-10-24, item 5)", () => {
+  it("APFS's long s is s: the credential spellings it opens are credentials", () => {
+    // `ſ` is U+017F; `toLowerCase()` leaves it as it is.
+    expect(foldName(".ſſh")).toBe(".ssh");
+    expect(foldName(".SSH")).toBe(".ssh");
+    for (const p of ["~/.ſſh/id_rſa", "~/.awſ/credentialſ", ".ſſh/config"]) {
+      expect(isCredentialPath(p), p).toBe(true);
+    }
+    expect(isSensitiveSegment(".ſſh")).toBe(true);
+    expect(isCredentialBasename("id_rſa")).toBe(true);
+    expect(isCredentialPath("src/ſtats.ts")).toBe(false);
   });
 });

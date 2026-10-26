@@ -1,8 +1,9 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { type BackgroundProcess, isPathInside } from "@herta/core";
+import type { BackgroundProcess } from "@herta/core";
 import { childProcessEnv } from "../child-env.js";
+import { workspaceSpelling } from "../path-safety.js";
 import {
   listMsysProcesses,
   type MsysGroup,
@@ -621,10 +622,14 @@ export class PersistentShell implements BackgroundProcess {
     const cwdReset = m[2] === "1";
     const pwdShell = m[3] as string;
     const native = this.paths.toNative(pwdShell);
+    // Spelled from the root: after `cd …/VERIFY/WS/.herta` the shell IS in
+    // `.herta`, and falling back to the root judged what ran next from the
+    // wrong directory (Mac findings 2026-10-24, item 3).
     this.currentCwd =
-      native !== null && isPathInside(this.opts.workspaceRoot, native)
-        ? native
-        : this.opts.workspaceRoot;
+      (native === null
+        ? null
+        : workspaceSpelling(this.opts.workspaceRoot, native)) ??
+      this.opts.workspaceRoot;
     w.resolve({
       output,
       outputBytes,

@@ -20,8 +20,23 @@
  * Case policy: matching is UNCONDITIONALLY case-insensitive (fail-closed).
  * This makes the file tools stricter than before on POSIX (where the old
  * path-safety comparison was case-sensitive) — a `.ENV` is now denied — which
- * is the safe direction for credential material.
+ * is the safe direction for credential material. Folded by `foldName`, not a
+ * bare `toLowerCase()`.
  */
+
+/**
+ * A name as a case-folding filesystem opens it, for every comparison here:
+ * NFKC, then lowercase. APFS folds `ſ` (U+017F, long s) to `s`, so
+ * `~/.ſſh/id_rſa` IS `~/.ssh/id_rsa` on a Mac — but `toLowerCase()` leaves
+ * `ſ` alone, and both read as no credential: `cat < .ſſh/id_rſa` was
+ * allowed, and a `curl` sending it got a low review floor (Mac findings
+ * 2026-10-24, item 5). `ſ` is the one alias of an ASCII letter
+ * `toLowerCase()` misses (U+0080–U+2FFFF scanned); NFKC also folds the
+ * fullwidth and ligature spellings, which only ever widens a denial.
+ */
+export function foldName(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
 
 /** Basenames that are credential material verbatim (exact, case-insensitive).
  *  EXACT rather than suffix so ordinary source files whose names merely
@@ -115,7 +130,7 @@ function atHome(s: readonly string[], i: number): boolean {
  *  lists above. Callers pass split path segments (workspace-relative in
  *  path-safety, raw argv components in the classifier). */
 export function hasCredentialSequence(segments: readonly string[]): boolean {
-  const s = segments.map((x) => x.toLowerCase());
+  const s = segments.map(foldName);
   const at = (i: number, seq: readonly string[]): boolean =>
     seq.every((part, k) => s[i + k] === part);
   for (let i = 0; i < s.length; i++) {
@@ -141,7 +156,7 @@ const ALLOW_BASENAMES: ReadonlySet<string> = new Set([".env.example"]);
  *  pass the final segment; the classifier passes a raw argv token's last
  *  component. */
 export function isCredentialBasename(name: string): boolean {
-  const n = name.toLowerCase();
+  const n = foldName(name);
   if (ALLOW_BASENAMES.has(n)) return false;
   if (EXACT_CREDENTIAL_BASENAMES.has(n)) return true;
   // `.env.local`, `.env.production`, … (the allow-exception was cleared above).
@@ -180,7 +195,7 @@ export function isCredentialBasename(name: string): boolean {
 
 /** True when a path SEGMENT is a credential directory (.ssh/.aws/.gnupg). */
 export function isSensitiveSegment(seg: string): boolean {
-  return SENSITIVE_SEGMENTS.has(seg.toLowerCase());
+  return SENSITIVE_SEGMENTS.has(foldName(seg));
 }
 
 /** True when a RAW path string (mixed `\`/`/` separators, possibly absolute

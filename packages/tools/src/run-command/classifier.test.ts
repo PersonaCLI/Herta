@@ -2405,3 +2405,38 @@ describe("ditto, plutil and rsync write their operands (Mac findings 2026-10-24,
     ]);
   });
 });
+
+describe("BSD sed's `-i ''` (Mac findings 2026-10-24, item 8)", () => {
+  const code = (argv: string[]): string => {
+    const v = classifyCommand(argv);
+    return v.kind === "allow" ? "allow" : `${v.kind}:${v.code}`;
+  };
+
+  it("the empty backup suffix is not the script: the edit is named, and outside is outside", () => {
+    expect(code(["sed", "-i", "", "s/a/b/", "src/x.ts"])).toBe(
+      "ask:command_ask_write",
+    );
+    expect(code(["sed", "-i", "", "s/a/b/", "~/.zshrc"])).toBe(
+      "ask:command_ask_outside",
+    );
+    expect(code(["sed", "-i", ".bak", "s/a/b/", "~/.zshrc"])).toBe(
+      "ask:command_ask_outside",
+    );
+    expect(code(["sed", "-Ei", "", "s/a+/b/", "src/x.ts"])).toBe(
+      "ask:command_ask_write",
+    );
+    // GNU's spelling is unchanged.
+    expect(code(["sed", "-i", "s/a/b/", "~/.zshrc"])).toBe(
+      "ask:command_ask_outside",
+    );
+  });
+
+  it("the files written are the files, not the script", () => {
+    expect(writtenOperands(["sed", "-i", "", "s/a/b/", "x.txt"])).toEqual([
+      "x.txt",
+    ]);
+    expect(writtenOperands(["sed", "-i", "s/a/b/", "x.txt"])).toEqual([
+      "x.txt",
+    ]);
+  });
+});

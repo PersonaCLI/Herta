@@ -239,3 +239,56 @@ describe("herta.launch.json", () => {
     expect(entryUrl(5173, "http://example.com/")).toBeNull();
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "Launcher — a command that backgrounds its server (Mac findings 2026-10-24, item 9)",
+  () => {
+    const shEntry = (ws: string, port: number, line: string): LaunchEntry => ({
+      ...entryFor(ws, port),
+      command: "sh",
+      args: ["-c", line],
+    });
+
+    it("exits before its port answers: what it left is ended, not left holding the port", async () => {
+      const ws = workspace();
+      plantServer(ws, { delayMs: 400 });
+      const port = await freePort();
+      const launcher = new Launcher();
+      const err = await launcher
+        .start(
+          shEntry(
+            ws,
+            port,
+            `"${process.execPath}" server.mjs ${port} > /dev/null 2>&1 &`,
+          ),
+          { by: "banzhuan" },
+        )
+        .catch((e: unknown) => e);
+      expect((err as ServerHostError).code).toBe("exited");
+      await new Promise((r) => setTimeout(r, 900));
+      expect(await portAnswers(port)).toBe(false);
+    }, 30_000);
+
+    it("answered, then its command exited: stop still ends the server", async () => {
+      const ws = workspace();
+      plantServer(ws);
+      const port = await freePort();
+      const launcher = new Launcher();
+      await launcher.start(
+        shEntry(
+          ws,
+          port,
+          `"${process.execPath}" server.mjs ${port} > /dev/null 2>&1 & sleep 1`,
+        ),
+        { by: "banzhuan" },
+      );
+      expect(await portAnswers(port)).toBe(true);
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(launcher.status("web")?.state).toBe("exited");
+      expect(await portAnswers(port)).toBe(true);
+      await launcher.stopAll();
+      await new Promise((r) => setTimeout(r, 200));
+      expect(await portAnswers(port)).toBe(false);
+    }, 30_000);
+  },
+);

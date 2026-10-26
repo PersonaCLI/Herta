@@ -17,7 +17,7 @@ import {
 } from "@herta/core";
 import { childProcessEnv } from "../child-env.js";
 import { LiveOutput } from "../run-command/live-output.js";
-import { killProcessTree } from "../run-command/runner.js";
+import { killProcessTree, LeftoverGroup } from "../run-command/runner.js";
 import { resolveWindowsShim } from "../run-command/shim-wrapper.js";
 import { entryCommand } from "./launch-file.js";
 
@@ -94,6 +94,8 @@ interface Running {
   readonly logPath: string;
   readonly log: WriteStream;
   readonly closed: Promise<void>;
+  /** What the command backgrounded before it exited (see `stopRunning`). */
+  readonly leftover: LeftoverGroup;
   state: ServerState;
   exitCode?: number | null;
   stopping: boolean;
@@ -209,6 +211,7 @@ export class Launcher implements ServerHost {
       closed: new Promise<void>((r) => {
         settle = r;
       }),
+      leftover: new LeftoverGroup(),
       state: "starting",
       stopping: false,
       ring: "",
@@ -220,6 +223,7 @@ export class Launcher implements ServerHost {
     this.opts.onSpawn?.({ pid, name: entry.name, startedAt: now.getTime() });
     this.wireOutput(running);
     child.on("close", (code) => {
+      running.leftover.noteExit(pid);
       running.state = running.stopping ? "stopped" : "exited";
       running.exitCode = code;
       running.log.end(
@@ -237,6 +241,9 @@ export class Launcher implements ServerHost {
       Date.now() + (this.opts.readyTimeoutMs ?? READY_TIMEOUT_MS);
     for (;;) {
       if (running.state !== "starting") {
+        // A command that backgrounded the server and exited: what it left
+        // must not hold the port behind a server listed as exited.
+        running.leftover.kill();
         throw new ServerHostError(
           "exited",
           `${entry.name} exited${running.exitCode != null ? ` with code ${running.exitCode}` : ""} before port ${entry.port} answered`,
@@ -304,8 +311,17 @@ export class Launcher implements ServerHost {
     );
   }
 
+  /**
+   * Stops the server and whatever its command left in its process group —
+   * also once the command itself has exited: `sh -c 'srv &'` ends at once,
+   * and stopping skipped it while `srv` ran on (Mac findings 2026-10-24,
+   * item 9).
+   */
   private async stopRunning(s: Running): Promise<void> {
-    if (s.state !== "starting" && s.state !== "ready") return;
+    if (s.state !== "starting" && s.state !== "ready") {
+      s.leftover.kill();
+      return;
+    }
     s.stopping = true;
     killProcessTree(s.child);
     await Promise.race([

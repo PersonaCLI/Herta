@@ -170,3 +170,61 @@ describe("managed background commands (ADR 0025 slice 4)", () => {
     }
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "a command that backgrounds a server and exits (Mac findings 2026-10-24, item 9)",
+  () => {
+    it("still counts as running, and the brief's stopAll ends what it left", async () => {
+      const ws = await mkTmpWorkspace({});
+      const bg = new BackgroundHost();
+      const ctx = mkToolContext({ workspaceRoot: ws.root, bg });
+      try {
+        const start = await runCommandTool().run(
+          {
+            id: "s1",
+            tool: "run_command",
+            input: {
+              argv: [
+                "sh",
+                "-c",
+                "sleep 30 > /dev/null 2>&1 & echo $! > srv.pid",
+              ],
+              runInBackground: true,
+            },
+          },
+          ctx,
+          noop,
+        );
+        const bgId = (start.data as { backgroundId?: string })
+          .backgroundId as string;
+        // The shell itself is done at once…
+        for (let i = 0; i < 40; i += 1) {
+          const out = await pollForOutput(ctx, bgId, "", 1);
+          if (!out.running) break;
+          await delay(50);
+        }
+        const { readFileSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const pid = Number(readFileSync(join(ws.root, "srv.pid"), "utf8"));
+        const alive = (): boolean => {
+          try {
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        // …but what it started runs on, and the host still sees it.
+        expect(alive()).toBe(true);
+        expect(bg.get(bgId)?.isRunning()).toBe(true);
+        expect(await bg.stopAll()).toBe(1);
+        await delay(100);
+        expect(alive()).toBe(false);
+        expect(bg.get(bgId)?.isRunning()).toBe(false);
+      } finally {
+        await bg.stopAll();
+        await ws.cleanup();
+      }
+    }, 20_000);
+  },
+);

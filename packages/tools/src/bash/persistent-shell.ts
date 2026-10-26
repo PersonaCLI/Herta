@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { BackgroundProcess } from "@herta/core";
 import { childProcessEnv } from "../child-env.js";
 import { workspaceSpelling } from "../path-safety.js";
+import { groupAlive } from "../run-command/runner.js";
 import {
   listMsysProcesses,
   type MsysGroup,
@@ -770,15 +771,6 @@ export class PersistentShell implements BackgroundProcess {
  *  nothing and only checks. Any error — ESRCH (empty), EPERM (the id now
  *  belongs to someone else's processes) — means there is nothing of ours
  *  left to kill. */
-function groupAlive(group: number): boolean {
-  try {
-    process.kill(-group, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** End these Windows processes and what each started (`taskkill /T`);
  *  one already gone is the outcome wanted. Bounded, never rejects. */
 function killWinpids(pids: readonly number[]): Promise<void> {

@@ -25,7 +25,8 @@ import { app, safeStorage } from "electron";
  * `.enc` is the `safeStorage`-encrypted form (preferred); `.txt` the
  * plaintext fallback when encryption is unavailable — or, on Linux, only
  * nominal (`basic_text`, see `encryptionProtects`). The fallback is
- * owner-only (0600) and flagged `encrypted: false` so the UI can warn.
+ * owner-only (0600) and flagged `encrypted: false` so the UI can warn, and
+ * moves to `.enc` once encryption is available (`sealPlaintext`).
  *
  * All reads are best-effort: a missing / corrupt / undecryptable store resolves
  * to `null` rather than throwing — a bad store must never wedge the app.
@@ -162,12 +163,41 @@ export function readSecretPlain(name: SecretName): string | null {
   try {
     if (existsSync(txtPath(name))) {
       const raw = readFileSync(txtPath(name), "utf-8").trim();
-      return raw.length > 0 ? raw : null;
+      if (raw.length === 0) return null;
+      sealPlaintext(name, raw);
+      return raw;
     }
   } catch {
     // Unreadable .txt — treat as no key.
   }
   return null;
+}
+
+/** Keys whose move into the encrypted store failed this run: tried once per
+ *  launch, so a keychain that keeps refusing is not asked on every read. */
+const sealRefused = new Set<SecretName>();
+
+/**
+ * A key saved in plaintext because encryption was unavailable THEN moves to
+ * the encrypted store once it is available. It stayed `.txt` for good: one
+ * Keychain "Deny" on a Mac — or a Linux keyring still locked when the key was
+ * saved — left it readable by every process of this user from then on, and
+ * Settings warned with no way out but typing the key again (Mac findings
+ * 2026-10-24, item 7). The ciphertext must decrypt to the same key before
+ * the plaintext goes. Best-effort: a refusal keeps the `.txt`.
+ */
+function sealPlaintext(name: SecretName, key: string): void {
+  if (sealRefused.has(name) || !encryptionProtects()) return;
+  try {
+    const sealed = safeStorage.encryptString(key);
+    if (safeStorage.decryptString(sealed).trim() !== key) {
+      throw new Error("the sealed key does not read back");
+    }
+    writeOwnerOnly(encPath(name), sealed);
+    rmIfExists(txtPath(name));
+  } catch {
+    sealRefused.add(name);
+  }
 }
 
 /** Masked status for the renderer. The raw key never leaves the main process. */

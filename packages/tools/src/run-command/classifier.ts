@@ -2660,7 +2660,10 @@ export function writtenOperands(argv: readonly string[]): string[] {
         files.push(...args.slice(i + 1));
         break;
       }
-      if (!nonFlag(a)) continue;
+      if (!nonFlag(a)) {
+        if (takesSedBackupSuffix(a, args[i + 1])) i += 1;
+        continue;
+      }
       if (!scriptGiven) {
         scriptGiven = true; // the first operand is the script
         continue;
@@ -4088,6 +4091,22 @@ function interpreterShape(
   return { kind: "script", script };
 }
 
+/**
+ * BSD sed's `-i SUFFIX`: the backup suffix is the NEXT word, and `''` means
+ * none — `sed -i '' 's/a/b/' f`, the spelling the macOS host note teaches.
+ * Read as the script, the empty word made the line unknown, and the card lost
+ * its "outside the workspace" warning (Mac findings 2026-10-24, item 8). GNU
+ * takes that word as the script, but an empty or `.bak`-shaped one is no sed
+ * program either, so reading it as the suffix loses nothing.
+ */
+function takesSedBackupSuffix(flag: string, next: string | undefined): boolean {
+  return (
+    /^-[a-zA-Z]*i$/.test(flag) &&
+    next !== undefined &&
+    (next === "" || /^\.[\w.~-]*$/.test(next))
+  );
+}
+
 /** A sed script made only of line-address substitutions, deletes and prints
  *  — the shapes that touch nothing but the addressed file. The `e` flag or
  *  command (runs the pattern space!), `w`/`W`/`r`/`R` file commands, `-f`
@@ -4160,7 +4179,10 @@ function namedProgramVerdict(
         files.push(...argv.slice(i + 1));
         break;
       }
-      if (a.startsWith("-") && a.length > 1) continue;
+      if (a.startsWith("-") && a.length > 1) {
+        if (takesSedBackupSuffix(a, argv[i + 1])) i += 1;
+        continue;
+      }
       if (scripts.length === 0) scripts.push(a);
       else files.push(a);
     }

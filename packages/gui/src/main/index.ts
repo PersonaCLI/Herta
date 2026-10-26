@@ -51,6 +51,7 @@ import { applyLoginPath, launchLocaleEnv } from "./login-path.js";
 import { installChromiumFetch } from "./net-transport.js";
 import {
   QUIT_HOLD_MS,
+  QuitHold,
   quitDisposals,
   quitsWhenAllWindowsClosed,
 } from "./quit-policy.js";
@@ -932,14 +933,25 @@ app.on("window-all-closed", () => {
 
 // Hold quit until the closing session's dispose settles (bounded — a hung
 // flush must not wedge exit). Without this, app.quit() raced the async
-// closeActiveSession fired on window close.
-let quitHeld = false;
+// closeActiveSession fired on window close. A quit that arrives while the
+// hold is on waits with it (`QuitHold`, Mac findings 2026-10-24, item 6).
+const quitHold = new QuitHold();
 app.on("before-quit", (event) => {
   // An app/OS-initiated quit (Cmd+Q, logout, updater) reaches the window's
   // close handler next — flip the close-to-tray override FIRST or that
   // handler would preventDefault + hide, silently cancelling the quit.
   quitRequested = true;
-  if (quitHeld) return;
+  const held = quitHold.onBeforeQuit(
+    startQuitFlush,
+    () => app.quit(),
+    QUIT_HOLD_MS,
+  );
+  if (held) event.preventDefault();
+});
+
+/** What a quit waits for, started now: the live session's dispose and the
+ *  window's final geometry. Null when there is nothing to wait for. */
+function startQuitFlush(): Promise<unknown> | null {
   // Quit paths that arrive BEFORE the window closed — the updater's
   // quitAndInstall (重启并更新), Cmd+Q, OS logout — found pendingDispose
   // still null here (it was assigned only in win.on("closed"), which has
@@ -976,24 +988,22 @@ app.on("before-quit", (event) => {
     }
     persistWindowState();
   }
-  if (pendingDispose === null && pendingStateWrite === null) return;
-  quitHeld = true;
-  event.preventDefault();
-  const timeout = new Promise<void>((resolve) => {
-    setTimeout(resolve, QUIT_HOLD_MS);
-  });
-  const flushes = Promise.allSettled([
+  if (pendingDispose === null && pendingStateWrite === null) return null;
+  // Out of sight while it waits: on macOS a direct quit leaves the window
+  // up and looking idle, which is what invited the second Cmd+Q. A
+  // full-screen window stays — hiding it leaves its Space black, and leaving
+  // full screen first would save the wrong state (hide-to-tray.ts).
+  if (w !== null && !w.isDestroyed() && !w.isFullScreen()) w.hide();
+  return Promise.allSettled([
     pendingDispose ?? Promise.resolve(),
     // The window-state write fired by the close handler — a maximize-then-
     // quit must not lose the final geometry capture (2026-07-13).
     pendingStateWrite ?? Promise.resolve(),
-  ]);
-  void Promise.race([flushes, timeout]).finally(() => {
+  ]).finally(() => {
     pendingDispose = null;
     pendingStateWrite = null;
-    app.quit();
   });
-});
+}
 
 // Remove the tray icon promptly at exit (Windows otherwise leaves a ghost
 // icon in the tray until the next hover sweep).

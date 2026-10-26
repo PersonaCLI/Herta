@@ -10,13 +10,20 @@ const state = vi.hoisted(() => ({
   userData: "",
   encAvailable: true,
   backend: "gnome_libsecret",
+  /** A keychain that refuses (a Mac's "Deny"): encryptString throws. */
+  refuse: false,
+  encrypts: 0,
 }));
 vi.mock("electron", () => ({
   app: { getPath: () => state.userData },
   safeStorage: {
     isEncryptionAvailable: () => state.encAvailable,
     getSelectedStorageBackend: () => state.backend,
-    encryptString: (s: string) => Buffer.from(`enc:${s}`, "utf-8"),
+    encryptString: (s: string) => {
+      state.encrypts += 1;
+      if (state.refuse) throw new Error("User denied keychain access");
+      return Buffer.from(`enc:${s}`, "utf-8");
+    },
     decryptString: (b: Buffer) => b.toString("utf-8").replace(/^enc:/, ""),
   },
 }));
@@ -55,6 +62,8 @@ describe("key-store", () => {
     state.userData = mkdtempSync(join(tmpdir(), "herta-key-store-"));
     state.encAvailable = true;
     state.backend = "gnome_libsecret";
+    state.refuse = false;
+    state.encrypts = 0;
   });
   afterEach(() => {
     vi.clearAllMocks();
@@ -120,6 +129,46 @@ describe("key-store", () => {
     setDeepSeekKey("sk-enc-second99");
     expect(readDeepSeekKeyPlain()).toBe("sk-enc-second99");
     expect(getDeepSeekKeyStatus().encrypted).toBe(true);
+  });
+
+  // ── A plaintext key moves to the encrypted store (Mac findings item 7) ──
+
+  it("a key saved in plaintext while encryption was unavailable is sealed once it is available", () => {
+    state.encAvailable = false;
+    setDeepSeekKey("sk-denied-5555");
+    expect(existsSync(join(state.userData, "deepseek-key.txt"))).toBe(true);
+    // A later launch: the keychain works again.
+    state.encAvailable = true;
+    expect(readDeepSeekKeyPlain()).toBe("sk-denied-5555");
+    expect(existsSync(join(state.userData, "deepseek-key.txt"))).toBe(false);
+    expect(existsSync(join(state.userData, "deepseek-key.enc"))).toBe(true);
+    expect(getDeepSeekKeyStatus()).toEqual({
+      set: true,
+      hint: "5555",
+      encrypted: true,
+    });
+  });
+
+  it("a keychain that refuses keeps the plaintext, and is asked once per run", () => {
+    state.encAvailable = false;
+    setMiniMaxPlanKey("sk-cp-refused-4444");
+    state.encAvailable = true;
+    state.refuse = true;
+    expect(readMiniMaxPlanKeyPlain()).toBe("sk-cp-refused-4444");
+    expect(readMiniMaxPlanKeyPlain()).toBe("sk-cp-refused-4444");
+    expect(state.encrypts).toBe(1);
+    expect(existsSync(join(state.userData, "minimax-plan-key.txt"))).toBe(true);
+    expect(getMiniMaxPlanKeyStatus().encrypted).toBe(false);
+  });
+
+  it("Linux `basic_text` is not encryption, so its plaintext key stays where it is", () => {
+    state.backend = "basic_text";
+    onPlatform("linux", () => setMiniMaxKey("sk-mm-basic-3333"));
+    expect(onPlatform("linux", () => readMiniMaxKeyPlain())).toBe(
+      "sk-mm-basic-3333",
+    );
+    expect(existsSync(join(state.userData, "minimax-key.txt"))).toBe(true);
+    expect(existsSync(join(state.userData, "minimax-key.enc"))).toBe(false);
   });
 
   // ── Linux without a keyring (platform review 2026-09-23) ──────────────────

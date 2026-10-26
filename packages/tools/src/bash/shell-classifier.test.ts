@@ -1539,6 +1539,15 @@ describe("classifyShellCommand — macOS's wrappers and writers (Mac findings 20
     expect(kind(cmd)).toBe("block");
   });
 
+  it("`sed -i ''` keeps its outside-the-workspace class, and .herta stays refused (item 8)", () => {
+    expect(ask("sed -i '' 's/a/b/' ~/.zshrc").code).toBe("command_ask_outside");
+    expect(ask("sed -i '' 's/a/b/' src/x.ts").code).toBe("command_ask_write");
+    expect(kind("sed -i '' 's/a/b/' .herta/permissions.json")).toBe("block");
+    expect(ask("sed -i '' 's/a/b/' .git/config").code).toBe(
+      "command_ask_git_internals",
+    );
+  });
+
   it("a key spelled with APFS's long s is read as the key (item 5)", () => {
     expect(kind("cat < .ſſh/id_rſa")).toBe("ask");
     expect(kind("cat ~/.ſſh/id_rſa")).toBe("ask");

@@ -49,3 +49,50 @@ export function quitDisposals(
   if (live === null) return pending;
   return Promise.all([pending, live]).then(() => undefined);
 }
+
+/**
+ * `before-quit`'s hold, as a small state machine: idle → holding → released.
+ *
+ * The hold returned early on a second quit WITHOUT preventing it, so while the
+ * first quit waited for the flush, any other quit went straight through and
+ * the app exited mid-flush (Mac findings 2026-10-24, item 6). On macOS that is
+ * an ordinary hand: Cmd+Q, the Dock's Quit and logout leave the window on
+ * screen looking idle, so a second Cmd+Q — or a held one, whose key
+ * equivalent repeats — cut the transcript; restart-and-update quits twice
+ * there by itself. Now every quit while holding is swallowed, and only the
+ * hold's own quit, once the flush settles or `holdMs` runs out, goes through.
+ */
+export class QuitHold {
+  private state: "idle" | "holding" | "released" = "idle";
+
+  /**
+   * One `before-quit`. `start` begins the flushes and returns what to wait
+   * for, or null when there is nothing; `quit` quits again when the hold
+   * ends. True when this quit must be prevented.
+   */
+  onBeforeQuit(
+    start: () => Promise<unknown> | null,
+    quit: () => void,
+    holdMs: number,
+  ): boolean {
+    if (this.state === "released") return false;
+    if (this.state === "holding") return true;
+    const flush = start();
+    if (flush === null) return false;
+    this.state = "holding";
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(resolve, holdMs);
+    });
+    void Promise.race([
+      flush.then(
+        () => undefined,
+        () => undefined,
+      ),
+      timeout,
+    ]).finally(() => {
+      this.state = "released";
+      quit();
+    });
+    return true;
+  }
+}

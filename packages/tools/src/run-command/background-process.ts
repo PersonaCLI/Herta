@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { BackgroundProcess } from "@herta/core";
-import { killProcessTree } from "./runner.js";
+import { killProcessTree, LeftoverGroup } from "./runner.js";
 
 const RING_MAX_BYTES = 256 * 1024;
 const KILL_GRACE_MS = 3_000;
@@ -22,6 +22,8 @@ export class SpawnedBackgroundProcess implements BackgroundProcess {
   /** Bytes dropped off the FRONT of the ring (the cursor floor). */
   private droppedBytes = 0;
   private running = true;
+  /** What the command backgrounded before it exited (`sh -c 'srv &'`). */
+  private readonly leftover = new LeftoverGroup();
   private exitCode: number | null = null;
   private exitSignal: string | null = null;
   private closePromise: Promise<void>;
@@ -63,6 +65,7 @@ export class SpawnedBackgroundProcess implements BackgroundProcess {
       const settle = (code: number | null, sig: string | null): void => {
         if (!this.running) return;
         this.running = false;
+        this.leftover.noteExit(this.child.pid);
         this.exitCode = code;
         this.exitSignal = sig;
         resolve();
@@ -90,8 +93,15 @@ export class SpawnedBackgroundProcess implements BackgroundProcess {
     });
   }
 
+  /**
+   * The BackgroundHost's question at brief end: whether anything this
+   * command started still runs — not whether the command itself does. A
+   * `sh -c 'srv > log 2>&1 &'` exits at once, and `stopAll` skipped it while
+   * `srv` held its port past the brief (Mac findings 2026-10-24, item 9).
+   * `status()` still reports the command's own exit.
+   */
   isRunning(): boolean {
-    return this.running;
+    return this.running || this.leftover.alive();
   }
 
   status(): {
@@ -130,7 +140,10 @@ export class SpawnedBackgroundProcess implements BackgroundProcess {
   }
 
   async kill(): Promise<void> {
-    if (!this.running) return;
+    if (!this.running) {
+      this.leftover.kill();
+      return;
+    }
     killProcessTree(this.child);
     // Bounded wait: don't hang the brief's teardown on a wedged child.
     await Promise.race([

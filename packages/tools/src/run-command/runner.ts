@@ -20,6 +20,58 @@ export interface RunOptions {
 }
 
 /**
+ * POSIX: whether process group `pgid` still has a member. A command started
+ * with `detached: true` leads its own group, and what it BACKGROUNDS stays
+ * in that group after it exits — `sh -c 'srv > log 2>&1 &'` ends at once and
+ * leaves `srv` running there. Always false on Windows, which has no groups.
+ */
+export function groupAlive(pgid: number): boolean {
+  if (process.platform === "win32") return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The process group a detached child leaves behind (Mac findings
+ * 2026-10-24, item 9): remembered at the child's exit only if a member is
+ * alive then, so an id is never kept past its group's end for an unrelated
+ * group to take over (the persistent shell's rule, review 2026-09-23); asked
+ * again before every use, and forgotten once empty. Every POSIX system.
+ */
+export class LeftoverGroup {
+  private pgid: number | null = null;
+
+  /** At the child's exit: keep its group if something still runs there. */
+  noteExit(pid: number | undefined): void {
+    if (pid !== undefined && groupAlive(pid)) this.pgid = pid;
+  }
+
+  /** Whether something the child started still runs in its group. */
+  alive(): boolean {
+    if (this.pgid === null) return false;
+    if (groupAlive(this.pgid)) return true;
+    this.pgid = null;
+    return false;
+  }
+
+  /** End what is left in the group; best-effort, then forgotten. */
+  kill(): void {
+    if (this.alive() && this.pgid !== null) {
+      try {
+        process.kill(-this.pgid, "SIGKILL");
+      } catch {
+        // emptied in between
+      }
+    }
+    this.pgid = null;
+  }
+}
+
+/**
  * Kill a child's WHOLE process tree. Windows has no process groups:
  * `child.kill()` terminates only the DIRECT child, orphaning
  * grandchildren (rustc under `cargo test`, a dev server's workers) —

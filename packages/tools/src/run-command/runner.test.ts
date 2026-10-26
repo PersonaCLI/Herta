@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { runCommand } from "./runner.js";
+import { describe, expect, it, vi } from "vitest";
+import { LeftoverGroup, runCommand } from "./runner.js";
 
 const POSIX = process.platform !== "win32";
 
@@ -157,4 +157,68 @@ describe("runCommand — process-tree kill", () => {
       expect(alive).toBe(false);
     }, 20_000);
   }
+});
+
+describe("LeftoverGroup — what a command left in its process group (Mac findings 2026-10-24, item 9)", () => {
+  /** A fake POSIX: `process.kill(-pgid, 0)` answers from `alive`; a real
+   *  signal empties the group. */
+  function fakeGroups(alive: Set<number>) {
+    const signals: Array<[number, string | number | undefined]> = [];
+    const real = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", {
+      value: "linux",
+      configurable: true,
+    });
+    const spy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid: number, sig?: string | number) => {
+        signals.push([pid, sig]);
+        if (!alive.has(-pid)) throw new Error("ESRCH");
+        if (sig !== 0) alive.delete(-pid);
+        return true;
+      });
+    return {
+      signals,
+      restore: () => {
+        spy.mockRestore();
+        if (real !== undefined)
+          Object.defineProperty(process, "platform", real);
+      },
+    };
+  }
+
+  it("keeps a group with a member, ends it on kill, and forgets it", () => {
+    const alive = new Set([4242]);
+    const fake = fakeGroups(alive);
+    try {
+      const left = new LeftoverGroup();
+      left.noteExit(4242);
+      expect(left.alive()).toBe(true);
+      left.kill();
+      expect(fake.signals).toContainEqual([-4242, "SIGKILL"]);
+      expect(left.alive()).toBe(false);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it("never keeps an empty group, and forgets one that empties on its own", () => {
+    const alive = new Set([7]);
+    const fake = fakeGroups(alive);
+    try {
+      const empty = new LeftoverGroup();
+      empty.noteExit(99); // nothing left in group 99
+      expect(empty.alive()).toBe(false);
+      const later = new LeftoverGroup();
+      later.noteExit(7);
+      alive.delete(7); // the server stops by itself
+      expect(later.alive()).toBe(false);
+      // A pid reused for a new group after that is never signalled.
+      alive.add(7);
+      later.kill();
+      expect(fake.signals).not.toContainEqual([-7, "SIGKILL"]);
+    } finally {
+      fake.restore();
+    }
+  });
 });

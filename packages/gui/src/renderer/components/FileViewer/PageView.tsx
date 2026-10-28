@@ -1,5 +1,9 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
-import type { PageBounds, PageState } from "../../../shared/browser-page.js";
+import {
+  type PageBounds,
+  type PageState,
+  typedPageUrl,
+} from "../../../shared/browser-page.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { subscribeOverlayStack, topOverlay } from "../../lib/overlay-stack.js";
@@ -129,6 +133,33 @@ function usePageSurface(
 const isLive = (page: PageState | null): boolean =>
   page !== null && page.url.length > 0 && page.url !== "about:blank";
 
+/** An address sent with Enter, shown until the page gets there: `from` is
+ *  where the page was, `started` that its load has begun. */
+interface Pending {
+  readonly shown: string;
+  readonly from: string;
+  readonly started: boolean;
+}
+
+/**
+ * The submitted address against the page's latest state: kept while the load
+ * has not left `from`, gone once the page is somewhere else or the load ended
+ * where it began (failed, stopped, the same address again). The bar showed the
+ * old address — on a new tab, nothing — from Enter until the server answered
+ * (owner 2026-10-28).
+ */
+export function settlePending(
+  pending: Pending | null,
+  page: PageState | null,
+): Pending | null {
+  if (pending === null || page === null) return pending;
+  if (page.url !== pending.from) return null;
+  if (page.loading) {
+    return pending.started ? pending : { ...pending, started: true };
+  }
+  return pending.started ? null : pending;
+}
+
 /**
  * The page tab (ADR 0083 §2, §4): the browser's controls over the area the
  * page is laid on. The Trailblazer may go anywhere http(s) reaches; main
@@ -145,6 +176,7 @@ export function PageView({
   const [page, setPage] = useState<PageState | null>(null);
   const [still, setStill] = useState<PageStill | null>(null);
   const [typed, setTyped] = useState<string | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   // The picker (ADR 0083 §4): on, a click in the page picks an element for
   // the composer; main says when the pick is over.
   const [picking, setPicking] = useState(false);
@@ -178,6 +210,9 @@ export function PageView({
   }, [bridge, sessionId]);
 
   const live = isLive(page);
+  useEffect(() => {
+    setPending((p) => settlePending(p, page));
+  }, [page]);
   usePageSurface(sessionId, body, live, setStill);
   // A page that goes away takes the pick with it.
   useEffect(() => {
@@ -273,7 +308,13 @@ export function PageView({
           className="page-view__address"
           onSubmit={(e) => {
             e.preventDefault();
-            if (typed !== null && typed.trim().length > 0) go({ url: typed });
+            if (typed === null) return;
+            const shown = typed.trim();
+            // An address main would not load stays in the field to be put
+            // right, rather than vanishing (main still reads it alone).
+            if (typedPageUrl(shown) === null) return;
+            go({ url: shown });
+            setPending({ shown, from: page?.url ?? "", started: false });
             setTyped(null);
           }}
         >
@@ -283,7 +324,7 @@ export function PageView({
             placeholder={t("page.addressPlaceholder")}
             spellCheck={false}
             autoComplete="off"
-            value={typed ?? (live ? (page?.url ?? "") : "")}
+            value={typed ?? pending?.shown ?? (live ? (page?.url ?? "") : "")}
             onChange={(e) => setTyped(e.target.value)}
             onKeyDown={(e) => {
               // Escape puts the address back; it is this field's.

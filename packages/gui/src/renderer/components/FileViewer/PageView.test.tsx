@@ -118,11 +118,47 @@ describe("the browser page tab (ADR 0083)", () => {
     expect(page.navigate).toHaveBeenCalledWith("s1", {
       url: "localhost:5173/login",
     });
-    // Escape in the field puts the address back; it is the field's.
+    // Escape in the field puts the address back — here the one on its way;
+    // it is the field's.
     fireEvent.change(url, { target: { value: "typo" } });
     fireEvent.keyDown(url, { key: "Escape" });
-    expect(url.value).toBe("");
+    expect(url.value).toBe("localhost:5173/login");
     expect(screen.getByTestId("page-view")).toBeTruthy();
+  });
+
+  it("the address sent with Enter stays in the bar until the page gets there (owner 2026-10-28)", async () => {
+    const mock = createMockHertaBridge();
+    const { page, emit } = withPage(mock);
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    act(() => {
+      runShortcut("openBrowser");
+    });
+    await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
+    const url = screen.getByLabelText("Address") as HTMLInputElement;
+    const enter = (text: string) => {
+      fireEvent.change(url, { target: { value: text } });
+      fireEvent.submit(url.closest("form") as HTMLFormElement);
+    };
+    // A new tab: the bar was emptied on Enter, until the server answered.
+    enter("www.google.com");
+    expect(url.value).toBe("www.google.com");
+    emit({ url: "", loading: true });
+    expect(url.value).toBe("www.google.com");
+    emit({ url: "https://www.google.com/", loading: true });
+    expect(url.value).toBe("https://www.google.com/");
+    emit({ url: "https://www.google.com/", loading: false });
+    // A load that fails where it began gives the page's own address back.
+    enter("unreachable.example");
+    emit({ url: "https://www.google.com/", loading: true });
+    expect(url.value).toBe("unreachable.example");
+    emit({ url: "https://www.google.com/", loading: false });
+    expect(url.value).toBe("https://www.google.com/");
+    // An address main would not load stays to be put right, and goes nowhere.
+    page.navigate.mockClear();
+    enter("not an address");
+    expect(page.navigate).not.toHaveBeenCalled();
+    expect(url.value).toBe("not an address");
   });
 
   it("closing the page tab ends the page, so it opens next on the server list (owner 2026-10-23)", () => {

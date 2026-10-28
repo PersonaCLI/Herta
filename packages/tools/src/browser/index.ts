@@ -282,7 +282,7 @@ export function browserNavigateTool(opts: {
       return {
         name: "browser_navigate",
         description:
-          "Open a page of the app running on this machine in the browser the Trailblazer watches in the viewer, or step back, forward or reload. Returns the title, the HTTP status, new console errors, and the elements you can act on, each with a ref for browser_act. Only this machine's pages (localhost, 127.0.0.1): for a public page use web_fetch. Start the app's dev server first if nothing answers (dev_server). What the page shows you stays with you: report what matters with report_finding.",
+          "Open a page of the app running on this machine in the browser the Trailblazer watches in the viewer, or step back, forward or reload. Returns the title, the HTTP status, new console errors, and the elements you can act on, each with a ref for browser_act. This browser is how you see, use or check a page of this app — an acceptance check included: use it, not jsdom, another or headless browser, or a script that fetches the page. Only this machine's pages (localhost, 127.0.0.1): for a public page use web_fetch. Start the app's dev server first if nothing answers (dev_server). What the page shows you stays with you: report what matters with report_finding.",
         inputSchema: browserNavigateJsonSchema,
       };
     },

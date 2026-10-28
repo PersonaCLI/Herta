@@ -77,6 +77,24 @@ describe("report_finding (ADR 0039)", () => {
     expect(c.findings.size).toBe(0);
   });
 
+  it("an over-long claim is told its length and to split (ADR 0083 step 7 lab)", async () => {
+    ws = await mkTmpWorkspace({ "a.txt": "x\n" });
+    const c = ctx(ws.root);
+    const long = await run(
+      { claim: "很长的结论。".repeat(80), cites: ["a.txt"] },
+      c,
+    );
+    expect(long.ok).toBe(false);
+    expect(long.suggestion).toContain("480 characters");
+    expect(long.suggestion).toContain("a finding of its own");
+    // Any other refusal keeps the usage line.
+    const uncited = await run(
+      { claim: "Everything is fine here.", cites: [] },
+      c,
+    );
+    expect(uncited.suggestion).toMatch(/^usage:/);
+  });
+
   it("verifies every cite against disk — a fabricated path or out-of-range line fails the whole call", async () => {
     ws = await mkTmpWorkspace({ "log.txt": "a\nb\nc\n" });
     const c = ctx(ws.root);

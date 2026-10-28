@@ -12,6 +12,7 @@ import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
 import {
   CITE_PATTERN,
+  MAX_FINDING_CLAIM_CHARS,
   reportFindingInputSchema,
   reportFindingJsonSchema,
 } from "./schema.js";
@@ -98,6 +99,7 @@ export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
             retryable: false,
           },
           suggestion:
+            overLongClaim(call.input) ??
             'usage: {claim: "<one sentence>", cites: ["path:line", "path:from-to", …]}',
           summary: "invalid input",
         };
@@ -191,6 +193,20 @@ export function reportFindingTool(opts: ReportFindingToolOpts = {}): HertaTool {
       };
     },
   };
+}
+
+/**
+ * The move that fixes an over-long claim. The generic usage line only said
+ * "one sentence", and the browser lab's refused finding (ADR 0083 step 7)
+ * held two conclusions and their evidence in one: say how long it is, and
+ * that each conclusion is a finding of its own.
+ */
+function overLongClaim(input: unknown): string | null {
+  const claim = (input as { claim?: unknown } | null)?.claim;
+  if (typeof claim !== "string" || claim.length <= MAX_FINDING_CLAIM_CHARS) {
+    return null;
+  }
+  return `The claim is ${claim.length} characters; the limit is ${MAX_FINDING_CLAIM_CHARS}. If it holds more than one conclusion, record each as a finding of its own; otherwise keep the conclusion and its deciding fact, and let the cites carry the detail.`;
 }
 
 function badCite(raw: string, why: string): ToolResult<ReportFindingData> {

@@ -167,6 +167,9 @@ describe("dev_server", () => {
       () => {},
     );
     expect(missing.error?.code).toBe("no_server_entry");
+    // The lab's 板砖 asked for `dev`, its entry's npm script: the answer
+    // names each entry with what it runs (ADR 0083 step 7).
+    expect(missing.suggestion).toContain("web (npm test)");
   });
 
   it("a failed start carries the end of its log; list, logs and stop report the state", async () => {

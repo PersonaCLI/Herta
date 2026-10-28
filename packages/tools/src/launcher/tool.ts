@@ -37,7 +37,9 @@ export const devServerInputSchema = z
       .min(1)
       .max(40)
       .optional()
-      .describe("The server's name in herta.launch.json (start, logs, stop)."),
+      .describe(
+        "The entry's name in herta.launch.json, as dev_server list shows it (start, logs, stop) — not its npm script's: an entry named web may run npm run dev.",
+      ),
     sinceByte: z
       .number()
       .int()
@@ -236,7 +238,9 @@ export function createDevServer(opts: { readonly host: ServerHost }): {
               return errResult(
                 "no_server_entry",
                 `${LAUNCH_FILE} names no server ${server}`,
-                `Servers: ${file.entries.map((e) => e.name).join(", ") || "none"}. Add an entry for it, or start one of these.`,
+                file.entries.length === 0
+                  ? `${LAUNCH_FILE} names no servers yet: add an entry, e.g. ${LAUNCH_FILE_EXAMPLE}`
+                  : `Use an entry's own name: ${file.entries.map((e) => `${e.name} (${entryCommand(e)})`).join(", ")}. Or add an entry for ${server}.`,
               );
             // The rule judges every start; a start it never saw does not run.
             return errResult(

@@ -1,4 +1,4 @@
-import { isLoopbackHost } from "@herta/core";
+import { isLoopbackHost } from "@herta/core/browser-host";
 
 /**
  * The browser page (ADR 0083): the shapes main and the renderer share, and

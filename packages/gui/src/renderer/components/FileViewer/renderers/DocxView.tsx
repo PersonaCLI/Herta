@@ -51,6 +51,8 @@ export function DocxView({
   const headings = useRef<ReadonlySet<string>>(new Set());
   /** The numbered blocks, read once per render at the first need. */
   const blocks = useRef<ReturnType<typeof docxBlocks> | null>(null);
+  /** Renders finished: the anchor is applied to each new one. */
+  const [rendered, setRendered] = useState(0);
 
   useEffect(() => {
     const body = bodyRef.current;
@@ -83,6 +85,7 @@ export function DocxView({
           ?.stylesPart?.styles;
         headings.current = headingStyleClasses(parsed ?? []);
         blocks.current = null;
+        setRendered((n) => n + 1);
         setState("done");
       },
       () => {
@@ -102,16 +105,24 @@ export function DocxView({
   }, []);
 
   // A quote's label opened this document: its first paragraph comes into
-  // view, once per anchor (the PDF's rule, ADR 0078 amendment 2026-10-22).
-  const anchored = useRef<ViewerAnchor | undefined>(undefined);
+  // view, once per anchor and render. Not once per anchor alone, as the PDF
+  // does (ADR 0078 amendment 2026-10-22): a label's new target makes the
+  // panel read the file again, and docx-preview draws the page anew, so the
+  // scroll taken on the old page was lost with it and the document opened
+  // at the top (seen in the dev app, 2026-10-29). Nothing but a new read
+  // renders again, so a resize still never pulls the reader back.
+  const anchored = useRef<{ anchor: ViewerAnchor; render: number } | null>(
+    null,
+  );
   useEffect(() => {
     if (anchor === undefined || state !== "done") return;
-    if (anchored.current === anchor) return;
+    const at = anchored.current;
+    if (at !== null && at.anchor === anchor && at.render === rendered) return;
     const block = blocksNow()[anchor.from - 1];
     if (block === undefined) return;
-    anchored.current = anchor;
+    anchored.current = { anchor, render: rendered };
     block.el.scrollIntoView({ block: "start" });
-  }, [anchor, state, blocksNow]);
+  }, [anchor, state, rendered, blocksNow]);
 
   // The pieces: each section laid from its first block, its seam halfway
   // through the gap before it.

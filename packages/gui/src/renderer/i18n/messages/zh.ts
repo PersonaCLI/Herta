@@ -327,6 +327,8 @@ export const zh = {
   "quote.truncated": "……（另有 {n} 行未引用）",
   "quote.page": "第 {n} 页",
   "quote.pages": "第 {from}–{to} 页",
+  "quote.para": "第 {n} 段",
+  "quote.paras": "第 {from}–{to} 段",
   "composer.quote.placeholder": "讲讲这段…",
   "composer.aria": "消息输入框",
   "composer.send": "发送消息",

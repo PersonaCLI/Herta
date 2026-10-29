@@ -17,16 +17,21 @@
 
 import { makeT } from "../i18n/LocaleProvider.js";
 
+/** What a quote's range counts when not lines: a PDF's pages (ADR 0078
+ *  amendment 2026-10-21), a Word document's paragraphs (2026-10-29). Neither
+ *  has lines of its own. */
+export type QuoteUnit = "page" | "para";
+
 export interface ComposerQuote {
   readonly id: string;
   /** Workspace-relative, forward slashes. */
   readonly path: string;
   readonly from: number;
   readonly to: number;
-  /** What `from` and `to` count: lines (absent), or a PDF's pages (ADR 0078
-   *  amendment 2026-10-21 — a PDF has no lines of its own). */
-  readonly unit?: "page";
-  /** A markdown section's heading; a PDF outline entry's title. */
+  /** What `from` and `to` count: lines (absent), pages or paragraphs. */
+  readonly unit?: QuoteUnit;
+  /** A markdown section's heading; a PDF outline entry's title; the Word
+   *  heading the quote falls under. */
   readonly title?: string;
   /** The source of those lines, bounded (`boundQuoteText`). */
   readonly text: string;
@@ -37,31 +42,59 @@ export interface ComposerQuote {
 export const QUOTE_MAX_LINES = 200;
 export const QUOTE_MAX_CHARS = 8_000;
 
-/** A PDF quote's pages as the message's own language writes them
- *  (`quote.page` / `quote.pages` in the session-language catalogs). */
-const pagesWord = (lang: "zh" | "en", from: number, to: number): string =>
-  to > from
-    ? makeT(lang)("quote.pages", { from, to })
-    : makeT(lang)("quote.page", { n: from });
+/** The catalog keys of a unit's one and its range. */
+const UNIT_KEYS = {
+  page: ["quote.page", "quote.pages"],
+  para: ["quote.para", "quote.paras"],
+} as const satisfies Record<QuoteUnit, readonly [string, string]>;
 
-/** The four page spellings as patterns, read from the catalogs: each
+/** A quote's pages or paragraphs as the message's own language writes them
+ *  (`quote.page` / `quote.pages`, `quote.para` / `quote.paras` in the
+ *  session-language catalogs). */
+const unitWord = (
+  unit: QuoteUnit,
+  lang: "zh" | "en",
+  from: number,
+  to: number,
+): string => {
+  const [one, range] = UNIT_KEYS[unit];
+  return to > from
+    ? makeT(lang)(range, { from, to })
+    : makeT(lang)(one, { n: from });
+};
+
+/** Every unit spelling as a pattern, read from the catalogs: each
  *  placeholder becomes a number group, the rest is literal. */
 const NUM_A = "";
 const NUM_B = "";
 const escapeRe = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-const PAGE_SPELLINGS: readonly string[] = (["zh", "en"] as const).flatMap(
-  (lang) => [
-    escapeRe(makeT(lang)("quote.page", { n: NUM_A })).replace(NUM_A, "(\\d+)"),
-    escapeRe(makeT(lang)("quote.pages", { from: NUM_A, to: NUM_B }))
-      .replace(NUM_A, "(\\d+)")
-      .replace(NUM_B, "(\\d+)"),
-  ],
+const UNIT_SPELLINGS: readonly { unit: QuoteUnit; re: string }[] = (
+  ["page", "para"] as const
+).flatMap((unit) =>
+  (["zh", "en"] as const).flatMap((lang) => {
+    const [one, range] = UNIT_KEYS[unit];
+    return [
+      {
+        unit,
+        re: escapeRe(makeT(lang)(one, { n: NUM_A })).replace(NUM_A, "(\\d+)"),
+      },
+      {
+        unit,
+        re: escapeRe(makeT(lang)(range, { from: NUM_A, to: NUM_B }))
+          .replace(NUM_A, "(\\d+)")
+          .replace(NUM_B, "(\\d+)"),
+      },
+    ];
+  }),
 );
-/** Any page spelling, numbers uncaptured — for the header's label part. */
-const PAGE_PART = `(?:${PAGE_SPELLINGS.map((p) => p.replaceAll("(\\d+)", "\\d+")).join("|")})`;
-/** `path · <pages>`, one pattern per spelling. */
-const PAGE_LABELS = PAGE_SPELLINGS.map((p) => new RegExp(`^(.+) · ${p}$`, "u"));
+/** Any unit spelling, numbers uncaptured — for the header's label part. */
+const UNIT_PART = `(?:${UNIT_SPELLINGS.map((u) => u.re.replaceAll("(\\d+)", "\\d+")).join("|")})`;
+/** `path · <pages or paragraphs>`, one pattern per spelling. */
+const UNIT_LABELS = UNIT_SPELLINGS.map((u) => ({
+  unit: u.unit,
+  re: new RegExp(`^(.+) · ${u.re}$`, "u"),
+}));
 
 /** The header's word is the message's own language, so it comes from the
  *  session-language catalogs (`makeT`), never the UI locale; the parser
@@ -72,23 +105,25 @@ const headerWord = (lang: "zh" | "en"): string => makeT(lang)("quote.header");
 // The label is lazy up to its optional page part, so a page label's own
 // " · " never reads as the title's.
 const HEADER = new RegExp(
-  `^${OPEN}(?:${headerWord("zh")}|${headerWord("en")}) (.+?(?: · ${PAGE_PART})?)(?: · (.+))?${CLOSE}$`,
+  `^${OPEN}(?:${headerWord("zh")}|${headerWord("en")}) (.+?(?: · ${UNIT_PART})?)(?: · (.+))?${CLOSE}$`,
   "u",
 );
 const LABEL = /^(.+):(\d+)(?:–(\d+))?$/;
 
 /** `path:from–to`, or `path:from` for one line; a PDF's pages as
- *  `path · 第 3 页` (zh) or `path · p. 3` (en), in the message's language. */
+ *  `path · 第 3 页` (zh) or `path · p. 3` (en), a Word document's paragraphs
+ *  as `path · 第 12–15 段` or `path · ¶ 12–15`, in the message's language. */
 export function quoteLabel(
   q: {
     readonly path: string;
     readonly from: number;
     readonly to: number;
-    readonly unit?: "page";
+    readonly unit?: QuoteUnit;
   },
   lang: "zh" | "en" = "zh",
 ): string {
-  if (q.unit === "page") return `${q.path} · ${pagesWord(lang, q.from, q.to)}`;
+  if (q.unit !== undefined)
+    return `${q.path} · ${unitWord(q.unit, lang, q.from, q.to)}`;
   return q.to > q.from ? `${q.path}:${q.from}–${q.to}` : `${q.path}:${q.from}`;
 }
 
@@ -98,18 +133,18 @@ function parseLabel(label: string):
       readonly path: string;
       readonly from: number;
       readonly to: number;
-      readonly unit?: "page";
+      readonly unit?: QuoteUnit;
     }
   | undefined {
-  for (const re of PAGE_LABELS) {
-    const page = re.exec(label);
-    if (page === null) continue;
-    const from = Number(page[2]);
+  for (const { unit, re } of UNIT_LABELS) {
+    const m = re.exec(label);
+    if (m === null) continue;
+    const from = Number(m[2]);
     return {
-      path: page[1] as string,
+      path: m[1] as string,
       from,
-      to: Number(page[3] ?? from),
-      unit: "page",
+      to: Number(m[3] ?? from),
+      unit,
     };
   }
   const line = LABEL.exec(label);
@@ -190,8 +225,8 @@ export interface ParsedQuote {
   readonly path?: string;
   readonly from?: number;
   readonly to?: number;
-  /** The range counts a PDF's pages. */
-  readonly unit?: "page";
+  /** The range counts a PDF's pages or a Word document's paragraphs. */
+  readonly unit?: QuoteUnit;
   readonly title?: string;
   readonly text: string;
   /** The fence's language tag, when it carried one. */
@@ -202,15 +237,16 @@ export interface ParsedQuote {
  * A header's label and title. The label takes an optional page part, so a
  * line quote whose title reads like one (`docs/x.md:1–5 · 第 2 页`, a
  * heading in a book's transcript) read as a PDF page quote of a file named
- * `docs/x.md:1–5` (release review 2026-10-22). A page label whose path is
- * itself a line label is that line quote, its title the page phrase.
+ * `docs/x.md:1–5` (release review 2026-10-22). A page or paragraph label
+ * whose path is itself a line label is that line quote, its title the
+ * phrase.
  */
 function splitHeader(
   label: string,
   title: string | undefined,
 ): { readonly label: string; readonly title?: string } {
   const at = parseLabel(label);
-  if (at?.unit === "page" && LABEL.test(at.path)) {
+  if (at?.unit !== undefined && LABEL.test(at.path)) {
     const phrase = label.slice(at.path.length + " · ".length);
     return {
       label: at.path,

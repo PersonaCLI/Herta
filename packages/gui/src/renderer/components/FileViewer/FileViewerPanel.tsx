@@ -349,11 +349,14 @@ export function FileViewerPanel(): JSX.Element | null {
         : load.kind === "diff"
           ? load.reply.diff.path
           : load.reply.relative;
-  // Piece quoting (ADR 0078): the code layout and rendered markdown, and a
-  // PDF's text (ADR 0078 amendment 2026-10-21).
+  // Piece quoting (ADR 0078): the code layout and rendered markdown, a
+  // PDF's text (amendment 2026-10-21) and a Word document's sections
+  // (amendment 2026-10-29).
   const quotable =
     (load.kind === "text" && load.reply.ok && kindInfo.kind !== "csv") ||
-    (load.kind === "bytes" && load.reply.ok && kindInfo.kind === "pdf");
+    (load.kind === "bytes" &&
+      load.reply.ok &&
+      (kindInfo.kind === "pdf" || kindInfo.kind === "docx"));
   const piece: PieceQuoting | undefined = quotable
     ? {
         enabled: pieceOn,
@@ -813,7 +816,13 @@ function FileViewerBody({
         );
         break;
       case "docx":
-        body = <DocxView bytes={bytes} />;
+        body = (
+          <DocxView
+            bytes={bytes}
+            piece={piece}
+            anchor={anchor?.unit === "para" ? anchor : undefined}
+          />
+        );
         break;
       case "xlsx":
         body = <SheetView bytes={bytes} />;

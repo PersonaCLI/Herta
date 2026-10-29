@@ -355,6 +355,8 @@ export const en = {
   "quote.truncated": "… ({n} more line(s) not quoted)",
   "quote.page": "p. {n}",
   "quote.pages": "pp. {from}–{to}",
+  "quote.para": "¶ {n}",
+  "quote.paras": "¶ {from}–{to}",
   "composer.quote.placeholder": "Ask about this…",
   "composer.predictionAria": "Suggested next message — press Tab to fill it in",
   "composer.aria": "Message composer",

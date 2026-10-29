@@ -46,6 +46,13 @@ function Probe(): JSX.Element {
       >
         png
       </button>
+      <button
+        type="button"
+        data-testid="open-docx"
+        onClick={() => open?.("docs/report.docx")}
+      >
+        docx
+      </button>
     </>
   );
 }
@@ -125,6 +132,65 @@ describe("FileViewerPanel — piece quoting (ADR 0078)", () => {
         fence: "typescript",
       }),
     ]);
+  });
+
+  it("a Word document's section lands as a paragraph quote, titled by its heading (amendment 2026-10-29)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const docx = new Uint8Array(
+      readFileSync(
+        join(__dirname, "renderers", "__fixtures__", "fixture.docx"),
+      ),
+    );
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      // The viewer opens only on a bridge that reads files.
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "binary",
+      })),
+      readWorkspaceBytes: vi.fn(async () => ({
+        ok: true as const,
+        bytes: docx,
+        size: docx.length,
+        relative: "docs/report.docx",
+      })),
+    });
+    const h = renderWithSession(ui(), { mock });
+    h.openSession("s1");
+    fireEvent.click(screen.getByTestId("open-docx"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("file-viewer").querySelector("section.docx")
+          ?.textContent,
+      ).toContain("Plain, bold and italic."),
+    );
+    expect(screen.getByTestId("viewer-piece-switch")).toBeTruthy();
+    vi.useFakeTimers();
+    const host = screen
+      .getByTestId("file-viewer")
+      .querySelector(
+        ".file-viewer__docx .file-viewer__doc-host",
+      ) as HTMLElement;
+    fireEvent.pointerMove(host);
+    act(() => vi.advanceTimersByTime(PIECE_REST_MS));
+    // One heading, so one section: the heading and everything after it.
+    const pieces = host.querySelectorAll(".piece-mask__piece");
+    expect(pieces).toHaveLength(1);
+    fireEvent.pointerDown(pieces[0] as Element);
+    fireEvent.pointerUp(window);
+    fireEvent.click(screen.getByText("Quote"));
+    const [quote] = store?.getSnapshot().composerQuotes ?? [];
+    expect(quote).toMatchObject({
+      path: "docs/report.docx",
+      unit: "para",
+      from: 1,
+      to: 5,
+      title: "Viewer fixture 文档",
+    });
+    expect(quote?.text).toContain("first bullet");
+    expect(quote?.text).toContain("Name\tValue\nalpha\t1");
+    expect(quote?.fence).toBeUndefined();
   });
 
   it("no switch where the page does not split (a picture)", async () => {

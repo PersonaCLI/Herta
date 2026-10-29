@@ -269,3 +269,54 @@ describe("quotes held twice, a title that reads like a page, a cut emoji (releas
     expect(out.length).toBeLessThan(8_100);
   });
 });
+
+describe("a Word quote counts paragraphs (ADR 0078 amendment 2026-10-29)", () => {
+  const PARA: ComposerQuote = {
+    id: "qd",
+    path: "docs/报告.docx",
+    from: 12,
+    to: 15,
+    unit: "para",
+    title: "2 研究方法",
+    text: "样本取自……",
+  };
+
+  it("the label is the path and the paragraphs, in the message's language", () => {
+    expect(quoteLabel(PARA, "zh")).toBe("docs/报告.docx · 第 12–15 段");
+    expect(quoteLabel(PARA, "en")).toBe("docs/报告.docx · ¶ 12–15");
+    expect(quoteLabel({ ...PARA, to: 12 }, "zh")).toBe(
+      "docs/报告.docx · 第 12 段",
+    );
+    expect(quoteLabel({ ...PARA, to: 12 }, "en")).toBe("docs/报告.docx · ¶ 12");
+  });
+
+  it("the header reads back as paragraphs, title and all, and comes back as a chip", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const message = composeQuotedMessage([PARA], "讲讲", lang);
+      expect(message.split("\n")[0]).toBe(
+        lang === "zh"
+          ? "〔引用 docs/报告.docx · 第 12–15 段 · 2 研究方法〕"
+          : "〔Quote docs/报告.docx · ¶ 12–15 · 2 研究方法〕",
+      );
+      const [q] = parseLeadingQuotes(message).quotes;
+      expect(q).toMatchObject({
+        path: "docs/报告.docx",
+        from: 12,
+        to: 15,
+        unit: "para",
+        title: "2 研究方法",
+      });
+      const back = quotesBack(message);
+      expect(back.quotes[0]).toMatchObject({ unit: "para", from: 12, to: 15 });
+    }
+  });
+
+  it("a line quote whose title reads like paragraphs stays a line quote", () => {
+    const [q] = parseLeadingQuotes(
+      composeQuotedMessage([{ ...DIV, title: "第 2 段" }], "", "zh"),
+    ).quotes;
+    expect(q).toMatchObject({ path: "src/calc.js", from: 9, to: 14 });
+    expect(q?.unit).toBeUndefined();
+    expect(q?.title).toBe("第 2 段");
+  });
+});

@@ -11,6 +11,7 @@ import {
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionScoped } from "../../hooks/useSessionScoped.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
+import type { QuoteUnit } from "../../lib/quote-format.js";
 import { useShortcut } from "../../lib/shortcut-registry.js";
 
 /**
@@ -31,9 +32,10 @@ import { useShortcut } from "../../lib/shortcut-registry.js";
 export interface ViewerAnchor {
   readonly from: number;
   readonly to: number;
-  /** The range counts a PDF's pages, not lines (a PDF quote's label, ADR
-   *  0078 amendment 2026-10-21): the PDF view scrolls to the first. */
-  readonly unit?: "page";
+  /** The range counts a PDF's pages or a Word document's paragraphs, not
+   *  lines (a quote's label, ADR 0078 amendments 2026-10-21 and 2026-10-29):
+   *  the view scrolls to the first. */
+  readonly unit?: QuoteUnit;
 }
 
 /** One open file: the record-spelled path to read, plus an optional

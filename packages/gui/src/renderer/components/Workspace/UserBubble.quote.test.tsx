@@ -1,7 +1,9 @@
 import { screen } from "@testing-library/react";
+import { createRef } from "react";
 import { describe, expect, it } from "vitest";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { composeQuotedMessage } from "../../lib/quote-format.js";
+import { MorphClone } from "./MorphClone.js";
 import { UserBubble } from "./UserBubble.js";
 
 describe("UserBubble — a quote reads as a card (ADR 0078 §7)", () => {
@@ -35,5 +37,52 @@ describe("UserBubble — a quote reads as a card (ADR 0078 §7)", () => {
     const { container } = renderWithLocale(<UserBubble text="hello" />);
     expect(container.querySelector(".message-quote")).toBeNull();
     expect(screen.getByText("hello")).toBeInTheDocument();
+  });
+});
+
+describe("MorphClone — the flying bubble reads like the one it lands as (owner 2026-10-29)", () => {
+  it("draws a sent quote as its card, never as the header and fence, the same as the landed bubble", () => {
+    const text = composeQuotedMessage(
+      [
+        {
+          id: "q1",
+          path: "docs/report.docx",
+          from: 6,
+          to: 9,
+          unit: "para",
+          title: "2 研究方法",
+          text: "2 研究方法\n\n2.1 数据\n\n样本取自……\n\n调用方\t次数",
+        },
+      ],
+      "这段的数据够不够？",
+      "zh",
+    );
+    const overlay = document.createElement("div");
+    document.body.append(overlay);
+    const ref = { current: overlay };
+    const { container } = renderWithLocale(
+      <>
+        <MorphClone
+          ref={createRef<HTMLDivElement>()}
+          overlay={ref}
+          variant="user"
+          text={text}
+          lang="zh"
+        />
+        <UserBubble text={text} />
+      </>,
+    );
+    // It flew expanded — the whole source as text — and collapsed to the
+    // card on landing.
+    const clone = overlay.querySelector(".morph-clone") as HTMLElement;
+    expect(clone.textContent).not.toContain("```");
+    expect(clone.textContent).not.toContain("〔引用");
+    const landed = container.querySelector(".user-bubble") as HTMLElement;
+    expect(clone.innerHTML).toBe(landed.innerHTML);
+    // Inert while it flies: nothing in it takes the keyboard.
+    expect(
+      clone.querySelector(".message-quote__label")?.getAttribute("tabindex"),
+    ).toBe(overlay.querySelector("button") === null ? null : "-1");
+    overlay.remove();
   });
 });

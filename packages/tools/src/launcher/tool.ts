@@ -109,6 +109,19 @@ const noFile = (code: "no_launch_file" | "bad_launch_file", message: string) =>
       : `Fix ${LAUNCH_FILE}: ${LAUNCH_FILE_EXAMPLE}`,
   );
 
+/** What one `logs` read shows the model (§6: results are bounded). The ring
+ *  holds 256K, and a chatty server's first read sent all of it (review
+ *  2026-10-30); the newest output is where a server's error is. */
+const MODEL_LOG_CHARS = 8_000;
+
+/** The newest whole lines of `text` within `max` chars. */
+function newestLines(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const tail = text.slice(-max);
+  const nl = tail.indexOf("\n");
+  return nl >= 0 && nl < tail.length - 1 ? tail.slice(nl + 1) : tail;
+}
+
 /**
  * The launcher's step for 板砖 (ADR 0083 §5–§6): list, start, read the logs
  * of and stop the dev servers `herta.launch.json` names, by name. A start
@@ -298,6 +311,9 @@ export function createDevServer(opts: { readonly host: ServerHost }): {
               "Start it with dev_server start; dev_server list shows what runs.",
             );
           const text = redactSecrets(read.text);
+          const shown = newestLines(text, MODEL_LOG_CHARS);
+          const skipped = text.length - shown.length;
+          const logPath = opts.host.status(server)?.logPath ?? "";
           return {
             ok: true,
             data: {
@@ -313,7 +329,12 @@ export function createDevServer(opts: { readonly host: ServerHost }): {
             summary: `${server} ${read.state} — ${text.length} new chars`,
             modelText: [
               `dev_server logs ${server} — ${read.state}${read.exitCode != null ? ` (exit ${read.exitCode})` : ""}; nextByte ${read.nextByte}${read.elidedBytes > 0 ? ` (${read.elidedBytes} earlier chars rolled off)` : ""}`,
-              text === "" ? "(no new output)" : text,
+              ...(skipped > 0
+                ? [
+                    `The newest ${shown.length} chars; the ${skipped} before them${logPath !== "" ? ` are in ${logPath}` : " are not shown"}.`,
+                  ]
+                : []),
+              text === "" ? "(no new output)" : shown,
             ].join("\n"),
           };
         }

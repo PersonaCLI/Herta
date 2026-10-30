@@ -33,6 +33,7 @@ function workspace(servers: unknown[]): string {
 class FakeHost implements ServerHost {
   started: LaunchEntry[] = [];
   failWith: ServerHostError | null = null;
+  logText = "VITE ready\n";
   private readonly statuses = new Map<string, ServerStatus>();
   list(): readonly ServerStatus[] {
     return [...this.statuses.values()];
@@ -59,8 +60,8 @@ class FakeHost implements ServerHost {
     return this.statuses.has(name)
       ? {
           name,
-          text: "VITE ready\n",
-          nextByte: 11,
+          text: this.logText,
+          nextByte: this.logText.length,
           elidedBytes: 0,
           state: "ready" as const,
         }
@@ -231,5 +232,28 @@ describe("dev_server", () => {
     expect(
       tool.summarize?.({ action: "start", name: "web" }, { workspaceRoot: ws }),
     ).toBe("start web");
+  });
+
+  it("a logs read shows the model the newest 8K, and where the rest is (review 2026-10-30)", async () => {
+    const ws = workspace([
+      { name: "web", command: "npm", args: ["test"], port: 5173 },
+    ]);
+    const host = new FakeHost();
+    const { tool, rule } = createDevServer({ host });
+    const ctx = mkToolContext({ workspaceRoot: ws });
+    const c1 = call("c1", { action: "start", name: "web" });
+    await rule(c1, ctx);
+    await tool.run(c1, ctx, () => {});
+    host.logText = `${"hmr update /src/App.tsx\n".repeat(11_000)}Error: the last line\n`;
+    const read = await tool.run(
+      call("c2", { action: "logs", name: "web" }),
+      ctx,
+      () => {},
+    );
+    expect(read.modelText?.length).toBeLessThan(8_400);
+    expect(read.modelText).toContain("Error: the last line");
+    expect(read.modelText).toContain(".herta/logs/servers/web-1.log");
+    expect(read.modelText).toContain("\nhmr update /src/App.tsx\n");
+    expect(read.data).toMatchObject({ nextByte: host.logText.length });
   });
 });

@@ -5,6 +5,7 @@ import {
   isServerOpVerb,
   type SystemBlock,
 } from "@herta/core";
+import { pageRouteOf } from "./page-record-projection.js";
 import { isPageDigest, pageFoldLine, pageRowForHerta } from "./page-voice.js";
 import type { PromptLang } from "./prompt-lang.js";
 import { serverFoldLine, serverRowForHerta } from "./server-voice.js";
@@ -427,8 +428,11 @@ export function detailForHerta(
           if (label === "改动文件")
             return `${plain}${rest.split(", ").join(t.listJoin)}`;
           if (label === "依据") {
+            // A receipt names what a page step stored, and a server's
+            // address, as the findings do (review 2026-10-30: a read of
+            // `snap-2.txt` reached her verdict turn as its stored path).
             const receipts = items("evidence") ?? rest.split("; ");
-            return `${plain}${receipts.map((r) => receiptForHerta(r, lang)).join(sep)}`;
+            return `${plain}${receipts.map((r) => nameReceipt(r, lang)).join(sep)}`;
           }
           if (label === "结论" || label === "风险") {
             const listed = items(label === "结论" ? "findings" : "risks");
@@ -580,7 +584,13 @@ export function systemRowForHerta(
       };
     }
     case "tool-fail":
-      return withDetail(t.toolFail(d.tool, d.message ?? ""));
+      // A page step's own message and hint are written for 板砖: they name
+      // refs, the page's options and a public address (ADR 0083 §12). She
+      // reads why in plain words, as the folded row does — a beat on the
+      // fresh row carried `e12` (review 2026-10-30).
+      return d.tool.startsWith("browser_")
+        ? { ...rest, body: t.toolFail(d.tool, FAIL_REASON[lang][d.code] ?? "") }
+        : withDetail(t.toolFail(d.tool, d.message ?? ""));
     case "bg":
       return withDetail(t.bg(d.id, d.state, d.exitCode));
     case "digest":
@@ -646,6 +656,21 @@ const STORED_NAME: Record<PromptLang, Record<string, string>> = {
     network: "network log",
   },
 };
+
+/** A loopback address as its route (`dev_server`'s "ready at" receipt):
+ *  never the query or the fragment (ADR 0083 §10). */
+const LOOPBACK_URL =
+  /https?:\/\/(?:localhost|127\.\d+\.\d+\.\d+|\[::1\]|[a-z0-9-]+\.localhost)(?::\d+)?[^\s，,；;）)]*/giu;
+
+/** A receipt as she reads it, its stored pages named and a server's address
+ *  as its route. Only a receipt: an excerpt's or a finding's address is the
+ *  file's or 板砖's own words. */
+function nameReceipt(text: string, lang: PromptLang): string {
+  return namePages(receiptForHerta(text, lang), lang).replace(
+    LOOPBACK_URL,
+    (url) => pageRouteOf(url),
+  );
+}
 
 function namePages(text: string, lang: PromptLang): string {
   return text

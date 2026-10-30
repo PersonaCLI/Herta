@@ -218,6 +218,23 @@ const hostOf = (url: string): string => {
   }
 };
 
+/**
+ * A step that ended on a page off this machine returns its host, never what
+ * the page shows (§7). The rule judges the page before the step; a
+ * redirect, a link, `back` or the Trailblazer's own navigation can take it
+ * anywhere during one, and the partition keeps his sign-ins (review
+ * 2026-10-30: `back` returned a signed-in github.com page's elements).
+ */
+function landedOff<T>(url: string): ToolResult<T> | null {
+  if (isLoopbackUrl(url)) return null;
+  return errResult(
+    "browser_off_loopback",
+    `the page ended at ${hostOf(url)}, not on this machine — nothing on it was read`,
+    "The page tools work on this machine's pages only. Navigate back to the app on localhost (browser_navigate with its address); for a public page use web_fetch.",
+    "failed: browser_off_loopback",
+  );
+}
+
 /** The page's elements under a step's result. */
 function elementsBlock(view: PageView): string[] {
   const e = view.elements;
@@ -309,6 +326,8 @@ export function browserNavigateTool(opts: {
           : { go: parsed.data.go as "back" | "forward" | "reload" };
       return hosted(async () => {
         const nav = await opts.host.navigate(to, ctx.signal);
+        const off = landedOff<BrowserNavigateData>(nav.url);
+        if (off !== null) return off;
         const route = pageRoute(nav.url);
         const modelText = [
           `browser_navigate ${route}${nav.status !== null ? ` → ${nav.status}` : ""}`,
@@ -389,6 +408,8 @@ export function browserReadTool(opts: {
               : { mode: i.mode };
       return hosted(async () => {
         const read = await opts.host.read(req, ctx.signal);
+        const off = landedOff<BrowserReadData>(read.url);
+        if (off !== null) return off;
         const text = redactSecrets(read.text);
         // What a read returned stays 板砖's (owner 2026-10-23), so what it
         // found is reported as a finding — and a finding cites. A console or
@@ -571,6 +592,8 @@ export function browserActTool(opts: {
       }
       return hosted(async () => {
         const acted = await opts.host.act(req, ctx.signal);
+        const off = landedOff<BrowserActData>(acted.url);
+        if (off !== null) return off;
         const typed =
           req.action === "type"
             ? typedFor(req.text, acted.password === true)
@@ -671,6 +694,10 @@ export function browserScreenshotTool(opts: {
           region !== undefined ? { region } : {},
           ctx.signal,
         );
+        const off = landedOff<BrowserScreenshotData>(
+          opts.host.currentUrl() ?? "about:blank",
+        );
+        if (off !== null) return off;
         const store = await storeDir(ctx, opts.host);
         const n = await nextIndex(store.abs, "shot", "png", MAX_SCREENSHOTS);
         const rel = `${store.rel}/shot-${n}.png`;

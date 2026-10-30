@@ -203,15 +203,28 @@ export interface FileChip {
   readonly pick?: PagePick;
 }
 
+/** Words the Trailblazer did not type that ride in his message — a quoted
+ *  section's heading (ADR 0078 amendment 2026-10-21), a picked element's
+ *  line: one that names `@板砖`, or `@brick`, which an EN session's alias
+ *  turns into it, would dispatch 板砖 on his behalf. A zero-width space
+ *  after the `@` keeps the words and breaks the token. */
+export function inertMentions(text: string): string {
+  return text.replace(/@(?=板砖|brick)/giu, "@​");
+}
+
 /** A picked element's line: the page's host and path, the element as the
- *  page names it, and its HTML — one line, as 板砖 reads it. */
+ *  page names it, and its HTML — one line, as 板砖 reads it. All of it is
+ *  the page's words, which the chip never showed: an `@板砖` in an attribute
+ *  dispatched 板砖 with them (review 2026-10-30), so the token is broken. */
 export function pickLine(pick: {
   readonly element: string;
   readonly route: string;
   readonly html: string;
 }): string {
   const html = pick.html.replace(/\s+/gu, " ").trim();
-  return `${pick.route} · ${pick.element}${html !== "" ? ` · ${html}` : ""}`;
+  return inertMentions(
+    `${pick.route} · ${pick.element}${html !== "" ? ` · ${html}` : ""}`,
+  );
 }
 
 /** A picked element's chip at the caret: its `@<label>` token, a space on

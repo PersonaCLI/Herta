@@ -129,6 +129,18 @@ describe("redactSecrets", () => {
     expect(redactSecrets("db.password=s3cret")).not.toContain("s3cret");
   });
 
+  it("reads a value of open parentheses in linear time (review 2026-10-30)", () => {
+    for (const line of [
+      `token=a${"(".repeat(28)})-`,
+      `apiKey=e${"(.b.b.b".repeat(14)}-`,
+      `secret=x${"(t".repeat(40)})-0`,
+    ]) {
+      const started = performance.now();
+      expect(redactSecrets(line)).toContain("[REDACTED:env_secret]");
+      expect(performance.now() - started).toBeLessThan(100);
+    }
+  });
+
   it("redacts only the secret in multi-line text", () => {
     const r = redactSecrets("line1\nAKIAIOSFODNN7EXAMPLE\nline3");
     expect(r).toContain("line1");

@@ -22,6 +22,8 @@ export interface ServerJournalRunning {
   readonly startedAt: number;
   readonly name: string;
   readonly sessionId: string;
+  /** When its app last wrote this file: the reaper's `notAfter`. */
+  readonly aliveAt?: number;
 }
 
 interface ServerJournalFile {
@@ -110,7 +112,18 @@ export class ServerJournal {
       .then(async () => {
         const now = await readJournal(this.file);
         const next = change(now);
-        if (next !== now) await writeJournal(this.file, next);
+        if (next === now) return;
+        // This app is alive as it writes: its servers say so.
+        const at = Date.now();
+        await writeJournal(this.file, {
+          ...next,
+          running: next.running.map((r) =>
+            r.host.pid === this.host.pid &&
+            r.host.startedAt === this.host.startedAt
+              ? { ...r, aliveAt: at }
+              : r,
+          ),
+        });
       })
       .catch(() => undefined);
     return this.chain;
@@ -120,7 +133,8 @@ export class ServerJournal {
 /**
  * The launch reaper for the launcher's servers: each recorded server whose
  * app process is gone, and that still runs as that process (same pid, same
- * start time), is ended with what it started; the sessions it belonged to
+ * start time), is ended with what it started (a child of one that is gone,
+ * only if it started while the app was alive); the sessions it belonged to
  * are owed a note. A server of a live app — this one, or a second one
  * sharing the sessions — is left alone, as is one whose process table could
  * not be read (it stays for the next launch).
@@ -149,7 +163,13 @@ export async function reapOrphanedServers(
       keep.push(r);
       continue;
     }
-    const tree = processTree(table, r, probe.platform ?? process.platform);
+    // A child of a server that is gone counts only if it started while the
+    // app was alive: the pid may have been reused in between, and hours may
+    // pass before the relaunch (review 2026-10-30, as the dispatch reaper's
+    // `journalLastAlive`).
+    const tree = processTree(table, r, probe.platform ?? process.platform, {
+      notAfter: r.aliveAt ?? r.startedAt,
+    });
     if (tree.length === 0) continue;
     try {
       await probe.kill(tree);

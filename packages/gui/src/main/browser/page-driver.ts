@@ -27,6 +27,9 @@ const CONSOLE_BUDGET = 2000;
 const NAV_TIMEOUT_MS = 15_000;
 const SETTLE_MAX_MS = 5000;
 const NETWORK_QUIET_MS = 500;
+/** One debugger command of a step: a page that never answers (a script that
+ *  does not stop) fails the step instead of holding the turn. */
+const COMMAND_TIMEOUT_MS = 10_000;
 /** Messages and requests kept per page. */
 const BUFFER = 200;
 
@@ -83,6 +86,16 @@ const pathOf = (url: string): string => {
   }
 };
 
+/** A page off this machine is named by its host alone: its path is the
+ *  Trailblazer's browsing (review 2026-10-30). */
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
 const remoteText = (arg: {
   value?: unknown;
   description?: string;
@@ -117,6 +130,14 @@ export class PageInstrument {
   private refsLive = false;
   /** Dispatching 板砖's own input: the Trailblazer's is everything else. */
   private driving = 0;
+  /** 板砖's steps in flight, by their abort signals: a dialog that opens
+   *  during one is his (review 2026-10-30 — an alert after the input's
+   *  150 ms held every later evaluate), and an abort ends the command a
+   *  step waits on. Counted: a run's steps share one signal. */
+  private readonly steps = new Map<AbortSignal, number>();
+  /** A dialog the page holds open, for the Trailblazer to answer. */
+  private dialog: { readonly type: string; readonly message: string } | null =
+    null;
   private mainFrame: string | null = null;
   /** The Trailblazer's picker, while it is on (ADR 0083 §4). */
   private onPicked:
@@ -224,12 +245,12 @@ export class PageInstrument {
     await this.stopPick();
     try {
       const world = await this.ensureWorld();
-      const node = (await this.cdp.sendCommand("DOM.resolveNode", {
+      const node = (await this.send("DOM.resolveNode", {
         backendNodeId,
         executionContextId: world,
       })) as { object: { objectId?: string } };
       if (node.object.objectId === undefined) return;
-      const r = (await this.cdp.sendCommand("Runtime.callFunctionOn", {
+      const r = (await this.send("Runtime.callFunctionOn", {
         objectId: node.object.objectId,
         functionDeclaration:
           "function () { return globalThis.__herta.describeNode(this); }",
@@ -281,19 +302,19 @@ export class PageInstrument {
         break;
       }
       case "Page.javascriptDialogOpening": {
-        // Mid-step, 板砖's: dismissed and reported. Otherwise the
-        // Trailblazer's to answer (§8).
-        if (this.driving > 0) {
-          void this.cdp
-            .sendCommand("Page.handleJavaScriptDialog", { accept: false })
-            .catch(() => undefined);
-          this.pushConsole(
-            "warning",
-            `dialog (${String(p.type)}) dismissed: ${String(p.message ?? "")}`,
-          );
-        }
+        // During a step, 板砖's: dismissed and reported. Otherwise the
+        // Trailblazer's to answer (§8) — until 板砖's next step needs the
+        // page (`during`).
+        this.dialog = {
+          type: String(p.type),
+          message: String(p.message ?? ""),
+        };
+        if (this.driving > 0 || this.steps.size > 0) this.dismissDialog();
         break;
       }
+      case "Page.javascriptDialogClosed":
+        this.dialog = null;
+        break;
       case "Runtime.executionContextsCleared":
         this.world = null;
         break;
@@ -352,6 +373,76 @@ export class PageInstrument {
       }
       default:
     }
+  }
+
+  private dismissDialog(): void {
+    const d = this.dialog;
+    if (d === null) return;
+    this.dialog = null;
+    void this.cdp
+      .sendCommand("Page.handleJavaScriptDialog", { accept: false })
+      .catch(() => undefined);
+    this.pushConsole("warning", `dialog (${d.type}) dismissed: ${d.message}`);
+  }
+
+  /** One of 板砖's steps on the page. A dialog left open is dismissed first:
+   *  while it is up the page answers nothing. */
+  async during<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+    this.steps.set(signal, (this.steps.get(signal) ?? 0) + 1);
+    this.dismissDialog();
+    try {
+      return await run();
+    } finally {
+      // The page's own events for the step's last input arrive just after.
+      setTimeout(() => {
+        const n = (this.steps.get(signal) ?? 1) - 1;
+        if (n > 0) this.steps.set(signal, n);
+        else this.steps.delete(signal);
+      }, 150);
+    }
+  }
+
+  /** A debugger command of a step, bounded by time and by the steps'
+   *  aborts: the debugger itself never gives up on a page that does not
+   *  answer. */
+  private send(method: string, params?: object): Promise<unknown> {
+    const signals = [...this.steps.keys()];
+    return new Promise((resolve, reject) => {
+      const finish = (): void => {
+        clearTimeout(timer);
+        for (const s of signals) s.removeEventListener("abort", abort);
+      };
+      const abort = (): void => {
+        finish();
+        reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+      };
+      const timer = setTimeout(() => {
+        finish();
+        reject(
+          new BrowserHostError(
+            "unavailable",
+            `the page did not answer in ${COMMAND_TIMEOUT_MS / 1000} s — a script on it may not be stopping`,
+          ),
+        );
+      }, COMMAND_TIMEOUT_MS);
+      for (const s of signals) {
+        if (s.aborted) {
+          abort();
+          return;
+        }
+        s.addEventListener("abort", abort, { once: true });
+      }
+      this.cdp.sendCommand(method, params).then(
+        (v) => {
+          finish();
+          resolve(v);
+        },
+        (e: unknown) => {
+          finish();
+          reject(e);
+        },
+      );
+    });
   }
 
   private pushConsole(level: ConsoleEntry["level"], text: string): void {
@@ -424,7 +515,7 @@ export class PageInstrument {
   async call<T>(fn: string, ...args: unknown[]): Promise<T> {
     const world = await this.ensureWorld();
     const expression = `__herta.${fn}(${args.map((a) => JSON.stringify(a ?? null)).join(", ")})`;
-    const r = (await this.cdp.sendCommand("Runtime.evaluate", {
+    const r = (await this.send("Runtime.evaluate", {
       expression,
       contextId: world,
       returnByValue: true,
@@ -438,17 +529,17 @@ export class PageInstrument {
     if (this.world !== null) return this.world;
     let frame = this.mainFrame;
     if (frame === null) {
-      const t = (await this.cdp.sendCommand("Page.getFrameTree")) as {
+      const t = (await this.send("Page.getFrameTree")) as {
         frameTree: { frame: { id: string } };
       };
       frame = t.frameTree.frame.id;
       this.mainFrame = frame;
     }
-    const w = (await this.cdp.sendCommand("Page.createIsolatedWorld", {
+    const w = (await this.send("Page.createIsolatedWorld", {
       frameId: frame,
       worldName: "herta-read",
     })) as { executionContextId: number };
-    await this.cdp.sendCommand("Runtime.evaluate", {
+    await this.send("Runtime.evaluate", {
       expression: READ_SCRIPT,
       contextId: w.executionContextId,
     });
@@ -517,13 +608,13 @@ export class PageInstrument {
 
   async click(x: number, y: number): Promise<void> {
     await this.drive(async () => {
-      await this.cdp.sendCommand("Input.dispatchMouseEvent", {
+      await this.send("Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x,
         y,
       });
       for (const type of ["mousePressed", "mouseReleased"])
-        await this.cdp.sendCommand("Input.dispatchMouseEvent", {
+        await this.send("Input.dispatchMouseEvent", {
           type,
           x,
           y,
@@ -535,7 +626,7 @@ export class PageInstrument {
 
   async insertText(text: string): Promise<void> {
     await this.drive(() =>
-      this.cdp.sendCommand("Input.insertText", { text }).then(() => undefined),
+      this.send("Input.insertText", { text }).then(() => undefined),
     );
   }
 
@@ -557,14 +648,14 @@ export class PageInstrument {
     const vk = named?.vk ?? (ch as string).toUpperCase().charCodeAt(0);
     const text = named?.text ?? ch ?? undefined;
     await this.drive(async () => {
-      await this.cdp.sendCommand("Input.dispatchKeyEvent", {
+      await this.send("Input.dispatchKeyEvent", {
         type: text !== undefined ? "keyDown" : "rawKeyDown",
         key,
         code,
         windowsVirtualKeyCode: vk,
         ...(text !== undefined ? { text } : {}),
       });
-      await this.cdp.sendCommand("Input.dispatchKeyEvent", {
+      await this.send("Input.dispatchKeyEvent", {
         type: "keyUp",
         key,
         code,
@@ -592,10 +683,10 @@ export class PageInstrument {
     scheme?: "light" | "dark",
   ): Promise<void> {
     if (preset === "desktop")
-      await this.cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
+      await this.send("Emulation.clearDeviceMetricsOverride");
     else {
       const p = PRESETS[preset];
-      await this.cdp.sendCommand("Emulation.setDeviceMetricsOverride", {
+      await this.send("Emulation.setDeviceMetricsOverride", {
         width: p.width,
         height: p.height,
         deviceScaleFactor: 0,
@@ -603,27 +694,39 @@ export class PageInstrument {
       });
     }
     if (scheme !== undefined)
-      await this.cdp.sendCommand("Emulation.setEmulatedMedia", {
+      await this.send("Emulation.setEmulatedMedia", {
         features: [{ name: "prefers-color-scheme", value: scheme }],
       });
     this.refsLive = false;
   }
 
   /** The view in the page's CSS pixels, as one PNG (§6): a screenshot's
-   *  pixels and a click's x/y are the same units. */
+   *  pixels and a click's x/y are the same units. The debugger clips in the
+   *  document's coordinates, so the view's scroll is added: a click scrolls
+   *  its element into view, and a clip from the top showed a blank or
+   *  shifted page after it (review 2026-10-30). */
   async capture(region?: {
     x: number;
     y: number;
     width: number;
     height: number;
   }): Promise<PageShot> {
-    const vp = await this.call<{ width: number; height: number; dpr: number }>(
-      "viewport",
-    );
+    const vp = await this.call<{
+      width: number;
+      height: number;
+      dpr: number;
+      left?: number;
+      top?: number;
+    }>("viewport");
     const clip = region ?? { x: 0, y: 0, width: vp.width, height: vp.height };
-    const r = (await this.cdp.sendCommand("Page.captureScreenshot", {
+    const r = (await this.send("Page.captureScreenshot", {
       format: "png",
-      clip: { ...clip, scale: 1 / (vp.dpr || 1) },
+      clip: {
+        ...clip,
+        x: clip.x + (vp.left ?? 0),
+        y: clip.y + (vp.top ?? 0),
+        scale: 1 / (vp.dpr || 1),
+      },
     })) as { data: string };
     return {
       png: new Uint8Array(Buffer.from(r.data, "base64")),
@@ -693,6 +796,18 @@ export class PageDriver implements BrowserHost {
     return p;
   }
 
+  /** A step that ended off this machine — a redirect, a link, a script —
+   *  reads nothing there (§7, review 2026-10-30): the page is the
+   *  Trailblazer's, signed in as him. */
+  private leftMachine(wc: WebContents): void {
+    const url = wc.getURL();
+    if (url !== "" && !isLoopbackUrl(url))
+      throw new BrowserHostError(
+        "off_loopback",
+        `the page went on to ${hostOf(url)}, not on this machine — nothing on it was read`,
+      );
+  }
+
   private async elements(i: PageInstrument): Promise<PageElements> {
     try {
       const e = await i.snapshot(false, STEP_BUDGET);
@@ -733,9 +848,33 @@ export class PageDriver implements BrowserHost {
           "no_page",
           `there is no page to go ${to.go} to`,
         );
+      // `back` past the app lands where the Trailblazer browsed before:
+      // refused before it goes, as an address off this machine is (§7).
+      if (to.go !== "reload") {
+        const entry = h.getEntryAtIndex(
+          h.getActiveIndex() + (to.go === "back" ? -1 : 1),
+        );
+        if (entry !== undefined && entry !== null && !isLoopbackUrl(entry.url))
+          throw new BrowserHostError(
+            "off_loopback",
+            `going ${to.go} leads to ${hostOf(entry.url)}, not on this machine`,
+          );
+      }
     }
     const { wc, instrument } = this.page.live();
     this.page.opened();
+    return instrument.during(signal, () =>
+      this.load(wc, instrument, to, url, signal),
+    );
+  }
+
+  private async load(
+    wc: WebContents,
+    instrument: PageInstrument,
+    to: PageNavigation,
+    url: string | null,
+    signal: AbortSignal,
+  ): Promise<PageNavigated> {
     const mark = instrument.mark();
     instrument.status = null;
     const done = new Promise<void>((resolve, reject) => {
@@ -789,6 +928,7 @@ export class PageDriver implements BrowserHost {
     await done;
     if (signal.aborted)
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    this.leftMachine(wc);
     return {
       url: wc.getURL(),
       title: wc.getTitle(),
@@ -798,8 +938,16 @@ export class PageDriver implements BrowserHost {
     };
   }
 
-  async read(req: PageReadRequest, _signal: AbortSignal): Promise<PageRead> {
+  async read(req: PageReadRequest, signal: AbortSignal): Promise<PageRead> {
     const { wc, instrument } = this.here();
+    return instrument.during(signal, () => this.readIn(wc, instrument, req));
+  }
+
+  private async readIn(
+    wc: WebContents,
+    instrument: PageInstrument,
+    req: PageReadRequest,
+  ): Promise<PageRead> {
     const view = (e: ReadElements): PageRead => ({
       url: wc.getURL(),
       title: wc.getTitle(),
@@ -830,6 +978,17 @@ export class PageDriver implements BrowserHost {
 
   async act(req: PageAction, signal: AbortSignal): Promise<PageActed> {
     const { wc, instrument } = this.here();
+    return instrument.during(signal, () =>
+      this.actIn(wc, instrument, req, signal),
+    );
+  }
+
+  private async actIn(
+    wc: WebContents,
+    instrument: PageInstrument,
+    req: PageAction,
+    signal: AbortSignal,
+  ): Promise<PageActed> {
     const before = wc.getURL();
     const mark = instrument.mark();
     let target: string | undefined;
@@ -924,6 +1083,9 @@ export class PageDriver implements BrowserHost {
         await instrument.emulate(req.preset, req.scheme);
     }
     await instrument.settle(signal);
+    if (signal.aborted)
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    this.leftMachine(wc);
     return {
       url: wc.getURL(),
       title: wc.getTitle(),
@@ -938,9 +1100,9 @@ export class PageDriver implements BrowserHost {
 
   async screenshot(
     req: { region?: { x: number; y: number; width: number; height: number } },
-    _signal: AbortSignal,
+    signal: AbortSignal,
   ): Promise<PageShot> {
     const { instrument } = this.here();
-    return instrument.capture(req.region);
+    return instrument.during(signal, () => instrument.capture(req.region));
   }
 }

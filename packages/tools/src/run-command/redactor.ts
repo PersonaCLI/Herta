@@ -47,8 +47,12 @@ export const TOKEN_SECRET_PATTERNS = PATTERNS;
 // and both agents spent a run on the line they could not see. A bare word,
 // a quoted value and a one-dot value (`p.ssw0rd`) are still taken for a
 // secret.
+// A call's parenthesis holds no other and closes, or runs to the end (the
+// value stops at a quote: `os.getenv(`). An optional close let each `(`
+// end its group anywhere, and the review of 2026-10-30 timed a 37-character
+// line at 22 s on the main thread.
 const CODE_REFERENCE_RE =
-  /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*\]|\([^)\n]*\)?)+[;,)]*$/;
+  /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*\]|\([^()\n]*(?:\)|$))+[;,)]*$/;
 
 function readsASecret(value: string): boolean {
   if (/^[=>(]/u.test(value)) return true;

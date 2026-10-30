@@ -16,6 +16,7 @@
  */
 
 import { makeT } from "../i18n/LocaleProvider.js";
+import { inertMentions } from "./file-mention.js";
 
 /** What a quote's range counts when not lines: a PDF's pages (ADR 0078
  *  amendment 2026-10-21), a Word document's paragraphs (2026-10-29). Neither
@@ -184,20 +185,13 @@ function fenceFor(text: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
-/** A title (a quoted section's heading) sits on the header line, OUTSIDE the
- *  fence that makes the source quotation (ADR 0078 amendment 2026-10-21): a
- *  heading that names `@板砖` — or `@brick`, which an EN session's alias
- *  turns into it — would dispatch 板砖 on the Trailblazer's behalf. A
- *  zero-width space after the `@` keeps the words and breaks the token. */
-function inertTitle(title: string): string {
-  return title.replace(/@(?=板砖|brick)/giu, "@​");
-}
-
-/** One quote as the message carries it. */
+/** One quote as the message carries it. A title (a quoted section's
+ *  heading) sits on the header line, OUTSIDE the fence that makes the source
+ *  quotation (ADR 0078 amendment 2026-10-21), so its `@板砖` is made inert. */
 export function formatQuote(q: ComposerQuote, lang: "zh" | "en"): string {
   const title =
     q.title !== undefined && q.title.length > 0
-      ? ` · ${inertTitle(q.title)}`
+      ? ` · ${inertMentions(q.title)}`
       : "";
   const fence = fenceFor(q.text);
   return [

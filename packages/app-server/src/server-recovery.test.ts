@@ -86,6 +86,27 @@ describe("the server journal and the launch reaper", () => {
     expect(JSON.parse(readFileSync(file, "utf8")).running).toEqual([]);
   });
 
+  it("of a server that is gone, ends only the children that started while its app was alive (review 2026-10-30)", async () => {
+    const file = journalFile();
+    const old = new ServerJournal(file, { pid: 600, startedAt: 1_000 });
+    const t0 = Date.now() - 60_000;
+    await old.spawned({
+      pid: 930,
+      startedAt: t0,
+      name: "web",
+      sessionId: "s1",
+    });
+    const hours = 3 * 3600_000;
+    const p = probe({
+      // web's own child, still running after web went.
+      960: [t0 + 1_000, 930],
+      // 930 was reused after the app died; this is that program's child.
+      961: [Date.now() + hours, 930],
+    });
+    expect((await reapOrphanedServers(file, p)).ended).toBe(1);
+    expect(p.killed).toEqual([960]);
+  });
+
   it("leaves a live app's servers alone, and keeps what it could not check", async () => {
     const file = journalFile();
     const live = new ServerJournal(file, { pid: 700, startedAt: 2_000 });

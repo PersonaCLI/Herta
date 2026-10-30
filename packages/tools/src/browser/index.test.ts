@@ -441,4 +441,72 @@ describe("registerBrowserRules (ADR 0083 §7)", () => {
     );
     expect(back.kind).toBe("deny");
   });
+
+  it("a step that ends off this machine returns the host, never the page (review 2026-10-30)", async () => {
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
+    const publicPage = {
+      url: "https://github.com/acme/app/settings?tab=danger",
+      title: "Settings · acme/app",
+      status: 200,
+      elements: {
+        lines: 'e2 button "Delete this repository"',
+        count: 1,
+        shown: 1,
+      },
+      consoleErrors: [],
+    };
+    // `back` past the app, a redirect to a sign-in provider, a link that
+    // leaves: the rule judged the page before the step.
+    const host = fakeHost({
+      async navigate() {
+        host.url = publicPage.url;
+        return publicPage;
+      },
+      async act() {
+        host.url = publicPage.url;
+        return { ...publicPage, navigated: true };
+      },
+      async read() {
+        return {
+          url: publicPage.url,
+          title: publicPage.title,
+          text: publicPage.elements.lines,
+          count: 1,
+          truncated: false,
+        };
+      },
+    });
+    host.url = "http://localhost:5173/";
+    const engine = engineWith(host);
+    const steps = [
+      [browserNavigateTool({ host }), call("browser_navigate", { go: "back" })],
+      [
+        browserActTool({ host, eyes: false }),
+        call("browser_act", { action: "click", ref: "e1" }),
+      ],
+      [browserReadTool({ host }), call("browser_read", { mode: "tree" })],
+    ] as const;
+    for (const [tool, c] of steps) {
+      host.url = "http://localhost:5173/";
+      expect((await engine.check(c, ctx())).kind, c.tool).toBe("allow");
+      const r = await tool.run(c, ctx(), () => {});
+      expect(r.ok, c.tool).toBe(false);
+      expect(r.error?.code).toBe("browser_off_loopback");
+      expect(r.error?.message).toContain("github.com");
+      const seen = JSON.stringify(r);
+      expect(seen).not.toContain("Delete this repository");
+      expect(seen).not.toContain("acme/app");
+      expect(seen).not.toContain("tab=danger");
+    }
+    // A screenshot taken as the page left is not kept or shown.
+    host.url = "http://localhost:5173/";
+    const shot = await browserScreenshotTool({
+      host: fakeHost({
+        currentUrl: () => publicPage.url,
+      }),
+      eyes: true,
+    }).run(call("browser_screenshot", {}), ctx(), () => {});
+    expect(shot.error?.code).toBe("browser_off_loopback");
+    expect(shot.images).toBeUndefined();
+  });
 });

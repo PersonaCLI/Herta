@@ -556,6 +556,76 @@ describe("receipts and labels", () => {
       ]),
     ).toContain("screenshot 7");
   });
+
+  it("a receipt names a stored page step and a server's route, never its path or query (review 2026-10-30)", () => {
+    const receipts = [
+      "read .herta/browser/sess1/snap-2.txt (1-200)",
+      "web ready at http://localhost:5173/login?next=%2Faccount",
+    ];
+    for (const lang of ["zh", "en"] as const) {
+      for (const detail of [
+        detailForHerta(`↳ 依据: ${receipts.join("; ")}`, lang),
+        detailForHerta(`↳ 依据: ${receipts.join("; ")}`, lang, [
+          { kind: "evidence", items: receipts },
+        ]),
+      ]) {
+        expect(detail).not.toContain(".herta");
+        expect(detail).not.toContain("http");
+        expect(detail).not.toContain("next=");
+        expect(detail).toContain("localhost:5173/login");
+        expect(detail).toContain(
+          lang === "en" ? "page snapshot 2" : "页面快照 2",
+        );
+      }
+    }
+  });
+});
+
+describe("a page step's failure (review 2026-10-30)", () => {
+  it("fresh, it reads its cause in plain words: no ref, no option, no address, no hint", () => {
+    const event: AgentEvent = {
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "c1",
+      tool: "browser_act",
+      result: {
+        ok: false,
+        summary: "failed: stale_ref",
+        error: {
+          code: "stale_ref",
+          message: "e12 belongs to a page that has changed since it was read",
+          retryable: false,
+        },
+        suggestion:
+          "The page changed since that ref was read. Read it again (browser_read mode tree) and use a fresh ref.",
+      },
+    };
+    const block = projectBackendEvent(event);
+    if (block === null) throw new Error("the bridge wrote no row");
+    expect(read(block)).toBe(
+      "这一步没成（browser_act）：页面变了，那个元素已经对不上",
+    );
+    expect(read(block, "en")).toBe(
+      "A step failed (browser_act): the page changed, and that element no longer matches",
+    );
+    // Another tool's failure keeps its own message and hint.
+    const other = projectBackendEvent({
+      ...event,
+      tool: "edit_file",
+      result: {
+        ...event.result,
+        error: {
+          code: "stale_read",
+          message: "a.ts changed",
+          retryable: false,
+        },
+        suggestion: "Read it again.",
+      },
+    } as AgentEvent);
+    if (other === null) throw new Error("the bridge wrote no row");
+    expect(read(other)).toContain("a.ts changed");
+    expect(read(other)).toContain("Read it again.");
+  });
 });
 
 describe("the web rows (ADR 0080)", () => {

@@ -215,7 +215,16 @@ export const READ_SCRIPT = String.raw`(() => {
       return { chosen: clean(opt.text) };
     },
     viewport() {
-      return { width: innerWidth, height: innerHeight, dpr: devicePixelRatio };
+      // Where the view sits in the document: a screenshot's clip is in the
+      // document's coordinates, a click's in the view's.
+      const v = visualViewport;
+      return {
+        width: innerWidth,
+        height: innerHeight,
+        dpr: devicePixelRatio,
+        left: v !== null ? v.pageLeft : scrollX,
+        top: v !== null ? v.pageTop : scrollY,
+      };
     },
   };
   return true;

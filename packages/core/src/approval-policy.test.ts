@@ -89,6 +89,32 @@ describe("ApprovalPolicy.preflight", () => {
   });
 });
 
+describe("ApprovalPolicy — what only the owner answers (review 2026-10-30)", () => {
+  // A remember is keyed by the program: `myprog --build` covered `myprog
+  // --out .herta/permissions.json`.
+  const run = cmdReq(["myprog", "--build"]);
+  const herta = cmdReq(["myprog", "--out", ".herta/permissions.json"]);
+  const ownerOnly = (r: PermissionRequest) =>
+    JSON.stringify(r.call.input).includes(".herta");
+
+  it("no remember covers it, none is offered, and none is stored for it", () => {
+    const cache = new SessionApprovalCache();
+    const policy = new ApprovalPolicy(cache, undefined, { ownerOnly });
+    expect(policy.preflight(run).kind).toBe("ask");
+    policy.commit(run, "session");
+    expect(policy.preflight(run).kind).toBe("auto");
+    const pre = policy.preflight(herta);
+    expect(pre.kind).toBe("ask");
+    expect(pre.kind === "ask" && pre.showRemember).toBe(false);
+
+    const fresh = new ApprovalPolicy(new SessionApprovalCache(), undefined, {
+      ownerOnly,
+    });
+    fresh.commit(herta, "session");
+    expect(fresh.preflight(run).kind).toBe("ask");
+  });
+});
+
 describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", () => {
   // An undoable write: the rule marked it, and every class is a write class.
   const undoable = (over: Partial<PermissionRequest> = {}) =>

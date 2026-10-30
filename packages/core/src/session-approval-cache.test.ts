@@ -190,6 +190,25 @@ describe("permissionCacheScope — command wrappers (audit S5)", () => {
     }
   });
 
+  it("a package manager's exec scopes nothing; its other subcommands still scope by it (review 2026-10-30)", () => {
+    // Remembering `pnpm run build` covered `pnpm exec rm -rf /`.
+    for (const argv of [
+      ["pnpm", "exec", "rm", "-rf", "/"],
+      ["pnpm", "--filter", "web", "exec", "vitest"],
+      ["pnpm", "dlx", "create-vite"],
+      ["yarn", "exec", "eslint"],
+      ["npm", "exec", "--yes", "--", "eslint"],
+      ["npm", "x", "eslint"],
+      ["bun", "x", "eslint"],
+      ["direnv", "exec", ".", "npm", "test"],
+    ])
+      expect(scopeFor(argv), argv.join(" ")).toBeUndefined();
+    for (const w of ["chrt", "unbuffer", "wsl", "exec", "bwrap"])
+      expect(scopeFor([w, "npm", "run", "build"]), w).toBeUndefined();
+    expect(scopeFor(["pnpm", "run", "build"])).toBe("pnpm");
+    expect(scopeFor(["npm", "test"])).toBe("npm");
+  });
+
   it("still refuses shells / wrappers, and interpreters WITHOUT a pinnable script", () => {
     for (const i of ["bash", "sh", "npx", "make"]) {
       expect(scopeFor([i, "build.py"])).toBeUndefined();

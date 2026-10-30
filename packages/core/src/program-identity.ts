@@ -69,7 +69,84 @@ export const EXEC_WRAPPER_PROGRAMS: ReadonlySet<string> = new Set([
   "caffeinate",
   "arch",
   "sandbox-exec",
+  // The pre-release review of 2026-10-30: each hid `rm -rf /` behind an
+  // ask a remember could cover.
+  "exec",
+  "chrt",
+  "unbuffer",
+  "firejail",
+  "nsenter",
+  "systemd-run",
+  "faketime",
+  "fakeroot",
+  "prlimit",
+  "numactl",
+  "bwrap",
+  "valgrind",
+  "xvfb-run",
+  "ssh-agent",
+  "wsl",
 ]);
+
+/** Package managers (and direnv) whose subcommand runs the program named
+ *  after it; the options of their own that take a value; the operands the
+ *  subcommand takes first (`direnv exec DIR cmd`). */
+const PACKAGE_RUNNERS: ReadonlyMap<
+  string,
+  {
+    readonly subs: ReadonlySet<string>;
+    readonly values: ReadonlySet<string>;
+    readonly operands?: number;
+  }
+> = new Map([
+  ["direnv", { subs: new Set(["exec"]), values: new Set(), operands: 1 }],
+  [
+    "pnpm",
+    {
+      subs: new Set(["exec", "dlx"]),
+      values: new Set(["-C", "--dir", "--filter", "-F"]),
+    },
+  ],
+  ["yarn", { subs: new Set(["exec", "dlx"]), values: new Set(["--cwd"]) }],
+  [
+    "npm",
+    {
+      subs: new Set(["exec", "x"]),
+      values: new Set(["--prefix", "-w", "--workspace"]),
+    },
+  ],
+  ["bun", { subs: new Set(["x"]), values: new Set(["--cwd"]) }],
+]);
+
+/**
+ * The command a package manager's run-a-binary subcommand runs — `pnpm exec
+ * rm -rf /` runs `rm -rf /` — or null for any other line. Read as a wrapper
+ * by the block peel, and never a remember's scope: remembering `pnpm run
+ * build` covered `pnpm exec rm -rf /` (review 2026-10-30). A `-c` body
+ * (`npm exec -c '…'`) is not an argv: null, and other classes judge it.
+ */
+export function packageExecCommand(argv: readonly string[]): string[] | null {
+  const a0 = argv[0];
+  if (a0 === undefined) return null;
+  const runner = PACKAGE_RUNNERS.get(binaryBasename(a0));
+  if (runner === undefined) return null;
+  let i = 1;
+  while (i < argv.length && (argv[i] as string).startsWith("-")) {
+    const flag = argv[i] as string;
+    i += runner.values.has(flag) ? 2 : 1;
+  }
+  if (i >= argv.length || !runner.subs.has(argv[i] as string)) return null;
+  i += 1;
+  while (i < argv.length && (argv[i] as string).startsWith("-")) {
+    const flag = argv[i] as string;
+    i += 1;
+    if (flag === "--") break;
+    if (flag === "-c" || flag === "--call") return null;
+    if (flag === "-p" || flag === "--package") i += 1;
+  }
+  i += runner.operands ?? 0;
+  return i < argv.length ? argv.slice(i) : null;
+}
 
 /** Programs that run what their arguments say. Shells and `-c`-style
  *  wrappers execute arbitrary bodies; env/xargs/sudo-alikes exec their

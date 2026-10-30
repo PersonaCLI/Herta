@@ -2,6 +2,7 @@ import type { EventBus } from "./event-bus.js";
 import type { RiskLevel } from "./permission-engine.js";
 import {
   binaryBasename,
+  packageExecCommand,
   pinnedScript,
   RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,
@@ -178,6 +179,8 @@ export function permissionCacheScope(
     if (!Array.isArray(argv) || argv.length === 0) return undefined;
     const first = argv[0];
     if (typeof first !== "string" || first.length === 0) return undefined;
+    // Before the interpreters: `bun x eslint` pinned `x` as bun's script.
+    if (runsAPackageBinary(argv)) return undefined;
     if (UNCACHEABLE_INTERPRETERS.has(binaryBasename(first))) {
       return pinnedInterpreterScope(argv);
     }
@@ -207,6 +210,8 @@ export function permissionCacheScope(
         ? request.programs[0]
         : undefined);
     if (typeof first !== "string" || first.length === 0) return undefined;
+    if (request.argv !== undefined && runsAPackageBinary(request.argv))
+      return undefined;
     if (UNCACHEABLE_INTERPRETERS.has(binaryBasename(first))) {
       // Only the single-program argv can pin a script; a chained line's
       // `programs` cannot.
@@ -217,6 +222,15 @@ export function permissionCacheScope(
     return first;
   }
   return undefined;
+}
+
+/** `pnpm exec …`, `npm x …`: the manager runs what follows, so its name
+ *  scopes nothing (`packageExecCommand`). */
+function runsAPackageBinary(argv: readonly unknown[]): boolean {
+  return (
+    argv.every((a): a is string => typeof a === "string") &&
+    packageExecCommand(argv) !== null
+  );
 }
 
 /**

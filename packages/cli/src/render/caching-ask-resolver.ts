@@ -1,4 +1,5 @@
 import {
+  ownerAnswers,
   type ReviewDeps,
   reviewBeforeCard,
   reviewTakes,
@@ -43,13 +44,12 @@ export class CachingAskResolver implements AskResolver {
     permissions?: WorkspacePermissions,
     private readonly review?: ReviewDeps,
   ) {
-    this.policy = new ApprovalPolicy(
-      cache,
-      permissions,
-      review !== undefined
+    this.policy = new ApprovalPolicy(cache, permissions, {
+      ownerOnly: (r) => ownerAnswers(r, review?.workspace() ?? ""),
+      ...(review !== undefined
         ? { reviewable: (r) => reviewTakes(r, review.workspace()) }
-        : {},
-    );
+        : {}),
+    });
   }
 
   /** Automatic review is on in this workspace (off unless chosen: the CLI

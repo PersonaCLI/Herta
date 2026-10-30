@@ -109,6 +109,28 @@ describe("classifyShellCommand — the harness's own state (.herta) is not comma
     expect(kind(cmd)).toBe("block");
   });
 
+  // The pre-release review of 2026-10-30: `time`'s `-p` was read as the
+  // command, and the wrappers it found missing hid the write.
+  it.each([
+    "time -p cp x .herta/permissions.json",
+    "time -p -- cp x .herta/permissions.json",
+    "chrt -f 1 cp x .herta/permissions.json",
+    "unbuffer rm -rf .herta",
+    "pnpm exec cp x .herta/permissions.json",
+    "nice timeout 5 nohup sudo stdbuf -oL cp x .herta/permissions.json",
+    // GNU sed reads the `''` as the script and rewrites the file; at v0.1.9
+    // these blocked.
+    "sed -i '' .herta/permissions.json",
+    "sed -i .bak .herta/permissions.json",
+  ])("blocks %s (review 2026-10-30)", (cmd) => {
+    expect(kind(cmd)).toBe("block");
+  });
+
+  it("time -p reads the command behind it, not the flag (review 2026-10-30)", () => {
+    expect(kind("time -p ls")).toBe(kind("time ls"));
+    expect(kind("time -p rm -rf /")).toBe("block");
+  });
+
   it("leaves the honest shapes alone — no .herta target, or only mentioned in a sed script", () => {
     expect(ask("echo x > out.txt").code).toBe("command_ask_write");
     expect(ask("cp a.json b.json").code).toBe("command_ask_fs");

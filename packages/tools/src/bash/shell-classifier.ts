@@ -559,8 +559,7 @@ export function effectivePrograms(
     // that RUNS: `command curl …` is a curl line, not a "command" line.
     let ws = words;
     for (let peel = 0; peel <= 4; peel += 1) {
-      while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string))
-        ws = ws.slice(1);
+      ws = skipPrefixKeywords(ws);
       const h = ws[0];
       if (h === undefined) break;
       if (basename(h) === "function") {
@@ -613,6 +612,21 @@ const PREFIX_KEYWORDS = new Set([
   "{",
   "}",
 ]);
+
+/** The words after the control-flow words that prefix a command. bash's
+ *  `time` takes `-p` before its pipeline: read as the command, it hid what
+ *  ran — `time -p cp x .herta/permissions.json` asked as an unknown `-p`
+ *  where its write blocks (review 2026-10-30). */
+function skipPrefixKeywords(words: readonly string[]): string[] {
+  let ws = [...words];
+  while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string)) {
+    const keyword = ws[0];
+    ws = ws.slice(1);
+    if (keyword === "time")
+      while (ws[0] === "-p" || ws[0] === "--") ws = ws.slice(1);
+  }
+  return ws;
+}
 /** Control-flow words that ARE the whole segment (or head an iteration
  *  header) — no program runs from them; their bodies are separate segments.
  *
@@ -888,6 +902,15 @@ function classifySegment(
           code: "command_ask_reader_path",
           reason: `reads a sensitive or out-of-workspace path: ${r.target}`,
         });
+      } else if (r.target.includes("__SUBST__") || /[$`]/.test(r.target)) {
+        // A path the line computes: no check can read it before it runs
+        // (`cat < $(echo ~/.ssh/id_rsa)` was allowed, review 2026-10-30).
+        asks.push({
+          kind: "ask",
+          risk: "workspace_read",
+          code: "command_ask_reader_path",
+          reason: `reads a path the command computes: ${r.target}`,
+        });
       }
     }
   }
@@ -898,9 +921,7 @@ function classifySegment(
   // waved through as a state builtin (codex study 2026-08-24).
   let standalone = false;
   for (let peel = 0; peel <= MAX_ACTION_DEPTH + 3; peel += 1) {
-    while (words.length > 0 && PREFIX_KEYWORDS.has(words[0] as string)) {
-      words = words.slice(1);
-    }
+    words = skipPrefixKeywords(words);
     const head = words[0];
     if (head === undefined) break;
     if (STANDALONE_KEYWORDS.has(head)) {
@@ -1414,8 +1435,7 @@ function substitutionsInsideQuotes(segment: string): string[] {
 export function peelReaderHead(words: readonly string[]): string[] {
   let ws = [...words];
   for (let peel = 0; peel <= 6; peel += 1) {
-    while (ws.length > 0 && PREFIX_KEYWORDS.has(ws[0] as string))
-      ws = ws.slice(1);
+    ws = skipPrefixKeywords(ws);
     const head = ws[0];
     if (head === undefined) break;
     const name = basename(head);

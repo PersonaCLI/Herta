@@ -554,6 +554,20 @@ function withoutHertaExclusions(command: string): string {
 }
 
 /**
+ * Whether only the owner answers this request, every time (`ownerOnly`):
+ * neither a review nor a remember (`ApprovalPolicy`'s `ownerOnly`, review
+ * 2026-10-30). Not a command → no.
+ */
+export function ownerAnswers(
+  request: PermissionRequest,
+  /** The workspace root, as `reviewTakes` reads it. */
+  workspace = "",
+): boolean {
+  const command = requestCommand(request);
+  return command !== undefined && ownerOnly(request, command, workspace);
+}
+
+/**
  * Whether a reviewer would judge this request at all: a command that is not
  * the owner's alone. The card offers turning automatic review on only where
  * it would take effect (`ApprovalPolicy`'s `reviewable`).

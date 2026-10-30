@@ -29,6 +29,7 @@ import {
   type WorkspacePermissions,
 } from "@herta/core";
 import {
+  ownerAnswers,
   type ReviewDeps,
   requestCommand,
   reviewBeforeCard,
@@ -75,6 +76,10 @@ export interface OverlayAskResolverDeps {
    * shows the card.
    */
   readonly review?: ReviewDeps;
+  /** The current backend workspace root, for what only the owner answers
+   *  (`.herta` is the workspace's own). Absent → the review's, else none:
+   *  any `.herta` then counts — the stricter reading. */
+  readonly workspace?: () => string;
 }
 
 export type ResolveExternalResult =
@@ -100,7 +105,10 @@ export class OverlayAskResolver implements AskResolver {
   private readonly policy: ApprovalPolicy;
 
   constructor(private readonly deps: OverlayAskResolverDeps) {
+    const workspace = (): string =>
+      deps.workspace?.() ?? deps.review?.workspace() ?? "";
     this.policy = new ApprovalPolicy(deps.cache, deps.permissions, {
+      ownerOnly: (request) => ownerAnswers(request, workspace()),
       ...(deps.defaultAutoReview !== undefined
         ? { defaultAutoReview: deps.defaultAutoReview }
         : {}),

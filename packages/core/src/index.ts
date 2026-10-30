@@ -191,6 +191,7 @@ export {
 export {
   binaryBasename,
   EXEC_WRAPPER_PROGRAMS,
+  packageExecCommand,
   pinnedScript,
   RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,

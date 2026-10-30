@@ -17,6 +17,11 @@ export interface ApprovalPolicyOpts {
    *  judge). Absent → no reviewer: turning review on then only lets the
    *  undoable writes through. */
   readonly reviewable?: (request: PermissionRequest) => boolean;
+  /** Whether only the owner answers this request, every time: a reach into
+   *  `.herta`. No remember covers it and none is stored for it — a remember
+   *  is keyed by its program, and `chrt -f 1 npm test` covered `chrt -f 1
+   *  cp x .herta/permissions.json` (review 2026-10-30). Absent → none. */
+  readonly ownerOnly?: (request: PermissionRequest) => boolean;
 }
 
 /**
@@ -67,7 +72,8 @@ export class ApprovalPolicy {
     // file writes (audit T3.4 / ADR 0026). A remember covers only that
     // binary / that task's writes, never the whole risk class.
     const scope = permissionCacheScope(request);
-    if (this.cache.has(tool, risk, scope)) {
+    const ownerOnly = this.opts.ownerOnly?.(request) === true;
+    if (!ownerOnly && this.cache.has(tool, risk, scope)) {
       return { kind: "auto", via: "cache", scope };
     }
 
@@ -85,7 +91,7 @@ export class ApprovalPolicy {
     return {
       kind: "ask",
       scope,
-      showRemember: this.cache.isCacheable(tool, risk, scope),
+      showRemember: !ownerOnly && this.cache.isCacheable(tool, risk, scope),
       // Offer turning automatic review on only where it would take effect:
       // it is off, there is a store to record the choice in, and the
       // request is one it would let through or hand to the reviewer.
@@ -110,6 +116,7 @@ export class ApprovalPolicy {
       }
       return;
     }
+    if (this.opts.ownerOnly?.(request) === true) return;
     this.cache.add(
       request.call.tool,
       request.risk,

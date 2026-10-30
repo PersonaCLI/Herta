@@ -122,6 +122,7 @@ import type { AppServerConfig } from "./types.js";
 export {
   AutoReviewer,
   defaultReviewModel,
+  ownerAnswers,
   type ReviewDeps,
   reviewBeforeCard,
   reviewTakes,

@@ -155,7 +155,7 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
       };
     }
     // allow → realpath what every command of the line reads (async guard).
-    const denial = await checkLineReads(ctx.workspaceRoot, steps ?? []);
+    const denial = await checkLineReads(ctx.workspaceRoot, steps ?? [], paths);
     if (denial !== null) {
       // A refused READ (2026-08-26): the reader guard only runs on
       // read-classified segments, so this deny withholds information, not
@@ -194,7 +194,11 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
 export async function checkLineReads(
   workspaceRoot: string,
   steps: ReadonlyArray<{ text: string; cwd: string }>,
+  /** The shell's spelling of an absolute path as the native one. */
+  paths?: ShellPaths,
 ): Promise<SafePathDenied | null> {
+  const native =
+    paths !== undefined ? (p: string) => paths.toNative(p) : undefined;
   for (const { text, cwd } of steps) {
     const { words, redirects } = tokenize(text);
     if (words.length > 0) {
@@ -202,6 +206,7 @@ export async function checkLineReads(
         workspaceRoot,
         cwd,
         peelReaderHead(words),
+        native,
       );
       if (denial !== null) return denial;
     }
@@ -213,6 +218,7 @@ export async function checkLineReads(
       cwd,
       inputs,
       (path) => `input redirect < ${path}`,
+      native,
     );
     if (denial !== null) return denial;
   }

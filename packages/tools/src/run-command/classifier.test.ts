@@ -2270,6 +2270,22 @@ describe("exec-wrappers: one list, peeled on both lanes (Mac findings 2026-10-24
     caffeinate: ["caffeinate", "-i"],
     arch: ["arch", "-arm64"],
     "sandbox-exec": ["sandbox-exec", "-p", "(version 1)"],
+    // The pre-release review of 2026-10-30.
+    exec: ["exec", "-a", "x"],
+    chrt: ["chrt", "-f", "10"],
+    unbuffer: ["unbuffer", "-p"],
+    firejail: ["firejail", "--noprofile"],
+    nsenter: ["nsenter", "-t", "1", "-m"],
+    "systemd-run": ["systemd-run", "--user", "-p", "Nice=5"],
+    faketime: ["faketime", "2020-01-01"],
+    fakeroot: ["fakeroot", "-u"],
+    prlimit: ["prlimit", "--nofile=1024"],
+    numactl: ["numactl", "-N", "0"],
+    bwrap: ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev"],
+    valgrind: ["valgrind", "--leak-check=full"],
+    "xvfb-run": ["xvfb-run", "-a", "-s", "-screen 0 1024x768x24"],
+    "ssh-agent": ["ssh-agent", "-t", "60"],
+    wsl: ["wsl", "-d", "Ubuntu", "-e"],
   };
   const payload = (w: string): string[] =>
     w === "su"
@@ -2293,6 +2309,40 @@ describe("exec-wrappers: one list, peeled on both lanes (Mac findings 2026-10-24
         argv.join(" "),
       ).toBe(true);
     }
+  });
+
+  it("a package manager's exec, taskset's list, env's --chdir and a deep chain hide nothing (review 2026-10-30)", () => {
+    for (const argv of [
+      ["pnpm", "exec", "rm", "-rf", "/"],
+      ["pnpm", "--filter", "web", "exec", "rm", "-rf", "/"],
+      ["yarn", "exec", "rm", "-rf", "/"],
+      ["npm", "exec", "--yes", "--", "rm", "-rf", "/"],
+      ["bun", "x", "rm", "-rf", "/"],
+      ["direnv", "exec", ".", "rm", "-rf", "/"],
+      ["taskset", "-c", "0", "rm", "-rf", "/"],
+      ["env", "--chdir", "/tmp", "rm", "-rf", "/"],
+      ["env", "--chdir", "/tmp", "-S", "rm -rf /"],
+      [
+        "nice",
+        "timeout",
+        "5",
+        "nohup",
+        "sudo",
+        "stdbuf",
+        "-oL",
+        "rm",
+        "-rf",
+        "/",
+      ],
+    ]) {
+      expect(classifyCommand(argv).kind, argv.join(" ")).toBe("block");
+      expect(classifyShellBody(argv.join(" ")).hit, argv.join(" ")).toBe(true);
+    }
+    // Their everyday shapes are what they were.
+    expect(classifyCommand(["pnpm", "run", "build"]).kind).not.toBe("block");
+    expect(classifyCommand(["pnpm", "exec", "vitest", "run"]).kind).not.toBe(
+      "block",
+    );
   });
 
   it("macOS's wrappers hide neither a keychain dump nor a harness write", () => {

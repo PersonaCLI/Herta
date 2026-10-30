@@ -2351,6 +2351,7 @@ export class SessionImpl implements Session {
         overlayResolver = new OverlayAskResolver({
           cache,
           permissions: workspacePermissions,
+          workspace: () => sessionHolder.session?.backendWorkspace ?? "",
           // Automatic review is on by default in the managed sandbox (ADR 0064
           // amendment 2026-10-10): a new session's workspace under
           // ~/.herta/workspaces holds nothing of the user's. A provider —

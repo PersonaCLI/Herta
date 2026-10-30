@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   type PendingPermissionApproval,
   type PermissionRequest,
+  SessionApprovalCache,
   WorkspacePermissions,
 } from "@herta/core";
 import { describe, expect, it } from "vitest";
@@ -45,6 +46,49 @@ function makeResolver(
   });
   return { resolver, pending, cleared };
 }
+
+describe("OverlayAskResolver — a remember never covers a reach into .herta (review 2026-10-30)", () => {
+  it("remembering `myprog --build` leaves `myprog --out .herta/…` to the owner", async () => {
+    const pending: PendingPermissionApproval[] = [];
+    const resolver = new OverlayAskResolver({
+      setPendingOverlay: (o) => pending.push(o),
+      clearOverlay: () => {},
+      cache: new SessionApprovalCache(),
+      workspace: () => "C:/ws",
+    });
+    const cmd = (argv: string[]): PermissionRequest =>
+      makeRequest({
+        call: { id: "c", tool: "run_command", input: { argv } },
+        risk: "workspace_write",
+        code: "command_ask_unknown",
+      });
+    const first = resolver.present(
+      cmd(["myprog", "--build"]),
+      new AbortController().signal,
+    );
+    resolver.resolveExternal({
+      requestId: pending[0]?.requestId ?? "",
+      decision: "allow",
+      persistence: "session",
+    });
+    expect(await first).toBe("allow");
+    // The remember covers its own program again, with no card…
+    expect(
+      await resolver.present(
+        cmd(["myprog", "--build"]),
+        new AbortController().signal,
+      ),
+    ).toBe("allow");
+    expect(pending).toHaveLength(1);
+    // …but not a reach into .herta under the same program.
+    void resolver.present(
+      cmd(["myprog", "--out", ".herta/permissions.json"]),
+      new AbortController().signal,
+    );
+    expect(pending).toHaveLength(2);
+    expect(pending[1]?.cacheable).toBe(false);
+  });
+});
 
 describe("OverlayAskResolver.present — payload enrichment", () => {
   it("carries tool + summary, no command for non-run_command tools", () => {

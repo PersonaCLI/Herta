@@ -1,6 +1,10 @@
-import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
-import { resolveSafePath, type SafePathDenied } from "../path-safety.js";
+import { readdir, realpath } from "node:fs/promises";
+import { join, parse, resolve } from "node:path";
+import {
+  globSegmentMatches,
+  resolveSafePath,
+  type SafePathDenied,
+} from "../path-safety.js";
 import { readerPathCandidates } from "./classifier.js";
 
 /**
@@ -80,10 +84,17 @@ export async function checkReaderArgvPaths(
   workspaceRoot: string,
   effectiveCwd: string,
   argv: readonly string[],
+  native?: (path: string) => string | null,
 ): Promise<SafePathDenied | null> {
   const candidates = readerPathCandidates(argv);
   if (candidates === null) return null;
-  return checkReadPaths(workspaceRoot, effectiveCwd, candidates);
+  return checkReadPaths(
+    workspaceRoot,
+    effectiveCwd,
+    candidates,
+    undefined,
+    native,
+  );
 }
 
 /**
@@ -100,6 +111,10 @@ export async function checkReadPaths(
   paths: readonly string[],
   describe: (path: string) => string = (path) =>
     `read-only command targets ${path}`,
+  /** The shell's spelling of an absolute path as the native one (Git
+   *  Bash's `/c/Users/…`): read raw, it resolved to `C:\c\Users\…`, which
+   *  does not exist, and was skipped (review 2026-10-30). */
+  native?: (path: string) => string | null,
 ): Promise<SafePathDenied | null> {
   for (const cand of paths) {
     // resolve() (not join) so a Windows DRIVE-RELATIVE operand like `E:.env`
@@ -108,26 +123,74 @@ export async function checkReadPaths(
     // produces (which realpaths to ENOENT and was silently skipped, leaking a
     // workspace credential; audit T3.4 review). resolve() also subsumes the
     // genuinely-absolute case.
-    const abs = resolve(effectiveCwd, cand);
-    let real: string;
+    const abs = resolve(effectiveCwd, native?.(cand) ?? cand);
+    let reals: string[];
     try {
-      real = await realpath(abs);
+      reals = [await realpath(abs)];
     } catch {
-      // Nonexistent operand (pattern / missing file): nothing to canonicalize
-      // and nothing a reader can leak. Skip.
-      continue;
+      // No such path. A pattern is read as what bash expands it to: the
+      // literal never exists, and skipping it let `cat l?nked/secret.txt`
+      // read through a link `cat linked/secret.txt` was refused for
+      // (review 2026-10-30). Anything else missing leaks nothing.
+      const matches = /[*?[]/.test(cand) ? await globMatches(abs) : [];
+      if (matches === null)
+        return {
+          ok: false,
+          code: "path_denied",
+          message: `${describe(cand)} → the pattern matches more than ${MAX_GLOB_MATCHES} paths, too many to check; name the files, or search with search_text or glob`,
+        };
+      reals = [];
+      for (const m of matches) {
+        try {
+          reals.push(await realpath(m));
+        } catch {
+          // gone between the listing and now
+        }
+      }
     }
-    // `real` is an existing canonical path; resolveSafePath re-realpaths it
-    // (idempotent) and applies the SAME workspace-prefix + credential
-    // denylist that guards read_file, inheriting its Windows case handling.
-    const r = await resolveSafePath(workspaceRoot, real, READER_CARVE_OUTS);
-    if (!r.ok) {
-      return {
-        ok: false,
-        code: r.code,
-        message: `${describe(cand)} → ${r.message}${hintFor(cand, r.code)}`,
-      };
+    // Each real path is an existing canonical one; resolveSafePath
+    // re-realpaths it (idempotent) and applies the SAME workspace-prefix +
+    // credential denylist that guards read_file, inheriting its Windows case
+    // handling.
+    for (const real of reals) {
+      const r = await resolveSafePath(workspaceRoot, real, READER_CARVE_OUTS);
+      if (!r.ok) {
+        return {
+          ok: false,
+          code: r.code,
+          message: `${describe(cand)} → ${r.message}${hintFor(cand, r.code)}`,
+        };
+      }
     }
   }
   return null;
+}
+
+/** Past this many matches a read's pattern is refused unread. */
+const MAX_GLOB_MATCHES = 1000;
+
+/** The existing paths a pattern names, segment by segment, as bash expands
+ *  it (a leading `.` must be spelled, `globSegmentMatches`); null past
+ *  {@link MAX_GLOB_MATCHES}. */
+async function globMatches(abs: string): Promise<string[] | null> {
+  const { root } = parse(abs);
+  let paths = [root];
+  for (const segment of abs
+    .slice(root.length)
+    .split(/[\\/]/)
+    .filter((s) => s.length > 0)) {
+    const next: string[] = [];
+    for (const dir of paths) {
+      if (!/[*?[]/.test(segment)) {
+        next.push(join(dir, segment));
+        continue;
+      }
+      const names = await readdir(dir).catch(() => [] as string[]);
+      for (const name of names)
+        if (globSegmentMatches(segment, name)) next.push(join(dir, name));
+    }
+    if (next.length > MAX_GLOB_MATCHES) return null;
+    paths = next;
+  }
+  return paths;
 }

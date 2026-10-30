@@ -34,6 +34,7 @@ import {
 } from "./index.js";
 import { PersistentShell } from "./persistent-shell.js";
 import { bashJsonSchema, bashZodJsonSchema } from "./schema.js";
+import { shellPathsFor } from "./shell-paths.js";
 
 const BASH = findBash();
 const d = describe.skipIf(BASH === null);
@@ -609,6 +610,11 @@ describe("what an allowed line reads is realpath-ed: input redirects, substituti
     "cd escape && cat secret.txt",
     "cd escape; cat < secret.txt",
     "for f in escape/secret.txt; do cat $f; done",
+    // A pattern bash expands to the link (review 2026-10-30): the literal
+    // never exists, and the check skipped it.
+    "cat esc?pe/secret.txt",
+    "cat < esc*/secret.txt",
+    "head e[s]cape/secret.txt",
   ];
 
   it("the rule refuses each, and still allows the same reads inside", async () => {
@@ -640,9 +646,16 @@ describe("what an allowed line reads is realpath-ed: input redirects, substituti
         "wc -l < a.txt",
         'echo "$(cat a.txt)"',
         "for f in a.txt; do cat $f; done",
+        "cat *.txt",
+        "cat ?.txt",
       ]) {
         expect((await rule(call(cmd), ctx)).kind, cmd).toBe("allow");
       }
+      // A path the line computes cannot be checked before it runs: a card.
+      expect(
+        (await rule(call("cat < $(echo escape/secret.txt)"), ctx)).kind,
+      ).toBe("ask");
+      expect((await rule(call("cat < `echo a.txt`"), ctx)).kind).toBe("ask");
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
@@ -675,6 +688,62 @@ d(
           expect(r.error?.code, cmd).toBe("path_outside_workspace");
           expect(r.modelText ?? "", cmd).not.toContain("OUTSIDE-SECRET");
         }
+      } finally {
+        await ctx.bg.stopAll();
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("the shell's own spelling of a path is checked as the path (review 2026-10-30)", async () => {
+      ws = await mkTmpWorkspace({ "a.txt": "inside\n" });
+      const outside = `${ws.root}-sneak`;
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+      const ctx = ctxFor(ws.root);
+      try {
+        try {
+          symlinkSync(outside, join(ws.root, "escape"), "junction");
+        } catch {
+          return;
+        }
+        // Git Bash prints `/c/Users/…`, and the model writes what pwd says.
+        const spelled = shellPathsFor(BASH as string).toShell(
+          join(ws.root, "escape", "secret.txt"),
+        );
+        const rule = makeBashRule({ bashPath: BASH as string });
+        for (const cmd of [`cat ${spelled}`, `cat < ${spelled}`]) {
+          const v = await rule(call(cmd), ctx);
+          expect(v.kind, cmd).toBe("deny");
+        }
+      } finally {
+        await ctx.bg.stopAll();
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it("a line the owner approved on its card reads what the card showed (review 2026-10-30)", async () => {
+      ws = await mkTmpWorkspace({ "a.txt": "inside\n" });
+      const outside = `${ws.root}-sneak`;
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+      const ctx = ctxFor(ws.root);
+      try {
+        // The native spelling (`C:/…` on Windows), which the old check read.
+        const cmd = `wc -l < ${join(outside, "secret.txt").replace(/\\/g, "/")}`;
+        // The rule asks — the card names the path outside —
+        const v = await makeBashRule({ bashPath: BASH as string })(
+          call(cmd),
+          ctx,
+        );
+        expect(v.kind).toBe("ask");
+        // — and once approved, the line runs; it was refused here.
+        const r = await bashTool({ bashPath: BASH as string }).run(
+          call(cmd, "r1"),
+          ctx,
+          noopProgress,
+        );
+        expect(r.ok, r.error?.message).toBe(true);
+        expect(r.modelText ?? "").toContain("1");
       } finally {
         await ctx.bg.stopAll();
         rmSync(outside, { recursive: true, force: true });

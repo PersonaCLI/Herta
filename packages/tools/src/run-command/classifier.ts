@@ -1,5 +1,6 @@
 import {
   type CommandConsequence,
+  packageExecCommand,
   type RepoInProgressState,
   type RiskLevel,
   SCRIPT_INTERPRETERS,
@@ -138,6 +139,8 @@ function shellBodyTokens(body: string): string[] {
 interface WrapperSpec {
   /** Flags that consume the NEXT word as their value (`sudo -u root …`). */
   valueFlags?: ReadonlySet<string>;
+  /** Flags that consume the next TWO words (`bwrap --bind src dest …`). */
+  pairFlags?: ReadonlySet<string>;
   /** Bare operands the wrapper eats before the command (`timeout 5 …`). */
   operands?: number;
   /** Leading `K=V` words belong to the wrapper (`env FOO=bar …`). */
@@ -168,7 +171,8 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
       // `-P altpath` is BSD env's search path (Mac findings 2026-10-24):
       // unknown, it read `/bin` as the command and `env -P /bin rm -rf /`
       // asked. `-S` is a value here and a body in `extractShellReentry`.
-      valueFlags: new Set(["-u", "--unset", "-C", "-S", "-P"]),
+      // `--chdir DIR` is `-C`'s long form (review 2026-10-30).
+      valueFlags: new Set(["-u", "--unset", "-C", "--chdir", "-S", "-P"]),
       assignments: true,
     },
   ],
@@ -224,7 +228,10 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
     "script",
     { valueFlags: new Set(["-c", "--command", "-f", "-t", "-T"]), operands: 1 },
   ],
-  ["taskset", { valueFlags: new Set(["-c", "-p"]), operands: 1 }],
+  // `-c` says the mask is a CPU list, and takes no word of its own: as a
+  // value flag it ate the list, and the mask operand then ate the command
+  // (`taskset -c 0 rm -rf /` asked, review 2026-10-30).
+  ["taskset", { operands: 1 }],
   [
     "unshare",
     { valueFlags: new Set(["--map-user", "--map-group", "-S", "-G"]) },
@@ -239,6 +246,116 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
   ["caffeinate", { valueFlags: new Set(["-t", "-w"]) }],
   ["arch", { valueFlags: new Set(["-arch", "-d", "-e"]) }],
   ["sandbox-exec", { valueFlags: new Set(["-f", "-n", "-p", "-D"]) }],
+  // The pre-release review of 2026-10-30: unknown, each hid its command
+  // behind an ask a remember of the wrapper's name covered.
+  ["exec", { valueFlags: new Set(["-a"]) }],
+  ["chrt", { valueFlags: new Set(["-T", "-P", "-D"]), operands: 1 }],
+  ["unbuffer", {}],
+  ["firejail", {}],
+  [
+    "nsenter",
+    {
+      valueFlags: new Set([
+        "-t",
+        "--target",
+        "-S",
+        "--setuid",
+        "-G",
+        "--setgid",
+      ]),
+    },
+  ],
+  [
+    "systemd-run",
+    {
+      valueFlags: new Set([
+        "-p",
+        "--property",
+        "-u",
+        "--unit",
+        "-E",
+        "--setenv",
+        "--uid",
+        "--gid",
+        "--working-directory",
+        "--description",
+        "--slice",
+        "-M",
+        "--machine",
+        "-H",
+        "--host",
+      ]),
+    },
+  ],
+  ["faketime", { valueFlags: new Set(["-m"]), operands: 1 }],
+  [
+    "fakeroot",
+    {
+      valueFlags: new Set(["-l", "--lib", "--faked", "-i", "-s", "-b"]),
+    },
+  ],
+  ["prlimit", { valueFlags: new Set(["-p", "--pid", "-o", "--output"]) }],
+  ["numactl", { valueFlags: new Set(["-C", "-N", "-m", "-p", "-i", "-P"]) }],
+  [
+    "bwrap",
+    {
+      valueFlags: new Set([
+        "--chdir",
+        "--tmpfs",
+        "--proc",
+        "--dev",
+        "--dir",
+        "--remount-ro",
+        "--unsetenv",
+        "--uid",
+        "--gid",
+        "--hostname",
+        "--seccomp",
+        "--info-fd",
+        "--argv0",
+      ]),
+      pairFlags: new Set([
+        "--bind",
+        "--bind-try",
+        "--ro-bind",
+        "--ro-bind-try",
+        "--dev-bind",
+        "--dev-bind-try",
+        "--symlink",
+        "--setenv",
+        "--file",
+        "--bind-data",
+        "--ro-bind-data",
+        "--chmod",
+      ]),
+    },
+  ],
+  ["valgrind", {}],
+  [
+    "xvfb-run",
+    {
+      valueFlags: new Set([
+        "-n",
+        "--server-num",
+        "-e",
+        "--error-file",
+        "-f",
+        "--auth-file",
+        "-s",
+        "--server-args",
+        "-p",
+        "--xauth-protocol",
+      ]),
+    },
+  ],
+  ["ssh-agent", { valueFlags: new Set(["-a", "-E", "-t", "-P", "-O"]) }],
+  // Windows: the line after `wsl`'s own options runs in the distribution.
+  [
+    "wsl",
+    {
+      valueFlags: new Set(["-d", "--distribution", "-u", "--user", "--cd"]),
+    },
+  ],
 ]);
 
 /** Bounded wrapper peel: the command a chain of exec-wrappers ends up running,
@@ -246,7 +363,15 @@ const EXEC_WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map<
 function peelExecWrappers(tokens: readonly string[]): string[] | null {
   let cur: readonly string[] = tokens;
   let peeled = false;
-  for (let round = 0; round < 4 && cur.length > 0; round += 1) {
+  // Eight deep: at four, `nice timeout 5 nohup sudo stdbuf -oL cp x
+  // .herta/…` left its write to the write guard unread (review 2026-10-30).
+  for (let round = 0; round < 8 && cur.length > 0; round += 1) {
+    const run = packageExecCommand(cur);
+    if (run !== null) {
+      cur = run;
+      peeled = true;
+      continue;
+    }
     const spec = EXEC_WRAPPERS.get(interpreterName(cur[0] as string));
     if (spec === undefined) break;
     let i = 1;
@@ -260,6 +385,8 @@ function peelExecWrappers(tokens: readonly string[]): string[] | null {
       if (t.startsWith("-") && t.length > 1) {
         i += 1;
         if (spec.valueFlags?.has(t) === true && i < cur.length) i += 1;
+        else if (spec.pairFlags?.has(t) === true)
+          i = Math.min(cur.length, i + 2);
         continue;
       }
       if (spec.assignments === true && /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
@@ -687,7 +814,7 @@ function extractShellReentry(argv: readonly string[]): Reentry | null {
             }
           : null;
       }
-      if (["-u", "--unset", "-C", "-P"].includes(a)) {
+      if (["-u", "--unset", "-C", "--chdir", "-P"].includes(a)) {
         i += 1;
         continue;
       }
@@ -2661,7 +2788,7 @@ export function writtenOperands(argv: readonly string[]): string[] {
         break;
       }
       if (!nonFlag(a)) {
-        if (takesSedBackupSuffix(a, args[i + 1])) i += 1;
+        if (takesSedBackupSuffix(a, args[i + 1], args.slice(i + 2))) i += 1;
         continue;
       }
       if (!scriptGiven) {
@@ -4097,14 +4224,27 @@ function interpreterShape(
  * Read as the script, the empty word made the line unknown, and the card lost
  * its "outside the workspace" warning (Mac findings 2026-10-24, item 8). GNU
  * takes that word as the script, but an empty or `.bak`-shaped one is no sed
- * program either, so reading it as the suffix loses nothing.
+ * program either, so reading it as the suffix loses nothing — while a script
+ * still follows it. With only a file after it, GNU reads the word as the
+ * script and edits the file: `sed -i '' .herta/permissions.json` asked as an
+ * unknown, where at v0.1.9 it blocked (review 2026-10-30).
  */
-function takesSedBackupSuffix(flag: string, next: string | undefined): boolean {
-  return (
-    /^-[a-zA-Z]*i$/.test(flag) &&
-    next !== undefined &&
-    (next === "" || /^\.[\w.~-]*$/.test(next))
+function takesSedBackupSuffix(
+  flag: string,
+  next: string | undefined,
+  after: readonly string[],
+): boolean {
+  if (
+    !/^-[a-zA-Z]*i$/.test(flag) ||
+    next === undefined ||
+    (next !== "" && !/^\.[\w.~-]*$/.test(next))
+  )
+    return false;
+  const scriptFlag = after.some((a) =>
+    /^(?:-e|--expression|-f|--file)(?:=|$)/.test(a),
   );
+  const words = after.filter((a) => a === "-" || !a.startsWith("-")).length;
+  return scriptFlag || words >= 2;
 }
 
 /** A sed script made only of line-address substitutions, deletes and prints
@@ -4180,7 +4320,7 @@ function namedProgramVerdict(
         break;
       }
       if (a.startsWith("-") && a.length > 1) {
-        if (takesSedBackupSuffix(a, argv[i + 1])) i += 1;
+        if (takesSedBackupSuffix(a, argv[i + 1], argv.slice(i + 2))) i += 1;
         continue;
       }
       if (scripts.length === 0) scripts.push(a);

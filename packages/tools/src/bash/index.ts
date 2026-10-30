@@ -234,11 +234,18 @@ export function bashTool(opts: BashToolOpts): HertaTool {
       // Execution-time reader realpath backstop (TOCTOU, mirrors run_command).
       // The RULE's own check (`checkLineReads`): this second look once kept
       // an older peel, so behind one harmless word it re-checked nothing
-      // (perf audit 2026-09-20, found in passing).
-      const denial = await checkLineReads(
-        ctx.workspaceRoot,
-        classified.steps ?? [],
-      );
+      // (perf audit 2026-09-20, found in passing). Only for a line the rule
+      // ALLOWED, as the rule checks only those: a line the owner approved
+      // on its card was refused here for reading what the card showed —
+      // `psql db < C:/Windows/win.ini`, an approved `npm test < /dev/null`
+      // (review 2026-10-30).
+      const denial = readOnly
+        ? await checkLineReads(
+            ctx.workspaceRoot,
+            classified.steps ?? [],
+            classifyOpts.paths,
+          )
+        : null;
       if (denial !== null) {
         return {
           ok: false,

@@ -596,6 +596,26 @@ export class SessionStore {
     });
   }
 
+  /** Quotes for the session that opens next: a Flow post asked about while
+   *  no session is open goes into the new one's composer (ADR 0084 §9). An
+   *  activation starts the composer empty, so they wait for it here. */
+  private nextSessionQuotes: readonly ComposerQuote[] = [];
+
+  quoteIntoNextSession(quote: ComposerQuote): void {
+    this.nextSessionQuotes = [...this.nextSessionQuotes, quote];
+  }
+
+  /** The new session did not open: its quotes go with it. */
+  dropNextSessionQuotes(): void {
+    this.nextSessionQuotes = [];
+  }
+
+  private takeNextSessionQuotes(): readonly ComposerQuote[] {
+    const quotes = this.nextSessionQuotes;
+    this.nextSessionQuotes = [];
+    return quotes;
+  }
+
   /** An element picked on the page (ADR 0083 §4): the composer places it
    *  as a chip at its caret. */
   addComposerPick(pick: {
@@ -925,7 +945,7 @@ export class SessionStore {
       // no message held for a turn that belonged to another session).
       composerDraft: null,
       composerDraftImages: null,
-      composerQuotes: [],
+      composerQuotes: this.takeNextSessionQuotes(),
       composerPicks: [],
       restagedImages:
         e.stagedImages !== undefined && e.stagedImages.length > 0

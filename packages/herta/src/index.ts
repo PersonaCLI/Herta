@@ -55,6 +55,17 @@ export {
 } from "./narrative/escape.js";
 export { checkFewShot, type FewShotCheck } from "./narrative/few-shot-guard.js";
 export {
+  type FlowWordDeps,
+  type FlowWordJudge,
+  type FlowWordPost,
+  flowJudgeVerdict,
+  flowWordJudge,
+  flowWordPrompt,
+  hertaWordOn,
+  inertFlowWord,
+  normalizeFlowWord,
+} from "./narrative/flow-word.js";
+export {
   type ClassifyIntentInput,
   type ClassifyIntentResult,
   classifyIntent,

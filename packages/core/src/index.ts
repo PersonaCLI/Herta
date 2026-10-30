@@ -284,6 +284,7 @@ export {
   pageMarkerLine,
   pageMarkerShape,
 } from "./text/page-marker.js";
+export { nameQuotedPages, quotedPageUrls } from "./text/quoted-pages.js";
 export {
   repoPathInsideWorkspace,
   workspaceRelativeRepoPath,

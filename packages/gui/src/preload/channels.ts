@@ -100,6 +100,14 @@ export const CMD = {
   serversList: "servers:list",
   serversStart: "servers:start",
   serversStop: "servers:stop",
+  // Flow (ADR 0084).
+  flowState: "flow:state",
+  flowIssues: "flow:issues",
+  flowRefresh: "flow:refresh",
+  flowMarkRead: "flow:markRead",
+  flowOpenSource: "flow:openSource",
+  flowSettings: "flow:settings",
+  flowSetSettings: "flow:setSettings",
 } as const;
 
 export const EVT = {
@@ -127,6 +135,7 @@ export const EVT = {
   pageCommand: "page:command",
   pageOpen: "page:open",
   serversChanged: "servers:changed",
+  flow: "flow:event",
   pagePicked: "page:picked",
   update: "update:state",
   voiceModel: "voice:model",

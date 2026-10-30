@@ -11,6 +11,8 @@ interface FakeContents {
   focused: boolean;
   destroyed: boolean;
   closed: number;
+  listeners: Record<string, (() => void)[]>;
+  inserted: string[];
 }
 
 const h = vi.hoisted(() => ({ views: [] as { webContents: FakeContents }[] }));
@@ -21,8 +23,16 @@ vi.mock("electron", () => {
       focused: false,
       destroyed: false,
       closed: 0,
+      listeners: {} as Record<string, (() => void)[]>,
+      inserted: [] as string[],
       setWindowOpenHandler: () => undefined,
-      on: () => undefined,
+      on(name: string, listener: () => void) {
+        this.listeners[name] = [...(this.listeners[name] ?? []), listener];
+      },
+      insertCSS(css: string) {
+        this.inserted.push(css);
+        return Promise.resolve("key");
+      },
       loadURL: async () => undefined,
       isDestroyed() {
         return this.destroyed;
@@ -146,6 +156,22 @@ describe("the page host as its window closes (ADR 0083 §3)", () => {
     expect(w.children).toHaveLength(0);
     expect(w.appFocus).toHaveBeenCalledTimes(1);
     expect(page?.closed).toBe(1);
+  });
+});
+
+describe("the page's scrollbars (owner 2026-10-30)", () => {
+  it("each document gets the app's scrollbar sheet: a thin thumb, no arrow buttons", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, true);
+    host.navigate("s1", { url: "https://example.com/" });
+    const page = h.views[0]?.webContents;
+    for (const ready of page?.listeners["dom-ready"] ?? []) ready();
+    for (const ready of page?.listeners["dom-ready"] ?? []) ready();
+    expect(page?.inserted).toHaveLength(2);
+    expect(page?.inserted[0]).toContain(
+      "::-webkit-scrollbar-button { display: none",
+    );
+    host.dispose();
   });
 });
 

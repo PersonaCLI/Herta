@@ -6,6 +6,7 @@ import {
   formatQuote,
   joinHeld,
   parseLeadingQuotes,
+  postQuote,
   QUOTE_MAX_LINES,
   quotedMessagePreview,
   quoteLabel,
@@ -318,5 +319,80 @@ describe("a Word quote counts paragraphs (ADR 0078 amendment 2026-10-29)", () =>
     expect(q).toMatchObject({ path: "src/calc.js", from: 9, to: 14 });
     expect(q?.unit).toBeUndefined();
     expect(q?.title).toBe("第 2 段");
+  });
+});
+
+describe("a Flow post as a quote (ADR 0084 §9)", () => {
+  const post = {
+    id: "2026-10-30-1/0",
+    url: "https://nodejs.org/en/blog/release/v24",
+    site: "Node.js",
+    date: "2026-10-30",
+    title: "Node.js 24\nis out",
+    detail: "The full write-up.",
+    word: "等一个月。",
+  };
+
+  it("carries the URL in its header, then the site and date, the write-up and her word", () => {
+    const q = postQuote(post, "zh");
+    expect(q).toBeDefined();
+    if (q === undefined) return;
+    expect(q.title).toBe("Node.js 24 is out");
+    const message = composeQuotedMessage([q], "现在升级吗？", "zh");
+    expect(message.split("\n")[0]).toBe(
+      "〔引用 https://nodejs.org/en/blog/release/v24 · Node.js 24 is out〕",
+    );
+    expect(message).toContain(
+      "Node.js · 2026-10-30\n\nThe full write-up.\n\n你在播报里给这条写的短评：等一个月。",
+    );
+    const parsed = parseLeadingQuotes(message);
+    expect(parsed.rest).toBe("现在升级吗？");
+    expect(parsed.quotes[0]).toMatchObject({
+      url: "https://nodejs.org/en/blog/release/v24",
+      title: "Node.js 24 is out",
+    });
+    expect(parsed.quotes[0]?.path).toBeUndefined();
+    expect(postQuote({ ...post, word: null }, "en")?.text).not.toContain(
+      "What you wrote under it",
+    );
+    // From an issue, it names the issue.
+    expect(postQuote(post, "en", 7)?.text.split("\n")[0]).toBe(
+      "Interastral Peace Broadcast No. 7, relayed by Herta Space Station · Node.js · 2026-10-30",
+    );
+  });
+
+  it("comes back as a post chip, and the preview names its site", () => {
+    const q = postQuote(post, "en");
+    if (q === undefined) throw new Error("no quote");
+    const message = composeQuotedMessage([q, DIV], "now?", "en");
+    const back = quotesBack(message);
+    expect(back.rest).toBe("now?");
+    expect(back.quotes[0]).toMatchObject({
+      kind: "post",
+      url: q.url,
+      title: q.title,
+      text: q.text,
+    });
+    expect(back.quotes[1]?.path).toBe("src/calc.js");
+    expect(quotedMessagePreview(message)).toBe(
+      "〔nodejs.org〕〔src/calc.js:9–14〕 now?",
+    );
+  });
+
+  it("a URL with a port is a page, never a file's line", () => {
+    const q = postQuote({ ...post, url: "https://a.dev:8080" }, "zh");
+    if (q === undefined) throw new Error("no quote");
+    const parsed = parseLeadingQuotes(composeQuotedMessage([q], "", "zh"));
+    expect(parsed.quotes[0]?.url).toBe("https://a.dev:8080/");
+    expect(parsed.quotes[0]?.from).toBeUndefined();
+  });
+
+  it("an @brick in the URL is broken, and only http(s) is a post", () => {
+    expect(
+      postQuote({ ...post, url: "https://medium.com/@brick/x" }, "en")?.url,
+    ).toBe("https://medium.com/%40brick/x");
+    expect(postQuote({ ...post, url: "file:///etc/passwd" }, "en")).toBe(
+      undefined,
+    );
   });
 });

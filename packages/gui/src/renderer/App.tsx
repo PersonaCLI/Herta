@@ -1,4 +1,11 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import type { FlowPostView } from "../shared/flow.js";
 import { HoverTipLayer } from "./components/common/HoverTipLayer.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import {
@@ -6,6 +13,8 @@ import {
   useFileViewerState,
 } from "./components/FileViewer/file-viewer-context.js";
 import { WorkspaceBodyShell } from "./components/FileViewer/WorkspaceBodyShell.js";
+import { FlowPanel } from "./components/Flow/FlowPanel.js";
+import { useFlow } from "./components/Flow/useFlow.js";
 import { OpeningAscii } from "./components/Opening/OpeningAscii.js";
 import { KeyPrompt } from "./components/Settings/KeyPrompt.js";
 import { SettingsModal } from "./components/Settings/SettingsModal.js";
@@ -29,7 +38,7 @@ import { useVoiceCues } from "./hooks/useVoiceCues.js";
 import { useWindowFullScreen } from "./hooks/useWindowFullScreen.js";
 import { useWindowHidden } from "./hooks/useWindowHidden.js";
 import { useWindowSnap } from "./hooks/useWindowSnap.js";
-import { LocaleProvider, useT } from "./i18n/LocaleProvider.js";
+import { LocaleProvider, useLocale, useT } from "./i18n/LocaleProvider.js";
 import { en } from "./i18n/messages/en.js";
 import { zh } from "./i18n/messages/zh.js";
 import type { HertaBridge, Locale } from "./ipc/bridge-types.js";
@@ -39,6 +48,7 @@ import {
   overlayOpenAbove,
   topOverlayZ,
 } from "./lib/overlay-stack.js";
+import { postQuote } from "./lib/quote-format.js";
 import {
   runShortcut,
   useShortcut,
@@ -122,7 +132,8 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   // web contents without the OS chrome). WindowControls already returns null
   // on darwin, but that only drops OUR buttons on the right; nothing was
   // reserving the left. See .app.is-mac .topbar in reference-ux.css.
-  const { bridge } = useHertaBridge();
+  const { bridge, sessionStore } = useHertaBridge();
+  const { locale } = useLocale();
   const isMac = bridge.platform === "darwin";
   // …except in full screen, where macOS hides the lights (2026-09-23).
   const fullScreen = useWindowFullScreen();
@@ -140,6 +151,47 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   const [query, setQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Flow (ADR 0084): a panel of its own over the main area.
+  const flow = useFlow();
+  const [flowOpen, setFlowOpen] = useState(false);
+  const closeFlow = useCallback(() => setFlowOpen(false), []);
+  const turnFlowOn = useCallback(() => {
+    void bridge
+      .flowSettings?.()
+      .then((s) => bridge.flowSetSettings?.({ ...s, enabled: true }))
+      .catch(() => undefined);
+  }, [bridge]);
+  // Ask Herta (§9): Flow closes and the post goes into the open session's
+  // composer as a quote, or into a new session's when none is open. The
+  // quote is in the session's language; a new session's is the window's.
+  const askHerta = useCallback(
+    (post: FlowPostView) => {
+      const s = sessionStore.getSnapshot();
+      const open = s.sessionId !== null;
+      const issue = flow.issues.find((i) =>
+        i.posts.some((p) => p.id === post.id),
+      );
+      const quote = postQuote(post, open ? s.lang : locale, issue?.number);
+      if (quote === undefined) return;
+      setFlowOpen(false);
+      if (open) {
+        const staged = s.composerQuotes.some(
+          (q) => q.kind === "post" && q.url === quote.url,
+        );
+        if (!staged) sessionStore.addComposerQuote(quote);
+        requestAnimationFrame(() => runShortcut("focusComposer"));
+        return;
+      }
+      sessionStore.quoteIntoNextSession(quote);
+      void bridge.createSession({}).then(
+        (created) => {
+          if (created === null) sessionStore.dropNextSessionQuotes();
+        },
+        () => sessionStore.dropNextSessionQuotes(),
+      );
+    },
+    [bridge, sessionStore, locale, flow.issues],
+  );
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // The application menu's Settings… (Cmd+, on macOS since 2026-09-23;
@@ -165,6 +217,14 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
   useEffect(
     () => bridge.onPageCommand?.((id) => void runShortcut(id)),
     [bridge],
+  );
+  useShortcut(
+    "openFlow",
+    () => {
+      setFlowOpen((v) => !v);
+      return true;
+    },
+    flow.available,
   );
   useShortcut("showShortcuts", () => {
     setShortcutsOpen((v) => !v);
@@ -236,6 +296,14 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         searchActive={searchOpen}
         onToggleSearch={toggleSearch}
         searchButtonRef={searchButtonRef}
+        {...(flow.available
+          ? {
+              flow: {
+                open: flowOpen,
+                unread: flow.state.unreadIssueId !== null,
+              },
+            }
+          : {})}
       />
       <Sidebar
         searchOpen={searchOpen}
@@ -250,6 +318,18 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
         <WorkspaceBodyShell>
           <Workspace />
           <UtilityRail />
+          {flow.available && (
+            <FlowPanel
+              open={flowOpen}
+              onClose={closeFlow}
+              state={flow.state}
+              issues={flow.issues}
+              onRefresh={flow.refresh}
+              onMarkRead={flow.markRead}
+              onTurnOn={turnFlowOn}
+              onAsk={askHerta}
+            />
+          )}
         </WorkspaceBodyShell>
       </FileViewerProvider>
       <SettingsModal

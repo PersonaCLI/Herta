@@ -291,6 +291,13 @@ export {
   webSearchTool,
   webTools,
 } from "./web/index.js";
+export {
+  fetchPreviewImage,
+  type PreviewImage,
+  type PreviewRefusal,
+  previewImageUrl,
+  publicAddress,
+} from "./web/preview-image.js";
 export type {
   WriteNewFileData,
   WriteNewFileRuleDeps,

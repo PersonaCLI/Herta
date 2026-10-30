@@ -101,9 +101,10 @@ export function buildCsp(opts: CspOptions): string {
     // Bundled art plus the small assets Vite inlines as data: URIs, the
     // custom scheme attachment images are served over (ADR 0048) — stored
     // pictures stay on disk instead of riding the record as data: URIs —
-    // and the 3D device card's scheme (ADR 0057): its two scalar PNG maps
-    // load through an image element, not fetch.
-    "img-src 'self' data: blob: herta-attachment: herta-asset:",
+    // the 3D device card's scheme (ADR 0057): its two scalar PNG maps
+    // load through an image element, not fetch — and Flow's pictures (ADR
+    // 0084 §8), served from the app's own store, never a remote origin.
+    "img-src 'self' data: blob: herta-attachment: herta-asset: herta-flow:",
     // The custom scheme the voice clips are served over.
     "media-src 'self' herta-voice: data: blob:",
     "font-src 'self' data:",

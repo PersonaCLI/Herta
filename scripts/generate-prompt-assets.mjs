@@ -77,6 +77,9 @@ function compileTree(dirName) {
     // Keyed by FULL filename: materialization writes these files verbatim
     // into a fresh workspace's .herta/narrative/.
     feianSeeds: dirRecord("feian-seeds"),
+    // Flow (ADR 0084 §7): the frame her word on a post is completed in, and
+    // the judge that reads it.
+    flow: dirRecord("flow", stem),
   };
 }
 
@@ -139,6 +142,7 @@ checkKeyParity(
 );
 checkKeyParity("openings", assets.openings, assetsEn.openings);
 checkKeyParity("feianSeeds", assets.feianSeeds, assetsEn.feianSeeds);
+checkKeyParity("flow", assets.flow, assetsEn.flow);
 
 const body = `// GENERATED FILE — DO NOT EDIT BY HAND.
 // Source of truth: packages/herta/prompts/** (zh) and
@@ -173,6 +177,10 @@ export interface PromptAssets {
    *  bodies that ever shipped under that name. A live copy matching one is
    *  archived rather than left to duplicate its successor (ADR 0053). */
   readonly retiredFeian: Readonly<Record<string, readonly string[]>>;
+  /** Flow (ADR 0084 §7), keyed by filename stem: word — the frame her
+   *  word on a post is completed in, its worked examples included;
+   *  judge — the system message of the judge that reads it. */
+  readonly flow: Readonly<Record<string, string>>;
 }
 
 export const PROMPT_ASSETS: PromptAssets = ${JSON.stringify(assets, null, 2)};

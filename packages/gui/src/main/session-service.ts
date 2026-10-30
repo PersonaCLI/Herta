@@ -75,6 +75,7 @@ import {
   watchAttention,
 } from "./attention.js";
 import { createElectronAttentionHost } from "./attention-electron.js";
+import { createFlowHost, flowDirFor } from "./flow-host.js";
 import { installMode } from "./install-mode.js";
 import {
   readDeepSeekKeyPlain,
@@ -697,6 +698,28 @@ export function createSessionService(
     win,
     prefs: () => attentionPrefs,
     locale: () => uiLocale,
+  });
+
+  // Flow (ADR 0084): one issue a day for the app, the same from every
+  // session. It reads the host only for whether a turn is in flight, the
+  // recent workspaces and Herta's model; its settings are per user.
+  const flowUserData = app.getPath("userData");
+  const flow = createFlowHost({
+    dir: flowDirFor(flowUserData),
+    host: () => host,
+    apiKey: () => readDeepSeekKeyPlain() ?? "",
+    // The same dev-only override the sessions get, never in a packaged build.
+    ...(!installMode().installed &&
+    process.env.HERTA_DEEPSEEK_BASE_URL !== undefined &&
+    process.env.HERTA_DEEPSEEK_BASE_URL !== ""
+      ? { baseUrl: process.env.HERTA_DEEPSEEK_BASE_URL }
+      : {}),
+    lang: () => uiLocale,
+    readSettings: async () => (await readGlobalSettings(flowUserData)).flow,
+    writeSettings: (next) =>
+      updateGlobalSettings(flowUserData, (cur) => ({ ...cur, flow: next })),
+    send,
+    openExternal: (url) => shell.openExternal(url),
   });
 
   // Interaction language (slice 4): resolved FRESH here per activation (like
@@ -1375,6 +1398,7 @@ export function createSessionService(
         },
       },
     });
+    flow.register(handle);
   }
   registerHandlers();
 
@@ -1583,6 +1607,8 @@ export function createSessionService(
       // it reads is empty unless a run was cut off, so this costs a file read;
       // the process query it may spawn runs off this thread.
       void host.reapOrphanedProcesses();
+      // Flow's clock (ADR 0084 §6): its first tick a minute from now.
+      void flow.start().catch(() => undefined);
     } catch (err) {
       console.error("[herta] session bootstrap failed:", err);
       host = null;
@@ -1603,6 +1629,8 @@ export function createSessionService(
       ownedChannels.length = 0;
       handlersRegistered = false;
     }
+    // Flow's run in flight stops first: it reads the host.
+    await flow.dispose().catch(() => undefined);
     await host?.closeActiveSession();
     host?.dispose();
     host = null;

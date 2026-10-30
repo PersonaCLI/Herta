@@ -90,6 +90,12 @@ export interface GlobalSettings {
    *  it at every finished turn. Per user — one small call per reply, on the
    *  user's key. */
   readonly composerPredictions?: boolean;
+  /** Flow (ADR 0084 §10): on or off, its three sources, the named
+   *  interests. Per user, not per workspace — Flow is one for the app (§2)
+   *  and spends the user's key. Read only through `normalizeFlowSettings`,
+   *  so a malformed section falls back field by field and never resets the
+   *  rest of this file. */
+  readonly flow?: unknown;
 }
 
 /** Whether an attached PDF's pictures are transcribed: the ONE resolver the

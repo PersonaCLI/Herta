@@ -44,10 +44,10 @@ import {
   withoutChip,
 } from "../../lib/file-mention.js";
 import {
+  chipLabel,
   composeQuotedMessage,
   joinHeld,
   quotedMessagePreview,
-  quoteLabel,
   quotesBack,
 } from "../../lib/quote-format.js";
 import { recallLastUserMessage } from "../../lib/recall-last-message.js";
@@ -1673,7 +1673,7 @@ export function Composer(): JSX.Element {
                   <path d="M3 9.5c-.3-1.8.3-3.4 2-4.2M7.5 9.5c-.3-1.8.3-3.4 2-4.2" />
                 </svg>
                 <span className="composer-quote__label">
-                  {quoteLabel(q, lang)}
+                  {chipLabel(q, lang)}
                 </span>
                 <span className="composer-quote__preview">
                   {q.title ??
@@ -1683,7 +1683,7 @@ export function Composer(): JSX.Element {
                 <button
                   type="button"
                   className="composer-quote__remove"
-                  aria-label={`${t("composer.quote.remove")} ${quoteLabel(q, lang)}`}
+                  aria-label={`${t("composer.quote.remove")} ${chipLabel(q, lang)}`}
                   onClick={() => sessionStore.removeComposerQuote(q.id)}
                 >
                   <svg

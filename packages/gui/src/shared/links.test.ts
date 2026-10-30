@@ -59,6 +59,20 @@ describe("recordedWebUrls / isRecordedWebUrl (ADR 0080 §5)", () => {
     ]);
   });
 
+  it("a Flow post the Trailblazer quoted names its page (ADR 0084 §9); a URL he only typed does not", () => {
+    const quoted = [
+      {
+        kind: "user",
+        text: "〔引用 https://nodejs.org/en/blog/release/v24 · Node 24〕\n```\nbody\n```\n\nok?",
+      },
+      { kind: "user", text: "see https://evil.example/x" },
+    ];
+    expect(
+      isRecordedWebUrl("https://nodejs.org/en/blog/release/v24", quoted),
+    ).toBe(true);
+    expect(isRecordedWebUrl("https://evil.example/x", quoted)).toBe(false);
+  });
+
   it("opens only a URL the session's own record names", () => {
     expect(isRecordedWebUrl("https://vitest.dev/config/update", record)).toBe(
       true,

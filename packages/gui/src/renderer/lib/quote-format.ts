@@ -12,7 +12,9 @@
  *
  * Herta has no tools, so the source itself rides the record (D7); 板砖
  * reads it the same way when the message calls him. The bubble reads the
- * same shape back into a card (`parseLeadingQuotes`). Pure.
+ * same shape back into a card (`parseLeadingQuotes`). A Flow post (ADR
+ * 0084 §9) is a quote too, its label the page's URL, which Herta reads as
+ * its host (`nameQuotedPages` in `@herta/core`). Pure.
  */
 
 import { makeT } from "../i18n/LocaleProvider.js";
@@ -23,7 +25,9 @@ import { inertMentions } from "./file-mention.js";
  *  has lines of its own. */
 export type QuoteUnit = "page" | "para";
 
-export interface ComposerQuote {
+/** A file's lines, pages or paragraphs, picked from the viewer's page. */
+export interface FileQuote {
+  readonly kind?: undefined;
   readonly id: string;
   /** Workspace-relative, forward slashes. */
   readonly path: string;
@@ -39,6 +43,25 @@ export interface ComposerQuote {
   /** The fence's language tag, when the file has one. */
   readonly fence?: string;
 }
+
+/** A Flow post brought to Herta (ADR 0084 §9). */
+export interface PostQuote {
+  readonly kind: "post";
+  readonly id: string;
+  /** The source page, http(s): the header's label, for 板砖. */
+  readonly url: string;
+  readonly title: string;
+  /** The site and date, the write-up and her word (`postQuote`). */
+  readonly text: string;
+  // A file quote's fields, never set: readable on either kind.
+  readonly path?: undefined;
+  readonly from?: undefined;
+  readonly to?: undefined;
+  readonly unit?: undefined;
+  readonly fence?: undefined;
+}
+
+export type ComposerQuote = FileQuote | PostQuote;
 
 export const QUOTE_MAX_LINES = 200;
 export const QUOTE_MAX_CHARS = 8_000;
@@ -110,6 +133,17 @@ const HEADER = new RegExp(
   "u",
 );
 const LABEL = /^(.+):(\d+)(?:–(\d+))?$/;
+/** A post quote's label: its page's URL, one token. */
+const URL_LABEL = /^https?:\/\/\S+$/u;
+
+/** A page's host, as the chip, the bubble and Herta name it. */
+export function quoteHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
 
 /** `path:from–to`, or `path:from` for one line; a PDF's pages as
  *  `path · 第 3 页` (zh) or `path · p. 3` (en), a Word document's paragraphs
@@ -177,6 +211,58 @@ export function boundQuoteText(text: string, lang: "zh" | "en"): string {
   return `${body}\n${note}`;
 }
 
+/** A Flow post as a quote: its URL with any `@brick` broken as `%40` (the
+ *  header sits outside the fence, where an EN session's alias reads it),
+ *  its title on one line, and its text bounded. The text opens on the issue
+ *  it came from and ends on her word as "yours": written as 「黑塔：…」, she
+ *  read her own word as a line put in her mouth (live run 2026-10-30).
+ *  Undefined for a URL that is not http(s). */
+export function postQuote(
+  post: {
+    readonly id: string;
+    readonly url: string;
+    readonly site: string;
+    readonly date: string | null;
+    readonly title: string;
+    readonly detail: string;
+    readonly word: string | null;
+  },
+  lang: "zh" | "en",
+  issue?: number,
+): PostQuote | undefined {
+  let url: string;
+  try {
+    const parsed = new URL(post.url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+      return undefined;
+    url = parsed.href.replace(/@(?=brick)/giu, "%40");
+  } catch {
+    return undefined;
+  }
+  const head = [
+    ...(issue !== undefined
+      ? [makeT(lang)("quote.broadcast", { n: issue })]
+      : []),
+    post.site,
+    ...(post.date !== null ? [post.date] : []),
+  ].join(" · ");
+  const parts = [head, post.detail];
+  if (post.word !== null)
+    parts.push(makeT(lang)("quote.word", { word: post.word }));
+  return {
+    kind: "post",
+    id: `post-${post.id}`,
+    url,
+    title: post.title.replace(/\s+/gu, " ").trim(),
+    text: boundQuoteText(parts.join("\n\n"), lang),
+  };
+}
+
+/** The composer chip's label: a file's range, or a post's site. */
+export function chipLabel(q: ComposerQuote, lang: "zh" | "en"): string {
+  return q.kind === "post" ? quoteHost(q.url) : quoteLabel(q, lang);
+}
+
 /** A fence of backticks longer than any run inside the text. */
 function fenceFor(text: string): string {
   let longest = 0;
@@ -194,9 +280,11 @@ export function formatQuote(q: ComposerQuote, lang: "zh" | "en"): string {
       ? ` · ${inertMentions(q.title)}`
       : "";
   const fence = fenceFor(q.text);
+  const label = q.kind === "post" ? q.url : quoteLabel(q, lang);
+  const tag = q.kind === "post" ? "" : (q.fence ?? "");
   return [
-    `${OPEN}${headerWord(lang)} ${quoteLabel(q, lang)}${title}${CLOSE}`,
-    `${fence}${q.fence ?? ""}`,
+    `${OPEN}${headerWord(lang)} ${label}${title}${CLOSE}`,
+    `${fence}${tag}`,
     q.text,
     fence,
   ].join("\n");
@@ -216,6 +304,8 @@ export function composeQuotedMessage(
 
 export interface ParsedQuote {
   readonly label: string;
+  /** A Flow post's page (ADR 0084 §9): the label is this URL. */
+  readonly url?: string;
   readonly path?: string;
   readonly from?: number;
   readonly to?: number;
@@ -240,7 +330,10 @@ function splitHeader(
   title: string | undefined,
 ): { readonly label: string; readonly title?: string } {
   const at = parseLabel(label);
-  if (at?.unit !== undefined && LABEL.test(at.path)) {
+  if (
+    at?.unit !== undefined &&
+    (LABEL.test(at.path) || URL_LABEL.test(at.path))
+  ) {
     const phrase = label.slice(at.path.length + " · ".length);
     return {
       label: at.path,
@@ -270,9 +363,12 @@ export function parseLeadingQuotes(message: string): {
     const close = lines.findIndex((l, k) => k > i + 1 && l === fence);
     if (close === -1) break;
     const { label, title } = splitHeader(head[1] as string, head[2]);
-    const at = parseLabel(label);
+    // A URL is a page, never a file's line (`https://a.dev:8080`).
+    const page = URL_LABEL.test(label);
+    const at = page ? undefined : parseLabel(label);
     quotes.push({
       label,
+      ...(page ? { url: label } : {}),
       ...(at ?? {}),
       ...(title !== undefined ? { title } : {}),
       text: lines.slice(i + 2, close).join("\n"),
@@ -334,9 +430,19 @@ export function quotesBack(message: string): {
   if (parsed.quotes.length === 0) return { quotes: [], rest: message };
   const quotes: ComposerQuote[] = [];
   for (const q of parsed.quotes) {
+    backSeq += 1;
+    if (q.url !== undefined) {
+      quotes.push({
+        kind: "post",
+        id: `qb${Date.now().toString(36)}-${backSeq}`,
+        url: q.url,
+        title: q.title ?? "",
+        text: q.text,
+      });
+      continue;
+    }
     if (q.path === undefined || q.from === undefined || q.to === undefined)
       return { quotes: [], rest: message };
-    backSeq += 1;
     quotes.push({
       id: `qb${Date.now().toString(36)}-${backSeq}`,
       path: q.path,
@@ -359,9 +465,12 @@ export function quotesBack(message: string): {
 export function quotedMessagePreview(message: string): string {
   const { quotes, rest } = parseLeadingQuotes(message);
   const cut = HEADER.exec(rest.split("\n", 1)[0] ?? "");
+  // A post's label is its URL; the preview names its site.
+  const named = (label: string): string =>
+    URL_LABEL.test(label) ? quoteHost(label) : label;
   const labels = [
-    ...quotes.map((q) => q.label),
-    ...(cut !== null ? [cut[1] as string] : []),
+    ...quotes.map((q) => named(q.label)),
+    ...(cut !== null ? [named(cut[1] as string)] : []),
   ];
   if (labels.length === 0) return message;
   const head = labels.map((l) => `${OPEN}${l}${CLOSE}`).join("");

@@ -6,7 +6,10 @@ import {
 } from "../../../shared/browser-page.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
-import { subscribeOverlayStack, topOverlay } from "../../lib/overlay-stack.js";
+import {
+  overlayOpenAbove,
+  subscribeOverlayStack,
+} from "../../lib/overlay-stack.js";
 import { pageInMotion, subscribePageMotion } from "../../lib/page-motion.js";
 import { PageNewTab } from "./PageNewTab.js";
 
@@ -16,10 +19,10 @@ const SETTLE_FRAMES = 6;
 
 /** An overlay that draws over the viewer: everything on the stack except the
  *  approval panel, an inline layer that stays out of the page by placement
- *  (ADR 0083 §3). */
+ *  (ADR 0083 §3). Any of them, not only the topmost: with Flow open and an
+ *  approval above it, the page drew over Flow (ADR 0084 §2). */
 function coveredNow(): boolean {
-  const top = topOverlay();
-  return top !== null && top !== "approval";
+  return overlayOpenAbove(Number.NEGATIVE_INFINITY, ["approval"]);
 }
 
 /** The page's still frame, and the size it was taken at: it is drawn at that

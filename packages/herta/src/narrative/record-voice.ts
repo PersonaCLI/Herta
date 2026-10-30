@@ -3,6 +3,7 @@ import {
   type EvidenceSection,
   isBrowserOpVerb,
   isServerOpVerb,
+  nameQuotedPages,
   type SystemBlock,
 } from "@herta/core";
 import { pageRouteOf } from "./page-record-projection.js";
@@ -1071,6 +1072,21 @@ export function nameMentionedPaths(
     );
   }
   return out;
+}
+
+/**
+ * A Flow post the user quoted (ADR 0084 §9) as Herta reads it: the page by
+ * its host, as a page 板砖 read reads (ADR 0080 §5), never the URL. 板砖
+ * reads the message as written, so the URL still reaches the one who can
+ * fetch it.
+ */
+export function nameQuotedPagesForHerta(
+  text: string,
+  lang: PromptLang,
+): string {
+  return nameQuotedPages(text, (url) =>
+    lang === "en" ? `the ${hostOf(url)} page` : `网页 ${hostOf(url)}`,
+  );
 }
 
 function escapeRegExp(text: string): string {

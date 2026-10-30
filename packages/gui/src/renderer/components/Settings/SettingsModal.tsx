@@ -9,9 +9,11 @@ import {
 } from "../../lib/overlay-stack.js";
 import { runShortcut } from "../../lib/shortcut-registry.js";
 import { KeyCaps, useMacKeys } from "../common/KeyCaps.js";
+import { FlowIcon } from "../Flow/FlowPanel.js";
 import { BanzhuanSettings } from "./BanzhuanSettings.js";
 import { DeepSeekSettings } from "./DeepSeekSettings.js";
 import { DreamSettings } from "./DreamSettings.js";
+import { FlowSettings } from "./FlowSettings.js";
 import { LanguageSettings } from "./LanguageSettings.js";
 import { primeSettings } from "./settings-snapshot.js";
 import { UpdateSettings } from "./UpdateSettings.js";
@@ -221,6 +223,13 @@ const GROUPS = [
         Icon: MoonIcon,
         Pane: DreamSettings,
         rows: false,
+      },
+      {
+        key: "flow",
+        labelKey: "nav.flow" satisfies MessageKey,
+        Icon: FlowIcon,
+        Pane: FlowSettings,
+        rows: true,
       },
     ],
   },

@@ -3,7 +3,7 @@ import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { type MessagePick, renderMentionText } from "../../lib/mention-text.js";
-import { parseLeadingQuotes } from "../../lib/quote-format.js";
+import { parseLeadingQuotes, quoteHost } from "../../lib/quote-format.js";
 import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { BubbleTime } from "./BubbleTime.js";
@@ -66,6 +66,9 @@ export interface UserBubbleProps {
   readonly mentions?: readonly string[];
   /** Elements picked on the page (ADR 0083 §4): drawn as their chips. */
   readonly picks?: readonly MessagePick[];
+  /** A quoted Flow post's page to the OS browser (ADR 0084 §9); main opens
+   *  it only when this session's record names it. */
+  readonly onOpenWebPage?: (url: string) => void;
 }
 
 /** Everything the bubble needs to draw one attached picture. `caption` is
@@ -114,13 +117,16 @@ export function imageViewsFromBlocks(
  * which must read exactly like the bubble it lands as: it drew the whole
  * message, the quote's header and fence as text, so a sent quote flew
  * expanded and collapsed to its card on landing (owner 2026-10-29).
- * `inert` draws the same elements, with nothing to click or focus.
+ * A Flow post's card (ADR 0084 §9) names its site and title; its label
+ * opens the page. `inert` draws the same elements, with nothing to click or
+ * focus.
  */
 export function UserBubbleBody(props: {
   readonly text: string;
   readonly lang: "zh" | "en";
   readonly mentions?: readonly string[] | undefined;
   readonly picks?: readonly MessagePick[] | undefined;
+  readonly onOpenWebPage?: ((url: string) => void) | undefined;
   readonly inert?: boolean;
 }): JSX.Element {
   const { lang, inert = false } = props;
@@ -136,6 +142,31 @@ export function UserBubbleBody(props: {
       {quotes.map((q, i) => {
         const preview = q.text.split("\n").slice(0, 3).join("\n");
         const target = q.path;
+        const page = q.url;
+        if (page !== undefined) {
+          const name = `${quoteHost(page)}${q.title !== undefined && q.title !== "" ? ` · ${q.title}` : ""}`;
+          const openPage = inert ? undefined : props.onOpenWebPage;
+          return (
+            <div
+              // biome-ignore lint/suspicious/noArrayIndexKey: quotes are positional in an immutable message
+              key={i}
+              className="message-quote is-page"
+            >
+              {openPage !== undefined ? (
+                <button
+                  type="button"
+                  className="message-quote__label"
+                  onClick={() => openPage(page)}
+                >
+                  {name}
+                </button>
+              ) : (
+                <span className="message-quote__label">{name}</span>
+              )}
+              <pre className="message-quote__text">{preview}</pre>
+            </div>
+          );
+        }
         return (
           <div
             // biome-ignore lint/suspicious/noArrayIndexKey: quotes are positional in an immutable message
@@ -242,6 +273,9 @@ export const UserBubble = memo(function UserBubble(
             ? { mentions: props.mentions }
             : {})}
           {...(props.picks !== undefined ? { picks: props.picks } : {})}
+          {...(props.onOpenWebPage !== undefined
+            ? { onOpenWebPage: props.onOpenWebPage }
+            : {})}
         />
       </div>
       {/* Hover-revealed action row BELOW the bubble (a sibling, not a child) —

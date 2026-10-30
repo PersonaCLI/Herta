@@ -42,6 +42,13 @@ import type {
   PageNavigation,
   PageState,
 } from "../../shared/browser-page.js";
+import type {
+  FlowEvent,
+  FlowIssueView,
+  FlowRefreshOutcome,
+  FlowSettingsView,
+  FlowStateView,
+} from "../../shared/flow.js";
 import type { LiveToolSnapshot } from "../../shared/live-tool-feed.js";
 import type { ShortcutId } from "../../shared/shortcuts.js";
 
@@ -967,6 +974,20 @@ export interface HertaBridge {
   onPageCommand?(cb: (id: ShortcutId) => void): () => void;
   /** 板砖 opened a page in this session (ADR 0083 §6): show its tab. */
   onPageOpen?(cb: (sessionId: string) => void): () => void;
+  /** Flow (ADR 0084): the day's issue of the Trailblazer's world. OPTIONAL
+   *  as a set: without `flowState` there is no Flow button. */
+  flowState?(): Promise<FlowStateView>;
+  /** The issues of the last seven days, newest first. */
+  flowIssues?(): Promise<readonly FlowIssueView[]>;
+  /** Refresh now (§6): a new issue for today, inside the day's budget. */
+  flowRefresh?(): Promise<FlowRefreshOutcome>;
+  /** The panel showed this issue: the button's dot goes. */
+  flowMarkRead?(issueId: string): void;
+  /** A post's source, in the OS browser (main checks the address). */
+  flowOpenSource?(url: string): void;
+  flowSettings?(): Promise<FlowSettingsView>;
+  flowSetSettings?(next: FlowSettingsView): Promise<FlowSettingsView>;
+  onFlow?(cb: (e: FlowEvent) => void): () => void;
   onWorkspace(cb: (e: WorkspaceEvent) => void): () => void;
   /** The workspace's repository state (ADR 0058) — the rail's repository
    *  card. OPTIONAL: fakes and the website demo omit the pair, and the card

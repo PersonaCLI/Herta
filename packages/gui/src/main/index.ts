@@ -45,6 +45,8 @@ import {
 import { ServerRegistry } from "./browser/server-registry.js";
 import { buildCsp } from "./csp.js";
 import createDocumentWorker from "./document-worker?nodeWorker";
+import { flowDirFor } from "./flow-host.js";
+import { registerFlowProtocol, registerFlowScheme } from "./flow-protocol.js";
 import { hideToTray } from "./hide-to-tray.js";
 import { installMode } from "./install-mode.js";
 import { applyLoginPath, launchLocaleEnv } from "./login-path.js";
@@ -78,11 +80,12 @@ import { captureWindowState, restoreWindowBounds } from "./window-state.js";
 
 // Privileged-scheme registration MUST happen before app ready (Electron
 // requirement), so the `herta-voice` audio scheme, the `herta-attachment`
-// image scheme (ADR 0048) and the `herta-asset` scene-asset scheme (ADR
-// 0057) are declared at module load.
+// image scheme (ADR 0048), the `herta-asset` scene-asset scheme (ADR
+// 0057) and Flow's picture scheme (ADR 0084 §8) are declared at module load.
 registerVoiceScheme();
 registerAttachmentScheme();
 registerAssetScheme();
+registerFlowScheme();
 
 // Documents are read on a thread of their own (owner 2026-10-16): pdfjs
 // decoded a page's every picture in one stretch of the main process — 3.1 s
@@ -774,6 +777,9 @@ void app
     registerAttachmentProtocol(
       () => mainService?.backendWorkspace() ?? appWorkspaceRoot(),
     );
+    // Serve Flow's kept pictures over herta-flow:// (ADR 0084 §8): an issue
+    // id and a card's file name, nothing that names a path.
+    registerFlowProtocol(flowDirFor(app.getPath("userData")));
     // Serve the 3D device card's bundled assets over herta-asset:// (ADR 0057):
     // Vite copies src/renderer/public into out/renderer, which is what the
     // package carries; an `electron-vite dev` run never populates that copy,

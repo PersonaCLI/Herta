@@ -36,6 +36,30 @@ describe("serializeBlock — user blocks", () => {
     expect(out).toContain(`@${ZWSP}板砖`);
   });
 
+  it("a quoted Flow post's page reads as its host, never the URL (ADR 0084 §9)", () => {
+    const text = [
+      "〔引用 https://nodejs.org/en/blog/release/v24 · Node.js 24 is out〕",
+      "```",
+      "Node.js · 2026-10-30",
+      "",
+      "A new major.",
+      "",
+      "你在播报里给这条写的短评：等一个月。",
+      "```",
+      "",
+      "现在升级吗？",
+    ].join("\n");
+    const out = serializeBlock({ kind: "user", text });
+    expect(out).toContain("〔引用 网页 nodejs.org · Node.js 24 is out〕");
+    expect(out).not.toContain("https://");
+    expect(out).toContain("你在播报里给这条写的短评：等一个月。");
+    const en = serializeBlock(
+      { kind: "user", text: text.replace("引用", "Quote") },
+      { lang: "en" },
+    );
+    expect(en).toContain("〔Quote the nodejs.org page · Node.js 24 is out〕");
+  });
+
   it("handles multi-line user text", () => {
     const block: TerminalRecordBlock = {
       kind: "user",

@@ -33,6 +33,27 @@ export const MAX_LIVE_PAGES = 3;
 /** The page's corner radius, the page tab body's own (reference-ux.css). */
 const PAGE_RADIUS_PX = 10;
 
+/** The page's scrollbars in the app's own shape — a thin rounded thumb on
+ *  no track, no arrow buttons — instead of the OS's (owner 2026-10-30). A
+ *  neutral grey, since a page may be light or dark. Display only, and only
+ *  the old prefixed rules: a page that styles its own scrollbars with the
+ *  standard properties keeps them. */
+const PAGE_SCROLLBAR_CSS = `
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.42);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.62);
+  background-clip: padding-box;
+}
+`;
+
 /** Where a parked page waits: on the window, outside what it shows. */
 const PARK_X = -30_000;
 /** A page 板砖 opens before the Trailblazer has shown it lays out at this
@@ -456,6 +477,12 @@ export class PageHost {
     wc.on("will-redirect", guard);
     wc.on("will-frame-navigate", (event) => {
       if (event.isMainFrame) guard(event, event.url);
+    });
+    // Each document gets the scrollbar sheet again: inserted CSS does not
+    // outlive a navigation.
+    wc.on("dom-ready", () => {
+      if (!wc.isDestroyed())
+        void wc.insertCSS(PAGE_SCROLLBAR_CSS).catch(() => undefined);
     });
     const push = (): void => {
       if (!wc.isDestroyed()) this.events.state(stateOf(sessionId, view));

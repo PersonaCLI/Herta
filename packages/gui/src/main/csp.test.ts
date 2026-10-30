@@ -96,7 +96,7 @@ describe("buildCsp (audit BL2)", () => {
     // own scheme (ADR 0048) rather than the record; the 3D device card's
     // scalar maps load as images over its scheme (ADR 0057).
     expect(csp).toContain(
-      "img-src 'self' data: blob: herta-attachment: herta-asset:",
+      "img-src 'self' data: blob: herta-attachment: herta-asset: herta-flow:",
     );
     // The viewer's PDF renderer runs pdf.js's worker from the bundle (ADR
     // 0054 §5) — the one directive that opened since the audit; workers

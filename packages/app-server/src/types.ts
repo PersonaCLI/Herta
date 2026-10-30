@@ -673,6 +673,9 @@ export interface SessionHost {
    *  dispatch — in this session or any later one. A field left out keeps its
    *  value. Persistence is the caller's job. */
   setModels(models: Partial<SessionModels>): void;
+  /** The models the next turn and dispatch read. Flow speaks her word on
+   *  Herta's (ADR 0084 §7). Optional: a host's fakes need not carry it. */
+  models?(): SessionModels;
   /** The user did something in the window that is not a turn (a rewind, an
    *  attachment, a search, a file opened in the viewer): it counts as
    *  activity for the dream trigger, and a running pass steps aside at its

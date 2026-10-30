@@ -426,6 +426,10 @@ class SessionHostImpl implements SessionHost {
     this.modelsHolder.current = { ...this.modelsHolder.current, ...models };
   }
 
+  models(): SessionModels {
+    return this.modelsHolder.current;
+  }
+
   /** The launcher's record of its servers (ADR 0083 §5): the desktop's
    *  main journals each server it starts here, so a relaunch can end what
    *  an exit left running. */

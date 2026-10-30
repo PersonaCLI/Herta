@@ -43,6 +43,8 @@ function renderBlock(
   onRewind?: () => void,
   // Pictures sent WITH this message (ADR 0048 §4), lifted onto the bubble.
   images?: readonly SystemBlock[],
+  // A quoted Flow post's page to the OS browser (ADR 0084 §9).
+  onOpenWebPage?: (url: string) => void,
 ): JSX.Element | null {
   // Blocks → bubble views here rather than in UserBubble, so the optimistic
   // echo (whose pictures come from the composer strip, not the record) can
@@ -70,6 +72,7 @@ function renderBlock(
             : {})}
           {...(block.picks !== undefined ? { picks: block.picks } : {})}
           {...(onRewind !== undefined ? { onRewind } : {})}
+          {...(onOpenWebPage !== undefined ? { onOpenWebPage } : {})}
           {...(imageViews.length > 0 ? { images: imageViews } : {})}
         />
       );
@@ -206,6 +209,7 @@ export function useConversationRows(opts: {
               // `.is-busy` rule that hides the control mid-turn).
               item.index === lastUserIndex ? handleRewind : undefined,
               item.images,
+              openWebPage,
             )}
           </ErrorBoundary>
         ) : null,
@@ -213,7 +217,7 @@ export function useConversationRows(opts: {
     // The 30s clock is deliberately absent (perf 2026-08-25): timestamps
     // subscribe to the shared tick in their BubbleTime leaf, so a tick
     // invalidates label leafs, never these row elements.
-    [items, recordStart, lang, lastUserIndex, handleRewind],
+    [items, recordStart, lang, lastUserIndex, handleRewind, openWebPage],
   );
 
   // ── assembly ────────────────────────────────────────────────────────────

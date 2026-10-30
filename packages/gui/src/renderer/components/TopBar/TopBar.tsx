@@ -8,6 +8,7 @@ import {
 import { useT } from "../../i18n/LocaleProvider.js";
 import { isRepeatClick } from "../../lib/repeat-click.js";
 import { runShortcut, useShortcut } from "../../lib/shortcut-registry.js";
+import { FlowIcon } from "../Flow/FlowPanel.js";
 import { TitleText } from "../TitleText.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import {
@@ -27,6 +28,12 @@ export interface TopBarProps {
   /** Forwarded to the search button so the parent can return focus to it
    *  when the search field closes. */
   readonly searchButtonRef?: Ref<HTMLButtonElement>;
+  /** Flow's button (ADR 0084 §2), beside the browser's; absent where the
+   *  bridge has no Flow. */
+  readonly flow?: {
+    readonly open: boolean;
+    readonly unread: boolean;
+  };
 }
 
 /**
@@ -215,24 +222,41 @@ export function TopBar(props: TopBarProps): JSX.Element {
           just left of them; macOS has its lights on the left and no buttons
           here, so the bar runs to the window's edge (`.app.is-mac .topbar`).
           A session's page: shown only with one open, on the desktop. */}
+      {(props.flow !== undefined ||
+        (sessionId !== null && bridge.pageShow !== undefined)) && (
+        <span className="topbar-spacer" />
+      )}
       {sessionId !== null && bridge.pageShow !== undefined && (
-        <>
-          <span className="topbar-spacer" />
-          <Tooltip
-            label={t("shortcut.openBrowser")}
-            keys="openBrowser"
-            align="end"
+        <Tooltip
+          label={t("shortcut.openBrowser")}
+          keys="openBrowser"
+          align="end"
+        >
+          <button
+            type="button"
+            className="sidebar-header-icon"
+            aria-label={t("shortcut.openBrowser")}
+            onClick={() => runShortcut("openBrowser")}
           >
-            <button
-              type="button"
-              className="sidebar-header-icon"
-              aria-label={t("shortcut.openBrowser")}
-              onClick={() => runShortcut("openBrowser")}
-            >
-              <GlobeIcon />
-            </button>
-          </Tooltip>
-        </>
+            <GlobeIcon />
+          </button>
+        </Tooltip>
+      )}
+      {props.flow !== undefined && (
+        <Tooltip label={t("shortcut.openFlow")} keys="openFlow" align="end">
+          <button
+            type="button"
+            className={`sidebar-header-icon flow-button${props.flow.open ? " is-active" : ""}`}
+            aria-label={t("shortcut.openFlow")}
+            aria-pressed={props.flow.open}
+            onClick={() => runShortcut("openFlow")}
+          >
+            <FlowIcon />
+            {props.flow.unread && !props.flow.open && (
+              <i className="flow-button-dot" aria-hidden="true" />
+            )}
+          </button>
+        </Tooltip>
       )}
     </div>
   );

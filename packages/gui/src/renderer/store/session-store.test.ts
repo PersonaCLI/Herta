@@ -1796,3 +1796,44 @@ describe("SessionStore — composer predictions (owner 2026-10-10)", () => {
     expect(store.getSnapshot().prediction).toBeNull();
   });
 });
+
+describe("SessionStore — a quote for the next session (ADR 0084 §9)", () => {
+  const quote = {
+    kind: "post" as const,
+    id: "post-1",
+    url: "https://a.dev/x",
+    title: "T",
+    text: "body",
+  };
+  const reset = (mock: ReturnType<typeof createMockHertaBridge>, id: string) =>
+    mock.emitReset({
+      sessionId: id,
+      workspaceRoot: "/r",
+      record: [],
+      overlay: null,
+      backendWorkspace: "/r",
+      backendWorkspaceIsDefault: true,
+    });
+
+  it("lands in the composer of the session that opens next, and only that one", () => {
+    const mock = createMockHertaBridge();
+    const store = new SessionStore();
+    store.connect(mock.bridge);
+    store.quoteIntoNextSession(quote);
+    expect(store.getSnapshot().composerQuotes).toEqual([]);
+    reset(mock, "s1");
+    expect(store.getSnapshot().composerQuotes).toEqual([quote]);
+    reset(mock, "s2");
+    expect(store.getSnapshot().composerQuotes).toEqual([]);
+  });
+
+  it("a session that did not open takes its quotes with it", () => {
+    const mock = createMockHertaBridge();
+    const store = new SessionStore();
+    store.connect(mock.bridge);
+    store.quoteIntoNextSession(quote);
+    store.dropNextSessionQuotes();
+    reset(mock, "s1");
+    expect(store.getSnapshot().composerQuotes).toEqual([]);
+  });
+});

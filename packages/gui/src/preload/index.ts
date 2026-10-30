@@ -168,6 +168,18 @@ const bridge: HertaBridge = {
   serversStop: (sessionId, name) =>
     ipcRenderer.invoke(CMD.serversStop, sessionId, name),
   onServersChanged: (cb) => subscribe(EVT.serversChanged, cb),
+  flowState: () => ipcRenderer.invoke(CMD.flowState),
+  flowIssues: () => ipcRenderer.invoke(CMD.flowIssues),
+  flowRefresh: () => ipcRenderer.invoke(CMD.flowRefresh),
+  flowMarkRead: (issueId) => {
+    void ipcRenderer.invoke(CMD.flowMarkRead, issueId).catch(() => undefined);
+  },
+  flowOpenSource: (url) => {
+    void ipcRenderer.invoke(CMD.flowOpenSource, url).catch(() => undefined);
+  },
+  flowSettings: () => ipcRenderer.invoke(CMD.flowSettings),
+  flowSetSettings: (next) => ipcRenderer.invoke(CMD.flowSetSettings, next),
+  onFlow: (cb) => subscribe(EVT.flow, cb),
   onPageState: (cb) => subscribe(EVT.pageState, cb),
   onPageCommand: (cb) => subscribe(EVT.pageCommand, cb),
   onPageOpen: (cb) => subscribe(EVT.pageOpen, cb),

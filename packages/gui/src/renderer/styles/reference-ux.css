@@ -9374,3 +9374,1088 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
   color: #d9704f;
   overflow-wrap: anywhere;
 }
+
+/* ── Flow (ADR 0084): a panel of its own over the main area ───────────
+   Under the approval card (z 40), which still draws above it; the page view
+   parks while it is open (PageView `coveredNow`). The look is the tuner's
+   round 1 (owner 2026-10-30): one-line masthead, day tabs. The cards are
+   round 2 (owner: "too huge … too normal"): a lead story with a short wide
+   picture and the title over it, then numbered rows with a small picture
+   beside, and her word as a note in her own hand. Motion follows the usual
+   card numbers: a staggered rise, a 2px hover lift, a press-in before the
+   open, a 300–500 ms spring to grow. Transform, opacity and filter only. */
+.flow-panel {
+  --flow-herta: #6a4bd8;
+  --flow-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  position: absolute;
+  /* A card like the sidebar: inset from the window by the sidebar's own
+     18px, every corner round, and everything inside clipped to them. It ran
+     to the window's edge, cut square at the bottom, and an opened post
+     covered its rounded corner with a square one (owner 2026-10-30). */
+  inset: 0 18px 18px 14px;
+  z-index: 30;
+  background: var(--shell);
+  backdrop-filter: blur(22px) saturate(1.2);
+  border: 1px solid var(--ink-a06);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    0 8px 24px rgba(34, 45, 57, 0.08),
+    -8px 0 32px var(--shadow-pop);
+  transform: translateX(104%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 520ms var(--ease-signature),
+    opacity 380ms ease,
+    visibility 0s linear 520ms;
+}
+.flow-panel.is-open {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 520ms var(--ease-signature),
+    opacity 380ms ease,
+    visibility 0s;
+}
+:root[data-theme="dark"] .flow-panel {
+  --flow-herta: #a48bff;
+}
+.flow-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+}
+/* Under an opened post the list steps aside once the post has faded in:
+   its scrollbar showed through the frosted page. */
+.flow-panel.is-reading .flow-scroll {
+  visibility: hidden;
+  transition: visibility 0s linear 280ms;
+}
+.flow-col {
+  width: min(560px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 22px 0 48px;
+  display: grid;
+  gap: 16px;
+}
+.flow-mast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+/* The station's line drawing, its night version on the dark shell. */
+.flow-station {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+}
+.flow-station-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* Its thin lines thin out further at this size: darkened to hold. */
+.flow-station-img--day {
+  filter: brightness(0.45);
+}
+.flow-station-img--night {
+  display: none;
+}
+:root[data-theme="dark"] .flow-station-img--day {
+  display: none;
+}
+:root[data-theme="dark"] .flow-station-img--night {
+  display: block;
+}
+.flow-mast-name {
+  font-family: "Noto Serif SC", "Songti SC", SimSun, Georgia, serif;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.flow-mast > :not(.flow-mast-rule) {
+  white-space: nowrap;
+}
+.flow-mast-rule {
+  flex: 1 0 24px;
+  height: 1px;
+  background: var(--hairline);
+}
+.flow-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.flow-tab {
+  position: relative;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted-strong);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-micro) ease,
+    background var(--dur-micro) ease;
+}
+.flow-tab:hover {
+  border-color: var(--accent);
+}
+.flow-tab.is-unseen::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--flow-herta);
+}
+.flow-tab.is-gathering {
+  animation: flow-pulse 1.6s ease-in-out infinite;
+}
+@keyframes flow-pulse {
+  50% {
+    border-color: var(--flow-herta);
+  }
+}
+.flow-day {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.flow-day b {
+  font-size: 13px;
+  color: var(--ink);
+}
+.flow-day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+.flow-post {
+  position: relative;
+  border-radius: 16px;
+  background: var(--card-solid);
+  cursor: pointer;
+  box-shadow:
+    0 1px 2px var(--shadow-pop),
+    0 10px 30px -18px var(--shadow-pop);
+  animation: flow-in 640ms var(--flow-spring) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+  transition:
+    transform 280ms var(--flow-spring),
+    box-shadow 280ms ease;
+}
+.flow-post:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 2px var(--shadow-pop),
+    0 20px 40px -20px var(--shadow-pop);
+}
+.flow-post:active {
+  transform: scale(0.985);
+  transition-duration: 120ms;
+}
+.flow-post:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@keyframes flow-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+    filter: blur(4px);
+  }
+}
+.flow-post-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.flow-mark {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: hsl(var(--hue, 200) 55% 42%);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.flow-post-site {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--muted-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-post-when {
+  flex: none;
+}
+.flow-post-when::before {
+  content: "·";
+  margin-right: 7px;
+}
+.flow-pic {
+  position: relative;
+  overflow: hidden;
+  background: hsl(var(--hue, 200) 40% 92%);
+}
+:root[data-theme="dark"] .flow-pic {
+  background: hsl(var(--hue, 200) 25% 16%);
+}
+.flow-pic-halftone {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background-image: radial-gradient(
+    circle,
+    hsl(var(--hue, 200) 45% 38% / 0.5) 1.2px,
+    transparent 1.6px
+  );
+  background-size: 9px 9px;
+  transition:
+    opacity 700ms ease,
+    transform 1400ms var(--flow-spring);
+}
+.flow-pic-halftone span {
+  font: 700 40px/1 Inter, sans-serif;
+  letter-spacing: 0.02em;
+  color: hsl(var(--hue, 200) 50% 32%);
+}
+:root[data-theme="dark"] .flow-pic-halftone span {
+  color: hsl(var(--hue, 200) 45% 72%);
+}
+.flow-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1.04);
+  transition:
+    opacity 700ms ease,
+    transform 1400ms var(--flow-spring);
+}
+.flow-pic.is-loaded img {
+  opacity: 1;
+  transform: none;
+}
+.flow-pic.is-loaded .flow-pic-halftone {
+  opacity: 0;
+  transform: scale(1.02);
+}
+/* The picture drifts in a little while the card is under the pointer. */
+.flow-post:hover .flow-pic.is-loaded img,
+.flow-post:hover .flow-pic.is-cover .flow-pic-halftone {
+  transform: scale(1.05);
+}
+.flow-post-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.flow-post-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--ink);
+  text-wrap: balance;
+  transition: color 200ms ease;
+}
+.flow-post-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted-strong);
+}
+.flow-chip {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+/* The lead: the day's front page. */
+.flow-lead {
+  overflow: hidden;
+}
+.flow-lead-pic {
+  position: relative;
+}
+.flow-lead .flow-pic {
+  aspect-ratio: 2.3 / 1;
+}
+.flow-lead .flow-pic-halftone span {
+  font-size: 72px;
+  opacity: 0.4;
+}
+.flow-lead-over {
+  position: absolute;
+  inset: auto 0 0;
+  display: grid;
+  gap: 6px;
+  padding: 44px 16px 14px;
+  background: linear-gradient(
+    to top,
+    rgb(14 10 28 / 0.82),
+    rgb(14 10 28 / 0.4) 62%,
+    transparent
+  );
+}
+.flow-lead-over .flow-post-meta,
+.flow-lead-over .flow-post-site {
+  color: rgb(255 255 255 / 0.86);
+}
+.flow-lead .flow-post-title {
+  font-size: 19px;
+  line-height: 1.35;
+  color: #fff;
+  text-shadow: 0 1px 14px rgb(0 0 0 / 0.35);
+}
+.flow-lead > .flow-post-body {
+  padding: 12px 16px 2px;
+}
+.flow-lead > .flow-word {
+  margin: 10px 16px 14px;
+}
+/* The rest: numbered rows, the picture small beside the words. */
+.flow-list {
+  display: grid;
+  gap: 10px;
+}
+.flow-row {
+  padding: 14px 14px 12px;
+}
+.flow-row-main {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 104px;
+  gap: 12px;
+  align-items: start;
+}
+.flow-row-num {
+  padding-top: 1px;
+  font:
+    600 19px/1 "Noto Serif SC",
+    "Songti SC",
+    Georgia,
+    serif;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--flow-herta) 60%, var(--muted));
+}
+.flow-row .flow-pic {
+  width: 104px;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+}
+.flow-row .flow-pic-halftone {
+  background-size: 6px 6px;
+}
+.flow-row .flow-pic-halftone span {
+  font-size: 17px;
+}
+.flow-row:hover .flow-post-title {
+  color: var(--flow-herta);
+}
+/* Her word: a note in her own hand, her mark beside its first line. */
+.flow-word {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--hairline-strong);
+  animation: flow-word-in 560ms var(--flow-spring) backwards;
+  animation-delay: calc(var(--i, 0) * 70ms + 280ms);
+}
+@keyframes flow-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.flow-word-av {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow:
+    0 0 0 2px var(--card-solid),
+    0 0 0 3px color-mix(in srgb, var(--flow-herta) 45%, transparent);
+  transition: transform 460ms var(--flow-spring);
+}
+.flow-post:hover .flow-word-av {
+  transform: rotate(-6deg) scale(1.06);
+}
+/* 5 + half of 21.6 puts the note's first line on the mark's middle. */
+.flow-word-note {
+  min-width: 0;
+  padding: 5px 11px 6px;
+  border-radius: 4px 12px 12px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--flow-herta) 8%, transparent);
+}
+.flow-word b {
+  margin-right: 6px;
+  font-weight: 700;
+  color: var(--flow-herta);
+}
+.flow-word-text.is-typing::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--flow-herta);
+  animation: flow-blink 0.9s steps(2) infinite;
+}
+@keyframes flow-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.flow-end,
+.flow-thin {
+  margin: 0;
+  padding: 18px 0 6px;
+  text-align: center;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.flow-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px 22px;
+  border-radius: 16px;
+  text-align: center;
+  background: var(--card-solid);
+  box-shadow: 0 8px 28px -14px var(--shadow-pop);
+}
+.flow-state h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink);
+}
+.flow-state p {
+  max-width: 42ch;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted-strong);
+}
+.flow-state button {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-inverse);
+  background: var(--btn-ink);
+  cursor: pointer;
+}
+.flow-state button:hover {
+  background: var(--btn-ink-hover);
+}
+/* An issue being gathered (owner 2026-10-30: "looks like a draft"): the
+   signal sending, the step in words, a bar across the five stages, the
+   stages as a tracker, and placeholder posts shimmering where posts land.
+   In the app's own blue, as the Settings toggles are. */
+.flow-gather {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px 16px;
+  border-radius: 16px;
+  background: var(--card-solid);
+  box-shadow: 0 8px 28px -14px var(--shadow-pop);
+  animation: flow-in 520ms var(--flow-spring) backwards;
+}
+.flow-gather-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.flow-gather-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.flow-gather-head p {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted-strong);
+  font-variant-numeric: tabular-nums;
+}
+.flow-gather-signal {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--banzhuan-led);
+  background: color-mix(in srgb, var(--banzhuan-led) 12%, transparent);
+}
+.flow-gather-signal .flow-station {
+  width: 32px;
+  height: 32px;
+}
+/* Two rings sent out from the signal, one after the other. */
+.flow-gather-signal::before,
+.flow-gather-signal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--banzhuan-led);
+  opacity: 0;
+  animation: flow-send 2.2s ease-out infinite;
+}
+.flow-gather-signal::after {
+  animation-delay: 1.1s;
+}
+@keyframes flow-send {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+.flow-gather-bar {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--soft-gray);
+}
+.flow-gather-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--banzhuan-led);
+  transition: width 700ms var(--flow-spring);
+}
+.flow-gather-bar i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.55),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: flow-sweep 1.6s ease-in-out infinite;
+}
+@keyframes flow-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+.flow-gather-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.flow-gather-steps li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+/* The line between one step's dot and the next. */
+.flow-gather-steps li + li::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 50%;
+  width: 100%;
+  height: 1.5px;
+  background: var(--hairline-strong);
+}
+.flow-gather-steps li.is-done + li::before,
+.flow-gather-steps li.is-done + li.is-now::before {
+  background: var(--banzhuan-led);
+}
+.flow-gather-dot {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--hairline-strong);
+  border-radius: 50%;
+  background: var(--card-solid);
+  transition:
+    background 300ms ease,
+    border-color 300ms ease;
+}
+.flow-gather-steps li.is-done {
+  color: var(--muted-strong);
+}
+.flow-gather-steps li.is-done .flow-gather-dot {
+  border-color: var(--banzhuan-led);
+  background: var(--banzhuan-led);
+}
+.flow-gather-steps li.is-now {
+  font-weight: 650;
+  color: var(--ink);
+}
+.flow-gather-steps li.is-now .flow-gather-dot {
+  border-color: var(--banzhuan-led);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--banzhuan-led) 18%, transparent);
+  animation: flow-now 1.4s ease-in-out infinite;
+}
+@keyframes flow-now {
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--banzhuan-led) 6%, transparent);
+  }
+}
+/* Placeholder posts: a lead and two rows, shimmering. */
+.flow-skeleton {
+  display: grid;
+  gap: 10px;
+}
+.flow-skel-lead,
+.flow-skel-row {
+  border-radius: 16px;
+  background: var(--card-solid);
+  box-shadow: 0 1px 2px var(--shadow-pop);
+}
+.flow-skel-lead {
+  display: grid;
+  gap: 10px;
+  overflow: hidden;
+  padding-bottom: 16px;
+}
+.flow-skel-lead .flow-skel-line {
+  margin-left: 16px;
+}
+.flow-skel-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 14px;
+  padding: 14px;
+}
+.flow-skel-row > div {
+  display: grid;
+  gap: 9px;
+  align-content: start;
+}
+.flow-skel-pic,
+.flow-skel-thumb,
+.flow-skel-line {
+  display: block;
+  background: linear-gradient(
+    100deg,
+    var(--soft-gray) 30%,
+    color-mix(in srgb, var(--soft-gray) 40%, var(--card-solid)) 50%,
+    var(--soft-gray) 70%
+  );
+  background-size: 300% 100%;
+  animation: flow-shimmer 1.5s linear infinite;
+}
+.flow-skel-pic {
+  aspect-ratio: 2.3 / 1;
+}
+.flow-skel-thumb {
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+}
+.flow-skel-line {
+  height: 11px;
+  border-radius: 6px;
+}
+@keyframes flow-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+.flow-open {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow-y: auto;
+  background: var(--shell);
+  animation: flow-fade 260ms ease both;
+}
+@keyframes flow-fade {
+  from {
+    opacity: 0;
+  }
+}
+/* Going back: the page fades while its card shrinks into the post. */
+/* Its own keyframes: switching the fade-in off made the page jump to
+   transparent instead of fading. */
+.flow-open.is-closing {
+  pointer-events: none;
+  animation: flow-fade-out 340ms ease forwards;
+}
+@keyframes flow-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+.flow-open-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  padding: 10px 16px;
+  background: var(--shell);
+  backdrop-filter: blur(12px);
+}
+.flow-open-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  border-radius: 9px;
+  padding: 6px 12px 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--soft-gray);
+  cursor: pointer;
+}
+.flow-open-card {
+  width: min(680px, calc(100% - 48px));
+  margin: 6px auto 40px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--card-solid);
+  box-shadow: 0 18px 48px -18px var(--shadow-pop);
+  transform-origin: 0 0;
+  transition: transform 480ms var(--flow-spring);
+}
+.flow-open-card .flow-pic {
+  aspect-ratio: 2.2 / 1;
+}
+.flow-open-body > * {
+  animation: flow-in 560ms var(--flow-spring) backwards;
+}
+.flow-open-body > :nth-child(2) {
+  animation-delay: 50ms;
+}
+.flow-open-body > :nth-child(3) {
+  animation-delay: 100ms;
+}
+.flow-open-body > :nth-child(4) {
+  animation-delay: 150ms;
+}
+.flow-open-body > :nth-child(n + 5) {
+  animation-delay: 200ms;
+}
+.flow-open-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 22px 22px;
+}
+.flow-open-body h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.35;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.flow-open-meta {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* The key points first, as a summary box; then the write-up as an article
+   (owner 2026-10-30: one block of text was "hard to read"). */
+.flow-open-points {
+  padding: 12px 16px 12px 14px;
+  border-left: 3px solid var(--banzhuan-led);
+  border-radius: 4px 12px 12px 4px;
+  background: color-mix(in srgb, var(--banzhuan-led) 6%, transparent);
+}
+.flow-open-points h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.flow-open-points ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.flow-article {
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+.flow-article > :first-child {
+  margin-top: 0;
+}
+.flow-article > :last-child {
+  margin-bottom: 0;
+}
+.flow-article p {
+  margin: 0 0 14px;
+}
+/* The lead paragraph reads a little larger, in the ink. */
+.flow-article > p:first-child {
+  font-size: 16px;
+  color: var(--ink);
+}
+.flow-article h1,
+.flow-article h2,
+.flow-article h3 {
+  margin: 22px 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.flow-article strong {
+  font-weight: 650;
+  color: var(--ink);
+}
+.flow-article ul,
+.flow-article ol {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding-left: 20px;
+}
+.flow-article table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 4px 0 16px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.flow-article th,
+.flow-article td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  vertical-align: top;
+}
+.flow-article th {
+  font-weight: 650;
+  color: var(--ink);
+  background: var(--soft-gray);
+}
+.flow-article tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--soft-gray) 45%, transparent);
+}
+.flow-open-card .flow-word {
+  margin: 0;
+  animation-delay: 150ms;
+}
+.flow-open-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+.flow-open-acts button {
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+}
+.flow-open-acts button.is-primary {
+  border-color: transparent;
+  color: var(--ink-inverse);
+  background: var(--btn-ink);
+}
+.flow-button {
+  position: relative;
+}
+.flow-button.is-active {
+  background: var(--soft-gray);
+}
+.flow-button-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6a4bd8;
+  box-shadow: 0 0 0 2px var(--surface-pop);
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-panel,
+  .flow-panel.is-open,
+  .flow-pic img,
+  .flow-pic-halftone {
+    transition-duration: 120ms;
+  }
+  .flow-post,
+  .flow-word,
+  .flow-open,
+  .flow-open-body > *,
+  .flow-tab.is-gathering,
+  .flow-word-text.is-typing::after,
+  .flow-gather,
+  .flow-gather-signal::before,
+  .flow-gather-signal::after,
+  .flow-gather-bar i::after,
+  .flow-gather-steps li.is-now .flow-gather-dot,
+  .flow-skel-pic,
+  .flow-skel-thumb,
+  .flow-skel-line {
+    animation: none;
+  }
+  .flow-post,
+  .flow-word-av,
+  .flow-topic-chip {
+    transition-duration: 1ms;
+  }
+}
+.flow-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Settings → Flow's topics (ADR 0084 §4, amendment "topics are picked"):
+   keywords by group, a check sliding in on the picked ones. */
+.flow-topic-groups {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+.flow-topic-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.flow-topic-group legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 2px;
+  padding: 0;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.flow-topic-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted-strong);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 160ms var(--ease-pop),
+    gap 220ms ease,
+    padding 220ms ease;
+}
+.flow-topic-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--banzhuan-led) 55%, transparent);
+}
+.flow-topic-chip:active:not(:disabled) {
+  transform: scale(0.95);
+}
+/* Picked: the app's own selected blue, the Settings toggle's LED, as a
+   tint with its border and text (owner 2026-10-30: violet did not match). */
+.flow-topic-chip.is-on {
+  gap: 5px;
+  padding-left: 8px;
+  border-color: color-mix(in srgb, var(--banzhuan-led) 70%, transparent);
+  color: var(--banzhuan-led);
+  background: color-mix(in srgb, var(--banzhuan-led) 10%, transparent);
+}
+.flow-topic-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.flow-topic-check {
+  width: 0;
+  height: 12px;
+  opacity: 0;
+  transition:
+    width 220ms ease,
+    opacity 180ms ease;
+}
+.flow-topic-chip.is-on .flow-topic-check {
+  width: 12px;
+  opacity: 1;
+}
+/* The viewer's narrow-window overlay is z 40, level with the approval card:
+   while Flow is open it stays out of sight (and open), so Flow covers the
+   whole main area as §2 says. The viewer follows Flow in the body, so a
+   sibling selector reaches it without :has(). */
+.workspace-body.viewer-overlay .flow-panel.is-open ~ .file-viewer {
+  visibility: hidden;
+}

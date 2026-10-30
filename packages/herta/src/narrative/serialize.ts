@@ -17,7 +17,11 @@ import {
 import { escapeUserText } from "./escape.js";
 import { namePicks } from "./page-voice.js";
 import type { PromptLang } from "./prompt-lang.js";
-import { nameMentionedPaths, systemRowForHerta } from "./record-voice.js";
+import {
+  nameMentionedPaths,
+  nameQuotedPagesForHerta,
+  systemRowForHerta,
+} from "./record-voice.js";
 
 /**
  * Serializer options for the prompt-side projection of a TerminalRecord.
@@ -121,7 +125,8 @@ export function serializeBlock(
       // A path mentioned with the composer's `@` reads as its name (ADR
       // 0072 amendment 2026-10-20): the chip the user saw.
       // An element picked on the page reads as the element (ADR 0083 §4).
-      return `（开拓者 说）\n${escapeUserText(namePicks(nameMentionedPaths(block.text, block.mentions), block.picks, opts?.lang ?? "zh"))}\n（/开拓者 说）`;
+      // A quoted Flow post's page reads as its host (ADR 0084 §9).
+      return `（开拓者 说）\n${escapeUserText(namePicks(nameMentionedPaths(nameQuotedPagesForHerta(block.text, opts?.lang ?? "zh"), block.mentions), block.picks, opts?.lang ?? "zh"))}\n（/开拓者 说）`;
     case "herta": {
       const [openTag, closeTag] =
         block.surface === "thought"

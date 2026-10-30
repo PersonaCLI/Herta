@@ -26,6 +26,9 @@ import { useEffect, useSyncExternalStore } from "react";
  *  sits under the settings/key-prompt backdrops; the image lightbox floats
  *  over those (an intentional viewer the user just opened); menus above all. */
 export const OVERLAY_Z = {
+  /** Flow's panel over the main area (ADR 0084 §2): under the approval
+   *  card, which still draws above it, and under every dialog. */
+  flow: 30,
   approval: 40,
   settings: 60,
   keyPrompt: 60,

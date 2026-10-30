@@ -13,6 +13,7 @@
     "./marker-summary": "./dist/text/marker-summary.js",
     "./repo-path": "./dist/text/repo-path.js",
     "./page-element": "./dist/text/page-element.js",
+    "./quoted-pages": "./dist/text/quoted-pages.js",
     "./browser-host": "./dist/browser-host.js",
     "./server-host": "./dist/server-host.js"
   },

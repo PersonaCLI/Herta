@@ -56,6 +56,8 @@ import {
   buildRecapRuntime,
   buildStaticHertaPrefix,
   type DriverSessionScope,
+  flowWordJudge,
+  hertaWordOn,
   loadActorHints,
   loadMetaThinkCorpus,
   type MetaThinkCorpus,
@@ -113,6 +115,7 @@ import {
   shellWorkspaceHint,
   viewImageToolFor,
 } from "@herta/tools";
+import type { FlowWord } from "./flow/flow-pipeline.js";
 import type { AppServerConfig } from "./types.js";
 
 // The usage log (token counts per model call) — a host that builds its
@@ -262,6 +265,68 @@ export function makeDigestProvider(
     temperature: 0.2,
     ...baseUrl,
   });
+}
+
+/** Flow's side model (ADR 0084 §5): the digest's flash with thinking off,
+ *  but room for five cards or a 1 500-character write-up as JSON — the
+ *  digest's 1 024 tokens cut either short, and then nothing parses. */
+export function flowSideModel(
+  apiKey: ApiKey,
+  baseUrl: { baseUrl?: string } = {},
+): DigestModel {
+  return digestModelFrom(
+    deepseekProvider({
+      apiKey,
+      model: "deepseek-flash",
+      thinking: false,
+      maxTokens: 4096,
+      temperature: 0.2,
+      ...baseUrl,
+    }),
+  );
+}
+
+/** Flow's judge of her word (ADR 0084 §7): flash with reasoning on, as the
+ *  supervisor runs — the lab's judge without reasoning let invented numbers
+ *  through. */
+export function flowJudgeProvider(
+  apiKey: ApiKey,
+  baseUrl: { baseUrl?: string } = {},
+): ProviderAdapter {
+  return deepseekProvider({
+    apiKey,
+    model: "deepseek-flash",
+    thinking: "high",
+    ...baseUrl,
+  });
+}
+
+/** Herta's word on a Flow post (ADR 0084 §7): her own model over the
+ *  completion endpoint, in Flow's own frame, each candidate past Flow's
+ *  judge. The model is read per word, so a change in Settings reaches the
+ *  next one. */
+export function flowWordFrom(opts: {
+  readonly apiKey: ApiKey;
+  readonly baseUrl?: string;
+  readonly model: () => string;
+}): FlowWord {
+  const baseUrl = opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {};
+  const provider = deepseekCompletionProvider({
+    apiKey: opts.apiKey,
+    ...baseUrl,
+  });
+  const judgeProvider = flowJudgeProvider(opts.apiKey, baseUrl);
+  return (post, signal, lang) =>
+    hertaWordOn(
+      post,
+      {
+        provider,
+        model: opts.model(),
+        lang,
+        judge: flowWordJudge({ provider: judgeProvider, lang }),
+      },
+      signal,
+    );
 }
 
 export interface BackendStackOpts {

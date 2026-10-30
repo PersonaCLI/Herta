@@ -1,8 +1,8 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { createRef } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithLocale } from "../../i18n/test-util.js";
-import { composeQuotedMessage } from "../../lib/quote-format.js";
+import { composeQuotedMessage, postQuote } from "../../lib/quote-format.js";
 import { MorphClone } from "./MorphClone.js";
 import { UserBubble } from "./UserBubble.js";
 
@@ -84,5 +84,34 @@ describe("MorphClone — the flying bubble reads like the one it lands as (owner
       clone.querySelector(".message-quote__label")?.getAttribute("tabindex"),
     ).toBe(overlay.querySelector("button") === null ? null : "-1");
     overlay.remove();
+  });
+});
+
+describe("UserBubble — a quoted Flow post (ADR 0084 §9)", () => {
+  it("names its site and title; the label opens the page", () => {
+    const quote = postQuote(
+      {
+        id: "d/0",
+        url: "https://nodejs.org/en/blog/release/v24",
+        site: "Node.js",
+        date: "2026-10-30",
+        title: "Node.js 24 is out",
+        detail: "The full write-up.",
+        word: null,
+      },
+      "en",
+    );
+    if (quote === undefined) throw new Error("no quote");
+    const text = composeQuotedMessage([quote], "Upgrade now?", "en");
+    const onOpenWebPage = vi.fn();
+    const { container } = renderWithLocale(
+      <UserBubble text={text} lang="en" onOpenWebPage={onOpenWebPage} />,
+    );
+    fireEvent.click(screen.getByText("nodejs.org · Node.js 24 is out"));
+    expect(onOpenWebPage).toHaveBeenCalledWith(
+      "https://nodejs.org/en/blog/release/v24",
+    );
+    expect(container.textContent).not.toContain("https://");
+    expect(screen.getByText("Upgrade now?")).toBeInTheDocument();
   });
 });

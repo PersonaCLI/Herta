@@ -42,8 +42,8 @@ describe("SettingsModal", () => {
       ).toBe(hasList);
       if (hasList) seen.push(item.textContent ?? "");
     }
-    // Not vacuous: the two panes with scrolling rows are among them.
-    expect(seen).toEqual(["Voice", "Coprocessor"]);
+    // Not vacuous: the panes with scrolling rows are among them.
+    expect(seen).toEqual(["Voice", "Flow", "Coprocessor"]);
   });
 
   it("renders nothing when closed", () => {

@@ -1,3 +1,5 @@
+import { quotedPageUrls } from "@herta/core/quoted-pages";
+
 /**
  * The few places outside the app a click may open (2026-09-09). The main
  * process opens ONLY these hosts through the OS browser (`shell:openExternal`
@@ -33,11 +35,15 @@ export function isAllowedExternalUrl(url: string): boolean {
  * fetched and every search result it was shown. The second door to the OS
  * browser, beside the four hosts above — narrower than "any URL": main opens
  * a URL only when it appears in THIS session's own web rows, so the renderer
- * still cannot hand the shell an arbitrary link. Pure.
+ * still cannot hand the shell an arbitrary link. A Flow post the Trailblazer
+ * quoted (ADR 0084 §9) names its page in his own message, at its front
+ * (`quotedPageUrls`): a link only a sent message, there in the record for
+ * everyone to read, can add. Pure.
  */
 export function recordedWebUrls(
   record: readonly {
     readonly kind: string;
+    readonly text?: string;
     readonly digest?: { readonly kind: string; readonly url?: string };
     readonly evidence?: readonly {
       readonly kind: string;
@@ -48,6 +54,8 @@ export function recordedWebUrls(
 ): Set<string> {
   const urls = new Set<string>();
   for (const b of record) {
+    if (b.kind === "user" && typeof b.text === "string")
+      for (const url of quotedPageUrls(b.text)) urls.add(url);
     if (b.kind !== "system") continue;
     if (b.digest?.kind === "web-fetch" && typeof b.digest.url === "string")
       urls.add(b.digest.url);

@@ -12,7 +12,13 @@
  * idempotent and deleteSession/openSession reject what the UI shouldn't
  * reach — this layer just keeps the chrome from *appearing* broken.
  */
-const FROZEN_SELECTORS = [".sidebar-settings", ".card-menu-button"];
+const FROZEN_SELECTORS = [
+  ".sidebar-settings",
+  ".card-menu-button",
+  // Flow's 查看原文 (ADR 0084): the demo issue's sources are made up, so the
+  // button answers hover but opens nothing. 引用到对话 (is-primary) stays live.
+  ".flow-open-acts button:not(.is-primary)",
+];
 
 export function freezeDemoChrome(): void {
   document.addEventListener(
@@ -30,7 +36,9 @@ export function freezeDemoChrome(): void {
       // Topbar icons by position (aria-labels are localized): 0 = sidebar
       // toggle (allowed), 1 = search, 2 = new session (both frozen).
       const icon = target.closest(".topbar .sidebar-header-icon");
-      if (icon !== null) {
+      // Flow's radio (ADR 0084) sits past the frozen two and stays live: its
+      // panel and the staged issue are the point.
+      if (icon !== null && !icon.classList.contains("flow-button")) {
         const all = Array.from(
           document.querySelectorAll(".topbar .sidebar-header-icon"),
         );

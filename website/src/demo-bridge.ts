@@ -61,6 +61,7 @@ import type {
 // the opening still reveals at voice pace, silently. Duration is unchanged,
 // so `openingVoiceMs` below still describes it.
 import openingVoiceUrl from "./assets/opening-voice.opus";
+import { createDemoFlow } from "./demo-flow.js";
 import { demoWorkspaceFiles, eventBusAfterPatch } from "./demo-workspace.js";
 
 export type DemoLang = "zh" | "en";
@@ -1552,6 +1553,9 @@ export function createDemoBridge(
       };
     },
     readWorkspaceBytes: async () => ({ ok: false, reason: "not_found" }),
+    // Flow (ADR 0084): a staged issue that gathers once on load and lands
+    // unread, so the top bar's radio and the REAL panel play (demo-flow.ts).
+    ...createDemoFlow(lang),
     getDreamConfig: async () => ({ enabled: true }),
     setDreamConfig: async () => {},
     getLocale: async () => lang,

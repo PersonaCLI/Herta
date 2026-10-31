@@ -65,3 +65,42 @@ export function NewSessionIcon(): JSX.Element {
     </IconSvg>
   );
 }
+
+/**
+ * Flow's button (ADR 0084): a radio sending. Its own svg rather than
+ * `IconSvg`, because its two waves are separate paths: while an issue is
+ * being gathered, or a new one waits unread, they pulse outward in turn
+ * (owner 2026-10-31: "dynamic, since it is like a radio"). At rest it takes
+ * the shared grey → dark, 1.5 → 2 stroke on hover, as every icon here does.
+ */
+export function FlowRadioIcon(props: { readonly live: boolean }): JSX.Element {
+  return (
+    <svg
+      className={`sidebar-header-icon-svg flow-radio${props.live ? " is-live" : ""}`}
+      data-icon="flow"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle
+        className="flow-radio-core"
+        cx="12"
+        cy="12"
+        r="1.6"
+        fill="currentColor"
+      />
+      <path
+        className="flow-radio-wave flow-radio-wave--near"
+        d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6"
+      />
+      <path
+        className="flow-radio-wave flow-radio-wave--far"
+        d="M5.4 18.6a9.4 9.4 0 0 1 0-13.2M18.6 5.4a9.4 9.4 0 0 1 0 13.2"
+      />
+    </svg>
+  );
+}

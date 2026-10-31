@@ -10,6 +10,7 @@ import type {
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useLocale, useT } from "../../i18n/LocaleProvider.js";
 import { SettingRow } from "./SettingRow.js";
+import { useRememberedSetting } from "./settings-snapshot.js";
 import { Toggle } from "./Toggle.js";
 
 /** One keyword picked or put back, in the list's own order, at most
@@ -35,8 +36,18 @@ export function FlowSettings(): JSX.Element {
   const t = useT();
   const { locale } = useLocale();
   const { bridge } = useHertaBridge();
-  const [settings, setSettings] = useState<FlowSettingsView | null>(null);
-  const [left, setLeft] = useState<number | null>(null);
+  // The first frame shows what was last known (settings-snapshot.ts), so
+  // the switch and the chips do not play off → on as the read lands.
+  const [settings, setSettings] = useRememberedSetting(
+    bridge,
+    "flow.settings",
+    null,
+  );
+  const [left, setLeft] = useRememberedSetting(
+    bridge,
+    "flow.refreshesLeft",
+    null,
+  );
   const [outcome, setOutcome] = useState<FlowRefreshOutcome | null>(null);
   const [failed, setFailed] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -54,7 +65,7 @@ export function FlowSettings(): JSX.Element {
     return () => {
       alive = false;
     };
-  }, [bridge]);
+  }, [bridge, setSettings, setLeft]);
 
   const save = (next: FlowSettingsView): void => {
     const before = settings;

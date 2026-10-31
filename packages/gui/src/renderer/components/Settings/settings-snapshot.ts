@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import type { FlowSettingsView } from "../../../shared/flow.js";
 import type {
   AttentionSettings,
   BackendContractChoice,
@@ -64,6 +65,11 @@ export interface SettingsSnapshot {
   "banzhuan.contract": BackendContractChoice;
   "banzhuan.bashFound": boolean | undefined;
   "banzhuan.pdfPictureTranscripts": boolean;
+  /** Settings → 信息流: the switch and the picked keywords, and the day's
+   *  refreshes left. Its pane read both on mount, and every chip and the
+   *  switch played off → on as the read landed (owner 2026-10-31). */
+  "flow.settings": FlowSettingsView | null;
+  "flow.refreshesLeft": number | null;
 }
 
 type Key = keyof SettingsSnapshot;
@@ -183,4 +189,8 @@ export function primeSettings(bridge: HertaBridge): void {
   void bridge
     .getPdfPictureTranscripts?.()
     .then((v) => keep("banzhuan.pdfPictureTranscripts", v), quiet);
+  void bridge.flowSettings?.().then((v) => keep("flow.settings", v), quiet);
+  void bridge
+    .flowState?.()
+    .then((v) => keep("flow.refreshesLeft", v.refreshesLeft), quiet);
 }

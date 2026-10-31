@@ -301,6 +301,7 @@ function Workbench({ booting }: { readonly booting: boolean }): JSX.Element {
               flow: {
                 open: flowOpen,
                 unread: flow.state.unreadIssueId !== null,
+                gathering: flow.state.gathering !== null,
               },
             }
           : {})}

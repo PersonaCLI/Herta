@@ -10326,8 +10326,56 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
 .flow-button {
   position: relative;
 }
-.flow-button.is-active {
-  background: var(--soft-gray);
+/* The radio: at rest the shared icon treatment. Live — gathering, or a new
+   issue unread — it takes the app's blue and its waves pulse outward in
+   turn, the near one first. The dot marks the unread issue where motion is
+   off; with motion on the waves say it. */
+.flow-radio.is-live {
+  color: var(--banzhuan-led);
+}
+.flow-radio.is-live .flow-radio-wave {
+  animation: flow-radio-wave 2.4s ease-in-out infinite;
+}
+.flow-radio.is-live .flow-radio-wave--far {
+  animation-delay: 0.35s;
+}
+.flow-radio.is-live .flow-radio-core {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: flow-radio-core 2.4s ease-in-out infinite;
+}
+@keyframes flow-radio-wave {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 1;
+  }
+  65% {
+    opacity: 0.2;
+  }
+}
+@keyframes flow-radio-core {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  20% {
+    transform: scale(1.35);
+  }
+}
+.flow-button-dot {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-radio.is-live .flow-radio-wave,
+  .flow-radio.is-live .flow-radio-core {
+    animation: none;
+  }
+  .flow-button-dot {
+    display: block;
+  }
 }
 .flow-button-dot {
   position: absolute;
@@ -10336,7 +10384,7 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #6a4bd8;
+  background: var(--banzhuan-led);
   box-shadow: 0 0 0 2px var(--surface-pop);
 }
 @media (prefers-reduced-motion: reduce) {

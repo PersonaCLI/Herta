@@ -413,3 +413,40 @@ describe("TopBar new-session mid-turn guard (2026-07-12)", () => {
     expect(opened).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("TopBar — Flow's radio (owner 2026-10-31)", () => {
+  const flowButton = (c: HTMLElement) =>
+    c.querySelector<SVGElement>("svg[data-icon='flow']");
+
+  it("takes the shared icon treatment, as the globe and the rest do", () => {
+    const { container } = renderTopBar({
+      flow: { open: false, unread: false, gathering: false },
+    });
+    const svg = flowButton(container);
+    expect(svg?.classList.contains("sidebar-header-icon-svg")).toBe(true);
+    // No fixed stroke: CSS owns it, so hover can thicken it.
+    expect(svg?.getAttribute("stroke-width")).toBeNull();
+    expect(svg?.classList.contains("is-live")).toBe(false);
+  });
+
+  it("goes live while gathering or with a new issue unread, never while the panel is open", () => {
+    const gathering = renderTopBar({
+      flow: { open: false, unread: false, gathering: true },
+    });
+    expect(flowButton(gathering.container)?.classList.contains("is-live")).toBe(
+      true,
+    );
+    const unread = renderTopBar({
+      flow: { open: false, unread: true, gathering: false },
+    });
+    expect(flowButton(unread.container)?.classList.contains("is-live")).toBe(
+      true,
+    );
+    const open = renderTopBar({
+      flow: { open: true, unread: true, gathering: true },
+    });
+    expect(flowButton(open.container)?.classList.contains("is-live")).toBe(
+      false,
+    );
+  });
+});

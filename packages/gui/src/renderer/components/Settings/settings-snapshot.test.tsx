@@ -5,6 +5,7 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import type { DeepSeekKeyStatus } from "../../ipc/bridge-types.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { DeepSeekSettings } from "./DeepSeekSettings.js";
+import { FlowSettings } from "./FlowSettings.js";
 import { SettingsModal } from "./SettingsModal.js";
 import {
   peekSetting,
@@ -126,6 +127,35 @@ describe("settings snapshot — a pane's first frame shows the last-known state 
     expect(
       screen.getByLabelText("Close to tray").getAttribute("aria-checked"),
     ).toBe("false");
+    await settle();
+  });
+
+  it("信息流 pane: the switch and the picked chips are on in the FIRST frame (owner 2026-10-31)", async () => {
+    const mock = createMockHertaBridge();
+    Object.assign(mock.bridge, {
+      flowSettings: async () => ({ enabled: true, topics: ["ai", "space"] }),
+      flowState: async () => ({
+        enabled: true,
+        gathering: null,
+        failed: null,
+        unreadIssueId: null,
+        refreshesLeft: 2,
+      }),
+    });
+    primeSettings(mock.bridge);
+    await settle();
+    const { container } = renderWithLocale(
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <FlowSettings />
+      </HertaBridgeProvider>,
+    );
+    // Before the pane's own reads answer: already on, nothing to switch.
+    expect(
+      screen.getByLabelText("Turn on Flow").getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(container.querySelectorAll(".flow-topic-chip.is-on")).toHaveLength(
+      2,
+    );
     await settle();
   });
 });

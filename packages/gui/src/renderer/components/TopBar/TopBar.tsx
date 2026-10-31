@@ -8,10 +8,10 @@ import {
 import { useT } from "../../i18n/LocaleProvider.js";
 import { isRepeatClick } from "../../lib/repeat-click.js";
 import { runShortcut, useShortcut } from "../../lib/shortcut-registry.js";
-import { FlowIcon } from "../Flow/FlowPanel.js";
 import { TitleText } from "../TitleText.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import {
+  FlowRadioIcon,
   GlobeIcon,
   NewSessionIcon,
   PanelToggleIcon,
@@ -33,6 +33,8 @@ export interface TopBarProps {
   readonly flow?: {
     readonly open: boolean;
     readonly unread: boolean;
+    /** An issue is being gathered right now. */
+    readonly gathering: boolean;
   };
 }
 
@@ -251,7 +253,11 @@ export function TopBar(props: TopBarProps): JSX.Element {
             aria-pressed={props.flow.open}
             onClick={() => runShortcut("openFlow")}
           >
-            <FlowIcon />
+            <FlowRadioIcon
+              live={
+                !props.flow.open && (props.flow.unread || props.flow.gathering)
+              }
+            />
             {props.flow.unread && !props.flow.open && (
               <i className="flow-button-dot" aria-hidden="true" />
             )}

@@ -9384,6 +9384,11 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
    beside, and her word as a note in her own hand. Motion follows the usual
    card numbers: a staggered rise, a 2px hover lift, a press-in before the
    open, a 300–500 ms spring to grow. Transform, opacity and filter only. */
+/* The panel takes focus when it opens (so the composer under it does not
+   keep the keyboard); the panel itself draws no ring. */
+.flow-panel:focus {
+  outline: none;
+}
 .flow-panel {
   --flow-herta: #6a4bd8;
   --flow-spring: cubic-bezier(0.16, 1, 0.3, 1);

@@ -956,6 +956,8 @@ export const en = {
   "flow.settings.refresh.limit": "Today's three refreshes have been used.",
   "flow.settings.refresh.no_key": "No DeepSeek key is set.",
   "flow.settings.refresh.off": "Turn on Flow first.",
+  "flow.settings.refresh.unsaved":
+    "Flow's records could not be written, so nothing was started. Check the free disk space.",
   "shortcut.focusComposer": "Focus the composer",
   "shortcut.send": "Send",
   "shortcut.newline": "New line",

@@ -157,6 +157,21 @@ describe("FlowStore prune", () => {
 });
 
 describe("FlowStore state", () => {
+  // The 0.1.10 review: the trigger must know an attempt was not recorded.
+  it("commitState says when state.json could not be written", async () => {
+    const s = await store();
+    expect(await s.commitState((st) => ({ ...st, attempts: 1 }))).toBe(true);
+    expect((await s.readState()).attempts).toBe(1);
+    const blocked = await store();
+    // A directory where state.json goes: every write of it fails.
+    await mkdir(blocked.stateFile, { recursive: true });
+    expect(await blocked.commitState((st) => ({ ...st, attempts: 1 }))).toBe(
+      false,
+    );
+    // An unchanged state needs no write.
+    expect(await blocked.commitState((st) => st)).toBe(true);
+  });
+
   it("starts empty, survives a malformed file, and applies updates in order", async () => {
     const s = await store();
     expect(await s.readState()).toEqual(EMPTY_FLOW_STATE);
@@ -233,5 +248,28 @@ describe("savePage", () => {
         new Date(0),
       ),
     ).toBeNull();
+  });
+});
+
+// The 0.1.10 review: a card missing a field crashed the workbench when Flow
+// opened, and a bad evidence failed the whole list.
+describe("FlowStore — a malformed issue file", () => {
+  it("is skipped whole, and the good ones still read", async () => {
+    const s = await store();
+    await s.writeIssue(issue("2026-10-29-1", [card("https://a.dev/ok")]));
+    const bad = JSON.parse(
+      JSON.stringify(issue("2026-10-30-1", [card("https://a.dev/x")])),
+    );
+    delete bad.cards[0].word;
+    await writeFile(
+      join(s.issuesDir, "2026-10-30-1.json"),
+      JSON.stringify(bad),
+    );
+    const badEvidence = { ...issue("2026-10-30-2"), evidence: { queries: 3 } };
+    await writeFile(
+      join(s.issuesDir, "2026-10-30-2.json"),
+      JSON.stringify(badEvidence),
+    );
+    expect((await s.issues(at(30))).map((i) => i.id)).toEqual(["2026-10-29-1"]);
   });
 });

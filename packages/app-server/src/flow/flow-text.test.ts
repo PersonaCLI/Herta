@@ -4,6 +4,7 @@ import {
   cleanField,
   cut,
   inertMentions,
+  nameUrls,
   normalizeTitle,
   normalizeUrl,
   parseJsonReply,
@@ -188,5 +189,31 @@ describe("parseJsonReply", () => {
     expect(parseJsonReply('```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(parseJsonReply('Here: ["x"] done')).toEqual(["x"]);
     expect(parseJsonReply("no json")).toBeUndefined();
+  });
+});
+
+// The 0.1.10 review: a quoted post's body reaches Herta as written, and the
+// cleaners left a write-up's URLs whole.
+describe("addresses in a post's text", () => {
+  it("a bare URL becomes its host, and the punctuation after it stays", () => {
+    expect(
+      nameUrls("详见 https://nodejs.org/en/blog/release/v24?utm_source=x。"),
+    ).toBe("详见 nodejs.org。");
+    expect(nameUrls("See www.example.com/a, then (https://b.dev/x).")).toBe(
+      "See example.com, then (b.dev).",
+    );
+    expect(nameUrls("broken https://[bad here")).toBe("broken  here");
+  });
+
+  it("every field and the article go through it", () => {
+    expect(cleanField("Get it at https://evil.dev/x?sig=abc now", 200)).toBe(
+      "Get it at evil.dev now",
+    );
+    expect(
+      cleanArticle(
+        "Read https://github.com/o/r/releases/download/setup.exe?sig=abc now.",
+        2400,
+      ),
+    ).toBe("Read github.com now.");
   });
 });

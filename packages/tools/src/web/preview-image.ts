@@ -156,8 +156,11 @@ async function guardedGet(
 
 /** The preview tag in a page's head, resolved against the page. */
 export function previewImageUrl(head: string, page: URL): string | null {
+  // `[^<>]`, not `[^>]`: a head of `<meta` with no `>` made the scan
+  // quadratic — 512K of it held the main thread for two minutes (the
+  // 0.1.10 review). Each tag now ends at the next `<`. Matched once.
+  const tags = head.match(/<meta\b[^<>]*>/gi) ?? [];
   for (const name of ["og:image:secure_url", "og:image", "twitter:image"]) {
-    const tags = head.match(/<meta\b[^>]*>/gi) ?? [];
     for (const tag of tags) {
       const key = /\b(?:property|name)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
       if (key?.toLowerCase() !== name) continue;

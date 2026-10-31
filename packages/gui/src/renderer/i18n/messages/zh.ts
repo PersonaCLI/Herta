@@ -940,6 +940,8 @@ export const zh = {
   "flow.settings.refresh.limit": "今日的三次更新已用完。",
   "flow.settings.refresh.no_key": "尚未配置 DeepSeek 密钥。",
   "flow.settings.refresh.off": "请先开启信息流。",
+  "flow.settings.refresh.unsaved":
+    "信息流的记录无法写入，本次未开始准备。请检查磁盘空间。",
   "shortcut.focusComposer": "聚焦输入框",
   "shortcut.send": "发送",
   "shortcut.newline": "换行",

@@ -79,7 +79,8 @@ export type FlowRefreshOutcome =
   | "off"
   | "no_key"
   | "running"
-  | "limit";
+  | "limit"
+  | "unsaved";
 
 export type FlowEvent =
   | { readonly kind: "state"; readonly state: FlowStateView }

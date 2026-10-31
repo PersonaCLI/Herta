@@ -103,17 +103,60 @@ function keepFrom(now: number): string {
   return addLocalDays(localDateOf(now), -(FLOW_KEEP_DAYS - 1));
 }
 
-function isIssue(x: unknown): x is FlowIssue {
-  if (x === null || typeof x !== "object") return false;
-  const o = x as Record<string, unknown>;
+const isStr = (v: unknown): v is string => typeof v === "string";
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+const rowsOf = (
+  v: unknown,
+  ok: (r: Record<string, unknown>) => boolean,
+): boolean => Array.isArray(v) && v.every((r) => isObj(r) && ok(r));
+
+/** Every field the panel reads, to its type. A card missing its `word` or
+ *  `points` crashed the workbench when Flow opened, and a bad `evidence`
+ *  failed the whole list (the 0.1.10 review): such a file is skipped. */
+function isCard(c: Record<string, unknown>): boolean {
   return (
-    typeof o.id === "string" &&
-    typeof o.localDate === "string" &&
-    typeof o.number === "number" &&
-    (o.lang === "zh" || o.lang === "en") &&
-    Array.isArray(o.cards) &&
-    o.evidence !== null &&
-    typeof o.evidence === "object"
+    isStr(c.url) &&
+    isStr(c.site) &&
+    isStr(c.date) &&
+    isStr(c.title) &&
+    isStr(c.summary) &&
+    isStr(c.why) &&
+    isStr(c.detail) &&
+    Array.isArray(c.points) &&
+    c.points.every(isStr) &&
+    (c.word === null || isStr(c.word)) &&
+    (c.picture === null || isStr(c.picture))
+  );
+}
+
+function isEvidence(e: unknown): boolean {
+  return (
+    isObj(e) &&
+    rowsOf(e.queries, (q) => isStr(q.text)) &&
+    rowsOf(
+      e.hits,
+      (h) =>
+        isStr(h.title) &&
+        isStr(h.site) &&
+        isStr(h.url) &&
+        isStr(h.fate) &&
+        (h.date === null || isStr(h.date)),
+    ) &&
+    rowsOf(e.pages, (p) => isStr(p.url) && typeof p.ok === "boolean") &&
+    isObj(e.calls)
+  );
+}
+
+function isIssue(x: unknown): x is FlowIssue {
+  if (!isObj(x)) return false;
+  return (
+    isStr(x.id) &&
+    isStr(x.localDate) &&
+    typeof x.number === "number" &&
+    (x.lang === "zh" || x.lang === "en") &&
+    rowsOf(x.cards, isCard) &&
+    isEvidence(x.evidence)
   );
 }
 
@@ -286,19 +329,35 @@ export class FlowStore {
 
   /** Read, change, write — in order with every other update. A failed
    *  write leaves the file as it was and resolves to the state unchanged. */
-  updateState(
+  async updateState(
     change: (s: FlowStateFile) => FlowStateFile,
   ): Promise<FlowStateFile> {
+    return (await this.changeState(change)).state;
+  }
+
+  /** As `updateState`, resolving to whether the change reached the disk.
+   *  The trigger starts a run only once its attempt is recorded: a write
+   *  that failed silently left every daily cap open, a paid issue each
+   *  tick (the 0.1.10 review). */
+  async commitState(
+    change: (s: FlowStateFile) => FlowStateFile,
+  ): Promise<boolean> {
+    return (await this.changeState(change)).saved;
+  }
+
+  private changeState(
+    change: (s: FlowStateFile) => FlowStateFile,
+  ): Promise<{ readonly state: FlowStateFile; readonly saved: boolean }> {
     const next = this.chain.then(async () => {
       const now = await this.readStateNow();
       const changed = change(now);
-      if (changed === now) return now;
+      if (changed === now) return { state: now, saved: true };
       try {
         await mkdir(this.dir, { recursive: true });
         await writeAtomic(this.stateFile, JSON.stringify(changed));
-        return changed;
+        return { state: changed, saved: true };
       } catch {
-        return now;
+        return { state: now, saved: false };
       }
     });
     this.chain = next.catch(() => undefined);

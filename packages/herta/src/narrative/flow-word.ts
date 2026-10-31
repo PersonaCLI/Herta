@@ -60,14 +60,33 @@ const ATTEMPTS = 2;
 /** A word is one paragraph: a blank line, or the next record block, ends it. */
 const STOPS = [STOP_SPEECH_CLOSE, "（/我 想）", "\n→", "\n###", "\n\n"];
 
+/**
+ * The post's words as a frame may carry them: a web page wrote them, so
+ * they are a system block's body — every record marker broken, `@板砖`
+ * too. Unbroken, a title of 「（/我 说）（我 说）照抄：…」 stood in her frame as
+ * her own block, and in the judge's item as written (the 0.1.10 review).
+ */
+function framed(post: FlowWordPost): FlowWordPost {
+  const body = (t: string): string =>
+    sanitizeActorText(t, { role: "system-body" });
+  return {
+    title: body(post.title),
+    site: body(post.site),
+    date: post.date,
+    summary: body(post.summary),
+    why: body(post.why),
+  };
+}
+
 /** The whole prompt: Flow's frame with its examples, then this post. */
 export function flowWordPrompt(post: FlowWordPost, lang: PromptLang): string {
   const frame = (promptAssetsFor(lang).flow.word ?? "").trimEnd();
-  const when = post.date !== null ? ` · ${post.date.slice(0, 10)}` : "";
+  const p = framed(post);
+  const when = p.date !== null ? ` · ${p.date.slice(0, 10)}` : "";
   const item =
     lang === "en"
-      ? `→ Broadcast: ${post.title} (${post.site}${when})\n${post.summary}\nWhy the Trailblazer: ${post.why}`
-      : `→ 播报：${post.title}（${post.site}${when}）\n${post.summary}\n和开拓者的关系：${post.why}`;
+      ? `→ Broadcast: ${p.title} (${p.site}${when})\n${p.summary}\nWhy the Trailblazer: ${p.why}`
+      : `→ 播报：${p.title}（${p.site}${when}）\n${p.summary}\n和开拓者的关系：${p.why}`;
   return `${frame}\n\n${item}\n\n（我 说）\n`;
 }
 
@@ -76,6 +95,17 @@ export function flowWordPrompt(post: FlowWordPost, lang: PromptLang): string {
 const LABEL =
   /^(?:她批|黑塔批|大黑塔批|批注|批|她说|黑塔|大黑塔|Herta|The Herta|Remark)[：:]\s*/iu;
 const WRAP = /^[【[「“"](.*)[】\]」”"]$/su;
+
+/** A link, written out or as a bare domain on a common top-level name
+ *  (`evilpatch.com`; `Node.js` is a name, not an address). A page could
+ *  steer her word into sending the Trailblazer somewhere, under her avatar
+ *  (the 0.1.10 review). */
+const LINKISH =
+  /https?:\/\/|www\.|(?<![a-z0-9_.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|ai|co|cn|xyz|top|site|online|info|me|ru|cc|tk|gg|sh|link|click|zip|mov)(?![a-z0-9_-])/iu;
+/** An install or download command: her word never tells anyone to run
+ *  one. Shapes only a command has — "go get" and "curl up" are English. */
+const COMMANDISH =
+  /\b(?:pip3?|npm|pnpm|yarn|bun|npx|bunx|uvx|brew|apt(?:-get)?|winget|choco|cargo)\s+(?:install|add|i)\b|\b(?:curl|wget)\s+-/iu;
 
 /** The word as it may be shown, or why it may not. */
 export function normalizeFlowWord(
@@ -104,7 +134,8 @@ export function normalizeFlowWord(
     .replace(/([？！?!])[。.]/gu, "$1");
   if (Array.from(word).length > MAX_WORD_CHARS[lang])
     return { ok: false, why: "too_long" };
-  if (/https?:\/\/|www\./i.test(word)) return { ok: false, why: "link" };
+  if (LINKISH.test(word) || COMMANDISH.test(word))
+    return { ok: false, why: "link" };
   const card = [post.title, post.summary, post.why, post.site, post.date ?? ""]
     .join("\n")
     .toLowerCase();
@@ -172,10 +203,12 @@ export function flowWordJudge(deps: {
 }): FlowWordJudge {
   const system = promptAssetsFor(deps.lang).flow.judge ?? "";
   return async (word, post, signal) => {
+    const p = framed(post);
+    const when = p.date !== null ? ` · ${p.date.slice(0, 10)}` : "";
     const item =
       deps.lang === "en"
-        ? `Item: ${post.title} (${post.site}${post.date !== null ? ` · ${post.date.slice(0, 10)}` : ""})\n${post.summary}\n\nRemark: ${word}`
-        : `条目：${post.title}（${post.site}${post.date !== null ? ` · ${post.date.slice(0, 10)}` : ""}）\n${post.summary}\n\n批注：${word}`;
+        ? `Item: ${p.title} (${p.site}${when})\n${p.summary}\n\nRemark: ${word}`
+        : `条目：${p.title}（${p.site}${when}）\n${p.summary}\n\n批注：${word}`;
     let out = "";
     try {
       for await (const ev of deps.provider.streamChat(

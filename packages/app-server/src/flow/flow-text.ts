@@ -79,10 +79,36 @@ export function cut(text: string, max: number): string {
     .trimEnd()}…`;
 }
 
+/** A bare address in text: a scheme or `www.`, up to a space, a quote, an
+ *  angle bracket or CJK punctuation. One class, so the scan is linear. */
+const BARE_URL = /\b(?:https?:\/\/|www\.)[^\s<>"'`　-〿＀-￯]+/giu;
+
+/**
+ * Each bare address as its host (`nodejs.org`), one that does not parse
+ * dropped. A quoted post's body reaches Herta as written, and she reads a
+ * page as its host, never its URL (ADR 0080); the cleaners left a write-up's
+ * `https://…?sig=…` whole (the 0.1.10 review).
+ */
+export function nameUrls(text: string): string {
+  return text.replace(BARE_URL, (m) => {
+    const tail = /[.,;:!?)\]}]+$/u.exec(m)?.[0] ?? "";
+    const url = m.slice(0, m.length - tail.length);
+    try {
+      const u = new URL(/^www\./i.test(url) ? `https://${url}` : url);
+      return `${u.hostname.replace(/^www\./i, "")}${tail}`;
+    } catch {
+      return tail;
+    }
+  });
+}
+
 /** One field of a card, through every rule of §5 step 4. The cap comes
  *  last: the redactor's marker may lengthen a line. */
 export function cleanField(raw: string, max: number, lines = false): string {
-  return cut(redactSecrets(inertMentions(plainText(raw, lines))), max);
+  return cut(
+    redactSecrets(inertMentions(nameUrls(plainText(raw, lines)))),
+    max,
+  );
 }
 
 /**
@@ -121,7 +147,7 @@ export function cleanArticle(raw: string, max: number): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const text = redactSecrets(inertMentions(t));
+  const text = redactSecrets(inertMentions(nameUrls(t)));
   if (Array.from(text).length <= max) return text;
   let kept = "";
   for (const b of text.split("\n\n")) {

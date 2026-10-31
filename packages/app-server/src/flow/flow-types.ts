@@ -63,7 +63,10 @@ export type FlowHitFate =
   | "undated"
   | "seen"
   | "duplicate"
-  | "over_budget";
+  | "over_budget"
+  /** Its address fails `checkFetchUrl` (a local host, a credential, too
+   *  long): never a post, so never quoted or opened. */
+  | "refused";
 
 export interface FlowEvidenceQuery {
   readonly text: string;

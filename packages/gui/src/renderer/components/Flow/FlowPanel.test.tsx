@@ -191,3 +191,54 @@ describe("Settings → Flow's topics (amendment: topics are picked)", () => {
     expect(toggleTopic(twelve, all[12] as string)).toBe(twelve);
   });
 });
+
+describe("FlowPanel — the 0.1.10 review", () => {
+  it("an article draws its Markdown and no attribute a page could style", () => {
+    const shaped: FlowIssueView = {
+      ...issue,
+      posts: [
+        {
+          ...issue.posts[0]!,
+          detail:
+            '### Part\n\n<div class="flow-word" style="position:fixed;inset:0">fake note</div>\n\n<img src="data:image/png;base64,AAAA">**bold**',
+        },
+      ],
+    };
+    const { getByText, container } = show({ state: ON, issues: [shaped] });
+    fireEvent.click(getByText("Node.js 24 is out"));
+    const article = container.querySelector(".flow-article");
+    expect(article?.querySelector("h3")?.textContent).toBe("Part");
+    expect(article?.querySelector("strong")?.textContent).toBe("bold");
+    expect(article?.textContent).toContain("fake note");
+    expect(article?.querySelector("div, img, [style], [class]")).toBeNull();
+  });
+
+  it("opening takes the keyboard from the composer; closing gives it back", () => {
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+    composer.focus();
+    const mock = createMockHertaBridge();
+    const panel = (open: boolean) => (
+      <HertaBridgeProvider bridge={mock.bridge}>
+        <FlowPanel
+          open={open}
+          onClose={() => undefined}
+          state={ON}
+          issues={[issue]}
+          onRefresh={() => undefined}
+          onMarkRead={() => undefined}
+          onTurnOn={() => undefined}
+        />
+      </HertaBridgeProvider>
+    );
+    const view = renderWithLocale(panel(true));
+    const section = view.getByTestId("flow-panel");
+    expect(document.activeElement).toBe(section);
+    // Tab from the panel stays in it.
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(section.contains(document.activeElement)).toBe(true);
+    view.rerender(panel(false));
+    expect(document.activeElement).toBe(composer);
+    composer.remove();
+  });
+});

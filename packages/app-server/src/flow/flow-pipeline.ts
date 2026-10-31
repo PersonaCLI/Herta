@@ -502,7 +502,11 @@ function filterHits(
     const site = cleanField(siteName(hit.site, hit.url), FLOW_LIMITS.site);
     const t = hit.date === null ? Number.NaN : Date.parse(hit.date);
     let fate: FlowEvidenceHit["fate"];
-    if (urls.has(key) || (title !== "" && titles.has(title))) {
+    // First: an address the fetch would refuse is no post either. Kept, it
+    // went into the issue, a quote and the OS browser as written (the
+    // 0.1.10 review: `http://127.0.0.1:5173/admin`).
+    if (!checkFetchUrl(hit.url).ok) fate = "refused";
+    else if (urls.has(key) || (title !== "" && titles.has(title))) {
       fate = "duplicate";
     } else if (!Number.isFinite(t) || t - now > FLOW_LIMITS.futureMs) {
       fate = "undated";

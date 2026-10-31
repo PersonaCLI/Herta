@@ -15,7 +15,8 @@ function ensureHooks(): void {
   if (hooked) return;
   hooked = true;
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-    if (node.tagName === "A") {
+    // An image map's <area> links as an anchor does.
+    if (node.tagName === "A" || node.tagName === "AREA") {
       const href = node.getAttribute("href");
       if (href !== null) {
         node.setAttribute("data-href", href);
@@ -33,13 +34,28 @@ const CONFIG: Parameters<typeof DOMPurify.sanitize>[1] = {
   FORBID_TAGS: ["style", "form", "input", "button"],
 };
 
-/** Sanitize `html` and make it the whole content of `el`. */
-export function setSanitizedHtml(el: Element, html: string): void {
+/**
+ * Sanitize `html` and make it the whole content of `el`. With `onlyTags`,
+ * those tags and no attribute at all, whatever the profile allows: for
+ * text a web page shaped (Flow's article), where a kept `style` or `class`
+ * could draw the app's own chrome — a fake note in Herta's hand.
+ */
+export function setSanitizedHtml(
+  el: Element,
+  html: string,
+  onlyTags?: readonly string[],
+): void {
   ensureHooks();
-  const frag = DOMPurify.sanitize(html, {
-    ...CONFIG,
-    RETURN_DOM_FRAGMENT: true,
-  });
+  const frag = DOMPurify.sanitize(
+    html,
+    onlyTags === undefined
+      ? { ...CONFIG, RETURN_DOM_FRAGMENT: true }
+      : {
+          ALLOWED_TAGS: [...onlyTags],
+          ALLOWED_ATTR: [],
+          RETURN_DOM_FRAGMENT: true,
+        },
+  );
   el.replaceChildren(frag);
 }
 

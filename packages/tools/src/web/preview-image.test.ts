@@ -268,6 +268,23 @@ describe("the picture", () => {
     ).toBeNull();
   });
 
+  // The 0.1.10 review: `<meta ` with no `>`, 512K of it, held the main
+  // thread for two minutes under `[^>]*`. It now takes milliseconds.
+  it("a head of unclosed tags is read in linear time", () => {
+    const page = new URL("https://n.example/a");
+    const hostile = "<meta ".repeat(Math.floor(524_288 / 6));
+    const started = performance.now();
+    expect(previewImageUrl(hostile, page)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
+    // A tag after the junk is still found.
+    expect(
+      previewImageUrl(
+        `${"<meta ".repeat(1000)}<meta property="og:image" content="p.jpg">`,
+        page,
+      ),
+    ).toBe("https://n.example/p.jpg");
+  });
+
   it("a page that never answers runs out of time", async () => {
     const hanging: PreviewGet = (_u, _a, _accept, s) =>
       new Promise((_, reject) =>

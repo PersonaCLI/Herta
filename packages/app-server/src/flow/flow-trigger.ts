@@ -30,6 +30,8 @@ export interface FlowTriggerStore {
   updateState(
     change: (s: FlowStateFile) => FlowStateFile,
   ): Promise<FlowStateFile>;
+  /** Resolves to false when the change could not be written. */
+  commitState(change: (s: FlowStateFile) => FlowStateFile): Promise<boolean>;
 }
 
 export interface FlowTriggerOptions {
@@ -65,14 +67,18 @@ export type FlowTickResult =
   | "busy"
   | "done_today"
   | "backoff"
-  | "attempts";
+  | "attempts"
+  | "unsaved";
 
+/** `unsaved`: the attempt could not be recorded, so nothing was started —
+ *  an unrecorded run is one no daily cap can count. */
 export type FlowRefreshResult =
   | "started"
   | "off"
   | "no_key"
   | "running"
-  | "limit";
+  | "limit"
+  | "unsaved";
 
 /** The day's counts, reset when the local date moved on. */
 function onDay(s: FlowStateFile, day: string): FlowStateFile {
@@ -88,6 +94,14 @@ export class FlowTrigger {
    *  tick and a refresh) can never both pass the async gates. */
   private claimed = false;
   private inFlight: Promise<void> | null = null;
+  /** The day's counts and last failure as this process recorded them: a
+   *  floor under state.json's, should a later write of it fail. */
+  private floor: {
+    day: string;
+    attempts: number;
+    refreshes: number;
+    failedAt: number | null;
+  } = { day: "", attempts: 0, refreshes: 0, failedAt: null };
 
   constructor(private readonly opts: FlowTriggerOptions) {}
 
@@ -119,16 +133,22 @@ export class FlowTrigger {
     try {
       const today = localDateOf(t);
       const s = onDay(await opts.store.readState(), today);
-      if (s.lastFailure !== null && t - s.lastFailure.at < FLOW_RETRY_MS) {
-        return "backoff";
-      }
-      if (s.attempts >= FLOW_ATTEMPTS_PER_DAY) return "attempts";
+      const floor = this.floorOn(today);
+      const failedAt = Math.max(
+        s.lastFailure?.at ?? Number.NEGATIVE_INFINITY,
+        floor.failedAt ?? Number.NEGATIVE_INFINITY,
+      );
+      if (t - failedAt < FLOW_RETRY_MS) return "backoff";
+      const attempts = Math.max(s.attempts, floor.attempts);
+      if (attempts >= FLOW_ATTEMPTS_PER_DAY) return "attempts";
       // A missed day stays missed: only today's date is ever gathered.
       if (await opts.store.hasIssueFor(today)) return "done_today";
-      await opts.store.updateState((cur) => {
+      const saved = await opts.store.commitState((cur) => {
         const d = onDay(cur, today);
         return { ...d, attempts: d.attempts + 1, lastAttemptAt: t };
       });
+      if (!saved) return "unsaved";
+      floor.attempts = attempts + 1;
       this.start("auto", today);
       started = true;
       return "started";
@@ -153,17 +173,30 @@ export class FlowTrigger {
       const t = opts.now();
       const today = localDateOf(t);
       const s = onDay(await opts.store.readState(), today);
-      if (s.refreshes >= FLOW_REFRESHES_PER_DAY) return "limit";
-      await opts.store.updateState((cur) => {
+      const floor = this.floorOn(today);
+      const refreshes = Math.max(s.refreshes, floor.refreshes);
+      if (refreshes >= FLOW_REFRESHES_PER_DAY) return "limit";
+      const saved = await opts.store.commitState((cur) => {
         const d = onDay(cur, today);
         return { ...d, refreshes: d.refreshes + 1, lastAttemptAt: t };
       });
+      if (!saved) return "unsaved";
+      floor.refreshes = refreshes + 1;
       this.start("refresh", today);
       started = true;
       return "started";
     } finally {
       if (!started) this.claimed = false;
     }
+  }
+
+  /** The floor for `day`: its counts start over with the date, its last
+   *  failure does not (a backoff runs past midnight, as state.json's). */
+  private floorOn(day: string): typeof this.floor {
+    if (this.floor.day !== day) {
+      this.floor = { ...this.floor, day, attempts: 0, refreshes: 0 };
+    }
+    return this.floor;
   }
 
   private start(kind: FlowRunKind, today: string): void {
@@ -183,6 +216,7 @@ export class FlowTrigger {
       try {
         if (failure !== undefined) {
           const at = this.opts.now();
+          this.floor.failedAt = failure === null ? null : at;
           await this.opts.store.updateState((s) => ({
             ...s,
             lastFailure: failure === null ? null : { at, reason: failure },

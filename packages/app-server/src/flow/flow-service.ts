@@ -166,6 +166,14 @@ export class FlowService {
     return this.trigger.idle();
   }
 
+  /** Abort the run in flight, if any — Flow was turned off, and its
+   *  remaining calls would still spend credit (the 0.1.10 review). As at
+   *  dispose, an aborted run is no failure; its attempt stays counted. */
+  async stopRun(): Promise<void> {
+    this.abort?.abort();
+    await this.trigger.idle();
+  }
+
   /** Stop the timers and the run in flight; an aborted run is not a
    *  failure and leaves no backoff. Nothing is emitted after this. */
   async dispose(): Promise<void> {

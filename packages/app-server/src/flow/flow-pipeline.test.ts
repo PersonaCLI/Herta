@@ -220,6 +220,25 @@ describe("runFlowIssue — a whole issue", () => {
 });
 
 describe("runFlowIssue — the hits (§5 step 3)", () => {
+  // The 0.1.10 review: a hit the fetch would refuse stayed a post, and was
+  // quoted and opened in the OS browser as written.
+  it("a hit whose address checkFetchUrl refuses is never a post", async () => {
+    const web = new FakeWeb([
+      hit("http://127.0.0.1:5173/admin"),
+      hit("https://user:pw@a.dev/x"),
+      hit("https://a.dev/fresh"),
+    ]);
+    const m = fakeModel({ queries: ['{"queries": ["one"]}'] });
+    const res = await run(deps({ web, model: m.model }));
+    expect(res.evidence.hits.map((h) => [h.url, h.fate])).toEqual([
+      ["http://127.0.0.1:5173/admin", "refused"],
+      ["https://user:pw@a.dev/x", "refused"],
+      ["https://a.dev/fresh", "kept"],
+    ]);
+    const cardsCall = m.calls.find((c) => c.kind === "cards");
+    expect(cardsCall?.user).not.toContain("127.0.0.1");
+  });
+
   it("drops stale, undated, future, seen and duplicate hits, and says why", async () => {
     const web = new FakeWeb([
       hit("https://a.dev/fresh"),

@@ -68,7 +68,14 @@ export interface FlowHostDeps {
 /** What this module uses of the service. */
 export type FlowLike = Pick<
   FlowService,
-  "start" | "refresh" | "issues" | "markRead" | "state" | "dispose" | "tick"
+  | "start"
+  | "refresh"
+  | "issues"
+  | "markRead"
+  | "state"
+  | "dispose"
+  | "tick"
+  | "stopRun"
 >;
 
 export interface FlowHost {
@@ -84,6 +91,17 @@ export function createFlowHost(deps: FlowHostDeps): FlowHost {
   let settings: FlowSettings = normalizeFlowSettings(undefined);
   let status: FlowStatus | null = null;
   let started = false;
+  // The stored settings, read at once — not at `start()`, which waits for
+  // the session bootstrap (and never comes when it fails). Every handler
+  // waits for this read: before it, the panel showed Flow off after each
+  // relaunch, and a "turn on" wrote the default topics over the
+  // Trailblazer's picks (the 0.1.10 review).
+  const loaded: Promise<void> = deps
+    .readSettings()
+    .then((stored) => {
+      settings = normalizeFlowSettings(stored);
+    })
+    .catch(() => undefined);
   const hasKey = (): boolean => deps.apiKey().trim() !== "";
   const baseUrl = deps.baseUrl !== undefined ? { baseUrl: deps.baseUrl } : {};
 
@@ -136,6 +154,7 @@ export function createFlowHost(deps: FlowHostDeps): FlowHost {
     return flowStateView(status, settings, hasKey());
   }
   async function freshState(): Promise<FlowStateView> {
+    await loaded;
     status = await service.state();
     return view();
   }
@@ -162,22 +181,35 @@ export function createFlowHost(deps: FlowHostDeps): FlowHost {
         await deps.openExternal(url);
         return true;
       });
-      handle(CMD.flowSettings, (): FlowSettingsView => settings);
+      handle(CMD.flowSettings, async (): Promise<FlowSettingsView> => {
+        await loaded;
+        return settings;
+      });
       handle(CMD.flowSetSettings, async (_e, next: unknown) => {
+        await loaded;
         const wasOn = settings.enabled;
-        settings = normalizeFlowSettings(next);
-        await deps.writeSettings(settings);
+        const wanted = normalizeFlowSettings(next);
+        // Kept only once stored: a failed write must not leave Flow on in
+        // memory while the pane rolls back to off.
+        await deps.writeSettings(wanted);
+        settings = wanted;
         sendState();
         // Turned on: today's issue need not wait for the next tick (§6).
         if (!wasOn && settings.enabled && started)
           void service.tick().catch(() => undefined);
+        // Turned off: an issue being gathered stops spending now.
+        if (wasOn && !settings.enabled)
+          void service.stopRun().catch(() => undefined);
         return settings;
       });
     },
     async start() {
-      settings = normalizeFlowSettings(await deps.readSettings());
+      await loaded;
       started = true;
       service.start();
+      // The renderer asked for the state during the bootstrap; say it again
+      // now that the service has read its own.
+      await freshState().then(sendState, () => undefined);
     },
     async dispose() {
       started = false;

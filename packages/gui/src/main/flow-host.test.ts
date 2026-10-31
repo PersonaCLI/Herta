@@ -167,6 +167,7 @@ function harness(settings: unknown = ON) {
     markRead: vi.fn(async () => IDLE),
     state: vi.fn(async () => IDLE),
     dispose: vi.fn(async () => undefined),
+    stopRun: vi.fn(async () => undefined),
   };
   const host = createFlowHost({
     dir: join("x", "flow"),
@@ -218,6 +219,68 @@ describe("Flow's doors", () => {
     expect(h.written).toHaveLength(1);
     expect(h.service.tick).toHaveBeenCalledTimes(1);
     expect(h.sent.at(-1)?.channel).toBe(EVT.flow);
+  });
+
+  // The 0.1.10 review: the settings were read only at start(), at the end
+  // of the session bootstrap — the panel showed Flow off after a relaunch,
+  // and a "turn on" before then wrote the default topics over the picks.
+  it("the stored settings answer before start(), and start() says the state", async () => {
+    const stored = { enabled: true, topics: ["ai", "space", "movies"] };
+    const h = harness(stored);
+    expect(await h.call(CMD.flowSettings)).toEqual(stored);
+    expect(await h.call(CMD.flowState)).toMatchObject({ enabled: true });
+    // A chip clicked before the bootstrap ends keeps the other picks.
+    await h.call(CMD.flowSetSettings, { ...stored, topics: ["ai", "space"] });
+    expect(h.written).toEqual([{ enabled: true, topics: ["ai", "space"] }]);
+    h.sent.length = 0;
+    await h.host.start();
+    expect(h.sent).toEqual([
+      {
+        channel: EVT.flow,
+        payload: expect.objectContaining({ kind: "state" }),
+      },
+    ]);
+  });
+
+  it("turning Flow off stops a run in flight", async () => {
+    const h = harness(ON);
+    await h.host.start();
+    await h.call(CMD.flowSetSettings, { enabled: false, topics: ["ai"] });
+    expect(h.service.stopRun).toHaveBeenCalledTimes(1);
+    await h.call(CMD.flowSetSettings, { enabled: false, topics: ["space"] });
+    expect(h.service.stopRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("a settings write that fails leaves Flow as it was", async () => {
+    const h = harness({ enabled: false, topics: ["ai"] });
+    const host = createFlowHost({
+      dir: join("x", "flow"),
+      host: () => null,
+      apiKey: () => "sk-test",
+      lang: () => "zh",
+      readSettings: async () => ({ enabled: false, topics: ["ai"] }),
+      writeSettings: async () => {
+        throw new Error("EPERM");
+      },
+      send: () => undefined,
+      openExternal: async () => undefined,
+      service: () => h.service,
+    });
+    const handlers = new Map<string, Handler>();
+    host.register(((channel: string, listener: Handler) =>
+      handlers.set(channel, listener)) as never);
+    await expect(
+      Promise.resolve(
+        handlers.get(CMD.flowSetSettings)?.(null, {
+          enabled: true,
+          topics: ["ai"],
+        }),
+      ),
+    ).rejects.toThrow("EPERM");
+    expect(await handlers.get(CMD.flowSettings)?.(null)).toEqual({
+      enabled: false,
+      topics: ["ai"],
+    });
   });
 
   it("refresh says what it did; a marked issue clears", async () => {

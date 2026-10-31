@@ -93,9 +93,26 @@ export function FlowPanel(props: {
     props.onMarkRead(unread);
   }, [props.open, unread, props.onMarkRead]);
 
+  // Opening takes the keyboard, closing gives it back: focus left in the
+  // composer it covers typed and sent a draft unseen (the 0.1.10 review).
+  const panelRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!props.open || !mounted) return;
+    const before = document.activeElement;
+    panelRef.current?.focus({ preventScroll: true });
+    return () => {
+      if (before instanceof HTMLElement && before.isConnected)
+        before.focus({ preventScroll: true });
+    };
+  }, [props.open, mounted]);
+
   useEffect(() => {
     if (!props.open || !isTop) return;
     const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Tab") {
+        keepTabInside(e, panelRef.current);
+        return;
+      }
       if (e.key !== "Escape") return;
       e.preventDefault();
       if (opened !== null) setClosing(true);
@@ -168,8 +185,12 @@ export function FlowPanel(props: {
 
   return (
     <section
+      ref={panelRef}
       className={`flow-panel${props.open ? " is-open" : ""}${opened !== null && !closing ? " is-reading" : ""}`}
+      role="dialog"
+      aria-modal={isTop}
       aria-label={t("flow.title")}
+      tabIndex={-1}
       data-testid="flow-panel"
       onTransitionEnd={(e) => {
         if (e.target === e.currentTarget && !props.open) setMounted(false);
@@ -690,17 +711,76 @@ function FlowOpened(props: {
   );
 }
 
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/** Tab and Shift+Tab wrap inside the panel while it is the top overlay;
+ *  focus found outside it comes back in. Hidden controls (the list while a
+ *  post is read) are skipped. */
+function keepTabInside(e: KeyboardEvent, panel: HTMLElement | null): void {
+  if (panel === null) return;
+  const items = Array.from(
+    panel.querySelectorAll<HTMLElement>(FOCUSABLE),
+  ).filter((el) => getComputedStyle(el).visibility !== "hidden");
+  const active = document.activeElement;
+  const first = items[0];
+  const last = items.at(-1);
+  if (first === undefined || last === undefined) {
+    e.preventDefault();
+    panel.focus({ preventScroll: true });
+    return;
+  }
+  // focus-scrolls: Tab lands on a control, which should come into view, as
+  // the browser's own Tab would bring it.
+  const next =
+    !(active instanceof Node) || !panel.contains(active)
+      ? first
+      : e.shiftKey && (active === first || active === panel)
+        ? last
+        : !e.shiftKey && active === last
+          ? first
+          : null;
+  if (next === null) return;
+  e.preventDefault();
+  // focus-scrolls: as above.
+  next.focus();
+}
+
 const article = new Marked({ gfm: true, breaks: false, async: false });
+
+/** What an article may draw: the Markdown the pipeline keeps, and nothing
+ *  with an attribute. A page shapes this text, and a kept `style` or
+ *  `class` drew a fake note in her hand over the panel (the 0.1.10 review). */
+export const ARTICLE_TAGS = [
+  "h3",
+  "p",
+  "br",
+  "ul",
+  "ol",
+  "li",
+  "strong",
+  "em",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+] as const;
 
 /** The write-up as an article (amendment round 3): the pipeline keeps a small
  *  part of Markdown — headings, paragraphs, lists, bold, tables — and it
- *  renders here through the viewer's one sanitizing door, as a file's
- *  Markdown does. */
+ *  renders here through the viewer's one sanitizing door, held to
+ *  `ARTICLE_TAGS`. */
 function FlowArticle(props: { readonly text: string }): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     if (ref.current === null) return;
-    setSanitizedHtml(ref.current, article.parse(props.text) as string);
+    setSanitizedHtml(
+      ref.current,
+      article.parse(props.text) as string,
+      ARTICLE_TAGS,
+    );
   }, [props.text]);
   return <div className="flow-article" ref={ref} />;
 }

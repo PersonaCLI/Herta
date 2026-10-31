@@ -233,6 +233,26 @@ describe("FlowService", () => {
     await service.dispose();
   });
 
+  // The 0.1.10 review: turning Flow off left the run spending.
+  it("stopRun aborts the run in flight, with no failure and no backoff", async () => {
+    const waiting = { now: false };
+    const { service } = await setup({
+      word: (_post, signal) =>
+        new Promise((_r, reject) => {
+          waiting.now = true;
+          signal.addEventListener("abort", () => reject(abortError()));
+        }),
+    });
+    await service.tick();
+    while (!waiting.now) await new Promise((r) => setTimeout(r, 5));
+    await service.stopRun();
+    const st = await service.state();
+    expect(st.running).toBe(false);
+    expect(st.lastFailure).toBeNull();
+    expect(await service.issues()).toEqual([]);
+    await service.dispose();
+  });
+
   it("dispose aborts the run in flight without a failure or an event", async () => {
     // Her word waits until the run is aborted: the run is mid-flight.
     const waiting = { now: false };

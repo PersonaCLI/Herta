@@ -24,6 +24,8 @@ function setup(over: Partial<FlowTriggerOptions> = {}) {
   let state: FlowStateFile = EMPTY_FLOW_STATE;
   const issueDays = new Set<string>();
   const busy = { now: false };
+  /** state.json cannot be written (a full disk, a lock). */
+  const disk = { full: false };
   const settings = { now: ON };
   /** Each run waits for its release, so a test can hold one in flight. */
   const pending: ((o: FlowRunOutcome) => void)[] = [];
@@ -41,8 +43,14 @@ function setup(over: Partial<FlowTriggerOptions> = {}) {
       hasIssueFor: async (d) => issueDays.has(d),
       readState: async () => state,
       updateState: async (change) => {
+        if (disk.full) return state;
         state = change(state);
         return state;
+      },
+      commitState: async (change) => {
+        if (disk.full) return false;
+        state = change(state);
+        return true;
       },
     },
     runIssue,
@@ -60,6 +68,7 @@ function setup(over: Partial<FlowTriggerOptions> = {}) {
     trig,
     clock,
     busy,
+    disk,
     settings,
     issueDays,
     runIssue,
@@ -196,5 +205,35 @@ describe("FlowTrigger.refresh", () => {
     expect(await t.trig.refresh()).toBe("no_key");
     t.settings.now = { ...ON, enabled: false };
     expect(await t.trig.refresh()).toBe("off");
+  });
+});
+
+// The 0.1.10 review: a write of state.json that failed silently left every
+// cap open — a paid issue each ten-minute tick, refreshes without end.
+describe("FlowTrigger — state.json cannot be written", () => {
+  it("starts nothing it cannot record, by tick or by refresh", async () => {
+    const t = setup();
+    t.disk.full = true;
+    for (let i = 0; i < 4; i++) {
+      expect(await t.trig.tick()).toBe("unsaved");
+      expect(await t.trig.refresh()).toBe("unsaved");
+    }
+    expect(t.runIssue).not.toHaveBeenCalled();
+    // Nothing claimed is left behind: once the disk takes writes, it runs.
+    t.disk.full = false;
+    expect(await t.trig.tick()).toBe("started");
+  });
+
+  it("keeps the backoff in memory when the failure cannot be written", async () => {
+    const t = setup();
+    expect(await t.trig.tick()).toBe("started");
+    t.disk.full = true;
+    await t.finish({ ok: false, reason: "network" });
+    expect(t.state().lastFailure).toBeNull();
+    t.disk.full = false;
+    t.clock.t += 10 * 60 * 1000;
+    expect(await t.trig.tick()).toBe("backoff");
+    t.clock.t += FLOW_RETRY_MS;
+    expect(await t.trig.tick()).toBe("started");
   });
 });

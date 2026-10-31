@@ -10326,23 +10326,45 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
 .flow-button {
   position: relative;
 }
-/* The radio: at rest the shared icon treatment. Live — gathering, or a new
-   issue unread — it takes the app's blue and its waves pulse outward in
-   turn, the near one first. The dot marks the unread issue where motion is
-   off; with motion on the waves say it. */
-.flow-radio.is-live {
+/* The radio: at rest the shared icon treatment. Gathering, it takes the
+   app's blue and its waves pulse outward in turn, the near one first, for as
+   long as the work runs. Ready, the waves light up outward once and hold
+   still, and the dot marks the unread issue: motion means "still gathering"
+   and nothing else. */
+.flow-radio.is-gathering,
+.flow-radio.is-ready {
   color: var(--banzhuan-led);
 }
-.flow-radio.is-live .flow-radio-wave {
+.flow-radio.is-gathering .flow-radio-wave {
   animation: flow-radio-wave 2.4s ease-in-out infinite;
 }
-.flow-radio.is-live .flow-radio-wave--far {
+.flow-radio.is-gathering .flow-radio-wave--far {
   animation-delay: 0.35s;
 }
-.flow-radio.is-live .flow-radio-core {
+.flow-radio.is-gathering .flow-radio-core,
+.flow-radio.is-ready .flow-radio-core {
   transform-box: fill-box;
   transform-origin: center;
+}
+.flow-radio.is-gathering .flow-radio-core {
   animation: flow-radio-core 2.4s ease-in-out infinite;
+}
+.flow-radio.is-ready .flow-radio-wave {
+  animation: flow-radio-land 0.5s ease-out both;
+}
+.flow-radio.is-ready .flow-radio-wave--far {
+  animation-delay: 0.18s;
+}
+.flow-radio.is-ready .flow-radio-core {
+  animation: flow-radio-core 0.6s ease-out 1;
+}
+@keyframes flow-radio-land {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes flow-radio-wave {
   0%,
@@ -10365,22 +10387,17 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
     transform: scale(1.35);
   }
 }
-.flow-button-dot {
-  display: none;
-}
 @media (prefers-reduced-motion: reduce) {
-  .flow-radio.is-live .flow-radio-wave,
-  .flow-radio.is-live .flow-radio-core {
+  .flow-radio .flow-radio-wave,
+  .flow-radio .flow-radio-core {
     animation: none;
   }
-  .flow-button-dot {
-    display: block;
-  }
 }
+/* In the button's corner, clear of the far wave's tip. */
 .flow-button-dot {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 2px;
+  right: 2px;
   width: 7px;
   height: 7px;
   border-radius: 50%;

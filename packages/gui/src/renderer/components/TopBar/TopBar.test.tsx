@@ -426,27 +426,46 @@ describe("TopBar — Flow's radio (owner 2026-10-31)", () => {
     expect(svg?.classList.contains("sidebar-header-icon-svg")).toBe(true);
     // No fixed stroke: CSS owns it, so hover can thicken it.
     expect(svg?.getAttribute("stroke-width")).toBeNull();
-    expect(svg?.classList.contains("is-live")).toBe(false);
+    expect(svg?.classList.contains("is-gathering")).toBe(false);
+    expect(svg?.classList.contains("is-ready")).toBe(false);
   });
 
-  it("goes live while gathering or with a new issue unread, never while the panel is open", () => {
-    const gathering = renderTopBar({
-      flow: { open: false, unread: false, gathering: true },
+  // Owner 2026-10-31: one animation for both hid when the issue was ready.
+  it("pulses only while gathering; a ready issue holds still under the dot", () => {
+    const state = (flow: {
+      open: boolean;
+      unread: boolean;
+      gathering: boolean;
+    }) => {
+      const { container } = renderTopBar({ flow });
+      const svg = flowButton(container);
+      return {
+        gathering: svg?.classList.contains("is-gathering") ?? false,
+        ready: svg?.classList.contains("is-ready") ?? false,
+        dot: container.querySelector(".flow-button-dot") !== null,
+      };
+    };
+    expect(state({ open: false, unread: false, gathering: true })).toEqual({
+      gathering: true,
+      ready: false,
+      dot: false,
     });
-    expect(flowButton(gathering.container)?.classList.contains("is-live")).toBe(
-      true,
-    );
-    const unread = renderTopBar({
-      flow: { open: false, unread: true, gathering: false },
+    expect(state({ open: false, unread: true, gathering: false })).toEqual({
+      gathering: false,
+      ready: true,
+      dot: true,
     });
-    expect(flowButton(unread.container)?.classList.contains("is-live")).toBe(
-      true,
-    );
-    const open = renderTopBar({
-      flow: { open: true, unread: true, gathering: true },
+    // A refresh over an unread issue: still gathering, the dot still says
+    // there is one to read.
+    expect(state({ open: false, unread: true, gathering: true })).toEqual({
+      gathering: true,
+      ready: false,
+      dot: true,
     });
-    expect(flowButton(open.container)?.classList.contains("is-live")).toBe(
-      false,
-    );
+    expect(state({ open: true, unread: true, gathering: true })).toEqual({
+      gathering: false,
+      ready: false,
+      dot: false,
+    });
   });
 });

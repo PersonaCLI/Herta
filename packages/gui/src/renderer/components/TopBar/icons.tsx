@@ -68,15 +68,22 @@ export function NewSessionIcon(): JSX.Element {
 
 /**
  * Flow's button (ADR 0084): a radio sending. Its own svg rather than
- * `IconSvg`, because its two waves are separate paths: while an issue is
- * being gathered, or a new one waits unread, they pulse outward in turn
- * (owner 2026-10-31: "dynamic, since it is like a radio"). At rest it takes
- * the shared grey → dark, 1.5 → 2 stroke on hover, as every icon here does.
+ * `IconSvg`, because its two waves are separate paths. While an issue is
+ * being gathered they pulse outward in turn (owner 2026-10-31: "dynamic,
+ * since it is like a radio"); once it is ready they light up outward once
+ * and hold still, so motion means "still gathering" and nothing else (owner
+ * 2026-10-31: the same animation for both hid when the issue was ready). At
+ * rest it takes the shared grey → dark, 1.5 → 2 stroke on hover, as every
+ * icon here does.
  */
-export function FlowRadioIcon(props: { readonly live: boolean }): JSX.Element {
+export type FlowRadioState = "rest" | "gathering" | "ready";
+
+export function FlowRadioIcon(props: {
+  readonly state: FlowRadioState;
+}): JSX.Element {
   return (
     <svg
-      className={`sidebar-header-icon-svg flow-radio${props.live ? " is-live" : ""}`}
+      className={`sidebar-header-icon-svg flow-radio${props.state === "rest" ? "" : ` is-${props.state}`}`}
       data-icon="flow"
       viewBox="0 0 24 24"
       fill="none"

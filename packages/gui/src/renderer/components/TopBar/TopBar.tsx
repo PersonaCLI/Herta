@@ -254,8 +254,14 @@ export function TopBar(props: TopBarProps): JSX.Element {
             onClick={() => runShortcut("openFlow")}
           >
             <FlowRadioIcon
-              live={
-                !props.flow.open && (props.flow.unread || props.flow.gathering)
+              state={
+                props.flow.open
+                  ? "rest"
+                  : props.flow.gathering
+                    ? "gathering"
+                    : props.flow.unread
+                      ? "ready"
+                      : "rest"
               }
             />
             {props.flow.unread && !props.flow.open && (

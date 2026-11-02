@@ -328,14 +328,16 @@ describe("the browser page tab (ADR 0083)", () => {
       const mock = createMockHertaBridge();
       withPage(mock);
       let state: "idle" | "ready" = "idle";
+      const shown = "web\0npm\0run\0dev\0/ws";
       const start = vi.fn(
-        async (_s: string, _n: string, confirmed: boolean) => {
-          if (!confirmed)
+        async (_s: string, _n: string, confirmed?: string) => {
+          if (confirmed !== shown)
             return {
               ok: false as const,
               reason: "confirm" as const,
               command: "npm run dev",
               code: "command_ask_unknown",
+              shown,
             };
           state = "ready";
           return {
@@ -371,10 +373,11 @@ describe("the browser page tab (ADR 0083)", () => {
       expect(screen.getByText("npm run dev")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
       expect(await screen.findByRole("button", { name: "Run" })).toBeTruthy();
-      expect(start).toHaveBeenLastCalledWith("s1", "web", false);
+      expect(start).toHaveBeenLastCalledWith("s1", "web", undefined);
+      // The card answers with what it showed (review 2026-10-30, U2).
       fireEvent.click(screen.getByRole("button", { name: "Run" }));
       await waitFor(() =>
-        expect(start).toHaveBeenLastCalledWith("s1", "web", true),
+        expect(start).toHaveBeenLastCalledWith("s1", "web", shown),
       );
       expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
     });

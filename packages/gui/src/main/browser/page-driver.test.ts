@@ -28,9 +28,15 @@ function fakePage(start = "http://localhost:5173/login") {
     /** Where a load lands: a redirect, when it differs. */
     lands: (url: string): string => url,
     top: 0,
+    /** What one of the read script's functions answers, by name. */
+    answers: {} as Record<string, unknown>,
+    /** Chromium's inspect mode: on, a press is a pick, not a click. */
+    inspect: "none",
   };
   let release: (() => void) | null = null;
   const values = (expr: string): unknown => {
+    const fn = /^__herta\.(\w+)\(/.exec(expr)?.[1] ?? "";
+    if (fn in state.answers) return state.answers[fn];
     if (expr.startsWith("__herta.viewport"))
       return { width: 800, height: 600, dpr: 1, left: 0, top: state.top };
     return {
@@ -60,6 +66,23 @@ function fakePage(start = "http://localhost:5173/login") {
           return {};
         case "Page.captureScreenshot":
           return { data: "" };
+        case "Overlay.setInspectMode":
+          state.inspect = String(params?.mode);
+          return {};
+        case "Input.dispatchMouseEvent":
+          if (params?.type === "mousePressed" && state.inspect !== "none")
+            messages.emit("message", {}, "Overlay.inspectNodeRequested", {
+              backendNodeId: 42,
+            });
+          return {};
+        case "DOM.resolveNode":
+          return { object: { objectId: "node-42" } };
+        case "Runtime.callFunctionOn":
+          return {
+            result: {
+              value: { element: 'button "Sign in"', html: "<button>" },
+            },
+          };
         case "Runtime.evaluate": {
           const expr = String(params?.expression ?? "");
           if (!expr.startsWith("__herta.")) return {};
@@ -115,7 +138,11 @@ function fakePage(start = "http://localhost:5173/login") {
       message,
     });
   };
-  return { driver, instrument, state, openDialog };
+  /** A debugger message from the page's own view: the Trailblazer's. */
+  const message = (method: string, params: Record<string, unknown>): void => {
+    messages.emit("message", {}, method, params);
+  };
+  return { driver, instrument, state, openDialog, message };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -219,6 +246,73 @@ describe("a screenshot of a scrolled page", () => {
       { x: 0, y: 1500, width: 800, height: 600, scale: 1 },
       { x: 10, y: 1520, width: 100, height: 50, scale: 1 },
     ]);
+  });
+});
+
+describe("typing is masked where the text lands (review 2026-10-30, M6)", () => {
+  it("a type by x/y on a wrapper that focuses a password field is masked", async () => {
+    const { driver, state } = fakePage();
+    state.answers.at = { target: 'div ""', password: false };
+    state.answers.focusedPassword = true;
+    const r = await driver.act(
+      { action: "type", x: 100, y: 200, text: "hunter2" },
+      new AbortController().signal,
+    );
+    expect(r.password).toBe(true);
+  });
+
+  it("a type that lands on a plain field is not", async () => {
+    const { driver, state } = fakePage();
+    state.answers.at = { target: 'textbox "Email"', password: false };
+    state.answers.focusedPassword = false;
+    const r = await driver.act(
+      { action: "type", x: 100, y: 200, text: "me@example.com" },
+      new AbortController().signal,
+    );
+    expect(r.password).toBeUndefined();
+  });
+});
+
+describe("the Trailblazer's picker (review 2026-10-30, M2)", () => {
+  it("板砖's click while a pick is on is a click, not their pick, and the pick stays on", async () => {
+    const { driver, instrument, state } = fakePage();
+    const picks: string[] = [];
+    await instrument.startPick((p) => picks.push(p.element));
+    state.answers.at = { target: 'button "Sign in"', password: false };
+    await driver.act(
+      { action: "click", x: 100, y: 200 },
+      new AbortController().signal,
+    );
+    await sleep(10);
+    expect(picks).toEqual([]);
+    expect(instrument.picking).toBe(true);
+    expect(state.inspect).toBe("searchForNode");
+    const modes = state.sent
+      .filter(
+        (s) =>
+          s.method === "Overlay.setInspectMode" ||
+          (s.method === "Input.dispatchMouseEvent" &&
+            s.params?.type === "mousePressed"),
+      )
+      .map((s) => String(s.params?.mode ?? s.params?.type));
+    expect(modes).toEqual([
+      "searchForNode",
+      "none",
+      "mousePressed",
+      "searchForNode",
+    ]);
+  });
+
+  it("the Trailblazer's own press still picks", async () => {
+    const { instrument, state, message } = fakePage();
+    const picks: string[] = [];
+    await instrument.startPick((p) => picks.push(p.element));
+    // Their press reaches the page's view, not 板砖's dispatch.
+    message("Overlay.inspectNodeRequested", { backendNodeId: 42 });
+    await sleep(10);
+    expect(picks).toEqual(['button "Sign in"']);
+    expect(instrument.picking).toBe(false);
+    expect(state.inspect).toBe("none");
   });
 });
 

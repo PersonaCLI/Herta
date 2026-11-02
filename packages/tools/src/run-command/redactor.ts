@@ -54,7 +54,13 @@ export const TOKEN_SECRET_PATTERNS = PATTERNS;
 const CODE_REFERENCE_RE =
   /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*\]|\([^()\n]*(?:\)|$))+[;,)]*$/;
 
-function readsASecret(value: string): boolean {
+// The `.env` shape — a bare `=`, no space on either side — is a value
+// written down, never code that reads one. The review of 2026-10-30 (G4)
+// found `password=correct.horse.battery.staple`, `TOKEN=part1.part2.part3`,
+// `DB_PASSWORD=foo(bar)` and `PASSWORD==hunter2` unmasked by the exemption
+// below. Every line the lab met was spaced; a minified line is masked.
+function readsASecret(sep: string, value: string): boolean {
+  if (sep === "=") return false;
   if (/^[=>(]/u.test(value)) return true;
   if (!CODE_REFERENCE_RE.test(value)) return false;
   const accesses = value.match(/\??\.[A-Za-z_$]/g)?.length ?? 0;
@@ -66,8 +72,8 @@ export function redactSecrets(text: string): string {
   for (const { kind, re } of PATTERNS) {
     out = out.replace(re, `[REDACTED:${kind}]`);
   }
-  out = out.replace(ENV_SECRET_RE, (match, key, sep, value: string) =>
-    readsASecret(value) ? match : `${key}${sep}[REDACTED:env_secret]`,
+  out = out.replace(ENV_SECRET_RE, (match, key, sep: string, value: string) =>
+    readsASecret(sep, value) ? match : `${key}${sep}[REDACTED:env_secret]`,
   );
   return out;
 }

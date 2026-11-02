@@ -959,12 +959,13 @@ export interface HertaBridge {
   ): () => void;
   /** The launcher's entries for the new-tab page (ADR 0083 §4). */
   serversList?(sessionId: string): Promise<ServerListing>;
-  /** The Trailblazer's Run; `confirmed` answers an ask-class command's
-   *  first start in the session (question 8). */
+  /** The Trailblazer's Run; `confirmed` — the confirm card's `shown` —
+   *  answers an ask-class command's first start in the session (question
+   *  8). */
   serversStart?(
     sessionId: string,
     name: string,
-    confirmed: boolean,
+    confirmed?: string,
   ): Promise<StartServerResult>;
   serversStop?(sessionId: string, name: string): Promise<{ ok: boolean }>;
   /** A session's server changed state: the new-tab page reads again. */

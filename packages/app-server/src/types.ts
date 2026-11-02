@@ -880,11 +880,13 @@ export interface Session {
   listServers?(): Promise<ServerListing>;
   /** The Trailblazer's Run (§5, question 8): classified as run_command
    *  would classify the entry's argv, at every start. An ask-class command
-   *  needs `confirmed` on its first start in the session; a block-class one
-   *  is refused. The start is noted in the record. */
+   *  needs `confirmed` on its first start in the session — the `shown` of
+   *  the card the Trailblazer answered, which confirms that argv in that
+   *  directory and nothing the entry says since; a block-class one is
+   *  refused. The start is noted in the record. */
   startServer?(
     name: string,
-    opts?: { readonly confirmed?: boolean },
+    opts?: { readonly confirmed?: string },
   ): Promise<StartServerResult>;
   /** The Trailblazer's Stop, noted in the record when it stopped one. */
   stopServer?(name: string): Promise<{ readonly ok: boolean }>;
@@ -999,6 +1001,9 @@ export type StartServerResult =
       readonly reason: "confirm";
       readonly command: string;
       readonly code?: string;
+      /** What the card stands for — the argv and its directory — sent back
+       *  as `confirmed` with the Trailblazer's Run. */
+      readonly shown: string;
     }
   /** A block-class command: never runs. */
   | { readonly ok: false; readonly reason: "refused"; readonly message: string }

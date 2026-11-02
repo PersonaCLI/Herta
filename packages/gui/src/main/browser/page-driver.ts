@@ -33,6 +33,17 @@ const COMMAND_TIMEOUT_MS = 10_000;
 /** Messages and requests kept per page. */
 const BUFFER = 200;
 
+/** Chromium's inspect mode, for the Trailblazer's picker (ADR 0083 §4). */
+const INSPECT_ON = {
+  mode: "searchForNode",
+  highlightConfig: {
+    showInfo: true,
+    contentColor: { r: 92, g: 182, b: 202, a: 0.22 },
+    borderColor: { r: 92, g: 182, b: 202, a: 0.9 },
+  },
+};
+const INSPECT_OFF = { mode: "none", highlightConfig: {} };
+
 /** Device widths for `resize` (ADR 0083 §6). */
 const PRESETS = {
   phone: { width: 375, height: 812, mobile: true },
@@ -143,6 +154,9 @@ export class PageInstrument {
   private onPicked:
     | ((pick: { readonly element: string; readonly html: string }) => void)
     | null = null;
+  /** Inspect mode is set aside for 板砖's input: nothing picked meanwhile
+   *  is the Trailblazer's. */
+  private inspectAside = false;
   status: number | null = null;
 
   constructor(private readonly wc: WebContents) {
@@ -205,24 +219,14 @@ export class PageInstrument {
     this.onPicked = onPicked;
     await this.cdp.sendCommand("DOM.enable");
     await this.cdp.sendCommand("Overlay.enable");
-    await this.cdp.sendCommand("Overlay.setInspectMode", {
-      mode: "searchForNode",
-      highlightConfig: {
-        showInfo: true,
-        contentColor: { r: 92, g: 182, b: 202, a: 0.22 },
-        borderColor: { r: 92, g: 182, b: 202, a: 0.9 },
-      },
-    });
+    await this.cdp.sendCommand("Overlay.setInspectMode", INSPECT_ON);
   }
 
   async stopPick(): Promise<void> {
     if (this.onPicked === null) return;
     this.onPicked = null;
     await this.cdp
-      .sendCommand("Overlay.setInspectMode", {
-        mode: "none",
-        highlightConfig: {},
-      })
+      .sendCommand("Overlay.setInspectMode", INSPECT_OFF)
       .catch(() => undefined);
   }
 
@@ -233,7 +237,8 @@ export class PageInstrument {
   /** The pointer is over the page at (x, y), in its CSS pixels: the inspect
    *  highlight follows it, and a click picks what it hovers. */
   hoverAt(x: number, y: number): void {
-    if (this.onPicked === null) return;
+    // Not between 板砖's press and its release.
+    if (this.onPicked === null || this.inspectAside) return;
     void this.cdp
       .sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
       .catch(() => undefined);
@@ -268,7 +273,7 @@ export class PageInstrument {
     switch (method) {
       case "Overlay.inspectNodeRequested": {
         const id = p.backendNodeId;
-        if (typeof id === "number") void this.picked(id);
+        if (typeof id === "number" && !this.inspectAside) void this.picked(id);
         return;
       }
       case "Runtime.consoleAPICalled": {
@@ -593,12 +598,29 @@ export class PageInstrument {
   }
 
   /** 板砖's own input: dispatched through the debugger, and not counted as
-   *  the Trailblazer's. */
+   *  the Trailblazer's. While the Trailblazer's picker is on, inspect mode
+   *  is set aside for the input and put back after: it took 板砖's press as
+   *  their pick, a chip landed in the composer and the step reported
+   *  success (review 2026-10-30, M2). */
   async drive<T>(run: () => Promise<T>): Promise<T> {
     this.driving += 1;
+    const picking = this.onPicked !== null;
+    if (picking) {
+      this.inspectAside = true;
+      await this.cdp
+        .sendCommand("Overlay.setInspectMode", INSPECT_OFF)
+        .catch(() => undefined);
+    }
     try {
       return await run();
     } finally {
+      if (picking) {
+        if (this.onPicked !== null)
+          await this.cdp
+            .sendCommand("Overlay.setInspectMode", INSPECT_ON)
+            .catch(() => undefined);
+        this.inspectAside = false;
+      }
       // The page's own events for this input arrive just after.
       setTimeout(() => {
         this.driving -= 1;
@@ -1025,13 +1047,21 @@ export class PageDriver implements BrowserHost {
         break;
       }
       case "type": {
+        const refuseOff = (): void => {
+          if (password && !isLoopbackUrl(wc.getURL()))
+            throw new BrowserHostError(
+              "password_refused",
+              "a password is typed only on this machine's pages",
+            );
+        };
         const p = await at(req.ref, req.x, req.y);
-        if (password && !isLoopbackUrl(wc.getURL()))
-          throw new BrowserHostError(
-            "password_refused",
-            "a password is typed only on this machine's pages",
-          );
+        refuseOff();
         await instrument.click(p.x, p.y);
+        // The mask follows where the text lands, not where 板砖 aimed: a
+        // press by x/y on a label or a wrapper, or one that lands on another
+        // element, can focus a password field (review 2026-10-30, M6).
+        if (await instrument.call<boolean>("focusedPassword")) password = true;
+        refuseOff();
         await instrument.insertText(req.text);
         if (req.submit === true) await instrument.key("Enter");
         break;

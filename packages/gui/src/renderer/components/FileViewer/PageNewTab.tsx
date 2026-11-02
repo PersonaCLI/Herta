@@ -47,6 +47,7 @@ export function PageNewTab({
     readonly name: string;
     readonly command: string;
     readonly code?: string;
+    readonly shown: string;
   } | null>(null);
   const [failure, setFailure] = useState<{
     readonly name: string;
@@ -66,7 +67,8 @@ export function PageNewTab({
     });
   }, [bridge, sessionId, refresh]);
 
-  const run = async (name: string, confirmed: boolean): Promise<void> => {
+  /** `confirmed`: the card's `shown`, when the Trailblazer answered one. */
+  const run = async (name: string, confirmed?: string): Promise<void> => {
     if (bridge.serversStart === undefined) return;
     setBusy(name);
     setAsk(null);
@@ -79,6 +81,7 @@ export function PageNewTab({
           name,
           command: r.command,
           ...(r.code !== undefined ? { code: r.code } : {}),
+          shown: r.shown,
         });
       } else {
         setFailure({
@@ -134,9 +137,7 @@ export function PageNewTab({
                 type="button"
                 className="page-server__btn"
                 disabled={pending}
-                onClick={() =>
-                  void (running ? stop(e.name) : run(e.name, false))
-                }
+                onClick={() => void (running ? stop(e.name) : run(e.name))}
               >
                 {running ? (
                   <svg
@@ -213,7 +214,7 @@ export function PageNewTab({
                   <button
                     type="button"
                     className="page-server__btn is-primary"
-                    onClick={() => void run(e.name, true)}
+                    onClick={() => void run(e.name, ask.shown)}
                   >
                     {t("page.servers.confirmRun")}
                   </button>

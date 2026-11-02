@@ -177,6 +177,44 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     expect(text.modelText).not.toContain("abcdef123");
   });
 
+  it("the elements under a navigation or an action are redacted as a read is (review 2026-10-30, T5)", async () => {
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
+    const view = {
+      title: "Settings",
+      elements: {
+        lines:
+          'e1 textbox "API key" value="sk-abcdef0123456789abcdef"\ne2 link "token=abcdef123"',
+        count: 2,
+        shown: 2,
+      },
+      consoleErrors: [] as string[],
+    };
+    const host = fakeHost({
+      async navigate() {
+        host.url = "http://localhost:5173/settings";
+        return { ...view, url: host.url, status: 200 };
+      },
+      async act() {
+        return { ...view, url: host.url as string, navigated: false };
+      },
+    });
+    const nav = await browserNavigateTool({ host }).run(
+      call("browser_navigate", { url: "localhost:5173/settings" }),
+      ctx(),
+      () => {},
+    );
+    const act = await browserActTool({ host, eyes: false }).run(
+      call("browser_act", { action: "scroll", direction: "down" }),
+      ctx(),
+      () => {},
+    );
+    for (const r of [nav, act]) {
+      expect(r.modelText).toContain('e1 textbox "API key"');
+      expect(r.modelText).not.toContain("sk-abcdef0123456789abcdef");
+      expect(r.modelText).not.toContain("abcdef123");
+    }
+  });
+
   it("read before any page fails with the move that fixes it; find needs a query", async () => {
     ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();

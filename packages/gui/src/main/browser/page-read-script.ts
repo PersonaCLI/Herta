@@ -201,6 +201,17 @@ export const READ_SCRIPT = String.raw`(() => {
         password: el.tagName === "INPUT" && el.type === "password",
       };
     },
+    // Where typed text goes: the focused element, through open shadow roots.
+    // Inside a frame is not this script's to read, so focus there counts as
+    // a password.
+    focusedPassword() {
+      let el = document.activeElement;
+      while (el && el.shadowRoot && el.shadowRoot.activeElement)
+        el = el.shadowRoot.activeElement;
+      if (!el) return false;
+      if (el.tagName === "IFRAME" || el.tagName === "FRAME") return true;
+      return el.tagName === "INPUT" && el.type === "password";
+    },
     choose(ref, value) {
       const el = refs.get(ref);
       if (!el || !el.isConnected || el.tagName !== "SELECT") return { chosen: null };

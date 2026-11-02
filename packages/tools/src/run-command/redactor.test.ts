@@ -129,6 +129,18 @@ describe("redactSecrets", () => {
     expect(redactSecrets("db.password=s3cret")).not.toContain("s3cret");
   });
 
+  it("never takes the .env shape for code (review 2026-10-30, G4)", () => {
+    for (const [line, secret] of [
+      ["password=correct.horse.battery.staple", "horse"],
+      ["TOKEN=part1.part2.part3", "part2"],
+      ["DB_PASSWORD=foo(bar)", "foo"],
+      ["PASSWORD==hunter2", "hunter2"],
+      ["export API_KEY=a.b.c.d", "a.b.c"],
+      ["curl -d secret=x.y.z https://example.com", "x.y.z"],
+    ] as const)
+      expect(redactSecrets(line)).not.toContain(secret);
+  });
+
   it("reads a value of open parentheses in linear time (review 2026-10-30)", () => {
     for (const line of [
       `token=a${"(".repeat(28)})-`,

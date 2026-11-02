@@ -350,12 +350,13 @@ describe("the Trailblazer's Run and Stop (ADR 0083 §5, question 8)", () => {
       command: "npm run dev",
     });
     expect(servers.started).toEqual([]);
-    expect(await session.startServer("web", { confirmed: true })).toMatchObject(
-      {
-        ok: true,
-        url: "http://localhost:5173/",
-      },
-    );
+    const shown = (first as { shown: string }).shown;
+    expect(
+      await session.startServer("web", { confirmed: shown }),
+    ).toMatchObject({
+      ok: true,
+      url: "http://localhost:5173/",
+    });
     // Confirmed once in this session: the next start does not ask.
     await session.stopServer("web");
     expect((await session.startServer("web")).ok).toBe(true);
@@ -387,6 +388,45 @@ describe("the Trailblazer's Run and Stop (ADR 0083 §5, question 8)", () => {
       "开拓者启动了开发服务器 web（npm run dev），localhost:5173",
       "开拓者启动了开发服务器 tests（npm test），localhost:4000",
     ]);
+    await cleanup();
+  });
+
+  it("a confirm runs only what its card showed: an entry rewritten while it was open asks again (review 2026-10-30, U2)", async () => {
+    const cfg = mkConfig();
+    const launch = (args: string[]) =>
+      writeFileSync(
+        join(cfg.workspaceRoot, "herta.launch.json"),
+        JSON.stringify({
+          version: 1,
+          servers: [{ name: "web", command: "npm", args, port: 5173 }],
+        }),
+      );
+    launch(["run", "dev"]);
+    const servers = fakeServers();
+    const { session, cleanup } = await mkStubSession(
+      cfg,
+      [{ kind: "user", text: "earlier" }],
+      1,
+      undefined,
+      { servers },
+    );
+    const card = await session.startServer("web");
+    expect(card).toMatchObject({ reason: "confirm", command: "npm run dev" });
+    // Rewritten while the card is open.
+    launch(["run", "wipe-cache"]);
+    const answered = await session.startServer("web", {
+      confirmed: (card as { shown: string }).shown,
+    });
+    expect(answered).toMatchObject({
+      ok: false,
+      reason: "confirm",
+      command: "npm run wipe-cache",
+    });
+    expect(servers.started).toEqual([]);
+    expect(
+      (await session.startServer("web", { confirmed: "anything" })).ok,
+    ).toBe(false);
+    expect(servers.started).toEqual([]);
     await cleanup();
   });
 

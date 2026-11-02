@@ -235,13 +235,15 @@ function landedOff<T>(url: string): ToolResult<T> | null {
   );
 }
 
-/** The page's elements under a step's result. */
+/** The page's elements under a step's result, redacted as `browser_read`
+ *  redacts the same lines (review 2026-10-30, T5: a field's value or a
+ *  link's name went to 板砖 as the page showed it). */
 function elementsBlock(view: PageView): string[] {
   const e = view.elements;
   if (e.count === 0) return ["Interactive elements: none."];
   return [
     `Interactive elements (${e.count}${e.shown < e.count ? `, first ${e.shown} shown — browser_read mode tree for the rest` : ""}):`,
-    e.lines,
+    redactSecrets(e.lines),
   ];
 }
 

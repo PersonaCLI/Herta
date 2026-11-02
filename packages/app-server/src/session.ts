@@ -1731,7 +1731,7 @@ export class SessionImpl implements Session {
 
   async startServer(
     name: string,
-    opts: { readonly confirmed?: boolean } = {},
+    opts: { readonly confirmed?: string } = {},
   ): Promise<StartServerResult> {
     if (this.servers === null) return { ok: false, reason: "no_launcher" };
     const root = this.wsHolder.current;
@@ -1764,13 +1764,17 @@ export class SessionImpl implements Session {
       "\0",
     );
     if (verdict.kind === "ask") {
-      if (opts.confirmed === true) this.confirmedServers.add(key);
+      // The answer names the card it answers: the file is read again here,
+      // and an entry rewritten while the card was open asks again with what
+      // it runs now (review 2026-10-30, U2).
+      if (opts.confirmed === key) this.confirmedServers.add(key);
       else if (!this.confirmedServers.has(key))
         return {
           ok: false,
           reason: "confirm",
           command,
           ...(verdict.code !== undefined ? { code: verdict.code } : {}),
+          shown: key,
         };
     }
     try {

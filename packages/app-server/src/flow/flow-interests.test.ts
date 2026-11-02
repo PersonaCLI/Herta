@@ -135,6 +135,20 @@ describe("gatherFlowInterests", () => {
     });
     expect(none.notes).toBe("");
   });
+
+  it("redacts her notes before they go to the side model (review 2026-11-01, FN1)", async () => {
+    const root = await workspace("w", {
+      [join(".herta", "narrative", trailblazerNotesFileName("zh"))]:
+        "开拓者贴过一次密钥：DEEPSEEK_API_KEY=sk-abcdef0123456789abcdef\n在做一个 CLI。",
+    });
+    const got = await gatherFlowInterests({
+      settings: ON,
+      workspaceRoots: [root],
+      lang: "zh",
+    });
+    expect(got.notes).toContain("在做一个 CLI。");
+    expect(got.notes).not.toContain("sk-abcdef0123456789abcdef");
+  });
 });
 
 describe("normalizeFlowSettings", () => {

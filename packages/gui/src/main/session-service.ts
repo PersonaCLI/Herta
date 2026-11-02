@@ -911,9 +911,10 @@ export function createSessionService(
       CMD.serversStart,
       async (_e, sessionId?: unknown, name?: unknown, confirmed?: unknown) =>
         typeof name === "string"
-          ? ((await activeFor(sessionId)?.startServer?.(name, {
-              confirmed: confirmed === true,
-            })) ?? { ok: false as const, reason: "no_launcher" as const })
+          ? ((await activeFor(sessionId)?.startServer?.(
+              name,
+              typeof confirmed === "string" ? { confirmed } : {},
+            )) ?? { ok: false as const, reason: "no_launcher" as const })
           : { ok: false as const, reason: "no_entry" as const },
     );
     handle(CMD.serversStop, async (_e, sessionId?: unknown, name?: unknown) =>

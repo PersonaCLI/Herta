@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { narrativeDirFor, trailblazerNotesFileName } from "@herta/core";
+import { redactSecrets } from "@herta/tools";
 import {
   DEFAULT_FLOW_TOPICS,
   flowTopicNames,
@@ -91,7 +92,10 @@ async function readSmall(file: string): Promise<string | null> {
 }
 
 /** Her page on the Trailblazer from the first workspace that has one: the
- *  issue's language first, the other when that one has none yet. */
+ *  issue's language first, the other when that one has none yet. Redacted
+ *  before it is cut: it goes to the side model in the query and card calls
+ *  (review 2026-11-01, FN1), and the dream pass writes it from
+ *  conversations, where a key may have been pasted. */
 async function notesOf(
   roots: readonly string[],
   lang: FlowLang,
@@ -102,7 +106,9 @@ async function notesOf(
       const file = join(narrativeDirFor(root, l), trailblazerNotesFileName(l));
       const text = await readSmall(file);
       if (text !== null && text.trim() !== "") {
-        return Array.from(text.trim()).slice(0, NOTES_CHARS).join("");
+        return Array.from(redactSecrets(text.trim()))
+          .slice(0, NOTES_CHARS)
+          .join("");
       }
     }
   }

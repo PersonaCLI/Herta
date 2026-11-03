@@ -11,11 +11,19 @@ interface FakeContents {
   focused: boolean;
   destroyed: boolean;
   closed: number;
-  listeners: Record<string, (() => void)[]>;
+  listeners: Record<string, ((...args: unknown[]) => void)[]>;
   inserted: string[];
+  loaded: string[];
+  openHandler: ((d: { url: string }) => { action: string }) | null;
 }
 
-const h = vi.hoisted(() => ({ views: [] as { webContents: FakeContents }[] }));
+const h = vi.hoisted(() => ({
+  views: [] as { webContents: FakeContents }[],
+  /** What went to the system browser. */
+  opened: [] as string[],
+  /** One of 板砖's steps runs on the page. */
+  stepping: false,
+}));
 
 vi.mock("electron", () => {
   class WebContentsView {
@@ -23,17 +31,26 @@ vi.mock("electron", () => {
       focused: false,
       destroyed: false,
       closed: 0,
-      listeners: {} as Record<string, (() => void)[]>,
+      listeners: {} as Record<string, ((...args: unknown[]) => void)[]>,
       inserted: [] as string[],
-      setWindowOpenHandler: () => undefined,
-      on(name: string, listener: () => void) {
+      loaded: [] as string[],
+      openHandler: null as ((d: { url: string }) => { action: string }) | null,
+      setWindowOpenHandler(
+        fn: (d: { url: string }) => { action: string },
+      ): void {
+        this.openHandler = fn;
+      },
+      on(name: string, listener: (...args: unknown[]) => void) {
         this.listeners[name] = [...(this.listeners[name] ?? []), listener];
       },
       insertCSS(css: string) {
         this.inserted.push(css);
         return Promise.resolve("key");
       },
-      loadURL: async () => undefined,
+      loadURL(url: string) {
+        this.loaded.push(url);
+        return Promise.resolve();
+      },
       isDestroyed() {
         return this.destroyed;
       },
@@ -56,7 +73,11 @@ vi.mock("electron", () => {
     WebContentsView,
     ipcMain: {},
     screen: {},
-    shell: {},
+    shell: {
+      openExternal: async (url: string) => {
+        h.opened.push(url);
+      },
+    },
     session: {
       fromPartition: () => ({
         setPermissionRequestHandler: () => undefined,
@@ -71,12 +92,17 @@ vi.mock("./page-driver.js", () => ({
   PageDriver: class {},
   PageInstrument: class {
     picking = false;
+    get stepping(): boolean {
+      return h.stepping;
+    }
     detach(): void {}
   },
 }));
 
 const { CMD } = await import("../../preload/channels.js");
-const { PageHost, registerPageHandlers } = await import("./page-host.js");
+const { chromiumSandboxOff, PageHost, registerPageHandlers } = await import(
+  "./page-host.js"
+);
 type PageIpc = import("./page-host.js").PageIpc;
 
 function fakeWindow() {
@@ -124,6 +150,8 @@ const BOX = { x: 0, y: 0, width: 360, height: 600 };
 beforeEach(() => {
   vi.useFakeTimers();
   h.views.length = 0;
+  h.opened.length = 0;
+  h.stepping = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -156,6 +184,97 @@ describe("the page host as its window closes (ADR 0083 §3)", () => {
     expect(w.children).toHaveLength(0);
     expect(w.appFocus).toHaveBeenCalledTimes(1);
     expect(page?.closed).toBe(1);
+  });
+});
+
+describe("with Chromium's sandbox off, an outside page opens in the system browser (review H2)", () => {
+  /** A navigation event as Electron hands it; true when it was stopped. */
+  const fire = (page: FakeContents, name: string, url: string): boolean => {
+    let stopped = false;
+    const event = {
+      preventDefault: () => {
+        stopped = true;
+      },
+      url,
+      isMainFrame: true,
+    };
+    for (const l of page.listeners[name] ?? []) l(event, url);
+    return stopped;
+  };
+
+  it("a typed address off this machine goes to the system browser, a local one loads", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false, true);
+    host.navigate("s1", { url: "github.com/acme/app" });
+    expect(h.opened).toEqual(["https://github.com/acme/app"]);
+    expect(h.views).toHaveLength(0);
+    host.navigate("s1", { url: "localhost:5173" });
+    expect(h.views[0]?.webContents.loaded).toEqual(["http://localhost:5173/"]);
+    expect(h.opened).toHaveLength(1);
+    host.dispose();
+  });
+
+  it("a link, a redirect or a new window off this machine is stopped and sent out, one a moment", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false, true);
+    host.navigate("s1", { url: "localhost:5173" });
+    const page = h.views[0]?.webContents as FakeContents;
+    expect(fire(page, "will-navigate", "https://news.example.com/a")).toBe(
+      true,
+    );
+    expect(h.opened).toEqual(["https://news.example.com/a"]);
+    // A redirect loop right after: stopped, and no second tab.
+    expect(fire(page, "will-redirect", "https://news.example.com/b")).toBe(
+      true,
+    );
+    expect(h.opened).toHaveLength(1);
+    vi.advanceTimersByTime(1500);
+    expect(page.openHandler?.({ url: "https://docs.example.com/" })).toEqual({
+      action: "deny",
+    });
+    expect(h.opened).toEqual([
+      "https://news.example.com/a",
+      "https://docs.example.com/",
+    ]);
+    // On this machine the page goes on as before.
+    expect(fire(page, "will-navigate", "http://127.0.0.1:5173/login")).toBe(
+      false,
+    );
+    host.dispose();
+  });
+
+  it("an outside page 板砖's step leads to is stopped, and the system browser stays shut", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false, true);
+    host.navigate("s1", { url: "localhost:5173" });
+    const page = h.views[0]?.webContents as FakeContents;
+    h.stepping = true;
+    expect(fire(page, "will-navigate", "https://github.com/login")).toBe(true);
+    expect(h.opened).toEqual([]);
+    host.dispose();
+  });
+
+  it("with the sandbox on, an outside page loads in the page as before", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false);
+    host.navigate("s1", { url: "github.com/acme/app" });
+    const page = h.views[0]?.webContents as FakeContents;
+    expect(page.loaded).toEqual(["https://github.com/acme/app"]);
+    expect(fire(page, "will-navigate", "https://news.example.com/a")).toBe(
+      false,
+    );
+    expect(h.opened).toEqual([]);
+    host.dispose();
+  });
+
+  it("reads the sandbox as off from the switch, the argument or the environment", () => {
+    const no = () => false;
+    expect(chromiumSandboxOff(["herta"], no, {})).toBe(false);
+    expect(chromiumSandboxOff(["herta", "--no-sandbox"], no, {})).toBe(true);
+    expect(chromiumSandboxOff([], (n) => n === "no-sandbox", {})).toBe(true);
+    expect(chromiumSandboxOff([], no, { ELECTRON_DISABLE_SANDBOX: "1" })).toBe(
+      true,
+    );
   });
 });
 

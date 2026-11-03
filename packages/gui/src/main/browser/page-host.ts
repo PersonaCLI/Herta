@@ -1,3 +1,4 @@
+import { isLoopbackUrl } from "@herta/core";
 import { redactSecrets } from "@herta/tools";
 import {
   type BrowserWindow,
@@ -59,6 +60,30 @@ const PARK_X = -30_000;
 /** A page 板砖 opens before the Trailblazer has shown it lays out at this
  *  size until the tab reports its own. */
 const DEFAULT_SIZE = { width: 1024, height: 768 } as const;
+
+/** How long after one page is sent to the system browser the next waits:
+ *  a page that redirects in a loop sends one, not a stream of tabs. */
+const SEND_OUT_GAP_MS = 1500;
+
+/**
+ * Chromium's sandbox is off in this process (review H2). The AppImage's
+ * AppRun adds `--no-sandbox` where the system refuses unprivileged user
+ * namespaces (Ubuntu 24.04's AppArmor default); a page then runs with no
+ * jail around it, and a site exploiting an engine bug runs as the user.
+ * Read once at start, from the switch and the environment variable that
+ * both turn it off.
+ */
+export function chromiumSandboxOff(
+  argv: readonly string[],
+  hasSwitch: (name: string) => boolean,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  return (
+    hasSwitch("no-sandbox") ||
+    argv.includes("--no-sandbox") ||
+    (env.ELECTRON_DISABLE_SANDBOX ?? "") !== ""
+  );
+}
 
 /** The page partition, hardened once: every permission request denied
  *  (camera, microphone, location, notifications, clipboard read), and
@@ -135,12 +160,36 @@ export class PageHost {
   private stillTimer: ReturnType<typeof setInterval> | null = null;
   /** The picker following the pointer, while a pick is on. */
   private pickFollow: ReturnType<typeof setInterval> | null = null;
+  /** When each session's page last sent one to the system browser. */
+  private readonly sentOutAt = new Map<string, number>();
 
   constructor(
     private readonly win: BrowserWindow,
     private readonly events: PageHostEvents,
     private readonly mac: boolean,
+    /** Chromium's sandbox is off (`chromiumSandboxOff`): a page off this
+     *  machine opens in the system browser, whose sandbox works, never in
+     *  the page (review H2, owner 2026-11-03). */
+    private readonly sandboxOff = false,
   ) {}
+
+  /** A page that may not load here: off this machine while the sandbox is
+   *  off. Local dev servers still load. */
+  private outsideHere(url: string): boolean {
+    return this.sandboxOff && /^https?:/i.test(url) && !isLoopbackUrl(url);
+  }
+
+  /** Send an outside page to the system browser — never one 板砖's step
+   *  led to, which is refused and nothing more: the system browser opens
+   *  only for the Trailblazer. */
+  private sendOut(sessionId: string, url: string): void {
+    if (this.pages.get(sessionId)?.instrument.stepping === true) return;
+    const now = Date.now();
+    const last = this.sentOutAt.get(sessionId);
+    if (last !== undefined && now - last < SEND_OUT_GAP_MS) return;
+    this.sentOutAt.set(sessionId, now);
+    void shell.openExternal(url).catch(() => undefined);
+  }
 
   /** Lay the session's page over `bounds` (the renderer's CSS pixels). */
   show(sessionId: string, bounds: PageBounds): void {
@@ -225,11 +274,16 @@ export class PageHost {
     return page === undefined ? null : stateOf(sessionId, page.view);
   }
 
-  /** The Trailblazer's URL bar and buttons (§4): anywhere http(s) goes. */
+  /** The Trailblazer's URL bar and buttons (§4): anywhere http(s) goes —
+   *  with the sandbox off, an outside address to the system browser. */
   navigate(sessionId: string, to: PageNavigation): void {
     if ("url" in to) {
       const url = typedPageUrl(to.url);
       if (url === null) return;
+      if (this.outsideHere(url)) {
+        this.sendOut(sessionId, url);
+        return;
+      }
       const page = this.pages.get(sessionId) ?? this.create(sessionId);
       void page.view.webContents.loadURL(url).catch(() => undefined);
       return;
@@ -467,11 +521,22 @@ export class PageHost {
     const wc = view.webContents;
     // A new window loads in the same tab, under the same rules (§8).
     wc.setWindowOpenHandler(({ url }) => {
-      if (pageUrlAllowed(url)) void wc.loadURL(url).catch(() => undefined);
+      if (!pageUrlAllowed(url)) return { action: "deny" };
+      if (this.outsideHere(url)) this.sendOut(sessionId, url);
+      else void wc.loadURL(url).catch(() => undefined);
       return { action: "deny" };
     });
+    // With the sandbox off, a link, a script or a redirect that leaves this
+    // machine goes to the system browser instead (H2).
     const guard = (event: { preventDefault: () => void }, url: string) => {
-      if (!pageUrlAllowed(url)) event.preventDefault();
+      if (!pageUrlAllowed(url)) {
+        event.preventDefault();
+        return;
+      }
+      if (this.outsideHere(url)) {
+        event.preventDefault();
+        this.sendOut(sessionId, url);
+      }
     };
     wc.on("will-navigate", guard);
     wc.on("will-redirect", guard);

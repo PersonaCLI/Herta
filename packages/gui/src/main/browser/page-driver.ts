@@ -230,6 +230,11 @@ export class PageInstrument {
       .catch(() => undefined);
   }
 
+  /** One of 板砖's steps is running on this page, or its input's tail. */
+  get stepping(): boolean {
+    return this.steps.size > 0 || this.driving > 0;
+  }
+
   get picking(): boolean {
     return this.onPicked !== null;
   }

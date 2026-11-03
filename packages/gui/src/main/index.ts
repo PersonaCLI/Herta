@@ -38,6 +38,7 @@ import {
   registerAttachmentScheme,
 } from "./attachment-protocol.js";
 import {
+  chromiumSandboxOff,
   PageHost,
   pageSession,
   registerPageHandlers,
@@ -432,6 +433,13 @@ function createWindow(): BrowserWindow {
         toRenderer(EVT.pagePicked, { sessionId, pick }),
     },
     process.platform === "darwin",
+    // Review H2 (owner 2026-11-03): where Chromium's sandbox is off, an
+    // outside page opens in the system browser instead of the page.
+    chromiumSandboxOff(
+      process.argv,
+      (name) => app.commandLine.hasSwitch(name),
+      process.env,
+    ),
   );
   registerPageHandlers(pages);
   // The window's dev servers (ADR 0083 §5): one launcher per session; a

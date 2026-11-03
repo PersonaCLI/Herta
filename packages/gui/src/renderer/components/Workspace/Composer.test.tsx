@@ -19,6 +19,7 @@ import {
   COMPOSER_MAX_LINES,
   COMPOSER_MIN_LINES,
   Composer,
+  composerLinePx,
   composerLines,
 } from "./Composer.js";
 import {
@@ -71,20 +72,32 @@ describe("the composer grows with its draft (owner 2026-11-03)", () => {
     expect(composerLines(2000, 22.5)).toBe(COMPOSER_MAX_LINES);
   });
 
+  it("keeps a line a whole number of device pixels at every scale, so lines move as one", () => {
+    expect(composerLinePx(1)).toBe(23);
+    expect(composerLinePx(2)).toBe(22.5);
+    for (const dpr of [1, 1.25, 1.5, 1.75, 2, 2.5, 3]) {
+      const device = composerLinePx(dpr) * dpr;
+      expect(Math.abs(device - Math.round(device))).toBeLessThan(1e-9);
+      expect(Math.abs(composerLinePx(dpr) - 22.5)).toBeLessThanOrEqual(0.5);
+    }
+    expect(composerLinePx(Number.NaN)).toBe(23);
+  });
+
   it("sets the lines past two as the draft grows, and takes them back as it shrinks", () => {
     // jsdom lays nothing out: the unseen copy is a line tall per line of
-    // its text, as Chromium lays out an unwrapped draft.
+    // its text, as Chromium lays out an unwrapped draft (23px at 1x).
     const height = vi
       .spyOn(HTMLElement.prototype, "offsetHeight", "get")
       .mockImplementation(function (this: HTMLElement) {
         if (!this.classList.contains("composer-measure")) return 0;
-        return (this.textContent ?? "").split("\n").length * 22.5;
+        return (this.textContent ?? "").split("\n").length * 23;
       });
     try {
       const { container } = renderComposer();
       const form = container.querySelector("form.composer") as HTMLElement;
       const extra = () => form.style.getPropertyValue("--composer-extra-lines");
       const input = screen.getByPlaceholderText("Message Herta…");
+      expect(form.style.getPropertyValue("--composer-line")).toBe("23px");
       expect(extra()).toBe("0");
       fireEvent.change(input, { target: { value: "1\n2\n3\n4\n5\n6" } });
       expect(extra()).toBe("4");

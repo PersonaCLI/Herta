@@ -148,14 +148,24 @@ const pickLabelIn =
  *  eight. */
 export const COMPOSER_MIN_LINES = 2;
 export const COMPOSER_MAX_LINES = 8;
-/** The input's line, 15px at 1.5 (`.composer-input`), for a DOM that
- *  reports none. */
-const COMPOSER_LINE_PX = 22.5;
 
 /** The lines the composer shows for a draft `contentPx` tall as wrapped. */
 export function composerLines(contentPx: number, linePx: number): number {
   const lines = Math.round(contentPx / linePx);
   return Math.min(COMPOSER_MAX_LINES, Math.max(COMPOSER_MIN_LINES, lines));
+}
+
+/**
+ * The input's line — 15px type at about 1.5 — as a whole number of device
+ * pixels (owner 2026-11-03: as the composer grew or shrank, every other
+ * line shook). At 22.5px a line on a 1x screen starts half a pixel off the
+ * one above it; while the box's edge glides, odd and even lines snap to the
+ * pixel grid at different moments. A line a whole number of device pixels
+ * tall keeps every line on the same fraction, so they move as one.
+ */
+export function composerLinePx(dpr: number): number {
+  const d = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  return Math.round(22.5 * d) / d;
 }
 
 /**
@@ -1279,13 +1289,30 @@ export function Composer(): JSX.Element {
   // past two (`--composer-extra-lines`, reference-ux.css).
   const measureRef = useRef<HTMLDivElement | null>(null);
   const [inputLines, setInputLines] = useState(COMPOSER_MIN_LINES);
+  // The line follows the screen's pixel ratio: a window moved to another
+  // display, or a zoom, changes it (`--composer-line`).
+  const [linePx, setLinePx] = useState(() =>
+    composerLinePx(window.devicePixelRatio),
+  );
+  useEffect(() => {
+    let query: MediaQueryList | null = null;
+    const watch = (): void => {
+      setLinePx(composerLinePx(window.devicePixelRatio));
+      query?.removeEventListener("change", watch);
+      query =
+        window.matchMedia?.(`(resolution: ${window.devicePixelRatio}dppx)`) ??
+        null;
+      query?.addEventListener("change", watch);
+    };
+    watch();
+    return () => query?.removeEventListener("change", watch);
+  }, []);
   const measureLines = useCallback(() => {
     const el = measureRef.current;
     if (el === null) return;
-    const line =
-      Number.parseFloat(getComputedStyle(el).lineHeight) || COMPOSER_LINE_PX;
+    const line = Number.parseFloat(getComputedStyle(el).lineHeight) || linePx;
     setInputLines(composerLines(el.offsetHeight, line));
-  }, []);
+  }, [linePx]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `text` is the re-measure trigger (the copy re-renders with it), not an input
   useLayoutEffect(() => {
     measureLines();
@@ -1576,6 +1603,7 @@ export function Composer(): JSX.Element {
         style={
           {
             "--composer-extra-lines": String(inputLines - COMPOSER_MIN_LINES),
+            "--composer-line": `${linePx}px`,
           } as CSSProperties
         }
         onSubmit={(e) => {

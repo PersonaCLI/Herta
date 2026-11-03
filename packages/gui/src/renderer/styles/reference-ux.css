@@ -1592,7 +1592,7 @@ button,
   font-size: 15px;
   color: transparent;
   caret-color: var(--ink);
-  line-height: 1.5;
+  line-height: var(--composer-line, 22.5px);
   outline: none;
   padding: 0;
   /* Always-reserved gutter (overflow-y: scroll), never auto: the highlight
@@ -1605,12 +1605,12 @@ button,
   overflow-x: hidden;
   /* Two lines (its rows), plus the draft's growth, on the composer's own
      curve so the two edges move together. */
-  height: calc(45px + var(--composer-grow, 0px));
+  height: calc(2 * var(--composer-line, 22.5px) + var(--composer-grow, 0px));
   transition: height 0.44s var(--ease-signature);
 }
 /* Resting shrunk, the composer shows its two lines whatever the draft. */
 .composer.is-shrunk .composer-input {
-  height: 45px;
+  height: calc(2 * var(--composer-line, 22.5px));
 }
 /* The draft as the textarea wraps it, unseen (Composer.tsx measureLines):
    the highlight's wrap width and type. Anchored at the bottom so a tall
@@ -1624,7 +1624,7 @@ button,
   pointer-events: none;
   font: inherit;
   font-size: 15px;
-  line-height: 1.5;
+  line-height: var(--composer-line, 22.5px);
   white-space: pre-wrap;
   word-break: break-word;
   padding-right: 10px;
@@ -1663,7 +1663,7 @@ button,
   margin: 0;
   font: inherit;
   font-size: 15px;
-  line-height: 1.5;
+  line-height: var(--composer-line, 22.5px);
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
@@ -3283,7 +3283,7 @@ button.agent-preview {
   /* A long draft grows the composer upward a line at a time (owner
      2026-11-03): the Composer sets the lines past two, up to six more, and
      every height below adds them — the input row stays where it is. */
-  --composer-grow: calc(var(--composer-extra-lines, 0) * 22.5px);
+  --composer-grow: calc(var(--composer-extra-lines, 0) * var(--composer-line, 22.5px));
   transition:
     height 0.44s var(--ease-signature),
     padding 0.44s var(--ease-signature),

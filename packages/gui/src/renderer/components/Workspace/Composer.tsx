@@ -2,9 +2,11 @@ import type { TerminalRecord } from "@herta/core";
 import { pageElementWords } from "@herta/core/page-element";
 import { workspaceRelativeRepoPath } from "@herta/core/repo-path";
 import {
+  type CSSProperties,
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -139,6 +141,22 @@ const pickLabelIn =
   (lang: "zh" | "en") =>
   (pick: PagePick): string =>
     pageElementWords(pick.element, lang);
+
+/** The lines of a draft the composer shows before it scrolls (owner
+ *  2026-11-03: "can not expand height when input multiple lines content"):
+ *  two at rest — the textarea's own `rows` — growing a line at a time to
+ *  eight. */
+export const COMPOSER_MIN_LINES = 2;
+export const COMPOSER_MAX_LINES = 8;
+/** The input's line, 15px at 1.5 (`.composer-input`), for a DOM that
+ *  reports none. */
+const COMPOSER_LINE_PX = 22.5;
+
+/** The lines the composer shows for a draft `contentPx` tall as wrapped. */
+export function composerLines(contentPx: number, linePx: number): number {
+  const lines = Math.round(contentPx / linePx);
+  return Math.min(COMPOSER_MAX_LINES, Math.max(COMPOSER_MIN_LINES, lines));
+}
 
 /**
  * The highlight layer's text with its chips drawn (ADR 0072 amendment
@@ -1254,6 +1272,33 @@ export function Composer(): JSX.Element {
   const hasQuotes = composerQuotes.length > 0;
   const shrunk = !focusWithin && !dragOver && !hasStaged && !hasQuotes;
 
+  // The draft's lines, read from an unseen copy laid out at the textarea's
+  // wrap width (`.composer-measure`): the textarea's own scrollHeight never
+  // reports less than its box, so a shortened draft could not shrink it.
+  // Every height of the composer, and the textarea's, grows by the lines
+  // past two (`--composer-extra-lines`, reference-ux.css).
+  const measureRef = useRef<HTMLDivElement | null>(null);
+  const [inputLines, setInputLines] = useState(COMPOSER_MIN_LINES);
+  const measureLines = useCallback(() => {
+    const el = measureRef.current;
+    if (el === null) return;
+    const line =
+      Number.parseFloat(getComputedStyle(el).lineHeight) || COMPOSER_LINE_PX;
+    setInputLines(composerLines(el.offsetHeight, line));
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` is the re-measure trigger (the copy re-renders with it), not an input
+  useLayoutEffect(() => {
+    measureLines();
+  }, [text, measureLines]);
+  // A narrower window wraps the same draft onto more lines.
+  useEffect(() => {
+    const el = measureRef.current;
+    if (el === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measureLines());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [measureLines]);
+
   /**
    * A picked or dropped batch splits by KIND (ADR 0048 §4): pictures stage in
    * the strip and wait for the message they belong to; documents ingest
@@ -1528,6 +1573,11 @@ export function Composer(): JSX.Element {
       <form
         ref={composerRef}
         className={`composer${shrunk ? " is-shrunk" : ""}${hasStaged ? " has-staged" : ""}${hasQuotes ? " has-quotes" : ""}${suppressed ? " is-suppressed" : ""}${dragOver ? " is-dragover" : ""}`}
+        style={
+          {
+            "--composer-extra-lines": String(inputLines - COMPOSER_MIN_LINES),
+          } as CSSProperties
+        }
         onSubmit={(e) => {
           e.preventDefault();
           doSubmit();
@@ -1786,6 +1836,13 @@ export function Composer(): JSX.Element {
           </div>
         )}
         <div className="composer-input-wrap">
+          {/* The draft as the textarea wraps it, unseen: its height is how
+              many lines the composer shows. The zero-width space keeps the
+              empty line a trailing newline opens, as the textarea does. */}
+          <div ref={measureRef} className="composer-measure" aria-hidden="true">
+            {text}
+            {"​"}
+          </div>
           <div className="composer-highlight" aria-hidden="true">
             {renderWithChips(text, chipSpans, lang)}
             {/* The ghost previews the token while its row is the one Tab

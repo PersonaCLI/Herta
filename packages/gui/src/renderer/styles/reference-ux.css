@@ -1152,7 +1152,7 @@ button,
 .avatar-glow{width:45px;height:45px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.58);border:1px solid rgba(17,20,23,.07);box-shadow:0 5px 18px rgba(32,45,58,.06);color:var(--ink);font-size:18px}.avatar-glow::before{content:"♡";transform:translateY(-1px)}
 .user-turn{display:flex;justify-content:flex-end;gap:14px;margin:0 0 26px}.user-bubble{max-width:430px;padding:15px 18px 13px;border-radius:18px;background:var(--bubble-user);box-shadow:inset 0 1px 0 var(--glass-a62);font-size:15px;line-height:1.42}.time{display:block;margin-top:7px;font-size:12px;color:var(--muted-3);text-align:right}.user-avatar{width:42px;height:42px;border-radius:999px;display:grid;place-items:center;background:rgba(255,255,255,.52);border:1px solid var(--ink-a06);color:var(--ink);align-self:center}.assistant-turn{display:grid;grid-template-columns:50px minmax(280px,440px);gap:18px;margin:22px 0 34px 34px}.assistant-card{padding:20px 24px 16px;border-radius:18px;border:1px solid rgba(17,20,23,.105);background:rgba(255,255,255,.64);box-shadow:0 12px 32px rgba(32,45,58,.045),inset 0 1px 0 var(--glass-a72);font-size:16px;line-height:1.62}.assistant-card p{margin:0 0 6px}.assistant-card .time{text-align:left;margin-top:10px}.second-user{margin-top:8px;margin-right:0}.second-assistant{margin-top:14px;margin-left:34px}
 .status-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:14px;width:78%;margin:6px auto 26px;color:var(--muted-2);font-size:15px;letter-spacing:.16em}.status-row:before,.status-row:after{content:"";height:1px;background:var(--ink-a11)}.status-core{display:flex;gap:12px;align-items:center;white-space:nowrap}.transfer-icon{width:24px;height:24px;object-fit:contain;opacity:.68;filter:grayscale(1) brightness(.82);letter-spacing:0}.transfer-text{letter-spacing:.16em}
-.composer{height:78px;margin-bottom:0;border-radius:18px;border:1px solid var(--hairline);background:var(--composer-bg);box-shadow:0 2px 8px rgba(32,45,58,.10),inset 0 1px 0 var(--glass-a78);padding:0 18px 0 22px;display:flex;align-items:center;justify-content:space-between}.placeholder{font-size:16px;color:var(--muted-4)}.send{width:42px;height:42px;border:0;border-radius:50%;display:grid;place-items:center;background:rgba(154,160,181,.55);color:white;font-size:22px;line-height:1;cursor:default}
+.composer{height:calc(78px + var(--composer-grow,0px));margin-bottom:0;border-radius:18px;border:1px solid var(--hairline);background:var(--composer-bg);box-shadow:0 2px 8px rgba(32,45,58,.10),inset 0 1px 0 var(--glass-a78);padding:0 18px 0 22px;display:flex;align-items:center;justify-content:space-between}.placeholder{font-size:16px;color:var(--muted-4)}.send{width:42px;height:42px;border:0;border-radius:50%;display:grid;place-items:center;background:rgba(154,160,181,.55);color:white;font-size:22px;line-height:1;cursor:default}
 /* The rail's box is PINNED at the resting track width (--rail-w on
    .workspace-body): its track animates to 0 for the disconnect and
    viewer-open slides, and an unpinned rail shrank with it — the device
@@ -1172,7 +1172,7 @@ button,
 .app:has(.workspace.is-morphing) .device-card {
   backdrop-filter: none;
 }
-@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{--rail-w:300px;grid-template-columns:minmax(0,1fr) var(--rail-w) 0px;gap:0;--body-pad-top:18px;--body-pad-right:18px;--body-pad-bottom:18px;--body-pad-left:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px min(var(--viewer-w,420px), calc(100% - 440px))}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:104px}}
+@media(max-width:1200px){.app{grid-template-columns:230px 1fr}.sidebar{--sidebar-content-w:176px}.workspace-body{--rail-w:300px;grid-template-columns:minmax(0,1fr) var(--rail-w) 0px;gap:0;--body-pad-top:18px;--body-pad-right:18px;--body-pad-bottom:18px;--body-pad-left:18px}.workspace{margin-right:18px}.workspace-body.viewer-docked{grid-template-columns:minmax(0,1fr) 0px min(var(--viewer-w,420px), calc(100% - 440px))}.assistant-turn{margin-left:0}.status-row{width:90%}.device-card{height:300px}.composer{height:calc(104px + var(--composer-grow,0px))}}
 @media(max-width:900px){.utility-rail{display:none}.workspace-body{grid-template-columns:minmax(0,1fr) 0px 0px}.workspace{margin-right:0}.app{grid-template-columns:210px 1fr}.sidebar{--sidebar-content-w:156px}}
 /* Slice 3 additions — Conversation message rows and bubbles */
 .message-row {
@@ -1603,6 +1603,31 @@ button,
      paints until the input actually overflows. */
   overflow-y: scroll;
   overflow-x: hidden;
+  /* Two lines (its rows), plus the draft's growth, on the composer's own
+     curve so the two edges move together. */
+  height: calc(45px + var(--composer-grow, 0px));
+  transition: height 0.44s var(--ease-signature);
+}
+/* Resting shrunk, the composer shows its two lines whatever the draft. */
+.composer.is-shrunk .composer-input {
+  height: 45px;
+}
+/* The draft as the textarea wraps it, unseen (Composer.tsx measureLines):
+   the highlight's wrap width and type. Anchored at the bottom so a tall
+   draft reaches up over the record, never below the window. */
+.composer-measure {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  visibility: hidden;
+  pointer-events: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-right: 10px;
 }
 /* Match the conversation's slim scrollbar (user feedback 2026-07-23) — the
    default chunky OS bar (arrow buttons and all) sat inside the glass
@@ -3255,6 +3280,10 @@ button.agent-preview {
      fixed height (78/104/60px), so the resting look is unchanged. */
   align-content: flex-end;
   padding-bottom: 15px;
+  /* A long draft grows the composer upward a line at a time (owner
+     2026-11-03): the Composer sets the lines past two, up to six more, and
+     every height below adds them — the input row stays where it is. */
+  --composer-grow: calc(var(--composer-extra-lines, 0) * 22.5px);
   transition:
     height 0.44s var(--ease-signature),
     padding 0.44s var(--ease-signature),
@@ -3597,6 +3626,7 @@ button.agent-preview {
   .connect-morph-clone,
   .connect-morph-clone-label,
   .composer,
+  .composer-input,
   .status-row,
   .status-row::before,
   .status-row::after {
@@ -8312,7 +8342,7 @@ button.commit-view__path:hover {
    input. Rides the 0.44s signature height transition both ways; the strip
    itself fades in under the grow (below). */
 .composer.has-staged {
-  height: 144px;
+  height: calc(144px + var(--composer-grow, 0px));
 }
 @media (max-width: 1200px) {
   /* The 104px media height, same growth. And the bottom-anchor padding that
@@ -8321,7 +8351,7 @@ button.commit-view__path:hover {
     padding-bottom: 28px;
   }
   .composer.has-staged {
-    height: 170px;
+    height: calc(170px + var(--composer-grow, 0px));
   }
 }
 /* ── The held message (ADR 0063) ─────────────────────────────────────────
@@ -8914,11 +8944,11 @@ button.commit-view__path:hover {
    Pieces quoted from the viewer's page wait here as chips, above the input
    like the staged pictures, and grow the composer by one row the same way.
    × takes one back; the source rides the message when it is sent. */
-.composer.has-quotes { height: 112px; }
-.composer.has-staged.has-quotes { height: 178px; }
+.composer.has-quotes { height: calc(112px + var(--composer-grow, 0px)); }
+.composer.has-staged.has-quotes { height: calc(178px + var(--composer-grow, 0px)); }
 @media (max-width: 1200px) {
-  .composer.has-quotes { height: 138px; }
-  .composer.has-staged.has-quotes { height: 204px; }
+  .composer.has-quotes { height: calc(138px + var(--composer-grow, 0px)); }
+  .composer.has-staged.has-quotes { height: calc(204px + var(--composer-grow, 0px)); }
 }
 .composer-quotes {
   order: -1;

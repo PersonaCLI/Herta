@@ -15,7 +15,12 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import type { SessionStore } from "../../store/session-store.js";
 import { isVoicePlaying, playVoiceClip } from "../../voice/play-voice.js";
-import { Composer } from "./Composer.js";
+import {
+  COMPOSER_MAX_LINES,
+  COMPOSER_MIN_LINES,
+  Composer,
+  composerLines,
+} from "./Composer.js";
 import {
   peekPendingAttachForTest,
   resetPendingAttachForTest,
@@ -57,6 +62,46 @@ function renderComposer(mock = createMockHertaBridge()) {
     ...rendered,
   };
 }
+
+describe("the composer grows with its draft (owner 2026-11-03)", () => {
+  it("shows two lines at least and eight at most", () => {
+    expect(composerLines(0, 22.5)).toBe(COMPOSER_MIN_LINES);
+    expect(composerLines(45, 22.5)).toBe(2);
+    expect(composerLines(135, 22.5)).toBe(6);
+    expect(composerLines(2000, 22.5)).toBe(COMPOSER_MAX_LINES);
+  });
+
+  it("sets the lines past two as the draft grows, and takes them back as it shrinks", () => {
+    // jsdom lays nothing out: the unseen copy is a line tall per line of
+    // its text, as Chromium lays out an unwrapped draft.
+    const height = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        if (!this.classList.contains("composer-measure")) return 0;
+        return (this.textContent ?? "").split("\n").length * 22.5;
+      });
+    try {
+      const { container } = renderComposer();
+      const form = container.querySelector("form.composer") as HTMLElement;
+      const extra = () => form.style.getPropertyValue("--composer-extra-lines");
+      const input = screen.getByPlaceholderText("Message Herta…");
+      expect(extra()).toBe("0");
+      fireEvent.change(input, { target: { value: "1\n2\n3\n4\n5\n6" } });
+      expect(extra()).toBe("4");
+      // A trailing newline opens a line, as the textarea shows it.
+      fireEvent.change(input, { target: { value: "1\n2\n3\n" } });
+      expect(extra()).toBe("2");
+      fireEvent.change(input, {
+        target: { value: Array.from({ length: 20 }, (_, i) => i).join("\n") },
+      });
+      expect(extra()).toBe(String(COMPOSER_MAX_LINES - COMPOSER_MIN_LINES));
+      fireEvent.change(input, { target: { value: "one line" } });
+      expect(extra()).toBe("0");
+    } finally {
+      height.mockRestore();
+    }
+  });
+});
 
 describe("Composer", () => {
   it("renders the input with placeholder + send button", () => {

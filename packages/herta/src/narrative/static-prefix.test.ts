@@ -237,6 +237,29 @@ describe("buildStaticHertaPrefix — structured return", () => {
     expect(prefix.env).toBe(PROMPT_ASSETS.envSet);
   });
 
+  it("a host with no browser gets the envSet that says 板砖 has none there (R5)", async () => {
+    for (const [lang, assets] of [
+      ["zh", PROMPT_ASSETS],
+      ["en", PROMPT_ASSETS_EN],
+    ] as const) {
+      const desktop = await buildStaticHertaPrefix({ ...mkDeps({}), lang });
+      const cli = await buildStaticHertaPrefix({
+        ...mkDeps({}),
+        lang,
+        browser: false,
+      });
+      expect(desktop.env).toBe(assets.envSet);
+      expect(cli.env).toBe(assets.envSetCli);
+      expect(cli.env).not.toBe(desktop.env);
+      expect(desktop.env).toMatch(/它有个浏览器|it has a browser that/);
+      expect(cli.env).not.toMatch(/它有个浏览器|it has a browser that/);
+      expect(cli.env).toMatch(
+        /这台命令行终端没接|this command-line terminal has none/,
+      );
+      for (const env of [desktop.env, cli.env]) expect(env).not.toMatch(/[⟦⟧]/);
+    }
+  });
+
   it('lang: "en" reads few-shots from the narrative-en dir (its own isolated corpus)', async () => {
     // Per-language corpora (EN-dream slice): an EN session reads its OWN
     // `.herta/narrative-en` dir — the readFile paths are narrative-en-relative,

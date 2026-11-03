@@ -51,6 +51,11 @@ export interface StaticPrefixDeps {
    *  Default "zh" — byte-identical to pre-slice-4 output. The 废案/记录
    *  few-shots are living workspace memory and load as-is regardless. */
   readonly lang?: PromptLang;
+  /** 板砖 has a page this session (ADR 0083): the desktop's envSet, which
+   *  says so. false — a host that mounts no browser, the CLI — takes
+   *  `envSetCli`, which says it has none there (R5). Decided once per
+   *  session, so the cached prefix stays one. Default true. */
+  readonly browser?: boolean;
   readonly readFile: (relPath: string) => Promise<string>;
   readonly readNarrativeDir: () => Promise<readonly string[]>;
   /** Few-shot filenames to withhold from THIS open's prefix — the reopen
@@ -81,6 +86,7 @@ export async function buildStaticHertaPrefix(
 ): Promise<StaticHertaPrefix> {
   const lang = deps.lang ?? "zh";
   const assets = promptAssetsFor(lang);
+  const env = deps.browser === false ? assets.envSetCli : assets.envSet;
 
   // Living memory from THIS language's narrative dir (`narrative` for zh,
   // `narrative-en` for en; the caller's readNarrativeDir/readFile point at the
@@ -136,9 +142,9 @@ export async function buildStaticHertaPrefix(
     const seeds = Object.keys(assets.feianSeeds)
       .sort()
       .map((name) => assets.feianSeeds[name] as string);
-    return { bio: assets.hertaBio, env: assets.envSet, fewShots: seeds };
+    return { bio: assets.hertaBio, env, fewShots: seeds };
   }
-  return { bio: assets.hertaBio, env: assets.envSet, fewShots };
+  return { bio: assets.hertaBio, env, fewShots };
 }
 
 async function safeRead(

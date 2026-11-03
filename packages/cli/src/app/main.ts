@@ -409,6 +409,8 @@ export async function main(
     workspaceRoot,
     sessionId: actorSessionId,
     lang,
+    // The CLI mounts no browser (ADR 0083): her envSet says 板砖 has none.
+    browser: false,
     initialRecord: resumeTarget?.record ?? [],
     apiKey,
     ...baseUrl,

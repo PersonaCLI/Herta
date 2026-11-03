@@ -714,6 +714,10 @@ export interface ActorStackOpts {
   readonly workspaceRoot: string;
   readonly sessionId: string;
   readonly lang: PromptLang;
+  /** 板砖 has a page this session (ADR 0083): the desktop's main hands one,
+   *  the CLI mounts none. Herta's envSet follows it (R5). Required, so each
+   *  host decides. */
+  readonly browser: boolean;
   /** The record a reopened session loads (own-dream exclusions; no opening).
    *  Empty for a new session. */
   readonly initialRecord: TerminalRecord;
@@ -823,6 +827,7 @@ export async function createActorStack(
     return buildStaticHertaPrefix({
       workspaceRoot,
       lang,
+      browser: opts.browser,
       // ALWAYS log a dropped few-shot (ADR 0051): the 2026-08-06 guard
       // regression silently dropped the entire 废案 corpus for 25 days
       // because only the CLI passed a logger and the GUI path had none —

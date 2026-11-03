@@ -2456,6 +2456,7 @@ export class SessionImpl implements Session {
       workspaceRoot,
       sessionId,
       lang,
+      browser: (opts.browser ?? null) !== null,
       initialRecord,
       apiKey,
       ...(config.providers.baseUrl !== undefined

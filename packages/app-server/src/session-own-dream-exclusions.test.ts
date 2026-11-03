@@ -216,6 +216,7 @@ describe("ownDreamExclusions", () => {
       workspaceRoot,
       sessionId: SESSION_ID,
       lang: "zh",
+      browser: true,
       initialRecord: RECORD,
       apiKey: "sk-test",
       supervisorEnabled: false,

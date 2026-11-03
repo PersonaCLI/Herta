@@ -25,6 +25,17 @@ const SOURCES = [
   "src/bash/rule.ts",
   "src/path-safety.ts",
 ];
+/** Rules that share a file with their tool, whose error codes are not
+ *  rule-denials: only the rule's own lines are read (review 2026-10-30, T2:
+ *  neither was scanned, and `browser_off_loopback` was decided nowhere). */
+const RULE_SLICES = [
+  { rel: "src/browser/index.ts", from: "export function registerBrowserRules" },
+  {
+    rel: "src/launcher/tool.ts",
+    from: "const rule: PermissionRule",
+    to: "const tool: HertaTool",
+  },
+];
 /** The command classifiers: only their block tier denies. */
 const CLASSIFIERS = [
   "src/run-command/classifier.ts",
@@ -39,10 +50,23 @@ function read(rel: string): string {
   throw new Error(`${rel} not found from cwd`);
 }
 
+/** A rule's own lines, between two markers of its file. */
+function slice(rel: string, from: string, to?: string): string {
+  const text = read(rel);
+  const start = text.indexOf(from);
+  if (start === -1) throw new Error(`${from} not found in ${rel}`);
+  const end = to === undefined ? text.length : text.indexOf(to, start);
+  if (end === -1) throw new Error(`${to} not found in ${rel}`);
+  return text.slice(start, end);
+}
+
 function denyCodes(): Set<string> {
   const codes = new Set<string>();
-  for (const rel of SOURCES) {
-    const text = read(rel).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  for (const text0 of [
+    ...SOURCES.map(read),
+    ...RULE_SLICES.map((s) => slice(s.rel, s.from, s.to)),
+  ]) {
+    const text = text0.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
     // `code: "x"`, a `deny("x", …)` helper, and a union `code: "a" | "b"`.
     for (const m of text.matchAll(
       /(?:code:\s*|deny\(\s*)"([a-z_]+)"((?:\s*\|\s*"[a-z_]+")*)/g,
@@ -74,6 +98,7 @@ describe("every rule-deny code is decided (ADR 0047 amendment 2026-09-29)", () =
       "path_outside_workspace",
       "path_denied",
       "command_blocked",
+      "browser_off_loopback",
     ]) {
       expect(codes.has(known), known).toBe(true);
     }

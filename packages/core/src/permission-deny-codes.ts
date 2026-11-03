@@ -51,6 +51,11 @@ export const CALL_ERROR_DENY_CODES: ReadonlySet<string> = new Set([
   "stale_read",
   "view_required",
   "stale_view",
+  // A page step off this machine (ADR 0083 §7): the page tools work on
+  // loopback only, and the refusal names web_fetch for a public page — a
+  // step that changes nothing. Undecided, it read a run that finished on
+  // localhost as 部分完成 (review 2026-10-30, T2).
+  "browser_off_loopback",
 ]);
 
 /** Rule-deny codes that are refusals. Listed so every code a rule returns is

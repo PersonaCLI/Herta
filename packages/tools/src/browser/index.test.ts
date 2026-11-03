@@ -310,6 +310,30 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     expect(blind.modelText).toContain("you cannot see it");
   });
 
+  it("screenshots and reads in one parallel batch each get their own file (review 2026-10-30, T1)", async () => {
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
+    const host = fakeHost();
+    host.url = "http://localhost:5173/";
+    const shot = browserScreenshotTool({ host, eyes: false });
+    const read = browserReadTool({ host });
+    const results = await Promise.all([
+      shot.run(call("browser_screenshot", {}), ctx(), () => {}),
+      shot.run(call("browser_screenshot", {}), ctx(), () => {}),
+      shot.run(call("browser_screenshot", {}), ctx(), () => {}),
+      read.run(call("browser_read", { mode: "tree" }), ctx(), () => {}),
+      read.run(call("browser_read", { mode: "tree" }), ctx(), () => {}),
+    ]);
+    const paths = results.map((r) => (r.data as { path?: string }).path);
+    expect(new Set(paths).size).toBe(5);
+    expect(readdirSync(join(ws, BROWSER_STORE_DIR, "s-1")).sort()).toEqual([
+      "shot-1.png",
+      "shot-2.png",
+      "shot-3.png",
+      "snap-1.txt",
+      "snap-2.txt",
+    ]);
+  });
+
   it("a console or network read is stored a line an entry, and a finding can cite its lines (owner 2026-10-23)", async () => {
     ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost({

@@ -17,6 +17,8 @@ export interface ReadElements {
   readonly count: number;
   readonly shown: number;
   readonly full: string;
+  /** The last ref number this read handed out: the next starts past it. */
+  readonly last: number;
 }
 
 /** What `locate` answers for a ref. */
@@ -114,7 +116,7 @@ export const READ_SCRIPT = String.raw`(() => {
     const role = roleOf(el) || el.tagName.toLowerCase();
     return role + " " + JSON.stringify(nameOf(el));
   };
-  const bounded = (lines, budget) => {
+  const bounded = (lines, budget, last) => {
     const out = [];
     let size = 0;
     for (const l of lines) {
@@ -122,12 +124,16 @@ export const READ_SCRIPT = String.raw`(() => {
       out.push(l);
       size += l.length + 1;
     }
-    return { lines: out.join("\n"), count: lines.length, shown: out.length, full: lines.join("\n") };
+    return { lines: out.join("\n"), count: lines.length, shown: out.length, full: lines.join("\n"), last };
   };
-  const walk = (root, all) => {
+  // Refs count on from the number main keeps for the page's life: a ref
+  // of an older read is never handed out again, so it cannot name another
+  // element (review 2026-10-30, M1: e3 was "Sign in", then "Docs").
+  let n = 0;
+  const walk = (root, all, from) => {
     refs.clear();
     const lines = [];
-    let n = 0;
+    n = from;
     for (const el of root.querySelectorAll(all ? "*" : SELECTOR)) {
       const role = roleOf(el);
       if (!role) continue;
@@ -141,19 +147,20 @@ export const READ_SCRIPT = String.raw`(() => {
     return lines;
   };
   globalThis.__herta = {
-    snapshot(all, rootRef, budget) {
+    snapshot(all, rootRef, budget, from) {
       let root = document;
       if (rootRef) {
         const el = refs.get(rootRef);
         if (!el || !el.isConnected) return { missing: true };
         root = el;
       }
-      return bounded(walk(root, all), budget);
+      const lines = walk(root, all, from);
+      return bounded(lines, budget, n);
     },
-    find(query, max, budget) {
+    find(query, max, budget, from) {
       const q = String(query).toLowerCase();
-      const lines = walk(document, false).filter((l) => l.toLowerCase().includes(q));
-      return bounded(lines.slice(0, max), budget);
+      const lines = walk(document, false, from).filter((l) => l.toLowerCase().includes(q));
+      return bounded(lines.slice(0, max), budget, n);
     },
     text(budget) {
       const t = document.body ? document.body.innerText : "";

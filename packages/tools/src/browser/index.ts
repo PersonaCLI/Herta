@@ -267,8 +267,23 @@ async function storeDir(
   return { abs, rel };
 }
 
+/** One writer at a time per store folder. Two reads or screenshots in one
+ *  parallel batch both took the same number and wrote over each other
+ *  (review 2026-10-30, T1: two screenshots, one `shot-1.png`, a mix). */
+const storeQueues = new Map<string, Promise<unknown>>();
+async function inStore<T>(abs: string, run: () => Promise<T>): Promise<T> {
+  const turn = (storeQueues.get(abs) ?? Promise.resolve()).then(run, run);
+  const settled = turn.catch(() => undefined);
+  storeQueues.set(abs, settled);
+  try {
+    return await turn;
+  } finally {
+    if (storeQueues.get(abs) === settled) storeQueues.delete(abs);
+  }
+}
+
 /** The next free number for a kind of file in the store; for screenshots,
- *  the oldest past the cap are removed first. */
+ *  the oldest past the cap are removed first. Called inside `inStore`. */
 async function nextIndex(
   abs: string,
   prefix: string,
@@ -426,14 +441,16 @@ export function browserReadTool(opts: {
         let path: string | undefined;
         if (kept !== null && (read.full ?? read.text) !== "") {
           const store = await storeDir(ctx, opts.host);
-          const n = await nextIndex(store.abs, kept.prefix, "txt", kept.keep);
-          path = `${store.rel}/${kept.prefix}-${n}.txt`;
-          await writeFile(
-            join(store.abs, `${kept.prefix}-${n}.txt`),
-            `${redactSecrets(read.full ?? read.text)}\n`,
-            "utf8",
-          ).catch(() => {
-            path = undefined;
+          path = await inStore(store.abs, async () => {
+            const n = await nextIndex(store.abs, kept.prefix, "txt", kept.keep);
+            return writeFile(
+              join(store.abs, `${kept.prefix}-${n}.txt`),
+              `${redactSecrets(read.full ?? read.text)}\n`,
+              "utf8",
+            ).then(
+              () => `${store.rel}/${kept.prefix}-${n}.txt`,
+              () => undefined,
+            );
           });
         }
         const modelText = [
@@ -701,10 +718,18 @@ export function browserScreenshotTool(opts: {
         );
         if (off !== null) return off;
         const store = await storeDir(ctx, opts.host);
-        const n = await nextIndex(store.abs, "shot", "png", MAX_SCREENSHOTS);
-        const rel = `${store.rel}/shot-${n}.png`;
+        let rel: string;
         try {
-          await writeFile(join(store.abs, `shot-${n}.png`), shot.png);
+          rel = await inStore(store.abs, async () => {
+            const n = await nextIndex(
+              store.abs,
+              "shot",
+              "png",
+              MAX_SCREENSHOTS,
+            );
+            await writeFile(join(store.abs, `shot-${n}.png`), shot.png);
+            return `${store.rel}/shot-${n}.png`;
+          });
         } catch (err) {
           return errResult(
             "write_failed",

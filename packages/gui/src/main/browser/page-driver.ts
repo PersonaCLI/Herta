@@ -133,12 +133,20 @@ export class PageInstrument {
   private readonly console: ConsoleEntry[] = [];
   private readonly requests = new Map<string, RequestEntry>();
   private readonly order: string[] = [];
-  private inflight = 0;
+  /** Requests still loading, by id — apart from the capped list above. A
+   *  request evicted from that list while it loaded was never counted down:
+   *  a Vite module burst left the network-quiet wait stuck for the page's
+   *  life (review 2026-10-30, M3). */
+  private readonly inflight = new Set<string>();
   private lastBusy = 0;
   private loading = false;
   /** 板砖's refs end at a navigation and at the Trailblazer's own input
    *  (§9); a new read gives fresh ones. */
   private refsLive = false;
+  /** The last ref number handed out on this page, across reads and
+   *  documents, and the first of the latest read (M1). */
+  private refLast = 0;
+  private refFirst = 1;
   /** Dispatching 板砖's own input: the Trailblazer's is everything else. */
   private driving = 0;
   /** 板砖's steps in flight, by their abort signals: a dialog that opens
@@ -343,10 +351,8 @@ export class PageInstrument {
       case "Network.requestWillBeSent": {
         const id = String(p.requestId);
         const r = p.request as { method: string; url: string };
-        if (!this.requests.has(id)) {
-          this.order.push(id);
-          this.inflight += 1;
-        }
+        if (!this.requests.has(id)) this.order.push(id);
+        this.inflight.add(id);
         this.requests.set(id, {
           method: r.method,
           path: pathOf(r.url),
@@ -372,9 +378,9 @@ export class PageInstrument {
       case "Network.loadingFinished":
       case "Network.loadingFailed": {
         const r = this.requests.get(String(p.requestId));
+        this.inflight.delete(String(p.requestId));
         if (r !== undefined && r.ms === null) {
           r.ms = Date.now() - r.start;
-          this.inflight = Math.max(0, this.inflight - 1);
           if (method === "Network.loadingFailed")
             r.failed = p.canceled === true ? "canceled" : String(p.errorText);
         }
@@ -557,31 +563,55 @@ export class PageInstrument {
     return w.executionContextId;
   }
 
-  /** A fresh snapshot: new refs, which stand until the page changes. */
+  /** A fresh snapshot: new refs, which stand until the page changes or a
+   *  newer read hands out its own. */
   async snapshot(
     all: boolean,
     budget: number,
     root?: string,
   ): Promise<ReadElements> {
+    const from = this.refLast;
     const r = await this.call<ReadElements | { missing: true }>(
       "snapshot",
       all,
       root ?? null,
       budget,
+      from,
     );
     if ("missing" in r)
       throw new BrowserHostError(
-        this.refsLive ? "no_ref" : "stale_ref",
+        this.refsLive && !this.olderRef(root ?? "") ? "no_ref" : "stale_ref",
         `${root} is not an element of the page now`,
       );
-    this.refsLive = true;
+    this.read(from, r);
     return r;
   }
 
   async find(query: string): Promise<ReadElements> {
-    const r = await this.call<ReadElements>("find", query, 20, READ_BUDGET);
-    this.refsLive = true;
+    const from = this.refLast;
+    const r = await this.call<ReadElements>(
+      "find",
+      query,
+      20,
+      READ_BUDGET,
+      from,
+    );
+    this.read(from, r);
     return r;
+  }
+
+  /** A read handed out refs past `from`: they are the live ones now. */
+  private read(from: number, r: ReadElements): void {
+    this.refFirst = from + 1;
+    this.refLast = Math.max(from, r.last);
+    this.refsLive = true;
+  }
+
+  /** A ref an older read handed out: refs count on for the page's life
+   *  (review 2026-10-30, M1), so it names nothing now. */
+  private olderRef(ref: string): boolean {
+    const n = Number(/^e(\d+)$/.exec(ref)?.[1] ?? Number.NaN);
+    return Number.isInteger(n) && n >= 1 && n < this.refFirst;
   }
 
   /** The element a ref names, scrolled into view: where to press. */
@@ -593,7 +623,12 @@ export class PageInstrument {
       );
     const r = await this.call<Located>("locate", ref);
     if ("missing" in r)
-      throw new BrowserHostError("no_ref", `no element is ${ref}`);
+      throw this.olderRef(ref)
+        ? new BrowserHostError(
+            "stale_ref",
+            `${ref} belongs to an older read of the page`,
+          )
+        : new BrowserHostError("no_ref", `no element is ${ref}`);
     if ("stale" in r)
       throw new BrowserHostError(
         "stale_ref",
@@ -769,7 +804,7 @@ export class PageInstrument {
     await new Promise((r) => setTimeout(r, 50));
     while (Date.now() - start < SETTLE_MAX_MS) {
       if (signal.aborted) return;
-      const quiet = !this.loading && this.inflight === 0;
+      const quiet = !this.loading && this.inflight.size === 0;
       if (quiet && Date.now() - this.lastBusy >= NETWORK_QUIET_MS) return;
       await new Promise((r) => setTimeout(r, 50));
     }

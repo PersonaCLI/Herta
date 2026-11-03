@@ -107,6 +107,31 @@ describe("Launcher", () => {
     expect(log).not.toContain("ghp_1234567890");
   }, 30_000);
 
+  it("two starts of one entry at once spawn one server, and stopAll ends it (review 2026-10-30, T3)", async () => {
+    const ws = workspace();
+    plantServer(ws, { delayMs: 300 });
+    const port = await freePort();
+    const spawned: number[] = [];
+    const exited: number[] = [];
+    const launcher = new Launcher({
+      onSpawn: (s) => spawned.push(s.pid),
+      onExit: (pid) => exited.push(pid),
+    });
+    const [a, b] = await Promise.all([
+      launcher.start(entryFor(ws, port), { by: "banzhuan" }),
+      launcher.start(entryFor(ws, port), { by: "trailblazer" }),
+    ]);
+    expect(spawned).toHaveLength(1);
+    expect([a.already, b.already].sort()).toEqual([false, true]);
+    await launcher.stopAll();
+    expect(exited).toEqual(spawned);
+    expect(await portAnswers(port)).toBe(false);
+    // A line of output is one line of the log, not one and a blank.
+    const log = readFileSync(join(ws, a.status.logPath), "utf8");
+    expect(log).toMatch(/starting on \d+\n\[REDACTED|starting on \d+\ntoken=/u);
+    expect(log).not.toMatch(/starting on \d+\n\n/u);
+  }, 30_000);
+
   it("a port that already answers starts nothing", async () => {
     const ws = workspace();
     plantServer(ws);

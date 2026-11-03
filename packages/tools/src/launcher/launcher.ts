@@ -116,6 +116,9 @@ interface Running {
  */
 export class Launcher implements ServerHost {
   private readonly servers = new Map<string, Running>();
+  /** A start under way, by entry name: a second start of the same entry
+   *  waits for it instead of spawning its own. */
+  private readonly pending = new Map<string, Promise<ServerStarted>>();
 
   constructor(private readonly opts: LauncherOptions = {}) {}
 
@@ -129,6 +132,28 @@ export class Launcher implements ServerHost {
   }
 
   async start(
+    entry: LaunchEntry,
+    opts: { readonly by: ServerStarter; readonly signal?: AbortSignal },
+  ): Promise<ServerStarted> {
+    // Two starts of one entry at once — 板砖's and the Trailblazer's Run —
+    // both spawned, the map kept the second, and `stopAll` left the first
+    // running past quit (review 2026-10-30, T3). The second waits for the
+    // first and spawns nothing.
+    const under = this.pending.get(entry.name);
+    if (under !== undefined) {
+      const first = await under;
+      return { status: first.status, already: true };
+    }
+    const run = this.launch(entry, opts);
+    this.pending.set(entry.name, run);
+    try {
+      return await run;
+    } finally {
+      if (this.pending.get(entry.name) === run) this.pending.delete(entry.name);
+    }
+  }
+
+  private async launch(
     entry: LaunchEntry,
     opts: { readonly by: ServerStarter; readonly signal?: AbortSignal },
   ): Promise<ServerStarted> {
@@ -340,7 +365,9 @@ export class Launcher implements ServerHost {
       let logged = 0;
       let capped = false;
       const out = new LiveOutput((text) => {
-        const line = `${text}\n`;
+        // A chunk of whole lines ends with its newline already; only the
+        // unterminated last one needs it (T3: a blank line after each).
+        const line = text.endsWith("\n") ? text : `${text}\n`;
         this.remember(s, line);
         if (capped) return;
         logged += Buffer.byteLength(line);

@@ -35,8 +35,14 @@ function fakePage(start = "http://localhost:5173/login") {
   };
   let release: (() => void) | null = null;
   const values = (expr: string): unknown => {
-    const fn = /^__herta\.(\w+)\(/.exec(expr)?.[1] ?? "";
-    if (fn in state.answers) return state.answers[fn];
+    const call = /^__herta\.(\w+)\(([\s\S]*)\)$/.exec(expr);
+    const fn = call?.[1] ?? "";
+    if (fn in state.answers) {
+      const a = state.answers[fn];
+      return typeof a === "function"
+        ? a(...(JSON.parse(`[${call?.[2] ?? ""}]`) as unknown[]))
+        : a;
+    }
     if (expr.startsWith("__herta.viewport"))
       return { width: 800, height: 600, dpr: 1, left: 0, top: state.top };
     return {
@@ -44,6 +50,7 @@ function fakePage(start = "http://localhost:5173/login") {
       count: 1,
       shown: 1,
       full: 'e1 button "Sign in"',
+      last: 1,
     };
   };
   const dbg = {
@@ -246,6 +253,96 @@ describe("a screenshot of a scrolled page", () => {
       { x: 0, y: 1500, width: 800, height: 600, scale: 1 },
       { x: 10, y: 1520, width: 100, height: 50, scale: 1 },
     ]);
+  });
+});
+
+describe("the network-quiet wait (review 2026-10-30, M3)", () => {
+  it("a request that outlives 200 newer ones still counts down when it ends", async () => {
+    vi.useFakeTimers();
+    const { instrument, message } = fakePage();
+    const sent = (id: string) =>
+      message("Network.requestWillBeSent", {
+        requestId: id,
+        request: { method: "GET", url: `http://localhost:5173/${id}.js` },
+        type: "Script",
+      });
+    const done = (id: string) =>
+      message("Network.loadingFinished", { requestId: id });
+    // A Vite module burst: the first module is still loading while 200
+    // newer ones come and go.
+    sent("slow");
+    for (let i = 0; i < 200; i += 1) {
+      sent(`m${i}`);
+      done(`m${i}`);
+    }
+    done("slow");
+    let settled = false;
+    void instrument.settle(new AbortController().signal).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(settled).toBe(true);
+  });
+});
+
+describe("an older read's ref names nothing (review 2026-10-30, M1)", () => {
+  it("e1 was Sign in; after a newer read it fails as stale, not a click on Docs", async () => {
+    const { driver, state } = fakePage();
+    // The read script as a page whose one button changes between reads.
+    let names = ['button "Sign in"'];
+    let refs = new Map<string, string>();
+    state.answers.snapshot = (
+      _all: boolean,
+      _root: string | null,
+      _budget: number,
+      from?: number | null,
+    ) => {
+      refs = new Map();
+      const lines = names.map((name, i) => {
+        const ref = `e${(from ?? 0) + i + 1}`;
+        refs.set(ref, name);
+        return `${ref} ${name}`;
+      });
+      const text = lines.join("\n");
+      return {
+        lines: text,
+        count: lines.length,
+        shown: lines.length,
+        full: text,
+        last: (from ?? 0) + lines.length,
+      };
+    };
+    state.answers.locate = (ref: string) => {
+      const target = refs.get(ref);
+      return target === undefined
+        ? { missing: true }
+        : {
+            x: 10,
+            y: 10,
+            target,
+            hit: null,
+            password: false,
+            select: false,
+            toggle: false,
+          };
+    };
+    const signal = new AbortController().signal;
+    expect((await driver.read({ mode: "tree" }, signal)).text).toBe(
+      'e1 button "Sign in"',
+    );
+    names = ['button "Docs"'];
+    expect((await driver.read({ mode: "tree" }, signal)).text).toBe(
+      'e2 button "Docs"',
+    );
+    await expect(
+      driver.act({ action: "click", ref: "e1" }, signal),
+    ).rejects.toMatchObject({ code: "stale_ref" });
+    expect(
+      (await driver.act({ action: "click", ref: "e2" }, signal)).target,
+    ).toBe('button "Docs"');
+    await expect(
+      driver.act({ action: "click", ref: "e99" }, signal),
+    ).rejects.toMatchObject({ code: "no_ref" });
   });
 });
 

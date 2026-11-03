@@ -284,43 +284,74 @@ describe("the browser page tab (ADR 0083)", () => {
   });
 
   it("laid over the tab once it holds still; an overlay or the divider's press freezes it at once, and it comes back after", async () => {
-    const mock = createMockHertaBridge();
-    const { page, emit } = withPage(mock);
-    const h = renderWithSession(ui(), { mock });
-    h.openSession("s1");
-    act(() => {
-      runShortcut("openBrowser");
-    });
-    await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
-    const body = document.querySelector(".page-view__body") as HTMLElement;
-    body.getBoundingClientRect = () =>
-      ({ left: 900, top: 140, width: 600, height: 700 }) as DOMRect;
-    emit({});
-    await waitFor(() =>
+    // The frames are stepped here, not left to jsdom's 16 ms timer: the box
+    // must hold still for several of them, and in a loaded suite they came
+    // too late for the wait to see the page laid on (2026-11-03).
+    const frames = new Map<number, FrameRequestCallback>();
+    let lastFrame = 0;
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        lastFrame += 1;
+        frames.set(lastFrame, cb);
+        return lastFrame;
+      });
+    const caf = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((id) => {
+        frames.delete(id);
+      });
+    /** Run frames until `done` holds; fails if it never does. */
+    const framesUntil = (done: () => boolean): void => {
+      for (let n = 0; n < 60 && !done(); n += 1) {
+        const due = [...frames.values()];
+        frames.clear();
+        act(() => {
+          for (const cb of due) cb(performance.now());
+        });
+      }
+      expect(done()).toBe(true);
+    };
+    try {
+      const mock = createMockHertaBridge();
+      const { page, emit } = withPage(mock);
+      const h = renderWithSession(ui(), { mock });
+      h.openSession("s1");
+      act(() => {
+        runShortcut("openBrowser");
+      });
+      await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
+      const body = document.querySelector(".page-view__body") as HTMLElement;
+      body.getBoundingClientRect = () =>
+        ({ left: 900, top: 140, width: 600, height: 700 }) as DOMRect;
+      emit({});
+      framesUntil(() => page.show.mock.calls.length > 0);
       expect(page.show).toHaveBeenCalledWith("s1", {
         x: 900,
         y: 140,
         width: 600,
         height: 700,
-      }),
-    );
-    // Settings opens over the viewer: frozen in the same turn, no frame wait.
-    act(() => pushOverlay("settings", OVERLAY_Z.settings));
-    expect(page.freeze).toHaveBeenCalledTimes(1);
-    await waitFor(() =>
-      expect(
-        (document.querySelector(".page-view__still") as HTMLImageElement)?.src,
-      ).toContain("data:image/jpeg"),
-    );
-    const shows = page.show.mock.calls.length;
-    act(() => popOverlay("settings"));
-    await waitFor(() =>
-      expect(page.show.mock.calls.length).toBeGreaterThan(shows),
-    );
-    // The divider's press does the same.
-    act(() => beginPageMotion());
-    expect(page.freeze).toHaveBeenCalledTimes(2);
-    act(() => endPageMotion());
+      });
+      // Settings opens over the viewer: frozen in the same turn, no frame wait.
+      act(() => pushOverlay("settings", OVERLAY_Z.settings));
+      expect(page.freeze).toHaveBeenCalledTimes(1);
+      await waitFor(() =>
+        expect(
+          (document.querySelector(".page-view__still") as HTMLImageElement)
+            ?.src,
+        ).toContain("data:image/jpeg"),
+      );
+      const shows = page.show.mock.calls.length;
+      act(() => popOverlay("settings"));
+      framesUntil(() => page.show.mock.calls.length > shows);
+      // The divider's press does the same.
+      act(() => beginPageMotion());
+      expect(page.freeze).toHaveBeenCalledTimes(2);
+      act(() => endPageMotion());
+    } finally {
+      raf.mockRestore();
+      caf.mockRestore();
+    }
   });
 
   describe("the new-tab page: the launcher's servers (ADR 0083 §4; pick B)", () => {

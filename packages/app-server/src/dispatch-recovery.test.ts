@@ -23,6 +23,7 @@ import {
   type TerminalRecordBlock,
   V2RecordPersister,
 } from "@herta/core";
+import { listProcesses } from "@herta/tools";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   dropWithdrawnJournal,
@@ -40,6 +41,17 @@ afterEach(async () => {
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** The machine's own probe, with a patient process query. On Windows the
+ *  query is a PowerShell start and a WMI read — seconds alone, and past the
+ *  reaper's own 20 s in a loaded suite, where the reaper then rightly
+ *  answered `unverified` (2026-11-03). The real tests check what the reaper
+ *  does with a real table, not how fast the machine hands it over; their
+ *  120 s budget is this minute and one for the rest. */
+const patientProbe: ProcessProbe = {
+  ...systemProcessProbe,
+  processes: () => listProcesses({ timeoutMs: 60_000 }),
+};
 
 /** A process table: the running pids and their start times — and, for a
  *  process another started, `[startedAt, ppid, pgid]` (a group leader's
@@ -765,7 +777,7 @@ describe("the launch reaper (ADR 0071 §1.6)", () => {
       await markJournalOpen(s.journalPath, true);
       const summary = await reapOrphanedDispatches(
         dispatchJournalDir(s.transcriptDir),
-        systemProcessProbe,
+        patientProbe,
       );
       expect(summary.fates).toEqual([
         { pid: child.pid, fate: "ended" },
@@ -777,7 +789,7 @@ describe("the launch reaper (ADR 0071 §1.6)", () => {
       child.kill();
       other.kill();
     }
-  }, 60_000);
+  }, 120_000);
 
   it("ends what a real launcher left running after it exited", async () => {
     // The launcher starts a long-lived child, says its pid, and exits — as
@@ -827,7 +839,7 @@ describe("the launch reaper (ADR 0071 §1.6)", () => {
       await markJournalOpen(s.journalPath, true);
       const summary = await reapOrphanedDispatches(
         dispatchJournalDir(s.transcriptDir),
-        systemProcessProbe,
+        patientProbe,
       );
       expect(summary.fates).toEqual([{ pid: launcher.pid, fate: "ended" }]);
       const until = Date.now() + 10_000;
@@ -842,7 +854,7 @@ describe("the launch reaper (ADR 0071 §1.6)", () => {
         // ended by the reaper
       }
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("a rewind drops a withdrawn run's journal (ADR 0071 §1.1)", () => {

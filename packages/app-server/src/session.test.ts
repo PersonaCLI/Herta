@@ -47,6 +47,13 @@ import type {
   VoiceCueEvent,
 } from "./types.js";
 
+// Nearly every test here builds a real session stack, most through the host:
+// tens of milliseconds outside vitest, but 2.5–4.4 s for a different handful
+// of tests in each loaded suite run, and one past the default 5 s
+// (2026-11-03). The hook outwaits removeTmpDir's own 10 s for a `git` still
+// holding a workspace. A test that does more says its own.
+vi.setConfig({ testTimeout: 15_000, hookTimeout: 20_000 });
+
 /**
  * A MetaThinkCorpus with every mood-state key present but mapped to the
  * empty string. corpusHasContent() returns false for this, so V2ActorDriver

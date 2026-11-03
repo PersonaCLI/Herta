@@ -11,6 +11,9 @@ import { DocxView } from "./DocxView.js";
 
 const FIXTURE = readFileSync(join(__dirname, "__fixtures__", "fixture.docx"));
 
+/** A wait over one real docx render: FileViewerPanel.piece.test.tsx's. */
+const RENDER_WAIT = { timeout: 5_000 };
+
 function view(bytes: Uint8Array, anchor: ViewerAnchor): JSX.Element {
   return (
     <LocaleProvider locale="en" onLocaleChange={() => {}}>
@@ -34,7 +37,9 @@ describe("DocxView — a quote's anchor", () => {
     const first = new Uint8Array(FIXTURE);
     const anchor: ViewerAnchor = { from: 2, to: 3, unit: "para" };
     const ui = render(view(first, anchor));
-    await waitFor(() => expect(scrolled).toHaveLength(1));
+    // A real docx-preview render stands between each read and its scroll:
+    // past the default 1 s wait in a loaded suite (2026-11-03).
+    await waitFor(() => expect(scrolled).toHaveLength(1), RENDER_WAIT);
     // The label clicked again. The panel takes the new target at once and
     // reads the file anew: the anchor arrives while the old page is up, the
     // bytes after it, and docx-preview draws the page anew. Scrolled once
@@ -48,11 +53,12 @@ describe("DocxView — a quote's anchor", () => {
       const last = scrolled[scrolled.length - 1];
       expect(last?.isConnected).toBe(true);
       expect(last?.textContent).toBe("Plain, bold and italic.");
-    });
+    }, RENDER_WAIT);
     // The same read and anchor rendered again: the reader stays put.
     const count = scrolled.length;
     ui.rerender(view(reread, again));
     await new Promise((r) => setTimeout(r, 200));
     expect(scrolled).toHaveLength(count);
-  });
+    // Two waits of up to RENDER_WAIT each: more than the default 5 s.
+  }, 15_000);
 });

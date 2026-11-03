@@ -9,8 +9,13 @@ import { PersistentShell } from "./persistent-shell.js";
 import { makeMsysPaths, shellPathsFor } from "./shell-paths.js";
 
 // Real bash processes: comfortably over the 5 s default under suite load; the
-// hook budget covers removeTmpDir's patient teardown on Windows.
+// hook budget covers removeTmpDir's patient teardown on Windows. A test that
+// starts more than one shell, or reads the process table, says its own.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
+/** The process-table query's budget: on Windows a PowerShell start and a WMI
+ *  read, past its own 20 s default in a loaded suite (2026-11-03). */
+const QUERY_MS = 60_000;
 
 const BASH = findBash();
 const d = describe.skipIf(BASH === null);
@@ -45,7 +50,7 @@ d("PersistentShell (real bash)", () => {
         expect(r.output).not.toContain("__HERTA_PD_");
         const sleeper = Number(r.output.trim());
         expect(said).toHaveLength(1);
-        const rows = await listProcesses();
+        const rows = await listProcesses({ timeoutMs: QUERY_MS });
         const shellRow = rows.find((row) => row.pid === said[0]);
         expect(shellRow).toBeDefined();
         // Windows' parent ids do not lead from the shell to the command
@@ -61,6 +66,7 @@ d("PersistentShell (real bash)", () => {
         await own.kill();
       }
     },
+    QUERY_MS + 30_000,
   );
 
   it.skipIf(process.platform !== "win32")(
@@ -289,7 +295,9 @@ d("PersistentShell (real bash)", () => {
       shellPathsFor(BASH as string).toNative(next.output.trim()) ??
         next.output.trim(),
     ).toBe(ws);
-  });
+    // Four shells started and three ended: 14 s alone, past 30 s in a loaded
+    // suite (2026-11-03).
+  }, 90_000);
 
   it("bounds a chatty command: keeps the tail, counts the total", async () => {
     const small = new PersistentShell({

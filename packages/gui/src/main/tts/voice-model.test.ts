@@ -116,7 +116,11 @@ function fetchOf(
   };
 }
 
-describe("downloadVoiceModel", () => {
+// Every test here writes a real bundle: streamed to disk, extracted, each
+// file verified, swapped into place — and some remove it again. A second or
+// so alone; a single install took 2.6 s beside other test files, and one test
+// went past the default 5 s in a loaded suite (2026-11-03).
+describe("downloadVoiceModel", { timeout: 30_000 }, () => {
   it("downloads, verifies, extracts and swaps the bundle into place", async () => {
     const root = tmp();
     const { gz, archive } = makeArchive();
@@ -262,23 +266,32 @@ describe("downloadVoiceModel", () => {
   });
 });
 
-describe("createVoiceModelService", () => {
+// The service over the same real installs: the same budget.
+describe("createVoiceModelService", { timeout: 30_000 }, () => {
   function service(
     fetch: FetchLike,
     archive: ReturnType<typeof makeArchive>["archive"],
-    extra: { beforeRemove?: () => void; afterChange?: () => void } = {},
+    extra: {
+      beforeRemove?: () => void;
+      afterChange?: () => void;
+      onChange?: (s: VoiceModelState) => void;
+    } = {},
   ) {
     const root = tmp();
     const changes: VoiceModelState[] = [];
+    const { onChange, ...rest } = extra;
     const svc = createVoiceModelService({
       root,
       bundleId: BUNDLE_ID,
       archive,
       fetch,
-      onChange: (s) => changes.push(s),
+      onChange: (s) => {
+        changes.push(s);
+        onChange?.(s);
+      },
       log: () => undefined,
       progressEveryMs: 0,
-      ...extra,
+      ...rest,
     });
     return { svc, root, changes };
   }
@@ -335,13 +348,24 @@ describe("createVoiceModelService", () => {
 
   it("cancel ends the download as absent, not failed", async () => {
     const { gz, archive } = makeArchive();
+    let landed!: () => void;
+    const firstChunks = new Promise<void>((resolve) => {
+      landed = resolve;
+    });
     const { svc, changes } = service(
       fetchOf(gz, { chunk: 256, hangAfter: 512 }),
       archive,
+      {
+        onChange: (s) => {
+          if (s.phase === "downloading" && s.receivedBytes > 0) landed();
+        },
+      },
     );
     const p = svc.download();
-    // Let the first chunks land, then cancel.
-    await new Promise((r) => setTimeout(r, 30));
+    // Let the first chunks land, then cancel. Waited for, not slept on: a
+    // cancel that came while the download was still looking at the disk
+    // ended it before it said anything (2026-11-03).
+    await firstChunks;
     svc.cancel();
     const end = await p;
     expect(end.phase).toBe("absent");

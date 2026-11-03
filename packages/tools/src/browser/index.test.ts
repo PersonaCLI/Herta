@@ -308,7 +308,9 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     );
     expect(blind.images).toBeUndefined();
     expect(blind.modelText).toContain("you cannot see it");
-  });
+    // Forty-four real files written, each after a read of the folder: half a
+    // second alone, past the default 5 s in a loaded suite (2026-11-03).
+  }, 30_000);
 
   it("screenshots and reads in one parallel batch each get their own file (review 2026-10-30, T1)", async () => {
     ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));

@@ -40,21 +40,29 @@ export interface ProcessRow {
 }
 
 /** Every running process. Rejects when the table cannot be read, so the
- *  caller can tell "gone" from "could not check". */
-export async function listProcesses(): Promise<ProcessRow[]> {
-  return process.platform === "win32" ? windowsProcesses() : posixProcesses();
+ *  caller can tell "gone" from "could not check". `timeoutMs` bounds the
+ *  query (20 s when absent): on Windows it is a PowerShell start and a WMI
+ *  read, seconds even on a quiet machine, and a test that runs it beside a
+ *  loaded suite gives it longer. */
+export async function listProcesses(
+  opts: { readonly timeoutMs?: number } = {},
+): Promise<ProcessRow[]> {
+  const timeoutMs = opts.timeoutMs ?? QUERY_TIMEOUT_MS;
+  return process.platform === "win32"
+    ? windowsProcesses(timeoutMs)
+    : posixProcesses(timeoutMs);
 }
 
-async function windowsProcesses(): Promise<ProcessRow[]> {
+async function windowsProcesses(timeoutMs: number): Promise<ProcessRow[]> {
   const script =
     "Get-CimInstance Win32_Process | Where-Object { $_.CreationDate } | ForEach-Object " +
     "{ '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() }";
-  const out = await run("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    script,
-  ]);
+  const out = await run(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    undefined,
+    timeoutMs,
+  );
   if (out.code !== 0) {
     throw new Error(`the process query failed (exit ${out.code})`);
   }
@@ -88,12 +96,14 @@ const MONTHS = [
   "Dec",
 ];
 
-async function posixProcesses(): Promise<ProcessRow[]> {
+async function posixProcesses(timeoutMs: number): Promise<ProcessRow[]> {
   // `lstart` in the C locale: `Mon Sep 28 20:14:41 2026`, local time.
-  const out = await run("ps", ["-A", "-o", "pid=,ppid=,pgid=,lstart="], {
-    ...process.env,
-    LC_ALL: "C",
-  });
+  const out = await run(
+    "ps",
+    ["-A", "-o", "pid=,ppid=,pgid=,lstart="],
+    { ...process.env, LC_ALL: "C" },
+    timeoutMs,
+  );
   if (out.code !== 0) {
     throw new Error(`the process query failed (exit ${out.code})`);
   }
@@ -242,6 +252,7 @@ function run(
   file: string,
   args: readonly string[],
   env?: NodeJS.ProcessEnv,
+  timeoutMs: number = QUERY_TIMEOUT_MS,
 ): Promise<{ code: number; stdout: string }> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -249,7 +260,7 @@ function run(
       args,
       {
         windowsHide: true,
-        timeout: QUERY_TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: 1 << 24,
         ...(env !== undefined ? { env } : {}),
       },

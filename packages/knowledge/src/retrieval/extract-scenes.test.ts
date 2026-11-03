@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HERTA_PERSON_PRIME } from "../schema.js";
 import {
   mkTempKnowledgeDb,
@@ -10,6 +10,12 @@ describe("extractHertaScenes", () => {
   let h: TempDb;
   beforeEach(() => {
     h = mkTempKnowledgeDb();
+  });
+  // Closed after each test: an open database holds its directory on Windows,
+  // and the eight left open made the temp-dir tracker's removal outlast its
+  // own hook (2026-11-03).
+  afterEach(() => {
+    h.cleanup();
   });
 
   function seedDoc(opts: {

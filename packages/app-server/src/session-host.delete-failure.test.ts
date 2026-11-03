@@ -46,11 +46,16 @@ vi.mock("@herta/core", async (importOriginal) => {
 
 const { createSessionHost } = await import("./session-host.js");
 
+// 20 s, tests and hook: each test builds the whole session stack through the
+// host — the second one twice, create and reopen — with the repository
+// probe's `git` in the workspace each time: half a second alone, past the
+// default 5 s in a loaded suite (2026-11-03). The hook outwaits
+// removeTmpDir's own 10 s for a `git` still holding the workspace.
 const tmpDirs: string[] = [];
 afterEach(async () => {
   failure.mode = "none";
   for (const d of tmpDirs.splice(0)) await removeTmpDir(d);
-});
+}, 20_000);
 
 function mkConfig(): AppServerConfig {
   const root = mkdtempSync(join(tmpdir(), "herta-delete-failure-test-"));
@@ -82,7 +87,7 @@ describe("deleteSession — a remove that fails part-way resolves, never throws"
     expect(existsSync(join(cfg.transcriptDir, `${s.sessionId}.jsonl`))).toBe(
       false,
     );
-  });
+  }, 20_000);
 
   it("nothing removed: ok false, removed FALSE — the session is still there to reopen", async () => {
     const cfg = mkConfig();
@@ -99,5 +104,5 @@ describe("deleteSession — a remove that fails part-way resolves, never throws"
     const again = await host.openSession({ sessionId: s.sessionId });
     expect(host.activeSession).toBe(again);
     await host.closeActiveSession();
-  });
+  }, 20_000);
 });

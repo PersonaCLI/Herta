@@ -278,7 +278,10 @@ describe("a run keeps its journal (ADR 0071 §1.1)", () => {
     await runtime.resumeBrief({ recordLength: 6 });
     const sent = JSON.stringify(continued ?? {});
     expect(sent).toContain("达到了这次运行的步数上限");
-  });
+    // The limit is the runtime's own (100 steps), each journaled in a real
+    // file before it runs: well under a second alone, past the default 5 s
+    // in a loaded suite (2026-11-03).
+  }, 30_000);
 
   it("will not continue a run that ended, or one started under another contract", async () => {
     const path = dispatchJournalPath(join(root, "sessions"), "sess");

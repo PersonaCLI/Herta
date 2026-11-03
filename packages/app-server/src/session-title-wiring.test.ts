@@ -125,6 +125,10 @@ async function mkSession(
       staticPrefixOverride: { bio: "[test-bio]", env: "", fewShots: [] },
       metaThinkOverride: emptyMetaThinkCorpus(),
       supervisorReferenceOverride: "",
+      // No git under these tests, as the dep's own doc asks: the real probe
+      // runs at create and at every turn's end — a `git` per turn that no
+      // title test looks at, each holding the workspace while it runs.
+      repoDescriber: async () => ({ kind: "absent" }),
     },
   });
 }
@@ -134,6 +138,11 @@ async function nextTitle(session: SessionImpl): Promise<TitleEvent> {
   throw new Error("title stream closed without an event");
 }
 
+// A test of many turns carries its own budget, 5 s plus about 2 s a turn.
+// Each turn reveals her reply at its real, paced speed — the sink's own
+// timers, which nothing at the session level turns off — about 0.3 s alone
+// and more in a loaded suite, where a dozen turns met the 5 s default
+// (2026-11-03).
 describe("SessionImpl — title generation", () => {
   it("generates, persists, and emits a title after the first turn", async () => {
     const cfg = mkConfig();
@@ -363,7 +372,7 @@ describe("SessionImpl — title generation", () => {
     expect(calls).toBe(2);
     expect(session.title).toBe("标题2");
     await session.close();
-  });
+  }, 20_000);
 
   it("bounds initial-title retries when the model keeps yielding nothing", async () => {
     const cfg = mkConfig();
@@ -387,7 +396,7 @@ describe("SessionImpl — title generation", () => {
     expect(session.title).toBeNull();
     expect(calls).toBe(3); // capped at MAX_INITIAL_TITLE_ATTEMPTS, not 5
     await session.close();
-  });
+  }, 15_000);
 
   it("stays untitled when the model yields no usable title", async () => {
     const cfg = mkConfig();
@@ -596,7 +605,7 @@ describe("SessionImpl — title generation", () => {
     expect(session.title).toBe("话题3");
     expect(session.topics.map((t) => t.title)).toEqual(["我起的名字", "话题3"]);
     await session.close();
-  });
+  }, 30_000);
 
   it("a rename restarts the periodic count — the retitle comes six turns after it, not sooner", async () => {
     const cfg = mkConfig();
@@ -628,7 +637,7 @@ describe("SessionImpl — title generation", () => {
     await session.whenTitleSettled();
     expect(calls).toBe(2); // the sixth
     await session.close();
-  });
+  }, 25_000);
 
   it("the initial title's prompt carries no incumbent contract", async () => {
     const cfg = mkConfig();

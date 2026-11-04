@@ -831,9 +831,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -871,7 +876,7 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     expect(systems).toHaveLength(2);
     // First system block is the projected patch.preview; the last is the
     // run-closing done-marker.
-    expect((systems[0] as { body: string }).body).toContain("patch preview");
+    expect((systems[0] as { body: string }).body).toContain("stale_read");
     expect((systems[1] as { role?: string }).role).toBe("done-marker");
 
     // Three scripted completion calls happened, plus the two auto thoughts.
@@ -881,7 +886,7 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     // The beat prompt (prompts[1]) should include the projected backend
     // SystemBlock so Herta sees what she's reacting to.
     expect(prompts[1]).toContain("系统");
-    expect(prompts[1]).toContain("改动 foo.ts"); // the patch row, as she reads it (ADR 0079)
+    expect(prompts[1]).toContain("这一步没成（edit_file）"); // the failed step, as she reads it (ADR 0079)
     expect(prompts[1]).toContain("foo.ts");
     expect(prompts[1]).toMatch(/（我 说）\n$/); // beat prompt ends with forced-speech open tag
   });
@@ -909,9 +914,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -961,9 +971,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1019,9 +1034,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1070,9 +1090,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1120,9 +1145,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1187,9 +1217,14 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1220,8 +1255,8 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     // `patch.preview` use a hint specifically about reacting to the
     // diff that just appeared — NOT the generic speech hint anymore.
     expect(beatPrompt.endsWith("\n（我 说）\n")).toBe(true);
-    expect(beatPrompt).toContain("板砖刚把补丁亮在记录上方了");
-    expect(beatPrompt).toContain("一句话点评");
+    expect(beatPrompt).toContain("板砖刚一步失败了");
+    expect(beatPrompt).toContain("把失败点拎出来");
     // Must still bracket-anchor the open/close tags so the model
     // doesn't drift surface.
     expect(beatPrompt).toContain("必须以（我 说）开始，以（/我 说）结束");
@@ -1514,9 +1549,14 @@ describe("runActorCompletionTurn — onPrompt callback (prompt dump)", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1561,7 +1601,7 @@ describe("runActorCompletionTurn — onPrompt callback (prompt dump)", () => {
     ]);
     // The beat prompt should be the one that ends with the open tag and
     // contains the projected backend system block.
-    expect(requests[2]?.prompt).toContain("改动 foo.ts");
+    expect(requests[2]?.prompt).toContain("这一步没成（edit_file）");
     expect(requests[2]?.prompt).toMatch(/（我 说）\n$/);
   });
 
@@ -1724,9 +1764,14 @@ describe("runActorCompletionTurn — thought/speech surface", () => {
         // Post-N2: patch.preview is the beat-firing event, so the empty
         // beat script above is actually consumed by a beat.
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -2519,9 +2564,14 @@ describe("runActorCompletionTurn — two-phase mood routing (Slice 13)", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -6593,9 +6643,14 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
         });
         // Emit a patch.preview to trigger a beat.
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -6615,16 +6670,14 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
       deps,
     );
     // Find the beat prompt. It's the one containing the
-    // patch.preview hint marker ("板砖刚把补丁亮在记录上方了").
-    const beatPrompt = prompts.find((p) =>
-      p.includes("板砖刚把补丁亮在记录上方了"),
-    );
+    // patch.preview hint marker ("板砖刚一步失败了").
+    const beatPrompt = prompts.find((p) => p.includes("板砖刚一步失败了"));
     expect(beatPrompt).toBeDefined();
     // The beat prompt should NOT contain the compaction header
     // (compactBridgeOutput: false — even with 2 system blocks present).
     expect(beatPrompt).not.toContain("板砖之前做过的事（细节不在手边）：");
     // Raw blocks present in the beat prompt.
-    expect(beatPrompt).toContain("改动 foo.ts");
+    expect(beatPrompt).toContain("这一步没成（edit_file）");
     expect(beatPrompt).toContain('{"path":"foo.ts"}'); // the step, uncompacted
   });
 

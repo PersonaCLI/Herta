@@ -316,7 +316,7 @@ async function streamInRunSpeech(
         );
   deps.onPrompt?.("beat-out", `${beatPrompt}${beatText}`);
 
-  // Beats carry bracketed hints too (beat_verification / beat_patch_preview
+  // Beats carry bracketed hints too (beat_verification / beat_tool_fail
   // / beat_tool_fail), so the same echo is possible here. Repair before the
   // slot check below, for the same ordering reason as runPhaseTwo — but
   // ONLY while nothing has streamed (review 2026-08-12): `beatEmittedTail`

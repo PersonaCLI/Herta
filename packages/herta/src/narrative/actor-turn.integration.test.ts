@@ -360,9 +360,14 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "+x",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         // Keep the brief pending long enough for the drain to fire the beat.
         await new Promise<void>((r) => setTimeout(r, 50));

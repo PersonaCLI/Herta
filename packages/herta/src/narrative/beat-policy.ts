@@ -76,9 +76,11 @@ export function workflowKindForBeat(tool: string): string | null {
  *  - `tool.call.finished` success → null.
  *  - `tool.call.finished` permission_denied/permission_failed → null.
  *  - `tool.call.finished` other failure → `tool.fail:${tool}:${code}`.
- *  - `patch.preview` → `patch.preview:first`.
+ *  - `patch.preview` → null (ADR 0085 step 4: routine progress).
  *  - `verification.finished` with `passed: false` → `verification.finished`;
  *    a passing run (or one whose outcome is unknown) → null (2026-09-03).
+ *  - `user.steer` / `user.talk` → null: a steer is said to 板砖, not to her
+ *    (ADR 0085 §5); talk she answers in her own lane (step 3).
  *  - `tool.call.delta` / `tool.call.output` (the live views) → null.
  *  - Turn lifecycle events → null (handled separately via reset()).
  *
@@ -90,21 +92,23 @@ export function workflowKindForBeat(tool: string): string | null {
  * has no actual output yet). The user explicitly asked for beats to
  * fire only when the CLI surfaces substantive content. So now:
  *
- *  - patch.preview (new code shown to the user) → beat
- *  - verification.finished (test/lint results) → beat
+ *  - verification.finished (a red test/lint run) → beat
  *  - tool.call.finished failure (something broke) → beat
  *  - everything else → no beat
+ *
+ * **Checkpoints (ADR 0085 step 4, 2026-11-04)**: while 板砖 works she is
+ * quiet but at a checkpoint — a failure the record shows — and when spoken
+ * to. The patch-preview beat (a diff is progress, and the card shows it)
+ * and the steer beat (the Trailblazer's words go to 板砖; her lane answers
+ * talk) went. A refused call stays out as before, and nothing in the record
+ * marks "a decision only the Trailblazer can make" yet: her verdict speaks
+ * for a run that stops on one.
  *
  * The `→ 差分协处理器` system blocks still appear in the record on
  * every tool start (backend-bridge.ts owns that projection); Herta
  * just doesn't narrate them individually.
  */
 export function classifyBeatTrigger(event: AgentEvent): TriggerSpec | null {
-  // A steer (ADR 0063) is the user speaking to Herta mid-commission — the
-  // one actor-layer event that earns a beat: one short acknowledgment in
-  // her voice (owner 2026-09-14: silence until her next commentary reads as
-  // being ignored). The id is the signature, so one steer fires once.
-  if (event.type === "user.steer") return { signature: `steer:${event.id}` };
   if (event.layer !== "backend") return null;
 
   switch (event.type) {
@@ -137,8 +141,6 @@ export function classifyBeatTrigger(event: AgentEvent): TriggerSpec | null {
         signature: `tool.fail:${event.tool}:${code ?? "unknown"}`,
       };
     }
-    case "patch.preview":
-      return { signature: "patch.preview:first" };
     case "verification.finished":
       // A RED run only (owner 2026-09-03). A green run drew a beat ("全绿，
       // 0.22 秒…拿着用吧") and, when it was the brief's last step, Herta's

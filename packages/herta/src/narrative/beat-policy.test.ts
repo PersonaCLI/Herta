@@ -14,26 +14,27 @@ describe("classifyBeatTrigger — event → trigger", () => {
     expect(classifyBeatTrigger(ev)).toBeNull();
   });
 
-  it("a steer (actor-layer user.steer) earns one beat, keyed by its id (ADR 0063)", () => {
+  it("a steer and talk earn no beat: a steer is said to 板砖, and she answers talk in her own lane (ADR 0085 step 4)", () => {
     const steer: AgentEvent = {
       type: "user.steer",
       layer: "actor",
       id: "s-1",
       text: "also rename the test file",
     };
-    expect(classifyBeatTrigger(steer)).toEqual({ signature: "steer:s-1" });
-    // Any other actor-layer event stays silent.
+    const talk: AgentEvent = {
+      type: "user.talk",
+      layer: "actor",
+      id: "t-1",
+      text: "周末几点？",
+    };
+    expect(classifyBeatTrigger(steer)).toBeNull();
+    expect(classifyBeatTrigger(talk)).toBeNull();
     const delta: AgentEvent = {
       type: "assistant.delta",
       layer: "actor",
       text: "…",
     };
     expect(classifyBeatTrigger(delta)).toBeNull();
-    // The policy dedups by signature: the same steer staged twice fires once.
-    const policy = new BeatPolicy({ clock: () => 0 });
-    expect(policy.shouldStage(steer)).toEqual({ signature: "steer:s-1" });
-    policy.markFired("steer:s-1", 0);
-    expect(policy.shouldStage(steer)).toBeNull();
   });
 
   it("returns null on backend tool.call.started for any workflow kind (N2, 2026-05-23)", () => {
@@ -154,14 +155,14 @@ describe("classifyBeatTrigger — event → trigger", () => {
     expect(classifyBeatTrigger(denied)).toBeNull();
   });
 
-  it("fires on patch.preview", () => {
+  it("a patch preview is progress, not a checkpoint: no beat (ADR 0085 step 4)", () => {
     const ev: AgentEvent = {
       type: "patch.preview",
       layer: "backend",
       diff: "--- a\n+++ b\n@@\n-x\n+y\n",
       files: ["foo.ts"],
     };
-    expect(classifyBeatTrigger(ev)?.signature).toBe("patch.preview:first");
+    expect(classifyBeatTrigger(ev)).toBeNull();
   });
 
   it("fires on a red verification.finished", () => {
@@ -294,16 +295,20 @@ describe("classifyBeatTrigger — event → trigger", () => {
 });
 
 describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
-  // N2 (2026-05-23): tool.call.started no longer fires beats, so we
-  // exercise the staging/dedup machinery via the still-beat-worthy
-  // `patch.preview` event. M3 (2026-07-04): staging is clock-free;
-  // the throttle window is checked at fire time via readyToFire().
-  function previewEv(path: string): AgentEvent {
+  // N2 (2026-05-23): tool.call.started no longer fires beats, and the
+  // patch preview went with ADR 0085 step 4, so we exercise the
+  // staging/dedup machinery via a checkpoint: a step that failed.
+  function failEv(path: string): AgentEvent {
     return {
-      type: "patch.preview",
+      type: "tool.call.finished",
       layer: "backend",
-      diff: "--- a\n+++ b\n@@ ... @@",
-      files: [path],
+      id: `t-${path}`,
+      tool: "edit_file",
+      result: {
+        ok: false,
+        error: { code: "stale_read", message: path, retryable: false },
+        summary: "failed",
+      },
     };
   }
   function verificationEv(): AgentEvent {
@@ -328,17 +333,17 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
 
   it("returns a trigger on first event", () => {
     const p = new BeatPolicy({ clock: () => 0 });
-    const t = p.shouldStage(previewEv("a.ts"));
+    const t = p.shouldStage(failEv("a.ts"));
     expect(t).not.toBeNull();
-    expect(t?.signature).toBe("patch.preview:first");
+    expect(t?.signature).toBe("tool.fail:edit_file:stale_read");
   });
 
   it("returns null on second event with the same signature after it fired (dedup)", () => {
     const p = new BeatPolicy({ clock: () => 1000 });
-    expect(p.shouldStage(previewEv("a.ts"))).not.toBeNull();
-    p.markFired("patch.preview:first", 1000);
-    // Same `patch.preview:first` signature — dedup blocks the second.
-    expect(p.shouldStage(previewEv("b.ts"))).toBeNull();
+    expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
+    p.markFired("tool.fail:edit_file:stale_read", 1000);
+    // Same `tool.fail:edit_file:stale_read` signature — dedup blocks the second.
+    expect(p.shouldStage(failEv("b.ts"))).toBeNull();
   });
 
   it("stages a different signature even inside the throttle window (M3: staging is clock-free)", () => {
@@ -350,8 +355,8 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
       clock: () => clock.now,
       minInterBurstMs: 3000,
     });
-    expect(p.shouldStage(previewEv("a.ts"))).not.toBeNull();
-    p.markFired("patch.preview:first", 0);
+    expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
+    p.markFired("tool.fail:edit_file:stale_read", 0);
 
     clock.now = 1000;
     expect(p.shouldStage(verificationEv())?.signature).toBe(
@@ -367,7 +372,7 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     });
     // lastBurstAt starts at -Infinity — the first beat is never held.
     expect(p.readyToFire()).toBe(true);
-    p.markFired("patch.preview:first", 0);
+    p.markFired("tool.fail:edit_file:stale_read", 0);
 
     clock.now = 1000;
     expect(p.readyToFire()).toBe(false);
@@ -385,8 +390,8 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     // A dropped beat (provider error) should not permanently consume its
     // signature; in-flight duplicates are the bridge's staged/ready scan.
     const p = new BeatPolicy({ clock: () => 0 });
-    expect(p.shouldStage(previewEv("a.ts"))).not.toBeNull();
-    expect(p.shouldStage(previewEv("a.ts"))).not.toBeNull();
+    expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
+    expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
   });
 
   it("reset() clears dedup but does NOT reset lastBurstAt", () => {
@@ -395,10 +400,10 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
       clock: () => clock.now,
       minInterBurstMs: 3000,
     });
-    expect(p.shouldStage(previewEv("a.ts"))).not.toBeNull();
-    p.markFired("patch.preview:first", 0);
+    expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
+    p.markFired("tool.fail:edit_file:stale_read", 0);
     // Fired → dedup blocks re-staging.
-    expect(p.shouldStage(previewEv("b.ts"))).toBeNull();
+    expect(p.shouldStage(failEv("b.ts"))).toBeNull();
 
     p.reset();
 
@@ -406,7 +411,7 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     // Dedup cleared → the signature stages again; but the throttle
     // window survives reset (lastBurstAt unchanged), so it is not yet
     // eligible to FIRE — that's the turn-2 flood protection.
-    expect(p.shouldStage(previewEv("b.ts"))).not.toBeNull();
+    expect(p.shouldStage(failEv("b.ts"))).not.toBeNull();
     expect(p.readyToFire()).toBe(false);
 
     clock.now = 3000;

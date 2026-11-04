@@ -31,14 +31,19 @@ Herta inference (DeepSeek completion mode)
             reads the runtime TerminalRecord as task evidence
           backend events render into TerminalRecord as
             → 差分协处理器 and → 系统 lines
-          during execution, the harness inserts short （我 说）
-            completion beats reacting to backend events — same
-            substrate as the main actor, rate-limited and deduped
-            per workflow kind; this replaces the v0.1 MicroburstNarrator
+          during execution her lane stays open (ADR 0085): the user
+            can talk to her and she answers while the run goes on —
+            one completion of hers at a time, same substrate as the
+            main actor; her @板砖 then steers the run with the
+            sentence that carries it. Unprompted she speaks only at a
+            checkpoint — a failure the record shows — never on routine
+            progress; this replaces the v0.1 MicroburstNarrator
+          her view draws the run as one block after the speech that
+            dispatched it, the talk during it after the run
           backend completes; harness opens a fresh （我 说） for
             Herta's verdict
             Done. (1 final Herta completion + N backend calls
-                   + M in-turn beat completions)
+                   + her answers and checkpoint completions)
 ```
 
 The agent does the work. **Herta decides when to delegate, hears the

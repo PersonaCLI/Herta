@@ -1926,9 +1926,8 @@ describe("invokeBanzhuanBridge", () => {
 
 describe("invokeBanzhuanBridge — beat insertion", () => {
   it("appends a HertaBlock beat after the projected SystemBlock when policy + firer present", async () => {
-    // Post-N2 (2026-05-23): only patch.preview / verification.finished /
-    // tool.call.finished failures fire beats. Use patch.preview here as
-    // the canonical beat-firing event.
+    // Checkpoints only (ADR 0085 step 4): a red check or a failed step fires
+    // a beat. A failed edit is the canonical one here.
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0 });
     const fireBeat: BeatFirer = async (
@@ -1943,9 +1942,14 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@ ... @@",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -1965,21 +1969,20 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
       beatPolicy,
       fireBeat,
     });
-    // system (patch.preview) + beat + trailing done-marker.
+    // system (the failure row) + beat + trailing done-marker.
     expect(out).toHaveLength(3);
     expect(out[0]?.kind).toBe("system");
     expect((out[0] as { label: string }).label).toBe("系统");
     expect(out[1]?.kind).toBe("herta");
     expect((out[1] as { text: string }).text).toBe(
-      "[beat for patch.preview:first]",
+      "[beat for tool.fail:edit_file:stale_read]",
     );
     expect((out[2] as { role?: string }).role).toBe("done-marker");
   });
 
   it("interleaves multiple events and beats in time order", async () => {
-    // Post-N2: tool.call.started no longer fires beats. Use a patch.preview
-    // and a tool.call.finished failure — both project as system blocks AND
-    // qualify as beat triggers under the new ruleset.
+    // Two failures with different signatures — both project as system
+    // blocks AND qualify as checkpoints (ADR 0085 step 4).
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
     let beatNum = 0;
@@ -1997,9 +2000,14 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         publishWithLayer(bus, "backend", {
@@ -2033,16 +2041,18 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const kinds = out.map((b) => b.kind);
     // Trailing done-marker (system) closes the run.
     expect(kinds).toEqual(["system", "herta", "system", "herta", "system"]);
-    expect((out[1] as { text: string }).text).toContain("patch.preview:first");
+    expect((out[1] as { text: string }).text).toContain(
+      "tool.fail:edit_file:stale_read",
+    );
     expect((out[3] as { text: string }).text).toContain(
       "tool.fail:read_file:io_error",
     );
     expect((out[4] as { role?: string }).role).toBe("done-marker");
   });
 
-  it("skips beats per the dedup policy (patch.preview twice → one beat)", async () => {
-    // Post-N2: two patch.preview events both classify to signature
-    // "patch.preview:first" — dedup collapses them to one beat.
+  it("skips beats per the dedup policy (the same failure twice → one beat)", async () => {
+    // Two failed edits both classify to one signature — dedup collapses
+    // them to one beat.
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
     let beats = 0;
@@ -2054,14 +2064,24 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff-a",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff-b",
-          files: ["b.ts"],
+          type: "tool.call.finished",
+          id: "f-b.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "b.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -2113,9 +2133,14 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
       runBrief: async (brief: HertaToAgentBrief) => {
         // Both triggers arrive in a single burst.
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
@@ -2152,7 +2177,7 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
       fireBeat,
     });
     expect(fired).toEqual([
-      "patch.preview:first",
+      "tool.fail:edit_file:stale_read",
       "tool.fail:read_file:io_error",
     ]);
   });
@@ -2182,9 +2207,14 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
@@ -2219,7 +2249,7 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const hertaBlocks = out.filter((b) => b.kind === "herta");
     expect(hertaBlocks).toHaveLength(1);
     expect((hertaBlocks[0] as { text: string }).text).toBe(
-      "beat:patch.preview:first",
+      "beat:tool.fail:edit_file:stale_read",
     );
     expect((out[out.length - 1] as { role?: string }).role).toBe("done-marker");
   });
@@ -2305,9 +2335,9 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
   });
 
   it("resets dedup on backend turn.started boundary", async () => {
-    // Post-N2: use patch.preview events. The first one fires, the second
-    // is deduped under "patch.preview:first", turn.started clears the
-    // dedup set, then the third fires again.
+    // The same failure thrice: the first fires, the second is deduped
+    // under its signature, turn.started clears the dedup set, then the
+    // third fires again.
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
     let beats = 0;
@@ -2319,15 +2349,25 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff-a",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff-b",
-          files: ["b.ts"],
+          type: "tool.call.finished",
+          id: "f-b.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "b.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         publishWithLayer(bus, "backend", {
@@ -2336,9 +2376,14 @@ describe("invokeBanzhuanBridge — beat insertion", () => {
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff-c",
-          files: ["c.ts"],
+          type: "tool.call.finished",
+          id: "f-c.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "c.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -2367,7 +2412,7 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
   const tick = (): Promise<void> =>
     new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-  it("defers a patch.preview beat until after permission.resolved is processed", async () => {
+  it("defers a checkpoint beat until after permission.resolved is processed", async () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
 
@@ -2392,9 +2437,14 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "--- a\n+++ b\n@@\n-x\n+y\n",
-          files: ["foo.ts"],
+          type: "tool.call.finished",
+          id: "f-foo.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         await tick(); // backend would now block awaiting the resolver
         publishWithLayer(bus, "backend", {
@@ -2456,14 +2506,14 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     const beatIdx = projected.findIndex(
       (b) =>
         b.kind === "herta" &&
-        (b as { text: string }).text.includes("patch.preview"),
+        (b as { text: string }).text.includes("stale_read"),
     );
     expect(beatIdx).toBeGreaterThan(lastSystemIdx);
     // And the done-marker is genuinely last in the full record.
     expect((out[out.length - 1] as { role?: string }).role).toBe("done-marker");
   });
 
-  it("still fires a patch.preview beat when no permission event follows", async () => {
+  it("still fires a checkpoint beat when no permission event follows", async () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const beatPolicy = new BeatPolicy({ clock: () => 0, minInterBurstMs: 0 });
     let beats = 0;
@@ -2475,9 +2525,14 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         return {
           taskId: brief.taskId,
@@ -2506,7 +2561,7 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
   it("does not hang (and drops the held beat) when the turn ends with a permission still pending", async () => {
     // Abort / resolver-rejection path: the backend emits permission.requested
     // (sets permissionPending) then runBrief returns WITHOUT a matching
-    // permission.resolved. A beat staged from the preceding patch.preview is
+    // permission.resolved. A beat staged from the preceding failure is
     // held behind the gate; the drain must terminate (not spin forever) and
     // must not fire the orphaned beat.
     const bus = new InMemoryEventBus<AgentEvent>();
@@ -2520,9 +2575,14 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     const runtime: CodingAgentRuntime = {
       runBrief: async (brief: HertaToAgentBrief) => {
         publishWithLayer(bus, "backend", {
-          type: "patch.preview",
-          diff: "diff",
-          files: ["a.ts"],
+          type: "tool.call.finished",
+          id: "f-a.ts",
+          tool: "edit_file",
+          result: {
+            ok: false,
+            error: { code: "stale_read", message: "a.ts", retryable: false },
+            summary: "edit failed",
+          },
         });
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         publishWithLayer(bus, "backend", {
@@ -2559,7 +2619,7 @@ describe("invokeBanzhuanBridge — beat deferral across permission prompt", () =
     // The held beat was dropped (never fired) because the turn ended with the
     // permission still pending.
     expect(beats).toBe(0);
-    // The patch.preview system block is still present.
+    // The failure's system block is still present.
     expect(out.some((b) => b.kind === "system")).toBe(true);
     expect(out.some((b) => b.kind === "herta")).toBe(false);
   });

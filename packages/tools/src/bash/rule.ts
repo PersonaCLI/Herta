@@ -13,6 +13,7 @@ import {
   checkReaderArgvPaths,
   checkReadPaths,
 } from "../run-command/reader-guard.js";
+import { hostIdentity } from "../run-command/self-kill.js";
 import { previewHeredocWrites } from "./heredoc-write.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
 import { readRedirectTargets, writesUndoable } from "./redirect-writes.js";
@@ -65,10 +66,18 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
         workspaceRoot: ctx.workspaceRoot,
         paths,
         cwd,
+        host: hostIdentity(),
       },
     );
     if (verdict.kind === "block") {
-      return { kind: "deny", code: verdict.code, reason: verdict.reason };
+      return {
+        kind: "deny",
+        code: verdict.code,
+        reason: verdict.reason,
+        ...(verdict.suggestion !== undefined
+          ? { suggestion: verdict.suggestion }
+          : {}),
+      };
     }
     if (verdict.kind === "ask") {
       // The effective program (ADR 0040): lets the approval cache scope this

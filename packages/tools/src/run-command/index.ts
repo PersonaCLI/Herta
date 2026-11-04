@@ -23,6 +23,7 @@ import { redactSecrets } from "./redactor.js";
 import { runCommandWriteGuard } from "./rule.js";
 import { runCommand } from "./runner.js";
 import { runCommandInputSchema, runCommandJsonSchema } from "./schema.js";
+import { hostIdentity } from "./self-kill.js";
 import { resolveWindowsShim } from "./shim-wrapper.js";
 import { detectTestRun, isTestCommand } from "./test-detector.js";
 
@@ -108,9 +109,10 @@ export function runCommandTool(): HertaTool {
       // the model never gets to escalate by phrasing its own cmd wrapper).
       const verdict = classifyCommand(argv, {
         writeGuard: runCommandWriteGuard(ctx.workspaceRoot, safe.resolved),
+        host: hostIdentity(),
       });
       if (verdict.kind === "block") {
-        return errResult("command_blocked", verdict.reason);
+        return errResult("command_blocked", verdict.reason, verdict.suggestion);
       }
 
       // Model-supplied env guard (ADR 0025 slice 4; ALLOWLIST since audit S1).

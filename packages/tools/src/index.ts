@@ -240,6 +240,9 @@ export {
   reviewRiskFloor,
 } from "./run-command/review-floor.js";
 export type { RunCommandInput } from "./run-command/schema.js";
+// A kill aimed at the app itself is blocked (2026-11-04); the desktop's main
+// hands over Electron's other processes.
+export { registerHostHelperPids } from "./run-command/self-kill.js";
 export type { SearchMatch, SearchTextData } from "./search-text/index.js";
 export {
   ATTACHMENT_SEARCH_MAX_BYTES,

@@ -7,6 +7,7 @@ import {
 } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 import { patchTargetPaths } from "./patch-targets.js";
+import { type HostIdentity, selfKillDenial } from "./self-kill.js";
 
 export type Verdict =
   | { kind: "allow" }
@@ -19,7 +20,14 @@ export type Verdict =
        *  part of the tier decision. */
       consequence?: CommandConsequence;
     }
-  | { kind: "block"; reason: string; code: "command_blocked" };
+  | {
+      kind: "block";
+      reason: string;
+      code: "command_blocked";
+      /** The move that serves the line's purpose instead, where the block
+       *  knows one (a kill of the app itself, 2026-11-04). */
+      suggestion?: string;
+    };
 
 /** Home, every way a shell spells it (platform review 2026-09-23: the `$HOME`
  *  spellings of `rm -rf ~` dropped from block to an ordinary ask). Compared
@@ -2460,6 +2468,9 @@ export interface ClassifyCommandOpts {
    *  resolve them (its workspace, its cwd, its links). A denial from either
    *  side turns the verdict into a block. Absent → no such check. */
   writeGuard?: WriteGuard;
+  /** The processes that are this app (2026-11-04): a kill aimed at one of
+   *  them is blocked. Absent → no such check. */
+  host?: HostIdentity;
 }
 
 /** See `ClassifyCommandOpts.writeGuard`. `path` and `body` return a denial
@@ -2513,8 +2524,16 @@ export function classifyCommand(
   opts?: ClassifyCommandOpts,
 ): Verdict {
   const verdict = classifyCommandTiers(argv, opts);
+  if (verdict.kind === "block") return verdict;
+  // A kill aimed at the app itself (2026-11-04): blocked whatever tier the
+  // kill earned, since an approval of it — the user's or a review's — closes
+  // the app mid-run.
+  if (opts?.host !== undefined) {
+    const self = selfKillBlock(argv, opts.host, opts.shell === true, 0);
+    if (self !== null) return self;
+  }
   const guard = opts?.writeGuard;
-  if (guard === undefined || verdict.kind === "block") return verdict;
+  if (guard === undefined) return verdict;
   // The harness's own state is not command-writable (2026-09-30): whatever
   // tier the command earned, a write into it is refused outright — the same
   // hard line the editors draw, since a card for it would be one click from
@@ -2551,6 +2570,43 @@ export function classifyCommand(
     }
   }
   return verdict;
+}
+
+/**
+ * The block for a line that would end one of the app's own processes: the
+ * line as written, the command its exec-wrappers run, and each command of a
+ * body it hands another shell (`cmd /c taskkill …`, `powershell -Command
+ * Stop-Process …`), to the re-entry depth the block scan reads. A body is
+ * always shell-expanded, so its `$PPID` counts.
+ */
+function selfKillBlock(
+  argv: readonly string[],
+  host: HostIdentity,
+  shell: boolean,
+  depth: number,
+): Verdict | null {
+  const peeled = peelExecWrappers(argv);
+  const forms = peeled !== null && peeled.length > 0 ? [argv, peeled] : [argv];
+  for (const form of forms) {
+    const denial = selfKillDenial(form, host, shell);
+    if (denial !== null) {
+      return {
+        kind: "block",
+        code: "command_blocked",
+        reason: denial.reason,
+        suggestion: denial.suggestion,
+      };
+    }
+    const reentry = extractShellReentry(form);
+    if (reentry?.kind !== "body" || depth >= MAX_REENTRY_DEPTH) continue;
+    for (const segment of splitShellSegments(reentry.body)) {
+      const tokens = shellBodyTokens(segment);
+      if (tokens.length === 0) continue;
+      const inner = selfKillBlock(tokens, host, true, depth + 1);
+      if (inner !== null) return inner;
+    }
+  }
+  return null;
 }
 
 /** A `.git` path segment in shell text: `.git/hooks`, `.git\config`,

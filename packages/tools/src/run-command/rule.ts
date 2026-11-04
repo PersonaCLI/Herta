@@ -19,6 +19,7 @@ import { classifyCommand, type WriteGuard } from "./classifier.js";
 import { readPatchTargets } from "./patch-targets.js";
 import { checkReaderArgvPaths } from "./reader-guard.js";
 import { runCommandInputSchema } from "./schema.js";
+import { hostIdentity } from "./self-kill.js";
 
 /**
  * run_command's write guard (2026-09-30): the harness's own state (`.herta`)
@@ -84,12 +85,16 @@ export function makeRunCommandRule(): PermissionRule {
         return gitDir === null ? null : detectInProgressState(gitDir);
       },
       writeGuard: runCommandWriteGuard(ctx.workspaceRoot, safe.resolved),
+      host: hostIdentity(),
     });
     if (verdict.kind === "block") {
       return {
         kind: "deny",
         code: verdict.code,
         reason: verdict.reason,
+        ...(verdict.suggestion !== undefined
+          ? { suggestion: verdict.suggestion }
+          : {}),
       };
     }
     if (verdict.kind === "allow") {

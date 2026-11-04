@@ -22,6 +22,7 @@ import {
 } from "../run-command/classifier.js";
 import { findDisallowedEnvKey } from "../run-command/env-guard.js";
 import { readPatchTargets } from "../run-command/patch-targets.js";
+import type { HostIdentity } from "../run-command/self-kill.js";
 import type { ShellPaths } from "./shell-paths.js";
 
 /**
@@ -70,6 +71,9 @@ export interface ShellClassifyOpts {
   paths: ShellPaths;
   /** The shell's current cwd (native); relative paths resolve against it. */
   cwd?: string;
+  /** The processes that are this app: a kill aimed at one is blocked
+   *  (2026-11-04). Absent → no such check. */
+  host?: HostIdentity;
 }
 
 const RISK_RANK: Record<RiskLevel, number> = {
@@ -1312,6 +1316,8 @@ function classifySegment(
   const v = classifyCommand(argv, {
     shell: true,
     unresolved: hasLiveExpansion(seg),
+    // A kill aimed at the app itself — `$PPID` here is the app (2026-11-04).
+    ...(opts.host !== undefined ? { host: opts.host } : {}),
     // Lazy in-progress probe at the segment's effective cwd (ADR 0049 §5) —
     // consulted only for commit-concluding git shapes.
     repoInProgress: () => {

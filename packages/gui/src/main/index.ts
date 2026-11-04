@@ -5,6 +5,7 @@ import {
   setDocumentExtractor,
   workerDocumentExtractor,
 } from "@herta/app-server/document-worker";
+import { registerHostHelperPids } from "@herta/tools";
 import {
   app,
   BrowserWindow,
@@ -681,6 +682,10 @@ void app
     const s = await readGlobalSettings(app.getPath("userData")).catch(
       () => ({}) as Awaited<ReturnType<typeof readGlobalSettings>>,
     );
+    // A kill aimed at the app is blocked (2026-11-04): Electron's renderers,
+    // GPU and utility processes are the app too, and a kill of one by pid
+    // blanks the window. Listed only when a command line kills something.
+    registerHostHelperPids(() => app.getAppMetrics().map((m) => m.pid));
     // Deny every renderer permission but one (audit BL22; the exception and
     // its reason in renderer-permissions.ts). Electron grants them by default,
     // and a deny by default means a future dependency cannot quietly acquire

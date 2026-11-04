@@ -1,0 +1,620 @@
+import { basename } from "node:path";
+
+/**
+ * A kill aimed at the app itself (2026-11-04). Every `kill`, `pkill`,
+ * `killall` and `taskkill` asked as the same process class whatever it would
+ * end, and an approved `taskkill /F /IM node.exe` ends the CLI that runs it;
+ * an approved kill of the desktop's own pid closes the window mid-run. With
+ * automatic review on, a review model is the one approving (ADR 0075).
+ * Ending the app from inside it has no use the Trailblazer's own close does
+ * not serve, so such a line is BLOCKED: no card, no review, no rule.
+ *
+ * What the harness knows about itself, read only when a line kills
+ * something: its own pid, program name and command line; its parent's pid
+ * (the shell that started the CLI, the dev server that started Electron);
+ * and, on the desktop, Electron's other processes (killing a renderer blanks
+ * the window). Ancestors above the parent, and a kill whose targets arrive
+ * through a pipe (`pgrep x | xargs kill`, `Get-Process x | Stop-Process`) or
+ * a substitution, are not judged here: they ask as before.
+ */
+
+/** One process that is this app. */
+export interface HostProcess {
+  readonly pid: number;
+  /** This process itself: the parent of the persistent shell, so `$PPID`
+   *  there names it. */
+  readonly self?: true;
+  /** Its program's file name, as a by-name kill matches it (`node.exe`,
+   *  `Herta`). Unknown for the parent. */
+  readonly name?: string;
+  /** Its parent's pid, for `pkill -P`. */
+  readonly ppid?: number;
+  /** Its command line, as `pkill -f` matches it. */
+  readonly commandLine?: string;
+}
+
+/** The processes that are this app, listed when a line kills something. */
+export interface HostIdentity {
+  processes(): readonly HostProcess[];
+}
+
+let helperPids: (() => readonly number[]) | null = null;
+
+/** The desktop's main hands over Electron's other processes (renderers, the
+ *  GPU and utility processes): they share the app's program name, and a kill
+ *  of one by pid blanks the window. */
+export function registerHostHelperPids(list: () => readonly number[]): void {
+  helperPids = list;
+}
+
+/** This process, as the classifier's callers pass it. */
+export function hostIdentity(): HostIdentity {
+  return {
+    processes(): readonly HostProcess[] {
+      const name = basename(process.execPath);
+      const out: HostProcess[] = [
+        {
+          pid: process.pid,
+          self: true,
+          name,
+          ppid: process.ppid,
+          commandLine: [process.execPath, ...process.argv.slice(1)].join(" "),
+        },
+      ];
+      if (process.ppid > 0) out.push({ pid: process.ppid });
+      let helpers: readonly number[] = [];
+      try {
+        helpers = helperPids?.() ?? [];
+      } catch {
+        // A list that cannot be read leaves the own pid and name, which still
+        // catch the kills that matter most.
+      }
+      for (const pid of helpers) {
+        if (pid !== process.pid) out.push({ pid, name });
+      }
+      return out;
+    },
+  };
+}
+
+/** Why a line is refused, and the move that serves its purpose instead. */
+export interface SelfKillDenial {
+  readonly reason: string;
+  readonly suggestion: string;
+}
+
+/** What a kill line selects: a test per process, and how it chose. */
+interface Selector {
+  readonly by: "pid" | "name" | "all";
+  matches(p: HostProcess): boolean;
+}
+
+/** The kill programs this guard reads, by their lowercased base name. */
+const KILL_PROGRAMS: ReadonlySet<string> = new Set([
+  "kill",
+  "pkill",
+  "killall",
+  "taskkill",
+  "tskill",
+  "stop-process",
+  "spps",
+]);
+
+/**
+ * The denial when `argv` (one command, exec-wrappers already peeled) would
+ * end one of the host's processes; null when it would not, or when its
+ * targets cannot be told from the line. `shell` says a shell expands the
+ * line: then `$PPID` is the process that started the shell — the app.
+ */
+export function selfKillDenial(
+  argv: readonly string[],
+  host: HostIdentity,
+  shell: boolean,
+): SelfKillDenial | null {
+  const a0 = argv[0];
+  if (a0 === undefined) return null;
+  const id = programName(a0);
+  if (!KILL_PROGRAMS.has(id)) return null;
+  const select = selectorFor(id, argv.slice(1).map(unquote), shell);
+  if (select === null) return null;
+  const hit = host.processes().find((p) => select.matches(p));
+  if (hit === undefined) return null;
+  const what =
+    hit.name === undefined
+      ? `pid ${hit.pid}, the process that started this app`
+      : `pid ${hit.pid}, ${hit.name}`;
+  return {
+    reason: `${id} would end this app's own process (${what}) — the harness running you would close mid-run; no approval can allow it`,
+    suggestion:
+      select.by === "pid"
+        ? "that pid belongs to this app: list the processes (tasklist / ps) and end the one you mean by its own pid; a dev server started with dev_server stops with dev_server"
+        : "end the process you mean by its own pid (tasklist / ps lists them), not by a program name or user this app shares; a dev server started with dev_server stops with dev_server",
+  };
+}
+
+function programName(a0: string): string {
+  const base = a0.split(/[\\/]/).pop() ?? a0;
+  return base.toLowerCase().replace(/\.exe$/, "");
+}
+
+function unquote(a: string): string {
+  return a.replace(/^(["'])(.*)\1$/s, "$2");
+}
+
+/** PowerShell's `kill` is Stop-Process; one of its parameter names, spelled
+ *  out, says which `kill` a line is. (`-n` is POSIX kill's signal flag.) */
+const PS_KILL_WORD =
+  /^-(?:id|name|processname|force|passthru|whatif|confirm|inputobject)$/i;
+
+function selectorFor(
+  id: string,
+  args: readonly string[],
+  shell: boolean,
+): Selector | null {
+  if (id === "stop-process" || id === "spps") return powershellSelector(args);
+  if (id === "kill") {
+    return args.some((a) => PS_KILL_WORD.test(a))
+      ? powershellSelector(args)
+      : posixKillSelector(args, shell);
+  }
+  if (id === "pkill") return pkillSelector(args);
+  if (id === "killall") return killallSelector(args);
+  if (id === "taskkill") return taskkillSelector(args);
+  if (id === "tskill") return tskillSelector(args);
+  return null;
+}
+
+/** The program name without `.exe`, as POSIX tools and PowerShell show it. */
+function stem(name: string): string {
+  return name.replace(/\.exe$/i, "");
+}
+
+/** A name test against both spellings of a process's program name. */
+function nameMatches(p: HostProcess, test: (s: string) => boolean): boolean {
+  return p.name !== undefined && (test(p.name) || test(stem(p.name)));
+}
+
+function byPids(pids: readonly number[]): Selector | null {
+  if (pids.length === 0) return null;
+  const set = new Set(pids);
+  return { by: "pid", matches: (p) => set.has(p.pid) };
+}
+
+function anyOf(selectors: ReadonlyArray<Selector | null>): Selector | null {
+  const live = selectors.filter((s): s is Selector => s !== null);
+  if (live.length === 0) return null;
+  const by = live.some((s) => s.by === "all")
+    ? "all"
+    : live.some((s) => s.by === "name")
+      ? "name"
+      : "pid";
+  return { by, matches: (p) => live.some((s) => s.matches(p)) };
+}
+
+/** Every process (all of a user's, all a filter lets through). */
+const EVERY: Selector = { by: "all", matches: () => true };
+
+/** A `*` / `?` wildcard as a whole-string, case-insensitive test. */
+function wildcard(pattern: string): RegExp {
+  const body = pattern
+    .split("")
+    .map((c) =>
+      c === "*"
+        ? ".*"
+        : c === "?"
+          ? "."
+          : c.replace(/[.+^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("");
+  return new RegExp(`^${body}$`, "i");
+}
+
+/** A pattern the program reads as a regular expression; null when it is not
+ *  one JavaScript can read either (the program would refuse it too). */
+function regex(pattern: string, flags: string): RegExp | null {
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+function escaped(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── kill (POSIX, and the shells' builtin) ──────────────────────────────────
+
+/** `$PPID`, `${PPID}`: under a shell, the process that started it. */
+const PPID_WORD = /^-?\$(?:PPID|\{PPID\})$/;
+
+function posixKillSelector(
+  args: readonly string[],
+  shell: boolean,
+): Selector | null {
+  let i = 0;
+  let signal = false;
+  for (; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") {
+      i += 1;
+      break;
+    }
+    // Lists signals; ends nothing.
+    if (a === "-l" || a === "-L" || a.startsWith("--list") || a === "--table") {
+      return null;
+    }
+    if (a === "-s" || a === "-n" || a === "--signal") {
+      i += 1;
+      signal = true;
+      continue;
+    }
+    // `-9` is the signal the first time and a process group after it
+    // (`kill -9 -1` ends every process the user owns).
+    if (/^-\d+$/.test(a)) {
+      if (signal) break;
+      signal = true;
+      continue;
+    }
+    // `-KILL`, `-SIGTERM`; MSYS's `-f` / `-W` (a Windows pid).
+    if (/^-[A-Za-z]/.test(a)) {
+      if (/^-[A-Z]/.test(a)) signal = true;
+      continue;
+    }
+    break;
+  }
+  const pids: number[] = [];
+  let all = false;
+  let parent = false;
+  for (const a of args.slice(i)) {
+    if (shell && PPID_WORD.test(a)) {
+      parent = true;
+      continue;
+    }
+    if (!/^-?\d+$/.test(a)) continue;
+    const n = Number(a);
+    // `-1` is every process the user owns; any other negative number is a
+    // process group, which a pid started from a shell leads.
+    if (n === -1) all = true;
+    else pids.push(Math.abs(n));
+  }
+  return anyOf([
+    all ? EVERY : null,
+    parent ? { by: "pid", matches: (p) => p.self === true } : null,
+    byPids(pids),
+  ]);
+}
+
+// ── pkill ──────────────────────────────────────────────────────────────────
+
+/** pkill's options that take a value, short and long. */
+const PKILL_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "-g",
+  "-G",
+  "-P",
+  "-s",
+  "-t",
+  "-u",
+  "-U",
+  "-F",
+  "-q",
+  "--signal",
+  "--pgroup",
+  "--group",
+  "--parent",
+  "--session",
+  "--terminal",
+  "--euid",
+  "--uid",
+  "--pidfile",
+  "--ns",
+  "--nslist",
+  "--queue",
+]);
+
+const USER_OPTS: ReadonlySet<string> = new Set(["-u", "-U", "--euid", "--uid"]);
+
+function pkillSelector(args: readonly string[]): Selector | null {
+  let full = false;
+  let exact = false;
+  let icase = false;
+  let invert = false;
+  let users = false;
+  const parents: number[] = [];
+  let pattern: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") {
+      pattern ??= args[i + 1];
+      break;
+    }
+    const long = a.startsWith("--");
+    const eq = a.indexOf("=");
+    const opt = long ? (eq < 0 ? a : a.slice(0, eq)) : a.slice(0, 2);
+    if (a.startsWith("-") && PKILL_VALUE_OPTS.has(opt)) {
+      const attached = long
+        ? eq < 0
+          ? undefined
+          : a.slice(eq + 1)
+        : a.length > 2
+          ? a.slice(2)
+          : undefined;
+      const value = attached ?? args[i + 1] ?? "";
+      if (attached === undefined) i += 1;
+      if (USER_OPTS.has(opt)) users = true;
+      if (opt === "-P" || opt === "--parent") {
+        for (const v of value.split(",")) {
+          if (/^\d+$/.test(v)) parents.push(Number(v));
+        }
+      }
+      continue;
+    }
+    if (a === "--full") full = true;
+    else if (a === "--exact") exact = true;
+    else if (a === "--ignore-case") icase = true;
+    else if (a === "--inverse") invert = true;
+    else if (long || /^-\d+$/.test(a) || /^-[A-Z]+$/.test(a)) {
+      // A signal, or a long flag that selects nothing.
+    } else if (/^-[a-z]+$/.test(a)) {
+      for (const c of a.slice(1)) {
+        if (c === "f") full = true;
+        else if (c === "x") exact = true;
+        else if (c === "i") icase = true;
+        else if (c === "v") invert = true;
+      }
+    } else {
+      pattern ??= a;
+    }
+  }
+  const byParent: Selector | null =
+    parents.length === 0
+      ? null
+      : {
+          by: "pid",
+          matches: (p) => p.ppid !== undefined && parents.includes(p.ppid),
+        };
+  // No pattern: every process of a user (`pkill -u me`), or of a parent.
+  if (pattern === undefined) return users ? EVERY : byParent;
+  const re = regex(exact ? `^(?:${pattern})$` : pattern, icase ? "i" : "");
+  if (re === null) return null;
+  const named: Selector = {
+    by: "name",
+    matches: (p) => {
+      const hit = full
+        ? p.commandLine !== undefined && re.test(p.commandLine)
+        : nameMatches(p, (s) => re.test(s));
+      if (p.name === undefined && !full) return false;
+      return invert ? !hit : hit;
+    },
+  };
+  return byParent === null
+    ? named
+    : { by: "name", matches: (p) => named.matches(p) && byParent.matches(p) };
+}
+
+// ── killall ────────────────────────────────────────────────────────────────
+
+/** killall's options that take a value: psmisc's (Linux) and the BSD one's
+ *  (macOS: `-t tty`, `-c name`). */
+const KILLALL_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "-s",
+  "-u",
+  "-o",
+  "-y",
+  "-n",
+  "-Z",
+  "-t",
+  "-c",
+  "--signal",
+  "--user",
+  "--older-than",
+  "--younger-than",
+  "--ns",
+  "--context",
+]);
+
+function killallSelector(args: readonly string[]): Selector | null {
+  let regexp = false;
+  let icase = false;
+  let users = false;
+  const names: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") {
+      names.push(...args.slice(i + 1));
+      break;
+    }
+    const opt = a.startsWith("--") ? (a.split("=")[0] as string) : a;
+    if (KILLALL_VALUE_OPTS.has(opt)) {
+      const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1];
+      if (!a.includes("=")) i += 1;
+      if (opt === "-u" || opt === "--user") users = true;
+      // BSD's `-c name`: only processes of that name.
+      if (opt === "-c" && value !== undefined) names.push(value);
+      continue;
+    }
+    if (a === "--regexp") regexp = true;
+    else if (a === "--ignore-case") icase = true;
+    else if (a.startsWith("--") || /^-\d+$/.test(a) || /^-[A-Z]{2,}$/.test(a)) {
+      // A signal, or a long flag that selects nothing.
+    } else if (/^-[A-Za-z]+$/.test(a)) {
+      for (const c of a.slice(1)) {
+        if (c === "r" || c === "m") regexp = true;
+        else if (c === "I") icase = true;
+      }
+    } else {
+      names.push(a);
+    }
+  }
+  if (names.length === 0) return users ? EVERY : null;
+  const flags = icase ? "i" : "";
+  const tests = names
+    .map((n) =>
+      regexp ? regex(n, flags) : new RegExp(`^${escaped(n)}$`, flags),
+    )
+    .filter((t): t is RegExp => t !== null);
+  if (tests.length === 0) return null;
+  return {
+    by: "name",
+    matches: (p) => nameMatches(p, (s) => tests.some((t) => t.test(s))),
+  };
+}
+
+// ── taskkill / tskill (Windows) ────────────────────────────────────────────
+
+/** A Windows switch in any spelling: `/PID`, `-pid`, and Git Bash's `//PID`
+ *  (the doubled slash keeps MSYS from reading it as a path). */
+function winSwitch(a: string): string | null {
+  const m = /^(?:\/\/|\/|-)([A-Za-z]+)(?::.*)?$/.exec(a);
+  return m === null ? null : (m[1] as string).toLowerCase();
+}
+
+function taskkillSelector(args: readonly string[]): Selector | null {
+  const pids: number[] = [];
+  const images: RegExp[] = [];
+  const filters: Array<(p: HostProcess) => boolean> = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const sw = winSwitch(args[i] as string);
+    if (sw === null) continue;
+    const value = args[i + 1] ?? "";
+    if (sw === "s") {
+      // Another machine's processes are not this app's.
+      if (!/^(?:localhost|127\.0\.0\.1|\.)$/i.test(value)) return null;
+      i += 1;
+    } else if (sw === "u" || sw === "p") {
+      i += 1;
+    } else if (sw === "pid") {
+      for (const v of value.split(",")) {
+        if (/^\d+$/.test(v)) pids.push(Number(v));
+      }
+      i += 1;
+    } else if (sw === "im") {
+      images.push(wildcard(value));
+      i += 1;
+    } else if (sw === "fi") {
+      filters.push(taskkillFilter(value));
+      i += 1;
+    }
+  }
+  const named: Selector | null =
+    images.length === 0
+      ? null
+      : {
+          by: "name",
+          matches: (p) =>
+            nameMatches(p, (s) => images.some((re) => re.test(s))),
+        };
+  // With neither /PID nor /IM, the filters alone choose, from every process.
+  const chosen =
+    pids.length === 0 && images.length === 0
+      ? filters.length === 0
+        ? null
+        : EVERY
+      : anyOf([byPids(pids), named]);
+  if (chosen === null) return null;
+  return {
+    by: chosen.by,
+    matches: (p) => chosen.matches(p) && filters.every((f) => f(p)),
+  };
+}
+
+/** One `/FI "NAME OP VALUE"` filter. A filter this guard does not read
+ *  (STATUS, USERNAME, MEMUSAGE, WINDOWTITLE …) is taken to match: the process
+ *  might pass it. */
+function taskkillFilter(text: string): (p: HostProcess) => boolean {
+  const m = /^\s*(\w+)\s+(eq|ne|gt|lt|ge|le)\s+(.+?)\s*$/i.exec(text);
+  if (m === null) return () => true;
+  const field = (m[1] as string).toLowerCase();
+  const op = (m[2] as string).toLowerCase();
+  const value = m[3] as string;
+  if (field === "imagename") {
+    const re = wildcard(value);
+    return (p) => {
+      // An unknown name (the parent's) is taken as not the one named, as
+      // every name test here takes it.
+      if (p.name === undefined) return op === "ne";
+      const hit = nameMatches(p, (s) => re.test(s));
+      return op === "ne" ? !hit : hit;
+    };
+  }
+  if (field === "pid" && /^\d+$/.test(value)) {
+    const n = Number(value);
+    const compare: Record<string, (pid: number) => boolean> = {
+      eq: (pid) => pid === n,
+      ne: (pid) => pid !== n,
+      gt: (pid) => pid > n,
+      lt: (pid) => pid < n,
+      ge: (pid) => pid >= n,
+      le: (pid) => pid <= n,
+    };
+    const test = compare[op];
+    return test === undefined ? () => true : (p) => test(p.pid);
+  }
+  return () => true;
+}
+
+/** `tskill <pid | name> [/server:x] [/id:n] [/a] [/v]`. */
+function tskillSelector(args: readonly string[]): Selector | null {
+  if (args.some((a) => winSwitch(a) === "server")) return null;
+  const target = args.find((a) => winSwitch(a) === null);
+  if (target === undefined) return null;
+  if (/^\d+$/.test(target)) return byPids([Number(target)]);
+  const re = wildcard(target);
+  return { by: "name", matches: (p) => nameMatches(p, (s) => re.test(s)) };
+}
+
+// ── Stop-Process (PowerShell) ──────────────────────────────────────────────
+
+/** A Stop-Process parameter this guard reads, from the prefixes PowerShell
+ *  accepts for it; null for any other. */
+function psParam(a: string): "id" | "name" | "whatif" | null {
+  if (!a.startsWith("-") || a.length < 2) return null;
+  const p = a.slice(1).toLowerCase();
+  if (p === "id") return "id";
+  if ("name".startsWith(p)) return "name";
+  if (p.length >= 3 && "processname".startsWith(p)) return "name";
+  if (p.length >= 2 && "whatif".startsWith(p)) return "whatif";
+  return null;
+}
+
+function powershellSelector(args: readonly string[]): Selector | null {
+  const pids: number[] = [];
+  const names: RegExp[] = [];
+  let param: "id" | "name" | null = null;
+  // Stop-Process's first positional parameter is -Id.
+  let positional = true;
+  for (const raw of args) {
+    const p = psParam(raw);
+    if (p === "whatif") return null;
+    if (p !== null) {
+      param = p;
+      positional = false;
+      continue;
+    }
+    if (raw.startsWith("-")) {
+      param = null;
+      continue;
+    }
+    const target = param ?? (positional ? "id" : null);
+    if (target === null) continue;
+    for (const v of raw.split(",").map(unquote)) {
+      if (v === "") continue;
+      if (target === "id" && /^\d+$/.test(v)) pids.push(Number(v));
+      if (target === "name") names.push(wildcard(v));
+    }
+    // A list goes on while its words end in a comma.
+    if (!raw.endsWith(",")) {
+      param = null;
+      positional = false;
+    }
+  }
+  return anyOf([
+    byPids(pids),
+    names.length === 0
+      ? null
+      : {
+          by: "name",
+          matches: (p) => nameMatches(p, (s) => names.some((re) => re.test(s))),
+        },
+  ]);
+}

@@ -185,6 +185,11 @@ export interface SessionSnapshotView {
    *  the composer until they are sent or removed. They belong to the
    *  session: a new activation starts with none. */
   readonly composerQuotes: readonly ComposerQuote[];
+  /** The composer's 插话 tag (ADR 0085 §9): while 板砖 works, what is sent
+   *  goes to the run as a steer instead of to Herta. Set by the card's (or
+   *  the run row's) 插话, cleared by the tag's ×; it means nothing outside
+   *  a run, and the composer drops it when the run ends. */
+  readonly composerSteer: boolean;
   /** Elements picked on the page, waiting for the composer to place them
    *  as chips at its caret (ADR 0083 §4). */
   readonly composerPicks: readonly {
@@ -293,6 +298,7 @@ const INITIAL: SessionSnapshotView = {
   composerDraft: null,
   composerDraftImages: null,
   composerQuotes: [],
+  composerSteer: false,
   composerPicks: [],
   restagedImages: null,
   held: null,
@@ -642,6 +648,12 @@ export class SessionStore {
     this.emit({ ...this.snapshot, composerQuotes: kept });
   }
 
+  /** The 插话 tag on or off (ADR 0085 §9). */
+  setComposerSteer(on: boolean): void {
+    if (this.snapshot.composerSteer === on) return;
+    this.emit({ ...this.snapshot, composerSteer: on });
+  }
+
   /** The composer sent them with the message. */
   clearComposerQuotes(): void {
     if (this.snapshot.composerQuotes.length === 0) return;
@@ -946,6 +958,7 @@ export class SessionStore {
       composerDraft: null,
       composerDraftImages: null,
       composerQuotes: this.takeNextSessionQuotes(),
+      composerSteer: false,
       composerPicks: [],
       restagedImages:
         e.stagedImages !== undefined && e.stagedImages.length > 0

@@ -27,6 +27,7 @@ import type {
   StartServerResult,
   SteerTextResult,
   SubmitTextResult,
+  TalkTextResult,
   TerminalRecord,
   TitleEvent,
   TurnLifecycleEvent,
@@ -543,6 +544,20 @@ export interface HertaBridge {
       readonly route: string;
     }[],
   ): Promise<SteerTextResult>;
+  /** A message to Herta while 板砖 works (ADR 0085 step 3): `accepted`
+   *  means the words are in the record and she answers them while the run
+   *  goes on; `queued` means no run is working and the composer holds the
+   *  text for the next turn. OPTIONAL — fakes and the website demo omit it,
+   *  and the composer then holds the message as before. */
+  talkText?(
+    text: string,
+    mentions?: readonly string[],
+    picks?: readonly {
+      readonly line: string;
+      readonly element: string;
+      readonly route: string;
+    }[],
+  ): Promise<TalkTextResult>;
   /** 继续 (ADR 0071 §1.4): continue the interrupted 板砖 run. Resolves when
    *  the turn has ended, like `submitText`; never rejects. OPTIONAL with
    *  `onResume` — fakes and the website demo omit them, and no strip shows. */

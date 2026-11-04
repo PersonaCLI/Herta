@@ -4,8 +4,8 @@ import {
   activityRows,
   activitySummary,
   type RunEntry,
+  type SteerBlock,
   type SystemBlock,
-  type UserBlock,
 } from "./group-record.js";
 import { opPhase, type TracePhase } from "./op-phase.js";
 import { runOps, type TraceOp } from "./trace-context.js";
@@ -87,7 +87,11 @@ export type RunSection =
       readonly phase: TracePhase;
       readonly rows: readonly ActivityRow[];
     }
-  | { readonly kind: "steer"; readonly key: string; readonly block: UserBlock };
+  | {
+      readonly kind: "steer";
+      readonly key: string;
+      readonly block: SteerBlock;
+    };
 
 /**
  * The run's rows under the card's phases (探索 / 修改 / 验证), none
@@ -98,7 +102,7 @@ export type RunSection =
  * tab ends on its facts.
  */
 export function runSections(entries: readonly RunEntry[]): RunSection[] {
-  const at = new Map<SystemBlock | UserBlock, number>();
+  const at = new Map<SystemBlock | SteerBlock, number>();
   for (const [i, e] of entries.entries()) at.set(e.block, i);
   const out: RunSection[] = [];
   let pending: SystemBlock[] = [];

@@ -178,7 +178,8 @@ function countDroppedTurns(record: TerminalRecord, boundary: number): number {
   let n = 0;
   const end = Math.min(boundary, record.length);
   for (let i = 0; i < end; i++) {
-    if (record[i]?.kind === "user") n++;
+    const b = record[i];
+    if (b?.kind === "user" && b.duringRun !== true) n++;
   }
   return n;
 }
@@ -242,12 +243,15 @@ export async function prepareTurnRecap(
     // A lang-mismatched cache (zh recap resumed into an en session or vice
     // versa) is discarded like a stale boundary: replaying wrong-language
     // "memory" into every prompt costs more than the one re-derive.
+    const atBoundary =
+      rawCache === null ? undefined : record[rawCache.boundaryIndex];
     const boundaryValid =
       rawCache !== null &&
       rawCache.lang === lang &&
       rawCache.boundaryIndex > 0 &&
       rawCache.boundaryIndex < record.length &&
-      record[rawCache.boundaryIndex]?.kind === "user";
+      atBoundary?.kind === "user" &&
+      atBoundary.duringRun !== true;
     // Text distrust is symmetric with the boundary distrust above — see
     // distrustCachedRecapText.
     const cache =

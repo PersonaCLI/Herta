@@ -81,6 +81,7 @@ export function slimAgentEventForRenderer(
     case "verification.started":
     case "verification.finished":
     case "user.steer":
+    case "user.talk":
       return null;
     // The live views (ADR 0073): a call's arguments a token at a time, a
     // command's output a chunk at a time. They reach the renderer folded and

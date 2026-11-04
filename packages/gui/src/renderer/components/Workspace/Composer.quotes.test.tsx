@@ -106,6 +106,8 @@ describe("Composer — a held message keeps its quotes (ADR 0078 amendment 2026-
   function startCommission(
     mock: ReturnType<typeof createMockHertaBridge>,
   ): void {
+    // The hold: a bridge without talk to Herta (ADR 0085 step 3).
+    delete (mock.bridge as { talkText?: unknown }).talkText;
     act(() => {
       mock.emitReset({
         sessionId: "s",

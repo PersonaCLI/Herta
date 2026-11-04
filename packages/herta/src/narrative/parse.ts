@@ -117,3 +117,20 @@ export function stripBanzhuanTrigger(text: string): string {
   }
   return result;
 }
+
+/**
+ * The sentences of her speech that carry a live `@板砖` — what reaches the
+ * running 板砖 when she writes one during a run (ADR 0085 §4; owner
+ * 2026-11-04: "the sentence with @板砖", not the whole reply, so her talk to
+ * the Trailblazer stays out of 板砖's run). A sentence ends at 。！？!?；;
+ * or a line break; a quoted `@板砖` carries nothing. Joined as she wrote
+ * them; empty when none does.
+ */
+export function banzhuanSentences(text: string): string {
+  const sentences = text.split(/(?<=[。！？!?；;\n])/u);
+  return sentences
+    .filter((s) => parseHertaBlock(s).hasBanzhuanTrigger)
+    .map((s) => s.trim())
+    .join(" ")
+    .trim();
+}

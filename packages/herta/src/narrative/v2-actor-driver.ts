@@ -127,6 +127,10 @@ export interface V2ActorDriverDeps {
   readonly staticPrefix: StaticHertaPrefix;
   readonly bus: EventBus<AgentEvent>;
   readonly runtimeFactory: () => CodingAgentRuntime;
+  /** Hands text to the running 板砖 as a steer — the session's steer
+   *  channel (ADR 0063). Her live `@板砖` in an answer during a run reaches
+   *  板砖 through it (ADR 0085 §4). Absent (the CLI): it steers nothing. */
+  readonly steerBackend?: (text: string) => void;
   /**
    * Optional persister. If set, every block appended by `runTurn` is pushed
    * synchronously to the persister via `appendBlock(block)`. Survives across
@@ -693,6 +697,9 @@ export class V2ActorDriver {
         staticPrefix: this.staticPrefix,
         bus: this.deps.bus,
         runtimeFactory: this.deps.runtimeFactory,
+        ...(this.deps.steerBackend !== undefined
+          ? { steerBackend: this.deps.steerBackend }
+          : {}),
         sink: this.deps.sink,
         onPrompt: this.deps.onPrompt,
         ...(voiceEligible && this.deps.onPrimarySpeechStart !== undefined
@@ -1033,10 +1040,11 @@ export class V2ActorDriver {
     // that commissioned it. Taking the last user block of any kind withdrew
     // only the steer and left the commission and half the run standing,
     // with no 完成 marker.
+    // Nor is talk during the run (ADR 0085): it is inside the turn too.
     let userIndex = -1;
     for (let i = this.record.length - 1; i >= 0; i--) {
       const b = this.record[i];
-      if (b?.kind === "user" && b.steer !== true) {
+      if (b?.kind === "user" && b.steer !== true && b.duringRun !== true) {
         userIndex = i;
         break;
       }
@@ -1045,9 +1053,12 @@ export class V2ActorDriver {
     if (userBlock === undefined || userBlock.kind !== "user") return null;
     const withdrawn = this.record.slice(userIndex);
     // Everything the user said in the withdrawn turn comes back: the
-    // commission, then each steer in order, as paragraphs of one draft.
+    // commission, then each steer and each word to her during the run, in
+    // order, as paragraphs of one draft.
     const steers = withdrawn.flatMap((b) =>
-      b.kind === "user" && b.steer === true ? [b.text] : [],
+      b.kind === "user" && (b.steer === true || b.duringRun === true)
+        ? [b.text]
+        : [],
     );
     const userText = [userBlock.text, ...steers].join("\n\n");
     // Durable-first: truncate the persisted JSONL BEFORE mutating the in-memory

@@ -135,6 +135,7 @@ import type {
   StageImagesResult,
   StartServerResult,
   SteerTextResult,
+  TalkTextResult,
   TitleEvent,
   TurnLifecycleEvent,
   UndoEvent,
@@ -1001,12 +1002,14 @@ export class SessionImpl implements Session {
   }
 
   /** Where the latest turn starts: its user block, never a steer (ADR 0063
-   *  §1.10) — the cut a rewind makes. -1 with no turn. */
+   *  §1.10) nor talk during a run (ADR 0085) — the cut a rewind makes. -1
+   *  with no turn. */
   private latestTurnStart(): number {
     const record = this.driver.getRecord();
     for (let i = record.length - 1; i >= 0; i -= 1) {
       const b = record[i];
-      if (b?.kind === "user" && b.steer !== true) return i;
+      if (b?.kind === "user" && b.steer !== true && b.duringRun !== true)
+        return i;
     }
     return -1;
   }
@@ -1331,6 +1334,9 @@ export class SessionImpl implements Session {
   async regenerateLastReplyIfOrphaned(): Promise<void> {
     const last = this.driver.getRecord().at(-1);
     if (last === undefined || last.kind !== "user") return;
+    // Talk during a run is not a message to re-run as a turn (ADR 0085): it
+    // fell inside a run whose own ending decides what reopening does.
+    if (last.duringRun === true) return;
     // A trailing user block is NOT proof of a crash (audit 2026-07-24, 1.6).
     // An interrupted turn — and a provider-failed one — leaves a byte-identical
     // file: the user block is flushed at the actor loop's head and persisted
@@ -1497,6 +1503,51 @@ export class SessionImpl implements Session {
       id: randomUUID(),
       text: trimmed,
       ...(held.length > 0 ? { picks: held } : {}),
+    });
+    return { accepted: this.currentTurn.turnId };
+  }
+
+  /**
+   * A message to Herta while 板砖 works (ADR 0085 step 3). The same window
+   * as a steer — a backend run working — and the same route into the record:
+   * the bus carries `user.talk`, and the bridge, the record's one writer
+   * while a run works, records it as talk and has her answer it. It never
+   * reaches 板砖. Outside a run: `queued`, nothing recorded.
+   */
+  async talkText(
+    text: string,
+    opts: {
+      readonly mentions?: readonly string[];
+      readonly picks?: readonly PickedElement[];
+    } = {},
+  ): Promise<TalkTextResult> {
+    const trimmed = text.trim();
+    if (
+      trimmed.length === 0 ||
+      this.currentTurn === null ||
+      !this.backendRunning
+    ) {
+      return { queued: true };
+    }
+    // Only the paths and picked lines the text still holds, as a message's.
+    const mentions = (opts.mentions ?? []).filter(
+      (p) => typeof p === "string" && p.length > 0 && trimmed.includes(p),
+    );
+    const picks = (opts.picks ?? []).filter(
+      (p) =>
+        typeof p?.line === "string" &&
+        typeof p.element === "string" &&
+        typeof p.route === "string" &&
+        p.line.length > 0 &&
+        trimmed.includes(p.line),
+    );
+    this.bus.publish({
+      type: "user.talk",
+      layer: "actor",
+      id: randomUUID(),
+      text: trimmed,
+      ...(mentions.length > 0 ? { mentions } : {}),
+      ...(picks.length > 0 ? { picks } : {}),
     });
     return { accepted: this.currentTurn.turnId };
   }
@@ -2584,6 +2635,9 @@ export class SessionImpl implements Session {
       staticPrefix: actor.staticPrefix,
       bus,
       runtimeFactory,
+      // Her `@板砖` during a run steers it (ADR 0085 §4), through the same
+      // channel as the Trailblazer's steer.
+      steerBackend: (text: string) => steer.push(text),
       persister,
       sink,
       onPrompt: actor.onPrompt,

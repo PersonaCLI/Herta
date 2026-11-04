@@ -17,6 +17,7 @@ import type {
   SessionSearchHit,
   SteerTextResult,
   SubmitTextResult,
+  TalkTextResult,
   TerminalRecord,
   TitleEvent,
   TurnLifecycleEvent,
@@ -58,6 +59,8 @@ export interface MockHertaBridgeOpts {
   readonly interruptResult?: { readonly ok: boolean };
   /** What `steerText` answers (ADR 0063); default accepted on "mock-turn". */
   readonly steerTextResult?: SteerTextResult;
+  /** What `talkText` answers (ADR 0085); default accepted on "mock-turn". */
+  readonly talkTextResult?: TalkTextResult;
   /** What `continueInterrupted` answers (ADR 0071 §1.4); default a turn. */
   readonly continueInterruptedResult?: ContinueInterruptedResult;
   readonly rewindLastTurnResult?: RewindResult;
@@ -215,6 +218,7 @@ export interface MockHertaBridge {
     interrupt: Array<string | undefined>;
     /** The texts steered while 板砖 ran (ADR 0063). */
     steerText: string[];
+    talkText: string[];
     /** 继续 presses (ADR 0071 §1.4). */
     continueInterrupted: number;
     rewindLastTurn: number;
@@ -366,6 +370,7 @@ export function createMockHertaBridge(
     submitTextStaged: [],
     interrupt: [],
     steerText: [],
+    talkText: [],
     continueInterrupted: 0,
     rewindLastTurn: 0,
     undoLastTurnEdits: [],
@@ -599,6 +604,10 @@ export function createMockHertaBridge(
       return opts.continueInterruptedResult ?? { turnId: "mock-turn" };
     },
     onResume: (cb) => sub(resumeCbs, cb),
+    talkText: async (text) => {
+      calls.talkText.push(text);
+      return opts.talkTextResult ?? { accepted: "mock-turn" };
+    },
     steerText: async (text) => {
       calls.steerText.push(text);
       return opts.steerTextResult ?? { accepted: "mock-turn" };

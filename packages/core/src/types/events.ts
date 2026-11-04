@@ -156,4 +156,22 @@ export type AgentEvent =
       /** Elements picked on the page whose lines `text` holds (ADR 0083
        *  §4): the steer's user block records them, as a message's does. */
       picks?: readonly PickedElement[];
+    }
+  // A message the user sent to HERTA while the backend works (ADR 0085 §2,
+  // step 3): talk, not a steer — it never reaches the running backend. The
+  // session publishes it the moment it accepts the text; the bridge, the
+  // record's one writer while a run works, projects it as a `duringRun`
+  // user block and has her answer it. Several before she answers get one
+  // answer. `id` names it; `text` is the raw user text.
+  | {
+      type: "user.talk";
+      layer: EventLayer;
+      id: string;
+      text: string;
+      /** Workspace paths mentioned with the composer's `@`, as `text`
+       *  holds them (ADR 0072 amendment 2026-10-20). */
+      mentions?: readonly string[];
+      /** Elements picked on the page whose lines `text` holds (ADR 0083
+       *  §4). */
+      picks?: readonly PickedElement[];
     };

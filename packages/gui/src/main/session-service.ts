@@ -16,6 +16,7 @@ import {
   type SessionMetadata,
   type SpeechSynthesizer,
   type SteerTextResult,
+  type TalkTextResult,
   type UndoTarget,
   type UndoTurnEditsResult,
 } from "@herta/app-server";
@@ -196,6 +197,7 @@ export function findProjectRoot(start: string): string | undefined {
 const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.interrupt,
   CMD.steerText,
+  CMD.talkText,
   CMD.rewindLastTurn,
   CMD.undoLastTurnEdits,
   CMD.search,
@@ -857,6 +859,28 @@ export function createSessionService(
           text,
           pickedElements(rawPicks),
         )) ?? { queued: true },
+    );
+    // A message to Herta while 板砖 works (ADR 0085 step 3). The same
+    // honest `queued` without a session that can take it.
+    handle(
+      CMD.talkText,
+      async (
+        _e,
+        text: string,
+        rawMentions?: unknown,
+        rawPicks?: unknown,
+      ): Promise<TalkTextResult> => {
+        const mentions = Array.isArray(rawMentions)
+          ? rawMentions.filter((m): m is string => typeof m === "string")
+          : [];
+        const picks = pickedElements(rawPicks);
+        return (
+          (await host?.activeSession?.talkText?.(text, {
+            ...(mentions.length > 0 ? { mentions } : {}),
+            ...(picks.length > 0 ? { picks } : {}),
+          })) ?? { queued: true }
+        );
+      },
     );
     // 继续 (ADR 0071 §1.4). No session, or one that cannot continue: there
     // is nothing to continue, and the renderer drops its strip.

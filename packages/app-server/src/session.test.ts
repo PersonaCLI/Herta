@@ -2641,6 +2641,135 @@ describe("contract-fallback record note (ADR 0044)", () => {
 
 // ── The repository card's stream (ADR 0058) ──────────────────────────────────
 
+describe("Session — talkText, a message to Herta while 板砖 works (ADR 0085 step 3)", () => {
+  it("answers `queued` when idle and during Herta's own turn, recording nothing", async () => {
+    const cfg = mkConfig();
+    const { session, cleanup } = await mkStubSession(cfg);
+    expect(await session.talkText("later")).toEqual({ queued: true });
+    const turn = session.submitText("hi");
+    expect(await session.talkText("also")).toEqual({ queued: true });
+    await turn;
+    expect(
+      session.record.some((b) => b.kind === "user" && b.text === "also"),
+    ).toBe(false);
+    expect(await session.talkText("   ")).toEqual({ queued: true });
+    await cleanup();
+  }, 15_000);
+
+  it("while 板砖 runs: accepted, recorded as talk, answered by her before the run's marker, and never handed to 板砖", async () => {
+    const cfg = mkConfig();
+    const { V2RecordPersister } = await import("@herta/core");
+    const { randomUUID } = await import("node:crypto");
+    const sessionId = randomUUID();
+    const persister = V2RecordPersister.forNewSession({
+      sessionId,
+      workspaceRoot: cfg.workspaceRoot,
+      startedAt: new Date(),
+      transcriptDir: cfg.transcriptDir,
+    });
+    // Actor: the dispatch, her answer to the talk, the beat the failed read
+    // earns once the run goes on, the verdict.
+    const actorStub = stubCompletionProvider([
+      { deltas: ["@板砖 看看 nope.txt。（/我 说）"], stopReason: "stop" },
+      { deltas: ["三点。（/我 说）"], stopReason: "stop" },
+      { deltas: ["没这个文件。（/我 说）"], stopReason: "stop" },
+      { deltas: ["看完了。（/我 说）"], stopReason: "stop" },
+    ]);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let firstCallStarted: () => void = () => {};
+    const firstCall = new Promise<void>((r) => {
+      firstCallStarted = r;
+    });
+    const frames: string[] = [];
+    type Adapter = import("@herta/core").ProviderAdapter;
+    type Ev = import("@herta/core").ProviderEvent;
+    const backendStub: Adapter = {
+      streamChat(frame) {
+        frames.push(JSON.stringify(frame));
+        const n = frames.length;
+        return (async function* () {
+          if (n === 1) {
+            firstCallStarted();
+            await gate;
+            yield {
+              type: "tool-call-request",
+              call: {
+                id: "c1",
+                tool: "read_file",
+                input: { path: "nope.txt" },
+              },
+            } as Ev;
+            yield { type: "finish", reason: "tool_calls" } as Ev;
+          } else {
+            yield { type: "finish", reason: "stop" } as Ev;
+          }
+        })();
+      },
+    };
+    const session = await SessionImpl.create({
+      sessionId,
+      workspaceRoot: cfg.workspaceRoot,
+      effectiveWorkspace: cfg.workspaceRoot,
+      isDefaultWorkspace: false,
+      config: cfg,
+      persister,
+      deps: {
+        providerOverrides: {
+          actor: actorStub,
+          backend: backendStub,
+          router: stubChatProvider([
+            {
+              events: [
+                { type: "text-delta", text: "默认" },
+                { type: "finish", reason: "stop" },
+              ],
+            },
+          ]),
+          title: stubChatProvider([]),
+        },
+        staticPrefixOverride: { bio: "[test-bio]", env: "", fewShots: [] },
+        metaThinkOverride: emptyMetaThinkCorpus(),
+        supervisorReferenceOverride: "",
+        openingOverride: null,
+      },
+    });
+
+    const turn = session.submitText("看看 nope.txt");
+    await firstCall;
+    const answer = await session.talkText("周末那个会几点？");
+    expect("accepted" in answer).toBe(true);
+    release();
+    await turn;
+
+    // 板砖 never reads it: talk is hers.
+    expect(frames.some((f) => f.includes("周末那个会几点"))).toBe(false);
+    const record = session.record;
+    const at = (pred: (b: (typeof record)[number]) => boolean): number =>
+      record.findIndex(pred);
+    const talkAt = at(
+      (b) => b.kind === "user" && b.text === "周末那个会几点？",
+    );
+    const answerAt = at((b) => b.kind === "herta" && b.text === "三点。");
+    const markerAt = record.findIndex(
+      (b) => b.kind === "system" && b.role === "done-marker",
+    );
+    expect(record[talkAt]).toMatchObject({ kind: "user", duringRun: true });
+    expect(record[answerAt]).toMatchObject({ kind: "herta", duringRun: true });
+    expect(answerAt).toBeGreaterThan(talkAt);
+    expect(markerAt).toBeGreaterThan(answerAt);
+    // The verdict follows the run.
+    expect(record[record.length - 1]).toMatchObject({
+      kind: "herta",
+      text: "看完了。",
+    });
+    expect(record[record.length - 1]).not.toHaveProperty("duringRun");
+    await session.close();
+  }, 20_000);
+});
+
 describe("Session — steerText, a message while 板砖 works (ADR 0063)", () => {
   it("answers `queued` when idle and during Herta's own turn, recording nothing", async () => {
     const cfg = mkConfig();

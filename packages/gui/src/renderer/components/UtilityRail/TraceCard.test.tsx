@@ -928,10 +928,17 @@ describe("the card's steers and its stop (ADR 0085 amendment 2026-11-04)", () =>
     h.startTurn();
     h.startBackend();
     push(h, user(), op("Reading", "a.ts"));
-    const stop = h.container.querySelector(
-      ".trace-card__action",
-    ) as HTMLElement;
-    expect(stop.textContent).toBe("停止运行");
+    const actions = Array.from(
+      h.container.querySelectorAll(".trace-card__action"),
+    ) as HTMLElement[];
+    expect(actions.map((b) => b.textContent)).toEqual(["插话", "停止运行"]);
+    // 插话 tags the composer: what is sent next goes to the run.
+    act(() => {
+      actions[0]?.click();
+    });
+    // The composer's chrome is in the app's language, the card in the session's.
+    expect(h.container.textContent).toContain("Steer · Coprocessor");
+    const stop = actions[1] as HTMLElement;
     await act(async () => {
       stop.click();
     });

@@ -8,7 +8,7 @@ import {
   estimatePromptTokens,
   reportUsageNote,
 } from "@herta/core";
-import { makeFireBeat } from "./actor-turn-beat.js";
+import { makeFireAnswer, makeFireBeat } from "./actor-turn-beat.js";
 import {
   ActorTurnAbortedError,
   type ActorTurnDeps,
@@ -31,7 +31,10 @@ import {
   runPhaseTwo,
   stripStrayOpenTags,
 } from "./actor-turn-stream.js";
-import { invokeBanzhuanBridge } from "./backend-bridge.js";
+import {
+  type BanzhuanBridgeDeps,
+  invokeBanzhuanBridge,
+} from "./backend-bridge.js";
 import { BeatPolicy } from "./beat-policy.js";
 import { isUnusableBlock, retryCause } from "./block-shape.js";
 import { commonPrefixLen } from "./common-prefix.js";
@@ -678,6 +681,7 @@ async function runTurn(
       signal,
       beatPolicy: policy,
       fireBeat,
+      ...talkLane(deps, priorTurnLength, recap, recapBoundaryIndex),
       sink: deps.sink,
       ...(deps.resume === true ? { resume: true as const } : {}),
     });
@@ -1454,6 +1458,7 @@ async function runTurn(
         signal,
         beatPolicy: policy,
         fireBeat,
+        ...talkLane(deps, priorTurnLength, recap, recapBoundaryIndex),
         sink: deps.sink,
       });
       dispatchCount += 1;
@@ -1476,4 +1481,28 @@ async function runTurn(
   // Safety cap hit on speech iterations.
   deps.sink?.flushBlocks(record);
   return { record };
+}
+
+/**
+ * Her lane while 板砖 works (ADR 0085 step 3): she answers talk, and a live
+ * `@板砖` in her answer steers the run. Both dispatch sites hand the bridge
+ * the same; a front-end that sends no talk (the CLI) never wakes it.
+ */
+function talkLane(
+  deps: ActorTurnDeps,
+  priorTurnLength: number,
+  recap: string | undefined,
+  recapBoundaryIndex: number,
+): Pick<BanzhuanBridgeDeps, "answerTalk" | "steerBackend"> {
+  return {
+    answerTalk: makeFireAnswer(
+      deps,
+      priorTurnLength,
+      recap,
+      recapBoundaryIndex,
+    ),
+    ...(deps.steerBackend !== undefined
+      ? { steerBackend: deps.steerBackend }
+      : {}),
+  };
 }

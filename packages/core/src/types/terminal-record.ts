@@ -115,6 +115,11 @@ export interface HertaBlock {
    *  verdict on the run. Absent on every other block, her checkpoints
    *  included. */
   readonly duringRun?: true;
+  /** The sentence(s) of this answer that reached the running 板砖 as a steer
+   *  — her live `@板砖` during a run (ADR 0085 §4; owner 2026-11-04: the
+   *  sentence, not the whole reply). The text keeps them; this names what
+   *  板砖 was handed, for the card's steer row. Never enters the prompt. */
+  readonly steered?: string;
   /** Wall-clock ISO time the block was emitted/persisted. See `UserBlock.at`. */
   readonly at?: string;
 }

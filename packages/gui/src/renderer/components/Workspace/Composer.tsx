@@ -400,6 +400,7 @@ export function Composer(): JSX.Element {
     prediction,
     composerQuotes,
     composerPicks,
+    composerSteer,
   } = useSessionSelector(
     (s) => ({
       status: s.status,
@@ -416,6 +417,7 @@ export function Composer(): JSX.Element {
       prediction: s.prediction,
       composerQuotes: s.composerQuotes,
       composerPicks: s.composerPicks,
+      composerSteer: s.composerSteer,
     }),
     shallowEqualObjects,
   );
@@ -530,6 +532,16 @@ export function Composer(): JSX.Element {
   // the composer as it was: disabled, with Stop.
   const holding = busy && backendActive && !suppressed;
   const canSteer = holding && bridge.steerText !== undefined;
+  // While 板砖 works the composer talks to Herta (ADR 0085 step 3): what is
+  // sent goes to her, and she answers while the run goes on. The 插话 tag
+  // sends it to the run as a steer instead. A bridge without talk (the
+  // website demo) holds the message as ADR 0063 did.
+  const canTalk = holding && bridge.talkText !== undefined;
+  const steerOn = composerSteer && canSteer;
+  // The tag belongs to the run it was set in.
+  useEffect(() => {
+    if (!holding && composerSteer) sessionStore.setComposerSteer(false);
+  }, [holding, composerSteer, sessionStore]);
   // The turn-end delivery reads the latest held text and language from
   // refs: the effect is keyed on the busy edge, not on either.
   const heldRef = useRef<string | null>(null);
@@ -642,11 +654,58 @@ export function Composer(): JSX.Element {
         lang,
       );
       if (pending.trim().length === 0) return;
-      sessionStore.holdMessage(pending, joinHeld);
       setText("");
       setChips([]);
       setHintActive(false);
       sessionStore.clearComposerQuotes();
+      if (!canTalk && !steerOn) {
+        sessionStore.holdMessage(pending, joinHeld);
+        return;
+      }
+      // Sent now, to her or (with the tag) to 板砖. The @brick alias is
+      // applied as a send applies it; a message the run could no longer take
+      // (it ended between the keypress and the call) is held for the next
+      // turn, as before.
+      const words = aliasBrickInput(pending, lang);
+      const picks = picksIn(
+        pending,
+        knownPicksOf(placedPicks.current, sessionStore.getSnapshot().record),
+      );
+      const holdIfQueued = (r: { readonly queued: true } | object): void => {
+        if ("queued" in r) sessionStore.holdMessage(pending, joinHeld);
+      };
+      if (steerOn) {
+        bridge
+          .steerText?.(words, picks.length > 0 ? picks : undefined)
+          .then(holdIfQueued, () =>
+            sessionStore.holdMessage(pending, joinHeld),
+          );
+        return;
+      }
+      const mentions = expandChips(text, chips).mentions;
+      sessionStore.markPendingUser(
+        words,
+        undefined,
+        mentions.length > 0 ? mentions : undefined,
+        picks.length > 0 ? picks : undefined,
+      );
+      bridge
+        .talkText?.(
+          words,
+          mentions.length > 0 ? mentions : undefined,
+          picks.length > 0 ? picks : undefined,
+        )
+        .then(
+          (r) => {
+            if (!("queued" in r)) return;
+            sessionStore.withdrawPendingUser(words);
+            sessionStore.clearComposerDraft();
+            sessionStore.holdMessage(pending, joinHeld);
+          },
+          () => {
+            sessionStore.withdrawPendingUser(words);
+          },
+        );
       return;
     }
     // Each chip becomes its path; the user block records the paths, so the
@@ -1740,6 +1799,34 @@ export function Composer(): JSX.Element {
                 </button>
               </li>
             ))}
+          </ul>
+        )}
+        {/* The 插话 tag (ADR 0085 §9): while it shows, what is sent goes
+          to 板砖's run as a steer; × gives the composer back to Herta. */}
+        {steerOn && (
+          <ul className="composer-quotes">
+            <li className="composer-quote composer-steer-tag">
+              <span className="composer-quote__label">
+                {t("composer.steer.tag")}
+              </span>
+              <button
+                type="button"
+                className="composer-quote__remove"
+                aria-label={t("composer.steer.off")}
+                onClick={() => sessionStore.setComposerSteer(false)}
+              >
+                <svg
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                </svg>
+              </button>
+            </li>
           </ul>
         )}
         {/* Quotes from the viewer's page (ADR 0078 §6): the source rides

@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from "react";
+import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useApprovalPending } from "../../hooks/useApprovalPending.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT } from "../../i18n/LocaleProvider.js";
@@ -63,6 +64,8 @@ export const RunRow = memo(function RunRow(props: RunRowProps): JSX.Element {
   const reduced = useReducedMotion();
   const waiting = useApprovalPending();
   const openFile = useFileViewerOpen();
+  const { bridge, sessionStore } = useHertaBridge();
+  const canSteer = bridge.steerText !== undefined;
   const facts = useMemo(
     () => runFacts(blocks, props.dispatchedAt),
     [blocks, props.dispatchedAt],
@@ -192,6 +195,19 @@ export const RunRow = memo(function RunRow(props: RunRowProps): JSX.Element {
               {t("activity.undo.chip")}
             </button>
           ))}
+        {active && canSteer && (
+          // 插话 with the rail hidden (ADR 0085 §9): the composer's tag.
+          <button
+            type="button"
+            className="run-row__steer"
+            onClick={() => {
+              sessionStore.setComposerSteer(true);
+              runShortcut("focusComposer");
+            }}
+          >
+            {t("run.steer")}
+          </button>
+        )}
         {active && (
           // The composer's own Stop, through its command: it cuts the voice
           // and drops a held message, as the button does.

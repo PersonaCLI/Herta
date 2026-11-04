@@ -1,5 +1,5 @@
 import type { TerminalRecordBlock } from "@herta/app-server";
-import type { SystemBlock, UserBlock } from "./group-record.js";
+import { type SteerBlock, type SystemBlock, steerOf } from "./group-record.js";
 import { opPhase, type TracePhase } from "./op-phase.js";
 
 export type { TracePhase } from "./op-phase.js";
@@ -42,6 +42,8 @@ export interface TraceOp {
 export interface TraceSteer {
   readonly beforeOp: number;
   readonly text: string;
+  /** Who steered: the Trailblazer, or Herta's `@板砖` during the run. */
+  readonly speaker: "trailblazer" | "herta";
 }
 
 /**
@@ -121,6 +123,7 @@ export interface TraceSteerAt {
   readonly key: number;
   readonly beforeSegment: number;
   readonly text: string;
+  readonly speaker: "trailblazer" | "herta";
 }
 
 /**
@@ -174,14 +177,16 @@ export type TraceScope =
  * settles the previous one as "ok" if no result row claimed otherwise.
  */
 export function traceScope(record: readonly TerminalRecordBlock[]): TraceScope {
-  const collected: (SystemBlock | UserBlock)[] = [];
+  const collected: (SystemBlock | SteerBlock)[] = [];
   for (let i = record.length - 1; i >= 0; i -= 1) {
     const block = record[i];
     if (block === undefined) continue;
-    if (block.kind === "user" && block.steer === true) {
-      collected.push(block);
+    if (isSteer(block)) {
+      collected.push(block as SteerBlock);
       continue;
     }
+    // Talk during the run (ADR 0085 step 3) is inside it, not a turn.
+    if (block.kind === "user" && block.duringRun === true) continue;
     if (block.kind === "user") {
       const { ops, steers } = collectOps(collected);
       return ops.length > 0
@@ -209,13 +214,16 @@ function endedOps(
   record: readonly TerminalRecordBlock[],
   markerAt: number,
 ): { ops: TraceOp[]; steers: TraceSteer[] } {
-  const collected: (SystemBlock | UserBlock)[] = [];
+  const collected: (SystemBlock | SteerBlock)[] = [];
   for (let i = markerAt - 1; i >= 0; i -= 1) {
     const block = record[i];
     if (block === undefined) continue;
+    if (isSteer(block)) {
+      collected.push(block as SteerBlock);
+      continue;
+    }
     if (block.kind === "user") {
-      if (block.steer !== true) break;
-      collected.push(block);
+      if (block.duringRun !== true) break;
       continue;
     }
     if (block.kind !== "system") continue;
@@ -231,9 +239,17 @@ export function runOps(blocks: readonly SystemBlock[]): readonly TraceOp[] {
   return collectOps([...blocks].reverse()).ops;
 }
 
+/** A steer the run took: the Trailblazer's, or her answer that steered.
+ *  Not a type guard: a user block that is no steer is still a user block. */
+function isSteer(block: TerminalRecordBlock): boolean {
+  return block.kind === "user"
+    ? block.steer === true
+    : block.kind === "herta" && block.steered !== undefined;
+}
+
 /** Collected newest-first; processed oldest-first. */
 function collectOps(
-  collectedNewestFirst: readonly (SystemBlock | UserBlock)[],
+  collectedNewestFirst: readonly (SystemBlock | SteerBlock)[],
 ): { ops: TraceOp[]; steers: TraceSteer[] } {
   const ops: TraceOp[] = [];
   const steers: TraceSteer[] = [];
@@ -245,8 +261,8 @@ function collectOps(
   for (let i = collectedNewestFirst.length - 1; i >= 0; i -= 1) {
     const block = collectedNewestFirst[i];
     if (block === undefined) continue;
-    if (block.kind === "user") {
-      steers.push({ beforeOp: ops.length, text: block.text });
+    if (block.kind !== "system") {
+      steers.push({ beforeOp: ops.length, ...steerOf(block) });
       continue;
     }
     const d = block.digest;
@@ -408,6 +424,7 @@ export function buildTrace(
       segments.find((g) => g.firstOpOrdinal >= s.beforeOp)?.ordinal ??
       segments.length,
     text: s.text,
+    speaker: s.speaker,
   }));
 
   const live = opts.settled !== true;

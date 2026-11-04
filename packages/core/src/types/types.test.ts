@@ -43,6 +43,8 @@ function describeEvent(e: AgentEvent): string {
       return `supervisor:${e.phase}`;
     case "user.steer":
       return `steer:${e.id}:${e.text}`;
+    case "user.talk":
+      return `talk:${e.id}:${e.text}`;
     default: {
       const _exhaustive: never = e;
       return _exhaustive;
@@ -51,7 +53,7 @@ function describeEvent(e: AgentEvent): string {
 }
 
 describe("AgentEvent type union", () => {
-  it("compiles with all 20 variants exhaustively handled (each with a layer field)", () => {
+  it("compiles with all 21 variants exhaustively handled (each with a layer field)", () => {
     expect(typeof describeEvent).toBe("function");
   });
 });

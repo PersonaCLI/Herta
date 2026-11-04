@@ -23,6 +23,7 @@ import {
   openRun,
   type RenderItem,
   type SystemBlock,
+  steerOf,
   undoTarget,
 } from "../Workspace/group-record.js";
 import { LightboxProvider, useLightbox } from "../Workspace/ImageLightbox.js";
@@ -206,9 +207,12 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
             {sections.map((section) =>
               section.kind === "steer" ? (
                 <li key={section.key} className="run-record__steer">
-                  <SpeakerAvatar speaker="trailblazer" t={t} />
+                  <SpeakerAvatar
+                    speaker={steerOf(section.block).speaker}
+                    t={t}
+                  />
                   <span className="run-record__steer-text">
-                    {section.block.text}
+                    {steerOf(section.block).text}
                   </span>
                 </li>
               ) : (

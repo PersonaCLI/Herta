@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
+import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionLang } from "../../hooks/useActiveSession.js";
 import { useListTransitions } from "../../hooks/useListTransitions.js";
 import { usePresence } from "../../hooks/usePresence.js";
@@ -68,6 +69,14 @@ export function TraceCard(): JSX.Element | null {
   const lang = useSessionLang();
   const t = useMemo(() => makeT(lang), [lang]);
   const { trace, live, open, waiting, settled } = useTraceCard();
+  const { bridge, sessionStore } = useHertaBridge();
+  // 插话 (ADR 0085 §9): tags the composer, so what is sent next goes to the
+  // run as a steer; the tag's × gives it back to Herta.
+  const canSteer = bridge.steerText !== undefined;
+  const startSteer = (): void => {
+    sessionStore.setComposerSteer(true);
+    runShortcut("focusComposer");
+  };
   const reduced = useReducedMotion();
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, trace);
@@ -84,7 +93,12 @@ export function TraceCard(): JSX.Element | null {
             ? steer.beforeSegment >= ordinal
             : steer.beforeSegment === ordinal
         ) {
-          rows.push({ id: `t${steer.key}`, kind: "steer", text: steer.text });
+          rows.push({
+            id: `t${steer.key}`,
+            kind: "steer",
+            text: steer.text,
+            speaker: steer.speaker,
+          });
         }
       }
     };
@@ -180,7 +194,7 @@ export function TraceCard(): JSX.Element | null {
                 className={`trace-card__steer${rowPhaseClass(row.phase)}`}
                 aria-hidden={row.phase === "leave" || undefined}
               >
-                <SpeakerAvatar speaker="trailblazer" t={t} />
+                <SpeakerAvatar speaker={row.item.speaker} t={t} />
                 <span
                   className="trace-card__text"
                   {...hoverTipProps(row.item.text, { whenClipped: true })}
@@ -250,6 +264,15 @@ export function TraceCard(): JSX.Element | null {
           lives on its row in the chat, since this card leaves after it. */}
       {trace.live && open && (
         <div className="trace-card__actions">
+          {canSteer && (
+            <button
+              type="button"
+              className="trace-card__action"
+              onClick={startSteer}
+            >
+              {t("run.steer")}
+            </button>
+          )}
           <button
             type="button"
             className="trace-card__action"
@@ -270,7 +293,12 @@ type CardRow =
       readonly kind: "segment";
       readonly segment: TraceSegment;
     }
-  | { readonly id: string; readonly kind: "steer"; readonly text: string };
+  | {
+      readonly id: string;
+      readonly kind: "steer";
+      readonly text: string;
+      readonly speaker: "trailblazer" | "herta";
+    };
 
 /**
  * The node in flight: its phase and current step, and how many lines the

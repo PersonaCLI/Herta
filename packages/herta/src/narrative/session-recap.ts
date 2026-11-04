@@ -131,8 +131,10 @@ export function selectBoundary(
   cfg: CompactionConfig,
 ): number {
   const userIdx: number[] = [];
+  // Talk during a run (ADR 0085) opens no turn: a cut there would split the
+  // run it fell in.
   record.forEach((b, i) => {
-    if (b.kind === "user") userIdx.push(i);
+    if (b.kind === "user" && b.duringRun !== true) userIdx.push(i);
   });
   if (userIdx.length === 0) return 0;
 

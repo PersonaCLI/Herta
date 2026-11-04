@@ -663,10 +663,14 @@ describe("Composer — a message while 板砖 works (ADR 0063)", () => {
     layer: "backend",
     summary: { durationMs: 1, toolCallCount: 0, messageCount: 0, endedAt: "" },
   };
-  /** A commission in flight: the turn started and 板砖 is running. */
+  /** A commission in flight: the turn started and 板砖 is running. These
+   *  cases are the hold, which stands where talk to Herta does not (ADR 0085
+   *  step 3: a bridge without `talkText`, the website demo) and catches a
+   *  message the run could no longer take. */
   function startCommission(
     mock: ReturnType<typeof createMockHertaBridge>,
   ): void {
+    delete (mock.bridge as { talkText?: unknown }).talkText;
     act(() => {
       mock.emitReset({
         sessionId: "s",
@@ -885,6 +889,8 @@ describe("Composer — a message while 板砖 works (ADR 0063)", () => {
 
   it("the EN alias applies at delivery, not at the hold: @brick is held as typed and sent as @板砖", () => {
     const { mock } = renderComposer();
+    // The hold: a bridge without talk (ADR 0085 step 3).
+    delete (mock.bridge as { talkText?: unknown }).talkText;
     act(() => {
       mock.emitReset({
         sessionId: "s-en",
@@ -912,6 +918,8 @@ describe("Composer — a message while 板砖 works (ADR 0063)", () => {
 
   it("no hold outside 板砖's window: Herta's own turn keeps the textarea disabled, and once 板砖 finishes mid-turn the interject goes while the held text stays", () => {
     const { mock } = renderComposer();
+    // The hold: a bridge without talk (ADR 0085 step 3).
+    delete (mock.bridge as { talkText?: unknown }).talkText;
     act(() => {
       mock.emitReset({
         sessionId: "s",
@@ -1057,6 +1065,95 @@ describe("Composer — a message while 板砖 works (ADR 0063)", () => {
     hold("also rename the test file");
     expect(screen.getByTestId("composer-held")).toBeInTheDocument();
     expect(screen.queryByText("Interject now")).toBeNull();
+  });
+});
+
+describe("Composer — talking to Herta while 板砖 works (ADR 0085 step 3)", () => {
+  const backendStarted: AgentEvent = {
+    type: "turn.started",
+    layer: "backend",
+    userText: "task",
+  };
+  const backendFinished: AgentEvent = {
+    type: "turn.finished",
+    layer: "backend",
+    summary: { durationMs: 1, toolCallCount: 0, messageCount: 0, endedAt: "" },
+  };
+  function startRun(mock: ReturnType<typeof createMockHertaBridge>): void {
+    act(() => {
+      mock.emitReset({
+        sessionId: "s",
+        workspaceRoot: "/r",
+        record: [],
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+      });
+      mock.emitTurn({ kind: "started", turnId: "t1" });
+      mock.emitAgent({ kind: "agent", event: backendStarted });
+    });
+  }
+  function send(text: string): HTMLTextAreaElement {
+    const input = screen.getByPlaceholderText(
+      "Message Herta…",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    return input;
+  }
+
+  it("Enter sends the words to her at once: echoed, nothing held, nothing to 板砖", async () => {
+    const { mock, store } = renderComposer();
+    startRun(mock);
+    const input = send("周末那个会几点？");
+    expect(input.value).toBe("");
+    await waitFor(() =>
+      expect(mock.calls.talkText).toEqual(["周末那个会几点？"]),
+    );
+    expect(store().getSnapshot().pendingUser).toBe("周末那个会几点？");
+    expect(screen.queryByTestId("composer-held")).toBeNull();
+    expect(mock.calls.steerText).toHaveLength(0);
+    expect(mock.calls.submitText).toHaveLength(0);
+  });
+
+  it("with the 插话 tag on, Enter steers the run instead; × gives the composer back to her", async () => {
+    const { mock, store } = renderComposer();
+    startRun(mock);
+    act(() => store().setComposerSteer(true));
+    expect(screen.getByText("Steer · Coprocessor")).toBeInTheDocument();
+    send("先别动 api 目录");
+    await waitFor(() =>
+      expect(mock.calls.steerText).toEqual(["先别动 api 目录"]),
+    );
+    expect(mock.calls.talkText).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText("Send to Herta instead"));
+    expect(screen.queryByText("Steer · Coprocessor")).toBeNull();
+    send("那几点？");
+    await waitFor(() => expect(mock.calls.talkText).toEqual(["那几点？"]));
+  });
+
+  it("the tag belongs to its run: it goes when the run ends", () => {
+    const { mock, store } = renderComposer();
+    startRun(mock);
+    act(() => store().setComposerSteer(true));
+    act(() => {
+      mock.emitAgent({ kind: "agent", event: backendFinished });
+    });
+    expect(store().getSnapshot().composerSteer).toBe(false);
+  });
+
+  it("words the run could no longer take (it ended first) are held for the next turn", async () => {
+    const { mock, store } = renderComposer(
+      createMockHertaBridge({ talkTextResult: { queued: true } }),
+    );
+    startRun(mock);
+    send("周末那个会几点？");
+    await waitFor(() =>
+      expect(screen.getByTestId("composer-held").textContent).toContain(
+        "周末那个会几点？",
+      ),
+    );
+    expect(store().getSnapshot().pendingUser).toBeNull();
   });
 });
 

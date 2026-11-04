@@ -4736,6 +4736,7 @@ button.session-item__badge--dismiss {
 }
 /* 停止运行 on the row only while the rail — and the card that carries it —
    is out of sight: a narrow window, or the viewer docked over the rail. */
+.run-row__steer,
 .run-row__stop {
   display: none;
   flex: none;
@@ -4750,10 +4751,12 @@ button.session-item__badge--dismiss {
   color: var(--muted-slate);
   cursor: pointer;
 }
+.run-row__steer:hover,
 .run-row__stop:hover {
   background: var(--ink-a09);
   color: var(--ink-2);
 }
+.run-row__steer:focus-visible,
 .run-row__stop:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
@@ -4761,13 +4764,25 @@ button.session-item__badge--dismiss {
 .run-row__stop + .activity-line__duration {
   margin-left: 0;
 }
+.run-row__steer + .run-row__stop {
+  margin-left: 6px;
+}
+.workspace-body.viewer-docked .run-row__steer,
 .workspace-body.viewer-docked .run-row__stop {
   display: inline-block;
 }
 @media (max-width: 900px) {
+  .run-row__steer,
   .run-row__stop {
     display: inline-block;
   }
+}
+/* The composer's 插话 tag (ADR 0085 §9): a quote chip in the Trailblazer's
+   gold — what is sent goes to the run, not to her. */
+.composer-quote.composer-steer-tag {
+  background: color-mix(in srgb, var(--speaker-trailblazer) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--speaker-trailblazer) 45%, transparent);
 }
 
 /* A speaker's avatar on a steer row (ADR 0085 amendment 2026-11-04): 18 px,

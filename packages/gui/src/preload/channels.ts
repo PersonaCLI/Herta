@@ -2,6 +2,7 @@ export const CMD = {
   submitText: "session:submitText",
   interrupt: "session:interrupt",
   steerText: "session:steerText",
+  talkText: "session:talkText",
   continueInterrupted: "session:continueInterrupted",
   rewindLastTurn: "session:rewindLastTurn",
   undoLastTurnEdits: "session:undoLastTurnEdits",

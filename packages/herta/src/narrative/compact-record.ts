@@ -889,7 +889,7 @@ export function compactRecordForPrompt(
   let dispatchStart = -1;
   for (let k = passThroughIdx - 1; k >= 0; k--) {
     const b = record[k];
-    if (b?.kind === "user" && b.steer !== true) {
+    if (b?.kind === "user" && b.steer !== true && b.duringRun !== true) {
       dispatchStart = k;
       break;
     }

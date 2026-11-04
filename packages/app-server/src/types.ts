@@ -704,6 +704,12 @@ export type SteerTextResult =
   | { readonly accepted: string }
   | { readonly queued: true };
 
+/** What `talkText` answers (ADR 0085 step 3). `accepted`: a run is working,
+ *  the words are in the record as talk, and she answers them. `queued`: no
+ *  run is working — the turn is her own speech, or none runs — so the
+ *  caller keeps the text for the next turn. Never an error. */
+export type TalkTextResult = SteerTextResult;
+
 /** Whether a 继续 is on offer changed (ADR 0071 §1.4). */
 export type ResumeEvent =
   | { readonly kind: "offer"; readonly resumable: boolean }
@@ -815,6 +821,20 @@ export interface Session {
     text: string,
     picks?: readonly PickedElement[],
   ): Promise<SteerTextResult>;
+  /**
+   * A message to HERTA while 板砖 works (ADR 0085 step 3): talk, not a steer.
+   * Accepted only while a backend run works: the words enter the record as
+   * talk and she answers them, while the run goes on. Outside a run the
+   * answer is `queued` and nothing is recorded — the caller holds the text
+   * for the next turn. OPTIONAL like `steerText`.
+   */
+  talkText?(
+    text: string,
+    opts?: {
+      readonly mentions?: readonly string[];
+      readonly picks?: readonly PickedElement[];
+    },
+  ): Promise<TalkTextResult>;
   /**
    * 继续 (ADR 0071 §1.4): continue the interrupted 板砖 run. OPTIONAL like
    * `steerText`: fakes and the website demo omit it, and no offer is shown.

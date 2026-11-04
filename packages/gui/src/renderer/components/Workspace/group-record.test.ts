@@ -688,3 +688,46 @@ describe("the latest turn's runs: its start, its open run, its 撤销", () => {
     ).toBe(true);
   });
 });
+
+describe("talk and her steer in a run (ADR 0085 step 3)", () => {
+  const done = sys("完成 · 1 file", "差分协处理器", "done-marker");
+  const talk: TerminalRecordBlock = {
+    kind: "user",
+    text: "几点？",
+    duringRun: true,
+  };
+  const answer: TerminalRecordBlock = {
+    kind: "herta",
+    surface: "speech",
+    text: "三点。@板砖 先补测试。",
+    duringRun: true,
+    steered: "@板砖 先补测试。",
+  };
+
+  it("talk is a bubble that does not end the run; her answer that steered is an entry of it", () => {
+    const record = [
+      user("修"),
+      herta("交给它"),
+      sys("Reading a.ts"),
+      talk,
+      answer,
+      sys("Writing a.ts"),
+      done,
+    ];
+    const items = groupRuns(groupRecord(record));
+    expect(
+      items.map((i) => (i.kind === "block" ? i.block.kind : i.kind)),
+    ).toEqual(["user", "herta", "run", "user", "herta"]);
+    const run = items[2];
+    if (run?.kind !== "run") throw new Error("not a run");
+    expect(run.blocks).toHaveLength(3);
+    expect(run.entries.map((e) => e.kind)).toEqual([
+      "row",
+      "steer",
+      "row",
+      "row",
+    ]);
+    // Talk opens no turn: rewind and undo look past it.
+    expect(lastTurnIndex(record)).toBe(0);
+  });
+});

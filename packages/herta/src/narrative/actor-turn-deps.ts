@@ -62,6 +62,10 @@ export interface ActorTurnDeps {
   readonly bus: EventBus<AgentEvent>;
   /** Factory that creates a fresh CodingAgentRuntime per `@板砖` invocation. */
   readonly runtimeFactory: () => CodingAgentRuntime;
+  /** Hands text to the running 板砖 as a steer — the session's steer
+   *  channel (ADR 0063). Her live `@板砖` in an answer during a run reaches
+   *  板砖 through it (ADR 0085 §4). Absent (the CLI): it steers nothing. */
+  readonly steerBackend?: (text: string) => void;
   /** Outer abort signal; passed through to provider and backend. */
   readonly signal?: AbortSignal;
   /**

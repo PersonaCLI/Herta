@@ -15,6 +15,7 @@ import type {
   CodingAgentRuntime,
   EventBus,
   EvidenceSection,
+  HertaBlock,
   RunCommandData,
   TerminalRecord,
   TerminalRecordBlock,
@@ -45,6 +46,18 @@ export type BeatFirer = (
   signal: AbortSignal,
 ) => Promise<TerminalRecordBlock | null>;
 
+/**
+ * Her answer to talk during the run (ADR 0085 step 3): a completion over the
+ * record as it stands, committed as a `duringRun` speech, or null when she
+ * says nothing. `canSteer`: whether the run can still take a steer — a live
+ * `@板砖` in the answer reaches 板砖 only then.
+ */
+export type AnswerFirer = (
+  record: TerminalRecord,
+  signal: AbortSignal,
+  canSteer: () => boolean,
+) => Promise<HertaBlock | null>;
+
 export interface BanzhuanBridgeDeps {
   /** Shared event bus the backend's `CodingAgentRuntime` publishes onto. */
   readonly bus: EventBus<AgentEvent>;
@@ -60,6 +73,12 @@ export interface BanzhuanBridgeDeps {
    *  provided, the bridge fires in-turn beats between projected events. */
   readonly beatPolicy?: BeatPolicy;
   readonly fireBeat?: BeatFirer;
+  /** Her answer to talk during the run (ADR 0085 step 3). Absent, talk is
+   *  still recorded but not answered until the run ends. */
+  readonly answerTalk?: AnswerFirer;
+  /** Hands her mid-run `@板砖` sentences to the running 板砖 (ADR 0085 §4) —
+   *  the session's steer channel. Absent (the CLI), nothing steers. */
+  readonly steerBackend?: (text: string) => void;
   /**
    * Optional streaming sink (Slice 9). When provided, the bridge calls
    * `sink.flushBlocks(current)` after each projected system block and
@@ -247,6 +266,10 @@ async function invokeBanzhuanBridgeInner(
   // exactly the "held beat over whatever renders next" hazard, just inside
   // the bridge instead of after it.
   let beatsSuppressed = false;
+  // Talk projected and not answered yet (ADR 0085 step 3). Talk that lands
+  // while she answers waits for the next pass and gets one answer together
+  // (owner 2026-11-04: "One answer to both").
+  let talkWaiting = false;
 
   // A permission prompt is "pending" if we've processed a `permission.requested`
   // without its `permission.resolved` yet, OR a `permission.requested` is still
@@ -270,8 +293,47 @@ async function invokeBanzhuanBridgeInner(
     while (
       !runBriefDone ||
       processedIdx < eventQueue.length ||
-      ready.length > 0
+      ready.length > 0 ||
+      talkWaiting
     ) {
+      // PHASE 0 — ANSWER talk: her lane, one completion at a time. Ahead of
+      // beats, and in place of the ones ready now — she answers with the
+      // record that holds their events, so a beat after her answer would be
+      // her speaking twice. Not held for an approval: the card is the
+      // Trailblazer's, and so is this talk. While she writes, 板砖's rows
+      // wait and land after her answer, as they do for a beat (owner
+      // 2026-11-04) — the live views carry the card meanwhile.
+      if (talkWaiting) {
+        talkWaiting = false;
+        const answer = deps.answerTalk;
+        if (answer !== undefined && !beatsSuppressed) {
+          let block: HertaBlock | null = null;
+          try {
+            block = await answer(current, signal, () => !runBriefDone);
+          } catch {
+            // Dropped like a failed beat; the talk stays in the record, and
+            // her next completion — the verdict at the latest — sees it.
+            block = null;
+          }
+          if (block !== null) {
+            current = [...current, block];
+            deps.sink?.flushBlocks(current);
+            // A run that ended while she wrote takes no steer: the sentence
+            // stays hers, in the record, for her verdict to act on.
+            if (block.steered !== undefined && !runBriefDone)
+              deps.steerBackend?.(block.steered);
+          }
+          if (beatsEnabled) {
+            for (const t of ready) policy.markFired(t.signature, policy.now());
+            ready = [];
+          }
+          if (signal.aborted) {
+            ready = [];
+            break;
+          }
+        }
+      }
+
       // PHASE 1 — FIRE prior-cycle `ready` beats, before this cycle's new
       // events project, so each beat lands immediately after its own
       // triggering system block and before the next one. FIRE is intentionally
@@ -405,6 +467,29 @@ async function invokeBanzhuanBridgeInner(
           deps.sink?.flushBlocks(current);
         }
 
+        // Talk (ADR 0085 step 3): the user's words to HERTA while 板砖 works.
+        // The record takes them here, in event order, as a `duringRun` user
+        // block — her view draws them after the run — and she answers them
+        // at the top of the next pass. They never reach 板砖.
+        if (event.type === "user.talk") {
+          current = [
+            ...current,
+            {
+              kind: "user",
+              text: event.text,
+              duringRun: true,
+              ...(event.mentions !== undefined && event.mentions.length > 0
+                ? { mentions: event.mentions }
+                : {}),
+              ...(event.picks !== undefined && event.picks.length > 0
+                ? { picks: event.picks }
+                : {}),
+            },
+          ];
+          deps.sink?.flushBlocks(current);
+          talkWaiting = true;
+        }
+
         let projected = projectBackendEvent(event);
         // Consecutive-state suppression for background rows: command_output
         // polls with no new output would otherwise stack identical
@@ -487,7 +572,7 @@ async function invokeBanzhuanBridgeInner(
       // PHASE 4 — YIELD if there's more to do (more backend events coming,
       // queued events to process, or held beats waiting to fire). See the
       // doc comment above on why this is `setTimeout(0)`, not `setImmediate`.
-      if (!runBriefDone || ready.length > 0) {
+      if (!runBriefDone || ready.length > 0 || talkWaiting) {
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 0);
         });

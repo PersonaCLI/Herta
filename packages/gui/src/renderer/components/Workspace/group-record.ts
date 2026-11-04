@@ -6,11 +6,28 @@ export type SystemBlock = Extract<TerminalRecordBlock, { kind: "system" }>;
 /** The user-block member: a message, or a steer inside a run. */
 export type UserBlock = Extract<TerminalRecordBlock, { kind: "user" }>;
 
+/** Herta's block: her speech, or her answer during a run. */
+export type HertaBlock = Extract<TerminalRecordBlock, { kind: "herta" }>;
+
+/** A steer as the run took it: the Trailblazer's words, or her answer that
+ *  carried a live `@板砖` (ADR 0085 §4) — its `steered` sentences. */
+export type SteerBlock = UserBlock | HertaBlock;
+
 /** One entry of a run as the record holds it (ADR 0085 §6): 板砖's rows,
  *  and the steers it took where it took them. */
 export type RunEntry =
   | { readonly kind: "row"; readonly block: SystemBlock }
-  | { readonly kind: "steer"; readonly block: UserBlock };
+  | { readonly kind: "steer"; readonly block: SteerBlock };
+
+/** Who steered, and what reached 板砖. */
+export function steerOf(block: SteerBlock): {
+  readonly speaker: "trailblazer" | "herta";
+  readonly text: string;
+} {
+  return block.kind === "user"
+    ? { speaker: "trailblazer", text: block.text }
+    : { speaker: "herta", text: block.steered ?? block.text };
+}
 
 /** The structured done-marker roll-up (derived from the block, no name-import). */
 export type DoneMarkerSummary = NonNullable<SystemBlock["markerSummary"]>;
@@ -259,9 +276,10 @@ function standsAlone(blocks: readonly SystemBlock[]): boolean {
  *
  * A run opens at a group with a coprocessor block and takes every group
  * after it — the beats that split it stay bubbles in place — until its
- * terminal marker, or until a message that is not a steer. A steer inside
- * it is both: a bubble where it was sent, and an entry of the run where 板砖
- * took it. A group that stands alone (an attachment, an undo line, a server
+ * terminal marker, or until a message that is not a steer or talk during
+ * the run (ADR 0085 step 3). A steer inside it is both: a bubble where it
+ * was sent, and an entry of the run where 板砖 took it; so is her answer
+ * that steered. Talk is a bubble only. A group that stands alone (an attachment, an undo line, a server
  * the Trailblazer started) keeps its own line. Blocks after a marker in the
  * same group belong to the next dispatch.
  *
@@ -293,9 +311,16 @@ export function groupRuns(items: readonly RenderItem[]): RenderItem[] {
   for (const item of items) {
     if (item.kind !== "activity") {
       if (item.kind === "block" && item.block.kind === "user") {
-        if (item.block.steer !== true) seal();
-        else open?.entries.push({ kind: "steer", block: item.block });
+        if (item.block.steer === true)
+          open?.entries.push({ kind: "steer", block: item.block });
+        else if (item.block.duringRun !== true) seal();
       }
+      if (
+        item.kind === "block" &&
+        item.block.kind === "herta" &&
+        item.block.steered !== undefined
+      )
+        open?.entries.push({ kind: "steer", block: item.block });
       out.push(item);
       continue;
     }
@@ -465,11 +490,12 @@ function isPreview(b: SystemBlock): boolean {
 }
 
 /** The record's last message that opens a turn (a steer opens none: ADR
- *  0063 §1.10), or -1. */
+ *  0063 §1.10; nor does talk during a run: ADR 0085), or -1. */
 export function lastTurnIndex(record: readonly TerminalRecordBlock[]): number {
   for (let i = record.length - 1; i >= 0; i--) {
     const b = record[i];
-    if (b?.kind === "user" && b.steer !== true) return i;
+    if (b?.kind === "user" && b.steer !== true && b.duringRun !== true)
+      return i;
   }
   return -1;
 }

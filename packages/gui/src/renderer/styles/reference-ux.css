@@ -1,6 +1,10 @@
 :root{
   --ink:#111417;
   --banzhuan-led:#4d86ff;
+  /* Who steered 板砖 (ADR 0085 amendment 2026-11-04): the Trailblazer gold,
+     Herta violet — the ring of their avatar on a steer row. */
+  --speaker-trailblazer:#ef9f27;
+  --speaker-herta:#7f77dd;
   --muted:#6f7782;
   --hairline:rgba(17,20,23,.08);
   --hairline-strong:rgba(17,20,23,.12);
@@ -163,6 +167,8 @@
    The opening splash stays light by design (its canvas glyphs are
    JS-drawn for a light field; see .opening-ascii). */
 :root[data-theme="dark"]{
+  --speaker-trailblazer:#f2b04d;
+  --speaker-herta:#9d97ea;
   --app-bg:
     radial-gradient(circle at 18% 35%,rgba(22,78,66,.5) 0 10%,transparent 28%),
     radial-gradient(circle at 58% 2%,rgba(26,84,74,.4) 0 8%,transparent 26%),
@@ -4696,6 +4702,99 @@ button.session-item__badge--dismiss {
 .activity-undo + .activity-line__duration {
   margin-left: 0;
 }
+/* A run of 板砖's (ADR 0085 §9): one row under her dispatching bubble. The
+   state words and the step count sit after the label, the live word
+   swapping in place. */
+.run-row__live {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+/* 完整记录 ›: the run's every row, in a viewer tab — a quiet link right
+   after the line it opens, on every run however old (the rail's card has
+   left by then). */
+.run-row__record {
+  flex: none;
+  margin-left: 10px;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--muted-4);
+  cursor: pointer;
+  transition: color var(--dur-micro) ease;
+}
+.run-row__record:hover {
+  color: var(--ink-2);
+}
+.run-row__record:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+/* 停止运行 on the row only while the rail — and the card that carries it —
+   is out of sight: a narrow window, or the viewer docked over the rail. */
+.run-row__stop {
+  display: none;
+  flex: none;
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink-a05);
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--muted-slate);
+  cursor: pointer;
+}
+.run-row__stop:hover {
+  background: var(--ink-a09);
+  color: var(--ink-2);
+}
+.run-row__stop:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.run-row__stop + .activity-line__duration {
+  margin-left: 0;
+}
+.workspace-body.viewer-docked .run-row__stop {
+  display: inline-block;
+}
+@media (max-width: 900px) {
+  .run-row__stop {
+    display: inline-block;
+  }
+}
+
+/* A speaker's avatar on a steer row (ADR 0085 amendment 2026-11-04): 18 px,
+   ringed in their colour. With no picture it is the ring on a tint of it. */
+.speaker-avatar {
+  flex: none;
+  box-sizing: border-box;
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--speaker-color);
+  background: color-mix(in srgb, var(--speaker-color) 20%, transparent);
+  overflow: hidden;
+}
+.speaker-avatar.is-trailblazer {
+  --speaker-color: var(--speaker-trailblazer);
+}
+.speaker-avatar.is-herta {
+  --speaker-color: var(--speaker-herta);
+}
+.speaker-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .activity-line__chevron {
   flex: none;
   color: var(--muted-4);
@@ -5073,6 +5172,60 @@ button.session-item__badge--dismiss {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A steer on the card's timeline, where 板砖 took it: the avatar centred on
+   the hairline, the words aligned with the nodes'. */
+.trace-card__steer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5.5px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.trace-card__steer .speaker-avatar {
+  margin-left: -4.5px;
+}
+.trace-card__steer::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 19px;
+  bottom: -11px;
+  width: 1px;
+  background: var(--hairline-strong);
+}
+.trace-card__steer:last-child::before {
+  display: none;
+}
+.trace-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.trace-card__action {
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink-a05);
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--muted-slate);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) ease,
+    color var(--dur-micro) ease;
+}
+.trace-card__action:hover {
+  background: var(--ink-a09);
+  color: var(--ink-2);
+}
+.trace-card__action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
 .trace-card__note {
   flex: none;
   margin-left: auto;
@@ -5400,16 +5553,20 @@ button.repo-card__path,
 .plan-card__row.is-entering,
 .plan-card__row.is-leaving,
 .trace-card__segment.is-entering,
-.trace-card__segment.is-leaving {
+.trace-card__segment.is-leaving,
+.trace-card__steer.is-entering,
+.trace-card__steer.is-leaving {
   interpolate-size: allow-keywords;
   overflow: hidden;
 }
 .plan-card__row.is-entering,
-.trace-card__segment.is-entering {
+.trace-card__segment.is-entering,
+.trace-card__steer.is-entering {
   animation: card-row-in 300ms var(--ease-signature) both;
 }
 .plan-card__row.is-leaving,
-.trace-card__segment.is-leaving {
+.trace-card__segment.is-leaving,
+.trace-card__steer.is-leaving {
   animation: card-row-out 220ms ease both;
   pointer-events: none;
 }
@@ -5453,9 +5610,12 @@ button.repo-card__path,
   .plan-card__row.is-entering,
   .plan-card__row.is-leaving,
   .trace-card__segment.is-entering,
-  .trace-card__segment.is-leaving { animation: none; }
+  .trace-card__segment.is-leaving,
+  .trace-card__steer.is-entering,
+  .trace-card__steer.is-leaving { animation: none; }
   .plan-card__row.is-leaving,
-  .trace-card__segment.is-leaving { display: none; }
+  .trace-card__segment.is-leaving,
+  .trace-card__steer.is-leaving { display: none; }
   .repo-card__all svg { transition: none; }
 }
 .trace-card__note.is-fail {
@@ -6483,6 +6643,108 @@ button.repo-card__path,
 .file-viewer__scroll::-webkit-scrollbar-thumb:hover {
   background: var(--ink-a22);
   background-clip: padding-box;
+}
+
+/* ── A run's 完整记录 (ADR 0085 §9) ──────────────────────────────────────────
+   Its head — the state, the counts, 撤销本轮改动 — then every row under the
+   card's phases, the steers where 板砖 took them, and the marker's facts. */
+.run-record {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 16px 24px;
+}
+.run-record__head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.run-record__state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+.run-record__led {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c2c8d0;
+}
+.run-record__led.is-live {
+  background: var(--banzhuan-led);
+}
+.run-record__label {
+  flex: none;
+  font-weight: 500;
+  color: var(--muted-3);
+}
+.run-record__summary {
+  min-width: 0;
+}
+.run-record__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 15px;
+  font-size: 12px;
+  color: var(--muted-4);
+  font-variant-numeric: tabular-nums;
+}
+.run-record__meta .activity-undo {
+  margin-left: auto;
+}
+.run-record__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-record__phase-name {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--muted-2);
+}
+.run-record__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 1px solid var(--hairline);
+}
+.run-record__steer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--ink);
+}
+.run-record__steer-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.run-record__facts-body {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--ink-a05);
+  font-family: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── The commit tab (ADR 0059) ────────────────────────────────────────────

@@ -33,6 +33,7 @@ import {
   type PieceQuoting,
   usePieceQuoting,
 } from "./PieceQuote.js";
+import { RunRecordView } from "./RunRecordView.js";
 import { CodeView } from "./renderers/CodeView.js";
 import { CommitView } from "./renderers/CommitView.js";
 import { DiffView } from "./renderers/DiffView.js";
@@ -144,18 +145,21 @@ export function FileViewerPanel(): JSX.Element | null {
   const isDiff = target?.kind === "diff";
   const isLog = target?.kind === "log";
   const isPage = target?.kind === "page";
+  const isRun = target?.kind === "run";
   const kindInfo: ViewerKindInfo =
     path === null
       ? { kind: "text" }
       : isPage
         ? { kind: "page" }
-        : isCommit
-          ? { kind: "commit" }
-          : isDiff
-            ? { kind: "diff" }
-            : isLog
-              ? { kind: "log" }
-              : viewerKindFor(path);
+        : isRun
+          ? { kind: "run" }
+          : isCommit
+            ? { kind: "commit" }
+            : isDiff
+              ? { kind: "diff" }
+              : isLog
+                ? { kind: "log" }
+                : viewerKindFor(path);
   const [load, setLoad] = useState<LoadState>({ kind: "loading" });
   const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
   const [modes, setModes] = useState<Readonly<Record<string, ViewMode>>>({});
@@ -187,9 +191,14 @@ export function FileViewerPanel(): JSX.Element | null {
     const readBytes = bridge.readWorkspaceBytes?.bind(bridge);
     const readCommit = bridge.readWorkspaceCommit?.bind(bridge);
     const readDiff = bridge.readWorkspaceDiff?.bind(bridge);
-    if (kindInfo.kind === "log" || kindInfo.kind === "page") {
-      // The log tab pages itself (LogView), and the page tab is not a file
-      // (ADR 0083 §2): nothing to load here.
+    if (
+      kindInfo.kind === "log" ||
+      kindInfo.kind === "page" ||
+      kindInfo.kind === "run"
+    ) {
+      // The log tab pages itself (LogView), the page tab is not a file (ADR
+      // 0083 §2), and a run's record is the session's own (ADR 0085 §9):
+      // nothing to load here.
       setLoad({ kind: "loading" });
     } else if (kindInfo.kind === "diff") {
       if (readDiff === undefined) {
@@ -527,8 +536,8 @@ export function FileViewerPanel(): JSX.Element | null {
               </button>
             </Tooltip>
           )}
-          {/* The history tab has nothing to copy. */}
-          {!isLog && !isPage && (
+          {/* The history tab has nothing to copy; nor has a run's record. */}
+          {!isLog && !isPage && !isRun && (
             <Tooltip
               label={
                 copied === "copied"
@@ -576,8 +585,9 @@ export function FileViewerPanel(): JSX.Element | null {
               </button>
             </Tooltip>
           )}
-          {/* A commit is not a file the OS could open; neither is history. */}
-          {!isCommit && !isLog && !isPage && (
+          {/* A commit is not a file the OS could open; neither is history,
+              nor a run's record. */}
+          {!isCommit && !isLog && !isPage && !isRun && (
             <Tooltip
               label={t("viewer.openExternal")}
               placement="bottom"
@@ -639,6 +649,13 @@ export function FileViewerPanel(): JSX.Element | null {
       </div>
       {isPage ? (
         sessionId !== null && <PageView sessionId={sessionId} />
+      ) : isRun ? (
+        <ViewerErrorBoundary
+          key={path}
+          fallback={<Notice text={t("viewer.renderFailed")} />}
+        >
+          <RunRecordView path={path} />
+        </ViewerErrorBoundary>
       ) : (
         <FileViewerBody
           path={path}

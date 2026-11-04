@@ -1,12 +1,10 @@
 import { Fragment, memo, useEffect, useMemo, useRef } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useActiveSession } from "../../hooks/useActiveSession.js";
-import { useBackendThinking } from "../../hooks/useBackendThinking.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { ConversationPinProvider } from "./ConversationPin.js";
 import { GalaxyTravelRow } from "./GalaxyTravelRow.js";
-import { activityHasTerminalMarker } from "./group-record.js";
 import { MorphClone } from "./MorphClone.js";
 import { PendingActivity } from "./PendingActivity.js";
 import {
@@ -79,7 +77,6 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     turnStartedAt,
     backendStartedAt,
     backendActive,
-    backendInFlight,
     recapCompacting,
     supervisorChecking,
     sessionId,
@@ -238,19 +235,15 @@ export const Conversation = memo(function Conversation(): JSX.Element {
       void open(sessionId, url);
     };
   }, [sessionId, bridge]);
-  const backendThinking = useBackendThinking();
-  const { items, rows } = useConversationRows({
+  const { rows, runLive } = useConversationRows({
     // The attach in flight shows as placeholder rows after the record's last
     // block — where its real blocks will land (pending-attach.ts).
     record: shownRecord,
     recordStart,
     lang,
     status,
-    turnStartedAt,
     backendStartedAt,
-    backendInFlight,
     backendActive,
-    backendThinking,
     handleRewind,
     removeAttachmentFactory,
     openWebPage,
@@ -417,7 +410,8 @@ export const Conversation = memo(function Conversation(): JSX.Element {
             {/* The 处理中… backend placeholder sits at the BOTTOM of the flow —
           backend work happens after Herta speaks the @板砖 delegation, so it
           must appear below her reply (record block or still-streaming bubble),
-          never above it. Hidden once the real activity group is active. Also
+          never above it. Hidden once the run's own row is live (ADR 0085 §6:
+          it sits under her dispatching bubble, her beats below it). Also
           deferred while the in-flight row is still holding its minimum OR
           fading out — that row renders ABOVE this slot, so mounting under it
           shoved this row down and let it slide back up when the row left;
@@ -430,21 +424,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
               // settles does not put 处理中 under a bubble in flight, only to
               // yield to the row a moment later.
               !sendArmed &&
-              (() => {
-                const last = items[items.length - 1];
-                const lastIsActive =
-                  last !== undefined &&
-                  last.kind === "activity" &&
-                  status !== "idle" &&
-                  !activityHasTerminalMarker(last.blocks);
-                return lastIsActive ? null : (
-                  <PendingActivity
-                    turnStartedAt={turnStartedAt}
-                    backendStartedAt={backendStartedAt}
-                    lang={lang}
-                  />
-                );
-              })()}
+              !runLive && (
+                <PendingActivity
+                  turnStartedAt={turnStartedAt}
+                  backendStartedAt={backendStartedAt}
+                  lang={lang}
+                />
+              )}
             {/* Turn headroom: empty room reserved under the newest turn so
               the answer fills a region instead of crawling along the bottom
               edge. Height is written imperatively (turn-headroom.ts); it is

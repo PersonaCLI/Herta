@@ -548,6 +548,16 @@ export function Composer(): JSX.Element {
     void bridge.interrupt();
   };
   useEscapeStop(busy && !suppressed, stopTurn, taRef);
+  // 停止运行 on the run's card and row (ADR 0085 §9) is this Stop, by its
+  // command: the voice cut and the held message dropped as here.
+  useShortcut(
+    "stopRun",
+    () => {
+      stopTurn();
+      return true;
+    },
+    busy && !suppressed,
+  );
   /** The held card's DOM node — the flying clone lifts off from its rect. */
   const heldCardRef = useRef<HTMLElement>(null);
   const langRef = useRef(lang);

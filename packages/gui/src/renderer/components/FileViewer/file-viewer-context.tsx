@@ -44,13 +44,30 @@ export interface ViewerAnchor {
  *  internals in the tab (owner 2026-08-31) — and an optional line anchor
  *  from a finding cite. */
 /** What a non-file tab shows (ADR 0059): a commit by id, a path's
- *  working-tree diff against HEAD, or the repository's history (§6).
- *  Absent = the file itself. */
-export type ViewerTabKind = "commit" | "diff" | "log" | "page";
+ *  working-tree diff against HEAD, or the repository's history (§6); the
+ *  page (ADR 0083); a run's full record (ADR 0085 §9). Absent = the file
+ *  itself. */
+export type ViewerTabKind = "commit" | "diff" | "log" | "page" | "run";
 
 /** The page tab's path: a page tab is not a file, and there is one per
  *  session (ADR 0083 §2). */
 export const PAGE_TAB_PATH = "page:";
+
+/** A run's 完整记录 tab (ADR 0085 §9): one per run, named by its first
+ *  block — the block's absolute record index and its stamp, so a rewind
+ *  that puts another run at the same index does not answer for this one. */
+export function runTabPath(index: number, at: string | undefined): string {
+  return `run:${index}:${at ?? ""}`;
+}
+
+/** A run tab's path read back; null for any other path. */
+export function parseRunTabPath(
+  path: string,
+): { readonly index: number; readonly at: string } | null {
+  const m = /^run:(\d+):(.*)$/.exec(path);
+  if (m === null) return null;
+  return { index: Number(m[1]), at: m[2] ?? "" };
+}
 
 export interface FileViewerTarget {
   /** The path to read — or, on a `commit` tab, the commit id (ADR 0059). */

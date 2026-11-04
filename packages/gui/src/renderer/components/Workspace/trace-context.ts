@@ -1,5 +1,5 @@
 import type { TerminalRecordBlock } from "@herta/app-server";
-import type { SystemBlock } from "./group-record.js";
+import type { SystemBlock, UserBlock } from "./group-record.js";
 import { opPhase, type TracePhase } from "./op-phase.js";
 
 export type { TracePhase } from "./op-phase.js";
@@ -34,6 +34,14 @@ export interface TraceOp {
   readonly status: "running" | "ok" | "fail" | "queued";
   readonly note?: TraceNote;
   readonly phase: TracePhase;
+}
+
+/** A steer the Trailblazer sent into the run (ADR 0063), where 板砖 took
+ *  it: after the run's first `beforeOp` ops. The card draws it there (ADR
+ *  0085 amendment 2026-11-04). */
+export interface TraceSteer {
+  readonly beforeOp: number;
+  readonly text: string;
 }
 
 /**
@@ -103,6 +111,16 @@ export interface TraceContext {
    *  steps written behind it wait their turn. Between steps, while 板砖
    *  thinks, the newest. Null once settled. */
   readonly current: { readonly segment: number; readonly op: number } | null;
+  /** The steers within the window, each before the segment whose ordinal is
+   *  `beforeSegment` (the next ordinal: after the last). `key` is the
+   *  steer's index in the run, stable as rows arrive. */
+  readonly steers: readonly TraceSteerAt[];
+}
+
+export interface TraceSteerAt {
+  readonly key: number;
+  readonly beforeSegment: number;
+  readonly text: string;
 }
 
 /**
@@ -113,6 +131,8 @@ export type TraceScope =
   | {
       readonly kind: "trace";
       readonly ops: readonly TraceOp[];
+      /** The steers 板砖 took, where it took them. */
+      readonly steers: readonly TraceSteer[];
       /** The scan reached the dispatch's start (a user block or an earlier
        *  marker): `ops` is the whole dispatch, not the tail a truncated
        *  record window left — so its length counts the dispatch's op rows. */
@@ -125,6 +145,7 @@ export type TraceScope =
        *  a commit earlier (lab 2026-09-30). Empty when the window holds
        *  none of them. */
       readonly ops: readonly TraceOp[];
+      readonly steers: readonly TraceSteer[];
     }
   | { readonly kind: "absent" }
   | { readonly kind: "unknown" };
@@ -139,7 +160,8 @@ export type TraceScope =
  *   - herta blocks do NOT stop the scan (a beat splits one run into several
  *     activity groups; the trace is a property of the dispatch);
  *   - a user block stops it (turn boundary) — ops found → trace, none →
- *     absent; a steer (ADR 0063 §1.10) sits inside the run it interrupted;
+ *     absent; a steer (ADR 0063 §1.10) sits inside the run it interrupted,
+ *     and the card draws it there (ADR 0085 amendment 2026-11-04);
  *   - a terminal marker stops it — ops found ABOVE it belong to a NEWER
  *     chained dispatch → trace; none → ended;
  *   - running off the start of the windowed array concludes nothing: ops in
@@ -152,29 +174,32 @@ export type TraceScope =
  * settles the previous one as "ok" if no result row claimed otherwise.
  */
 export function traceScope(record: readonly TerminalRecordBlock[]): TraceScope {
-  const collected: SystemBlock[] = [];
+  const collected: (SystemBlock | UserBlock)[] = [];
   for (let i = record.length - 1; i >= 0; i -= 1) {
     const block = record[i];
     if (block === undefined) continue;
-    if (block.kind === "user" && block.steer === true) continue;
+    if (block.kind === "user" && block.steer === true) {
+      collected.push(block);
+      continue;
+    }
     if (block.kind === "user") {
-      const ops = collectOps(collected);
+      const { ops, steers } = collectOps(collected);
       return ops.length > 0
-        ? { kind: "trace", ops, complete: true }
+        ? { kind: "trace", ops, steers, complete: true }
         : { kind: "absent" };
     }
     if (block.kind !== "system") continue;
     if (block.role === "done-marker" || block.role === "noop-marker") {
-      const ops = collectOps(collected);
+      const { ops, steers } = collectOps(collected);
       return ops.length > 0
-        ? { kind: "trace", ops, complete: true }
-        : { kind: "ended", ops: endedOps(record, i) };
+        ? { kind: "trace", ops, steers, complete: true }
+        : { kind: "ended", ...endedOps(record, i) };
     }
     collected.push(block);
   }
-  const ops = collectOps(collected);
+  const { ops, steers } = collectOps(collected);
   return ops.length > 0
-    ? { kind: "trace", ops, complete: false }
+    ? { kind: "trace", ops, steers, complete: false }
     : { kind: "unknown" };
 }
 
@@ -183,12 +208,16 @@ export function traceScope(record: readonly TerminalRecordBlock[]): TraceScope {
 function endedOps(
   record: readonly TerminalRecordBlock[],
   markerAt: number,
-): TraceOp[] {
-  const collected: SystemBlock[] = [];
+): { ops: TraceOp[]; steers: TraceSteer[] } {
+  const collected: (SystemBlock | UserBlock)[] = [];
   for (let i = markerAt - 1; i >= 0; i -= 1) {
     const block = record[i];
     if (block === undefined) continue;
-    if (block.kind === "user" && block.steer !== true) break;
+    if (block.kind === "user") {
+      if (block.steer !== true) break;
+      collected.push(block);
+      continue;
+    }
     if (block.kind !== "system") continue;
     if (block.role === "done-marker" || block.role === "noop-marker") break;
     collected.push(block);
@@ -196,16 +225,31 @@ function endedOps(
   return collectOps(collected);
 }
 
+/** A run's ops from its blocks, oldest first — the run row reads them as
+ *  the card does (ADR 0085 §6). */
+export function runOps(blocks: readonly SystemBlock[]): readonly TraceOp[] {
+  return collectOps([...blocks].reverse()).ops;
+}
+
 /** Collected newest-first; processed oldest-first. */
-function collectOps(collectedNewestFirst: readonly SystemBlock[]): TraceOp[] {
+function collectOps(
+  collectedNewestFirst: readonly (SystemBlock | UserBlock)[],
+): { ops: TraceOp[]; steers: TraceSteer[] } {
   const ops: TraceOp[] = [];
+  const steers: TraceSteer[] = [];
   const amendLast = (patch: Partial<TraceOp>): void => {
     const last = ops[ops.length - 1];
     if (last === undefined) return;
     ops[ops.length - 1] = { ...last, ...patch };
   };
   for (let i = collectedNewestFirst.length - 1; i >= 0; i -= 1) {
-    const d = collectedNewestFirst[i]?.digest;
+    const block = collectedNewestFirst[i];
+    if (block === undefined) continue;
+    if (block.kind === "user") {
+      steers.push({ beforeOp: ops.length, text: block.text });
+      continue;
+    }
+    const d = block.digest;
     if (d === undefined) continue;
     switch (d.kind) {
       case "op": {
@@ -260,7 +304,7 @@ function collectOps(collectedNewestFirst: readonly SystemBlock[]): TraceOp[] {
         break; // bg / excerpt / finding / attachment / skip / legacy todo
     }
   }
-  return ops;
+  return { ops, steers };
 }
 
 /**
@@ -284,6 +328,9 @@ export function buildTrace(
     readonly pending?: readonly PendingOp[];
     readonly focus?: TraceFocus | null;
     readonly settled?: boolean;
+    /** The record's steers: each closes the segment it lands in, so the
+     *  card can draw it between the steps before and after it. */
+    readonly steers?: readonly TraceSteer[];
   } = {},
 ): TraceContext {
   let ops: readonly TraceOp[] = recordOps;
@@ -340,8 +387,13 @@ export function buildTrace(
       failures: current.filter((o) => o.status === "fail").length,
     });
   };
+  const steerOps = opts.steers ?? [];
+  const breaks = new Set(steerOps.map((s) => s.beforeOp));
   ops.forEach((op, i) => {
-    if (current.length > 0 && current[0]?.phase !== op.phase) {
+    if (
+      current.length > 0 &&
+      (current[0]?.phase !== op.phase || breaks.has(i))
+    ) {
       close();
       current = [];
       firstOp = i;
@@ -349,6 +401,14 @@ export function buildTrace(
     current.push(op);
   });
   close();
+  // Each steer before the first segment that starts at or after it.
+  const steersAt: TraceSteerAt[] = steerOps.map((s, key) => ({
+    key,
+    beforeSegment:
+      segments.find((g) => g.firstOpOrdinal >= s.beforeOp)?.ordinal ??
+      segments.length,
+    text: s.text,
+  }));
 
   const live = opts.settled !== true;
   let inFlight: TraceContext["current"] = null;
@@ -371,11 +431,14 @@ export function buildTrace(
     if (segment !== undefined) inFlight = { segment: segment.ordinal, op };
   }
 
+  const shown =
+    segments.length > TRACE_MAX_SEGMENTS
+      ? segments.slice(-TRACE_MAX_SEGMENTS)
+      : segments;
+  const firstShown = shown[0]?.ordinal ?? 0;
   return {
-    segments:
-      segments.length > TRACE_MAX_SEGMENTS
-        ? segments.slice(-TRACE_MAX_SEGMENTS)
-        : segments,
+    segments: shown,
+    steers: steersAt.filter((s) => s.beforeSegment >= firstShown),
     steps: ops.length,
     writes: new Set(
       ops.filter((op) => op.verb === "Writing").map((op) => op.arg),

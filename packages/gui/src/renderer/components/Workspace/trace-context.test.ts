@@ -437,3 +437,63 @@ describe("tallySegment", () => {
     expect(tally.servers).toEqual(["web", "api"]);
   });
 });
+
+describe("steers on the card (ADR 0085 amendment 2026-11-04)", () => {
+  const steer = (text: string): TerminalRecordBlock =>
+    ({ kind: "user", text, steer: true }) as TerminalRecordBlock;
+
+  it("the scope keeps each steer where 板砖 took it, live and ended", () => {
+    const record = [
+      user(),
+      op("Reading", "a.ts"),
+      steer("先别动 api 目录"),
+      op("Reading", "b.ts"),
+    ];
+    const live = traceScope(record);
+    expect(live.kind === "trace" && live.steers).toEqual([
+      { beforeOp: 1, text: "先别动 api 目录" },
+    ]);
+    const ended = traceScope([...record, marker]);
+    expect(ended.kind === "ended" && ended.steers).toEqual([
+      { beforeOp: 1, text: "先别动 api 目录" },
+    ]);
+  });
+
+  it("a steer closes the node it lands in, and stands before the next", () => {
+    const record = [
+      user(),
+      op("Reading", "a.ts"),
+      steer("先别动 api 目录"),
+      op("Reading", "b.ts"),
+      steer("顺便看看测试"),
+    ];
+    const scope = traceScope(record);
+    if (scope.kind !== "trace") throw new Error(scope.kind);
+    const trace = buildTrace(scope.ops, { steers: scope.steers });
+    // Two reads, one phase — split by the steer between them.
+    expect(trace.segments.map((s) => s.ops.length)).toEqual([1, 1]);
+    expect(trace.steers).toEqual([
+      { key: 0, beforeSegment: 1, text: "先别动 api 目录" },
+      // After the last node: the next ordinal.
+      { key: 1, beforeSegment: 2, text: "顺便看看测试" },
+    ]);
+    // Anti-vacuous: without the steers, the reads are one node.
+    expect(buildTrace(scope.ops).segments).toHaveLength(1);
+  });
+
+  it("a steer before the window's first node leaves with the nodes before it", () => {
+    const ops: TraceOp[] = [];
+    const steers = [{ beforeOp: 1, text: "早" }];
+    for (let i = 0; i < TRACE_MAX_SEGMENTS + 2; i++) {
+      ops.push({
+        verb: i % 2 === 0 ? "Reading" : "Writing",
+        arg: `f${i}`,
+        status: "ok",
+        phase: i % 2 === 0 ? "explore" : "modify",
+      });
+    }
+    const trace = buildTrace(ops, { steers, settled: true });
+    expect(trace.segments).toHaveLength(TRACE_MAX_SEGMENTS);
+    expect(trace.steers).toEqual([]);
+  });
+});

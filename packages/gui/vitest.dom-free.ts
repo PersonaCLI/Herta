@@ -95,6 +95,7 @@ export const DOM_FREE_TESTS = [
   "src/renderer/components/Workspace/group-record.test.ts",
   "src/renderer/components/Workspace/marker-summary.test.ts",
   "src/renderer/components/Workspace/op-phase.test.ts",
+  "src/renderer/components/Workspace/run-facts.test.ts",
   "src/renderer/components/Workspace/step-display.test.ts",
   "src/renderer/components/Workspace/trace-context.test.ts",
   "src/renderer/components/Workspace/workspace-path.test.ts",

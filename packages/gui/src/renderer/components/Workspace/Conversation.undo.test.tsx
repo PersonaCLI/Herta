@@ -87,7 +87,10 @@ function render(
 }
 
 const chip = () => screen.queryByRole("button", { name: "Undo" });
-const cards = (container: HTMLElement) =>
+/** The runs' rows (ADR 0085 §6), and the lines that stand alone. */
+const runs = (container: HTMLElement) =>
+  Array.from(container.querySelectorAll('[data-testid="run-row"]'));
+const lines = (container: HTMLElement) =>
   Array.from(container.querySelectorAll('[data-testid="activity-block"]'));
 
 describe("the 撤销 chip on the latest turn's card (ADR 0074 §4)", () => {
@@ -95,7 +98,7 @@ describe("the 撤销 chip on the latest turn's card (ADR 0074 §4)", () => {
     const { mock, container } = render([...turn(1), ...turn(2)], {
       undoable: true,
     });
-    const blocks = cards(container);
+    const blocks = runs(container);
     expect(blocks).toHaveLength(2);
     expect(blocks[0]?.querySelector(".activity-undo")).toBeNull();
     expect(blocks[1]?.contains(chip())).toBe(true);
@@ -134,7 +137,8 @@ describe("the 撤销 chip on the latest turn's card (ADR 0074 §4)", () => {
   it("a turn already undone says so on its card, and its line shows what happened to each file", () => {
     const { container } = render([...turn(1), ...turn(2), undoLine]);
     expect(chip()).toBeNull();
-    const [, card, line] = cards(container);
+    const [, card] = runs(container);
+    const [line] = lines(container);
     expect(card?.querySelector(".activity-undo")?.textContent).toBe("Undone");
     expect(line?.textContent).toContain(
       "Changes from this turn undone · 1 restored · 1 not restored",

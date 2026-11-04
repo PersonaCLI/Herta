@@ -3,6 +3,15 @@ import type { TerminalRecordBlock } from "@herta/app-server";
 /** The system-block member of the record union (no name-import needed). */
 export type SystemBlock = Extract<TerminalRecordBlock, { kind: "system" }>;
 
+/** The user-block member: a message, or a steer inside a run. */
+export type UserBlock = Extract<TerminalRecordBlock, { kind: "user" }>;
+
+/** One entry of a run as the record holds it (ADR 0085 §6): 板砖's rows,
+ *  and the steers it took where it took them. */
+export type RunEntry =
+  | { readonly kind: "row"; readonly block: SystemBlock }
+  | { readonly kind: "steer"; readonly block: UserBlock };
+
 /** The structured done-marker roll-up (derived from the block, no name-import). */
 export type DoneMarkerSummary = NonNullable<SystemBlock["markerSummary"]>;
 
@@ -39,7 +48,27 @@ export type RenderItem =
       readonly kind: "activity";
       readonly startIndex: number;
       readonly blocks: readonly SystemBlock[];
+    }
+  | {
+      /** One dispatch of 板砖's, from its first row to its marker (ADR 0085
+       *  §6): the chat draws it as one row, under the bubble that sent it. */
+      readonly kind: "run";
+      /** The run's first block, as an index into the window. */
+      readonly startIndex: number;
+      /** Every system block of the run, across the beats that split it. */
+      readonly blocks: readonly SystemBlock[];
+      /** The blocks and the steers, in record order: the 完整记录 tab's
+       *  rows. */
+      readonly entries: readonly RunEntry[];
+      /** The stamp of her bubble that dispatched it: the run's time is
+       *  counted from there, as the live row counts from the backend's
+       *  start — 板砖 thinks before its first row lands. */
+      readonly dispatchedAt?: string;
     };
+
+/** What the record folds into before runs are drawn (no `run` items yet):
+ *  the Markdown export reads this. */
+export type RecordItem = Exclude<RenderItem, { readonly kind: "run" }>;
 
 /** An image attachment block — a picture that was stored, with or without a
  *  caption. Text/document attachments are NOT lifted: their content is the
@@ -118,8 +147,8 @@ export function liftUserImages(items: readonly RenderItem[]): RenderItem[] {
  */
 export function groupRecord(
   record: readonly TerminalRecordBlock[],
-): RenderItem[] {
-  const items: RenderItem[] = [];
+): RecordItem[] {
+  const items: RecordItem[] = [];
   let i = 0;
   while (i < record.length) {
     const block = record[i];
@@ -197,7 +226,7 @@ function stableRun(
  */
 export function shareRunIdentity(items: readonly RenderItem[]): RenderItem[] {
   return items.map((item) => {
-    if (item.kind === "activity") {
+    if (item.kind === "activity" || item.kind === "run") {
       const blocks = stableRun(activityRuns, item.blocks);
       return blocks === item.blocks ? item : { ...item, blocks };
     }
@@ -209,6 +238,111 @@ export function shareRunIdentity(items: readonly RenderItem[]): RenderItem[] {
 
 function isTerminal(b: SystemBlock): boolean {
   return b.role === "done-marker" || b.role === "noop-marker";
+}
+
+/** A group that is the Trailblazer's own act, or the app's, never 板砖's:
+ *  files handed over, an undo line, a dev server started or stopped from
+ *  the page tab. It keeps its own line even inside a run. */
+function standsAlone(blocks: readonly SystemBlock[]): boolean {
+  return blocks.every(
+    (b) =>
+      b.digest?.kind === "attachment" ||
+      b.digest?.kind === "undo" ||
+      b.digest?.kind === "server",
+  );
+}
+
+/**
+ * Fold each of 板砖's dispatches into one `run` item (ADR 0085 §6, build
+ * step 1): the chat keeps one row per run, under the bubble that dispatched
+ * it, and the run's rows move to its 完整记录 tab.
+ *
+ * A run opens at a group with a coprocessor block and takes every group
+ * after it — the beats that split it stay bubbles in place — until its
+ * terminal marker, or until a message that is not a steer. A steer inside
+ * it is both: a bubble where it was sent, and an entry of the run where 板砖
+ * took it. A group that stands alone (an attachment, an undo line, a server
+ * the Trailblazer started) keeps its own line. Blocks after a marker in the
+ * same group belong to the next dispatch.
+ *
+ * Pure presentation (D7): every block is still drawn, by the row or by the
+ * tab.
+ */
+export function groupRuns(items: readonly RenderItem[]): RenderItem[] {
+  const out: RenderItem[] = [];
+  let open: {
+    readonly at: number;
+    readonly startIndex: number;
+    readonly blocks: SystemBlock[];
+    readonly entries: RunEntry[];
+    readonly dispatchedAt: string | undefined;
+  } | null = null;
+  const seal = (): void => {
+    if (open === null) return;
+    out[open.at] = {
+      kind: "run",
+      startIndex: open.startIndex,
+      blocks: open.blocks,
+      entries: open.entries,
+      ...(open.dispatchedAt !== undefined
+        ? { dispatchedAt: open.dispatchedAt }
+        : {}),
+    };
+    open = null;
+  };
+  for (const item of items) {
+    if (item.kind !== "activity") {
+      if (item.kind === "block" && item.block.kind === "user") {
+        if (item.block.steer !== true) seal();
+        else open?.entries.push({ kind: "steer", block: item.block });
+      }
+      out.push(item);
+      continue;
+    }
+    if (open !== null && standsAlone(item.blocks)) {
+      out.push(item);
+      continue;
+    }
+    let rest = item.blocks;
+    let restStart = item.startIndex;
+    while (rest.length > 0) {
+      if (open === null) {
+        if (!rest.some((b) => b.label === "差分协处理器")) {
+          out.push(
+            rest === item.blocks
+              ? item
+              : { kind: "activity", startIndex: restStart, blocks: rest },
+          );
+          break;
+        }
+        const before = out[out.length - 1];
+        open = {
+          at: out.length,
+          startIndex: restStart,
+          blocks: [],
+          entries: [],
+          dispatchedAt:
+            before?.kind === "block" && before.block.kind === "herta"
+              ? before.block.at
+              : undefined,
+        };
+        // Held until the run is sealed: its blocks are still arriving.
+        out.push(item);
+      }
+      const end = rest.findIndex(isTerminal);
+      const taken = end === -1 ? rest : rest.slice(0, end + 1);
+      for (const block of taken) {
+        open.blocks.push(block);
+        open.entries.push({ kind: "row", block });
+      }
+      if (end === -1) break;
+      seal();
+      restStart += end + 1;
+      rest = rest.slice(end + 1);
+    }
+  }
+  seal();
+  return out;
 }
 
 /** Chip identity: backend if any backend block, else system. */
@@ -328,4 +462,56 @@ export function activityRows(
 /** A patch preview. `skip` is how records before 2026-08-25 carried one. */
 function isPreview(b: SystemBlock): boolean {
   return b.digest?.kind === "patch" || b.digest?.kind === "skip";
+}
+
+/** The record's last message that opens a turn (a steer opens none: ADR
+ *  0063 §1.10), or -1. */
+export function lastTurnIndex(record: readonly TerminalRecordBlock[]): number {
+  for (let i = record.length - 1; i >= 0; i--) {
+    const b = record[i];
+    if (b?.kind === "user" && b.steer !== true) return i;
+  }
+  return -1;
+}
+
+/**
+ * Where 撤销 goes (ADR 0074 §4): the latest turn's LAST finished run — a
+ * turn can hold several dispatches, and the undo takes them all — as an
+ * index into `items`, or -1. `undone`: the turn already holds its undo line,
+ * and that run says so instead.
+ */
+export function undoTarget(
+  items: readonly RenderItem[],
+  lastTurn: number,
+): { readonly card: number; readonly undone: boolean } {
+  let card = -1;
+  let undone = false;
+  items.forEach((item, idx) => {
+    if (item.kind === "block" || item.startIndex <= lastTurn) return;
+    if (item.blocks.some((b) => b.digest?.kind === "undo")) undone = true;
+    else if (
+      item.kind === "run" &&
+      item.blocks.some((b) => b.role === "done-marker")
+    )
+      card = idx;
+  });
+  return { card, undone };
+}
+
+/** The latest turn's last run while it has no marker, as an index into
+ *  `items`, or -1. Whether it is still WORKING is the session's to say (the
+ *  turn runs, the backend started): an earlier run cut short has no marker
+ *  either. */
+export function openRun(
+  items: readonly RenderItem[],
+  lastTurn: number,
+): number {
+  for (let idx = items.length - 1; idx >= 0; idx -= 1) {
+    const item = items[idx];
+    if (item === undefined || item.kind === "block") continue;
+    if (item.startIndex <= lastTurn) return -1;
+    if (item.kind !== "run") continue;
+    return activityHasTerminalMarker(item.blocks) ? -1 : idx;
+  }
+  return -1;
 }

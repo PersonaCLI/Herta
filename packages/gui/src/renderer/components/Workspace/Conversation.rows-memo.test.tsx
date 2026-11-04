@@ -15,7 +15,7 @@ import { WorkspaceRefsProvider } from "./WorkspaceRefs.js";
  *
  * Its own suite covers the formatting; this file only counts.
  */
-const calls = { formatBubbleTime: 0, segmentSpeech: 0, activityChipLabel: 0 };
+const calls = { formatBubbleTime: 0, segmentSpeech: 0, runFacts: 0 };
 vi.mock("./format-time.js", async () => {
   const real =
     await vi.importActual<typeof import("./format-time.js")>(
@@ -46,20 +46,17 @@ vi.mock("../../lib/segment-speech.js", async () => {
   };
 });
 
-// And over the activity group's chip label: it is computed inside
-// ActivityBlock's `derived` memo, which keys on the `blocks` ARRAY — so its
-// call count IS the number of groups that re-derived their rows, patches and
-// headline (ADR 0068 §8).
-vi.mock("./group-record.js", async () => {
+// And over a run's facts: they are computed inside RunRow's memo, which keys
+// on the run's `blocks` ARRAY — so the call count IS the number of runs that
+// re-derived their ops, counts and headline (ADR 0068 §8, ADR 0085 §6).
+vi.mock("./run-facts.js", async () => {
   const real =
-    await vi.importActual<typeof import("./group-record.js")>(
-      "./group-record.js",
-    );
+    await vi.importActual<typeof import("./run-facts.js")>("./run-facts.js");
   return {
     ...real,
-    activityChipLabel: (...args: Parameters<typeof real.activityChipLabel>) => {
-      calls.activityChipLabel += 1;
-      return real.activityChipLabel(...args);
+    runFacts: (...args: Parameters<typeof real.runFacts>) => {
+      calls.runFacts += 1;
+      return real.runFacts(...args);
     },
   };
 });
@@ -70,7 +67,7 @@ afterEach(() => {
   vi.useRealTimers();
   calls.formatBubbleTime = 0;
   calls.segmentSpeech = 0;
-  calls.activityChipLabel = 0;
+  calls.runFacts = 0;
 });
 
 /** A record of `pairs` exchanges, every block timestamped so each one costs a
@@ -256,11 +253,11 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
     expect(calls.segmentSpeech).toBe(segsAfterMount);
   });
 
-  it("a new record block re-derives ONE activity group, not every group in the window (ADR 0068 §8)", () => {
+  it("a new record block re-derives ONE run, not every run in the window (ADR 0068 §8)", () => {
     // The bug: groupRecord rebuilt every group's `blocks` array per commit,
-    // memo(ActivityBlock) compares by identity, so one block at the tail
+    // the row memo compares by identity, so one block at the tail
     // re-rendered — and re-derived rows, patches, headline for — every
-    // historical group. 12 groups here; a long session holds 20–40, and a
+    // historical group. 12 runs here; a long session holds 20–40, and a
     // parallel tool batch is five to ten commits in a row.
     const GROUPS = 12;
     const at = new Date("2026-07-30T04:00:00.000Z").toISOString();
@@ -303,11 +300,11 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
         backendWorkspaceIsDefault: true,
       });
     });
-    // Anti-vacuous: the probe sees the mount — one derivation per group.
-    expect(calls.activityChipLabel).toBeGreaterThanOrEqual(GROUPS);
+    // Anti-vacuous: the probe sees the mount — one derivation per run.
+    expect(calls.runFacts).toBeGreaterThanOrEqual(GROUPS);
 
-    // A bubble lands: no run changed, so NO group re-derives.
-    let before = calls.activityChipLabel;
+    // A bubble lands: no run changed, so NO run re-derives.
+    let before = calls.runFacts;
     act(() => {
       mock.emitRecord({
         kind: "block",
@@ -315,10 +312,10 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
         block: { kind: "user", text: "one more", at },
       });
     });
-    expect(calls.activityChipLabel - before).toBe(0);
+    expect(calls.runFacts - before).toBe(0);
 
-    // A system block lands and opens a NEW group: exactly that one derives.
-    before = calls.activityChipLabel;
+    // A system block lands and opens a NEW run: exactly that one derives.
+    before = calls.runFacts;
     act(() => {
       mock.emitRecord({
         kind: "block",
@@ -331,10 +328,10 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
         },
       });
     });
-    expect(calls.activityChipLabel - before).toBe(1);
+    expect(calls.runFacts - before).toBe(1);
 
-    // …and it GROWS: still only the live group.
-    before = calls.activityChipLabel;
+    // …and it GROWS: still only that run.
+    before = calls.runFacts;
     act(() => {
       mock.emitRecord({
         kind: "block",
@@ -347,15 +344,11 @@ describe("Conversation — the row memo does not depend on turn state (2026-07-3
         },
       });
     });
-    expect(calls.activityChipLabel - before).toBe(1);
-    // Anti-vacuous: the live group really holds the new block. A group's rows
-    // mount on its first open (ADR 0068 §11), so open the LAST group before
-    // looking for the text.
-    const toggles = document.querySelectorAll(".activity-line");
-    act(() => {
-      (toggles[toggles.length - 1] as HTMLButtonElement).click();
-    });
-    expect(screen.getAllByText(/src\/new\.ts/).length).toBeGreaterThan(0);
+    expect(calls.runFacts - before).toBe(1);
+    // Anti-vacuous: the new block made a run of its own, beside the twelve.
+    expect(document.querySelectorAll('[data-testid="run-row"]')).toHaveLength(
+      GROUPS + 1,
+    );
   });
 
   it("a rewind click mid-turn is refused by the handler, not just by CSS", async () => {

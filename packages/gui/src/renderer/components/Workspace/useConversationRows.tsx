@@ -12,13 +12,17 @@ import type { SessionStatus } from "../../store/session-store.js";
 import { ErrorBoundary } from "../ErrorBoundary.js";
 import { ActivityBlock } from "./ActivityBlock.js";
 import {
-  activityHasTerminalMarker,
   groupRecord,
+  groupRuns,
+  lastTurnIndex,
   liftUserImages,
+  openRun,
   type SystemBlock,
   shareRunIdentity,
+  undoTarget,
 } from "./group-record.js";
 import { HertaBubble } from "./HertaBubble.js";
+import { RunRow } from "./RunRow.js";
 import { imageViewsFromBlocks, UserBubble } from "./UserBubble.js";
 import type { RemoveAttachmentFactory } from "./useRemoveAttachment.js";
 
@@ -91,12 +95,8 @@ export function useConversationRows(opts: {
   readonly recordStart: number;
   readonly lang: "zh" | "en";
   readonly status: SessionStatus;
-  readonly turnStartedAt: number | null;
   readonly backendStartedAt: number | null;
-  readonly backendInFlight: number;
   readonly backendActive: boolean;
-  /** 板砖 has been thinking for a while (`useBackendThinking`). */
-  readonly backendThinking: boolean;
   readonly handleRewind: () => Promise<void>;
   readonly removeAttachmentFactory: RemoveAttachmentFactory | undefined;
   /** Opens a web page the record names in the OS browser (ADR 0080 §5). */
@@ -112,11 +112,8 @@ export function useConversationRows(opts: {
     recordStart,
     lang,
     status,
-    turnStartedAt,
     backendStartedAt,
-    backendInFlight,
     backendActive,
-    backendThinking,
     handleRewind,
     removeAttachmentFactory,
     openWebPage,
@@ -133,23 +130,38 @@ export function useConversationRows(opts: {
     // run that carries them in the record (ADR 0048 §4) — same record,
     // different overlay.
     //
+    // Each of 板砖's dispatches folds into one run row (ADR 0085 §6).
+    //
     // `shareRunIdentity` last: an unchanged run keeps the ARRAY it had on the
-    // previous commit, so `memo(ActivityBlock)` — and a user bubble's lifted
-    // pictures — skip instead of re-deriving the whole window per block.
-    () => shareRunIdentity(liftUserImages(groupRecord(record))),
+    // previous commit, so `memo(ActivityBlock)` and `memo(RunRow)` — and a
+    // user bubble's lifted pictures — skip instead of re-deriving the whole
+    // window per block.
+    () => shareRunIdentity(groupRuns(liftUserImages(groupRecord(record)))),
     [record],
   );
   // The rewind control shows only on the LATEST user turn, and only when idle
   // (no in-flight turn to race the truncation). Find the last `user` block
   // that starts a turn — a steer is words inside 板砖's run, not a turn, and
   // ⟲ on it offered to withdraw only the steer (ADR 0063 §1.10).
-  const lastUserIndex = useMemo(() => {
-    for (let i = record.length - 1; i >= 0; i--) {
-      const b = record[i];
-      if (b?.kind === "user" && b.steer !== true) return i;
-    }
-    return -1;
-  }, [record]);
+  const lastUserIndex = useMemo(() => lastTurnIndex(record), [record]);
+  // The 撤销 chip's run (ADR 0074 §4).
+  const undoCard = useMemo(
+    () => undoTarget(items, lastUserIndex),
+    [items, lastUserIndex],
+  );
+  // The run still working: the latest turn's run with no marker yet, while
+  // the turn runs and the backend has started. The backend's anchor is the
+  // honest signal (audit 2026-07-24, L1): it is null until a dispatch
+  // starts, and the turn-start handler clears it. The chat's 处理中
+  // placeholder stands down for this run, wherever her beats have put it.
+  const liveRun = useMemo(
+    () => openRun(items, lastUserIndex),
+    [items, lastUserIndex],
+  );
+  const runLive =
+    liveRun !== -1 &&
+    status !== "idle" &&
+    (backendActive || backendStartedAt !== null);
   // ── the bubble rows ──────────────────────────────────────────────────────
   // Memoized on their REAL inputs (user profile 2026-07-12): per-frame state
   // flickers during the sidebar slide (pinned, fog edges) re-rendered
@@ -169,19 +181,6 @@ export function useConversationRows(opts: {
   //
   // Aligned with `items` (activity slots hold null) so the assembly below can
   // index straight into it.
-  // The 撤销 chip's card (ADR 0074 §4): the latest turn's LAST finished 板砖
-  // card — a turn can hold several dispatches, and the undo takes them all.
-  // A turn that already holds its undo line says so on that card instead.
-  const undoCard = useMemo(() => {
-    let card = -1;
-    let undone = false;
-    items.forEach((item, idx) => {
-      if (item.kind !== "activity" || item.startIndex <= lastUserIndex) return;
-      if (item.blocks.some((b) => b.digest?.kind === "undo")) undone = true;
-      else if (item.blocks.some((b) => b.role === "done-marker")) card = idx;
-    });
-    return { card, undone };
-  }, [items, lastUserIndex]);
   const blockRows = useMemo(
     () =>
       items.map((item) =>
@@ -225,23 +224,46 @@ export function useConversationRows(opts: {
   // here; the bubble rows come from `blockRows` by reference.
   const rows = useMemo(
     () =>
-      items.map((item, idx, all) => {
+      items.map((item, idx) => {
         if (item.kind === "block") return blockRows[idx];
-        const isLast = idx === all.length - 1;
-        // "Live" requires the CURRENT turn to actually own this group (audit
-        // 2026-07-24, L1). The terminal-marker guard only recognizes 板砖's
-        // done/noop markers, so an out-of-turn 系统 note (a workspace set /
-        // reset) has none — and the moment the NEXT turn started, that
-        // already-committed historical row began pulsing with a shimmering
-        // header and a duration counting from 0s, as if 板砖 were performing
-        // it right now. A backend anchor is the honest signal: it is null
-        // until a dispatch actually starts, and the turn-start handler
-        // clears it.
-        const isActive =
-          isLast &&
-          status !== "idle" &&
-          !activityHasTerminalMarker(item.blocks) &&
-          (backendActive || backendStartedAt !== null);
+        if (item.kind === "run") {
+          return (
+            <ErrorBoundary
+              key={`a${recordStart + item.startIndex}`}
+              label="activity-row"
+              fallback={<RowRenderError />}
+            >
+              <RunRow
+                blocks={item.blocks}
+                absIndex={recordStart + item.startIndex}
+                dispatchedAt={item.dispatchedAt}
+                active={runLive && idx === liveRun}
+                // Only the live turn's runs read the backend's start (see
+                // turnStartedAt below for why history must not).
+                backendStartedAt={
+                  item.startIndex > lastUserIndex ? backendStartedAt : null
+                }
+                lang={lang}
+                {...(idx !== undoCard.card
+                  ? {}
+                  : undoCard.undone
+                    ? { undo: { state: "done" as const } }
+                    : undoable && status === "idle"
+                      ? {
+                          undo: {
+                            state: undoBusy
+                              ? ("busy" as const)
+                              : ("offer" as const),
+                            onUndo: () => void handleUndo(),
+                          },
+                        }
+                      : {})}
+              />
+            </ErrorBoundary>
+          );
+        }
+        // A group that stands alone — an attachment, an undo line, a server
+        // note — is never 板砖's live work: its rows are drawn as they are.
         return (
           <ErrorBoundary
             key={`a${recordStart + item.startIndex}`}
@@ -250,43 +272,11 @@ export function useConversationRows(opts: {
           >
             <ActivityBlock
               blocks={item.blocks}
-              active={isActive}
-              // Live-turn state reaches only the live TURN's groups — every
-              // group after the last user block, which includes the born-done
-              // parts a beat split minted (they freeze their whole-run
-              // duration from backendStartedAt while it is still set, so
-              // strict `isActive` would starve them). Handed to every group,
-              // the timestamps' null↔value flips at each turn boundary
-              // defeated ActivityBlock's memo for the whole mounted history —
-              // the last live-turn state still reaching historical rows after
-              // adf67dc (perf review 2026-07-31).
-              turnStartedAt={
-                item.startIndex > lastUserIndex ? turnStartedAt : null
-              }
-              backendStartedAt={
-                item.startIndex > lastUserIndex ? backendStartedAt : null
-              }
               lang={lang}
-              inFlightCount={isActive ? backendInFlight : 1}
-              thinking={isActive && backendThinking}
               onRemoveAttachment={removeAttachmentFactory}
               {...(openWebPage !== undefined
                 ? { onOpenWebPage: openWebPage }
                 : {})}
-              {...(idx !== undoCard.card
-                ? {}
-                : undoCard.undone
-                  ? { undo: { state: "done" as const } }
-                  : undoable && status === "idle"
-                    ? {
-                        undo: {
-                          state: undoBusy
-                            ? ("busy" as const)
-                            : ("offer" as const),
-                          onUndo: () => void handleUndo(),
-                        },
-                      }
-                    : {})}
             />
           </ErrorBoundary>
         );
@@ -297,16 +287,9 @@ export function useConversationRows(opts: {
       recordStart,
       lang,
       status,
-      turnStartedAt,
       backendStartedAt,
-      backendInFlight,
       removeAttachmentFactory,
       openWebPage,
-      // Read by the activity group's `isActive` (L1) — without it the rows
-      // memo would keep rendering the last group as live after the backend
-      // stopped.
-      backendActive,
-      backendThinking,
       // The live-turn gate above. Changes only with the record, which
       // already invalidates via `items` — listed for the lint contract.
       lastUserIndex,
@@ -316,8 +299,10 @@ export function useConversationRows(opts: {
       undoable,
       undoBusy,
       handleUndo,
+      liveRun,
+      runLive,
     ],
   );
 
-  return { items, rows };
+  return { items, rows, runLive };
 }

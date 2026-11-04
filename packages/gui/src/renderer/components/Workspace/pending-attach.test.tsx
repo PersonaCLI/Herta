@@ -144,13 +144,7 @@ describe("the attach in flight as placeholder rows (2026-10-01)", () => {
     );
     const placeholders = result.current.slice(1) as SystemBlock[];
     const view = renderWithLocale(
-      <ActivityBlock
-        blocks={placeholders}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-        lang="en"
-      />,
+      <ActivityBlock blocks={placeholders} lang="en" />,
     );
     const rows = (): HTMLElement[] => [
       ...view.container.querySelectorAll<HTMLElement>(".activity-step"),
@@ -207,15 +201,7 @@ describe("the attach in flight as placeholder rows (2026-10-01)", () => {
       usePendingAttachRecord("s1", [herta, ...real], 0),
     );
     expect(grown.result.current).toHaveLength(3);
-    view.rerender(
-      <ActivityBlock
-        blocks={real}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-        lang="en"
-      />,
-    );
+    view.rerender(<ActivityBlock blocks={real} lang="en" />);
     expect(labels()).toEqual([]);
     expect(
       view.container.querySelectorAll(".activity-step__progress.is-finishing"),

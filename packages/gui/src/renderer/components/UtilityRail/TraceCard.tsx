@@ -5,7 +5,9 @@ import { usePresence } from "../../hooks/usePresence.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT, type TFn } from "../../i18n/LocaleProvider.js";
 import type { LiveToolView } from "../../ipc/bridge-types.js";
+import { runShortcut } from "../../lib/shortcut-registry.js";
 import { hoverTipProps } from "../common/hover-tip.js";
+import { SpeakerAvatar } from "../common/SpeakerAvatar.js";
 import { VERB_KEY } from "../Workspace/step-display.js";
 import {
   type TraceNote,
@@ -70,14 +72,30 @@ export function TraceCard(): JSX.Element | null {
   const listRef = useRef<HTMLOListElement>(null);
   const edges = useScrollEdges(listRef, trace);
 
-  const keyed = useMemo(
-    () =>
-      (trace?.segments ?? EMPTY).map((segment) => ({
-        id: String(segment.ordinal),
-        segment,
-      })),
-    [trace],
-  );
+  // The timeline's rows: the phase nodes, and the steers 板砖 took between
+  // them (ADR 0085 amendment 2026-11-04).
+  const keyed = useMemo((): readonly CardRow[] => {
+    if (trace === null) return EMPTY;
+    const rows: CardRow[] = [];
+    const steersBefore = (ordinal: number, last: boolean): void => {
+      for (const steer of trace.steers) {
+        if (
+          last
+            ? steer.beforeSegment >= ordinal
+            : steer.beforeSegment === ordinal
+        ) {
+          rows.push({ id: `t${steer.key}`, kind: "steer", text: steer.text });
+        }
+      }
+    };
+    for (const segment of trace.segments) {
+      steersBefore(segment.ordinal, false);
+      rows.push({ id: `s${segment.ordinal}`, kind: "segment", segment });
+    }
+    const after = trace.segments[trace.segments.length - 1];
+    steersBefore(after === undefined ? 0 : after.ordinal + 1, true);
+    return rows;
+  }, [trace]);
   const rows = useListTransitions(
     keyed,
     keyOf,
@@ -153,6 +171,25 @@ export function TraceCard(): JSX.Element | null {
         }${edges.bottom ? " has-fog-bottom" : ""}`}
       >
         {rows.map((row) => {
+          if (row.item.kind === "steer") {
+            // The Trailblazer's words, where 板砖 took them: their avatar,
+            // ringed in their colour, then the words — no label.
+            return (
+              <li
+                key={row.key}
+                className={`trace-card__steer${rowPhaseClass(row.phase)}`}
+                aria-hidden={row.phase === "leave" || undefined}
+              >
+                <SpeakerAvatar speaker="trailblazer" t={t} />
+                <span
+                  className="trace-card__text"
+                  {...hoverTipProps(row.item.text, { whenClipped: true })}
+                >
+                  {row.item.text}
+                </span>
+              </li>
+            );
+          }
           const segment =
             (row.phase !== "leave"
               ? now.get(row.item.segment.ordinal)
@@ -209,9 +246,31 @@ export function TraceCard(): JSX.Element | null {
           );
         })}
       </ol>
+      {/* Live control (ADR 0085 amendment 2026-11-04): the run's record
+          lives on its row in the chat, since this card leaves after it. */}
+      {trace.live && open && (
+        <div className="trace-card__actions">
+          <button
+            type="button"
+            className="trace-card__action"
+            onClick={() => runShortcut("stopRun")}
+          >
+            {t("run.stop")}
+          </button>
+        </div>
+      )}
     </section>
   );
 }
+
+/** A row of the card's timeline: a phase node, or a steer. */
+type CardRow =
+  | {
+      readonly id: string;
+      readonly kind: "segment";
+      readonly segment: TraceSegment;
+    }
+  | { readonly id: string; readonly kind: "steer"; readonly text: string };
 
 /**
  * The node in flight: its phase and current step, and how many lines the
@@ -391,7 +450,7 @@ function useTickerFrame(
   return frame;
 }
 
-const EMPTY: readonly TraceSegment[] = [];
+const EMPTY: readonly CardRow[] = [];
 const keyOf = (k: { readonly id: string }): string => k.id;
 
 /** Localized verb via the record rows' own map; an unknown verb (a newer

@@ -715,6 +715,21 @@ export const zh = {
   "trace.live.lineOne": "1 行",
   "trace.live.lines": "{n} 行",
   "trace.live.noOutput": "尚无输出",
+  // A run of 板砖's in the chat, on the card and in its own tab (ADR 0085
+  // §9, amendments 2026-11-04). The device's own state words.
+  "run.state.working": "处理中",
+  "run.state.verifying": "验证中",
+  "run.state.waiting": "等待批准",
+  "run.record": "完整记录",
+  "run.record.openAria": "打开这次运行的完整记录",
+  "run.tab": "差分协处理器 · 完整记录",
+  "run.tab.gone":
+    "这次运行已不在已加载的记录里。在对话里加载更早的记录后，再从它那一行打开。",
+  "run.tab.empty": "尚无记录",
+  "run.stop": "停止运行",
+  "run.undoAll": "撤销本轮改动",
+  "run.speaker.trailblazer": "开拓者",
+  "run.speaker.herta": "黑塔",
   // 仓库 rail card (ADR 0058): the workspace's repository, under the device.
   "repo.card.title": "仓库",
   "repo.card.clean": "工作区干净",

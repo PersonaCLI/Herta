@@ -13,22 +13,6 @@ const step = (body: string): SystemBlock => ({
   label: "差分协处理器",
   body,
 });
-const done = (
-  body: string,
-  markerSummary?: SystemBlock["markerSummary"],
-): SystemBlock => ({
-  kind: "system",
-  label: "差分协处理器",
-  body,
-  role: "done-marker",
-  ...(markerSummary !== undefined ? { markerSummary } : {}),
-});
-const noop = (): SystemBlock => ({
-  kind: "system",
-  label: "差分协处理器",
-  body: "无产出 — 这次没有触发任何文件、目录或命令操作。",
-  role: "noop-marker",
-});
 
 /** Existing cases render under the default UI locale "en" and assert English
  *  labels; record labels now follow the SESSION lang (this change), so default
@@ -41,80 +25,22 @@ function A(
   return <ActivityBlock lang={lang} {...rest} />;
 }
 
-describe("ActivityBlock", () => {
-  it("running: one collapsed line with LED, latest step, and live duration", () => {
+describe("ActivityBlock — a group that stands on its own line", () => {
+  // 板砖's runs have their own row since ADR 0085 (RunRow.test.tsx); what is
+  // left here is the line every other group keeps: the chip, a click that
+  // opens its quiet history, and nothing live.
+  it("is never live: no pulsing LED, no shimmer, no duration", () => {
     const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading scripts"), step("Writing a.ts")]}
-        active={true}
-        turnStartedAt={Date.now() - 3000}
-        backendStartedAt={Date.now() - 3000}
-      />,
+      <A blocks={[step("Reading scripts"), step("Writing a.ts")]} />,
     );
-    // Default-collapsed while running — the panel is mounted (for the reveal
-    // animation) but not open.
     expect(
-      container.querySelector(".activity-line__history.is-open"),
+      container.querySelector(".activity-line__led.is-pulsing"),
     ).toBeNull();
-    expect(container.querySelector(".activity-block")).toBeNull();
-    const led = container.querySelector(".activity-line__led");
-    expect(led).not.toBeNull();
-    expect(led?.classList.contains("is-pulsing")).toBe(true);
-    expect(screen.getByText("Coprocessor")).toBeInTheDocument();
-    // The swap line shows the LATEST step.
-    expect(container.querySelector(".swap-text__in")?.textContent).toBe(
-      "Writing a.ts",
-    );
-    // …and it shimmers (continuous with the pending 处理中… shimmer) so the
-    // working line reads as live even between step changes.
-    expect(
-      container
-        .querySelector(".swap-text__in")
-        ?.classList.contains("is-shimmer"),
-    ).toBe(true);
-    expect(container.querySelector(".activity-line__duration")).not.toBeNull();
+    expect(container.querySelector(".swap-text")).toBeNull();
+    expect(container.querySelector(".activity-line__duration")).toBeNull();
   });
 
-  it("running: the live line shows the latest OP, never a result row (bug 3)", () => {
-    const { container } = renderWithLocale(
-      <A
-        blocks={[
-          step("Running python3 scripts/merge_sort.py"),
-          step("↳ exit 1 · 0 lines"),
-        ]}
-        active={true}
-        turnStartedAt={Date.now() - 3000}
-        backendStartedAt={Date.now() - 3000}
-      />,
-    );
-    // "↳ exit 1 · 0 lines" as the "current activity" reads wrong — the op
-    // that produced it stays the honest in-flight label.
-    expect(container.querySelector(".swap-text__in")?.textContent).toBe(
-      "Running python3 scripts/merge_sort.py",
-    );
-  });
-
-  it("thinking: the live line says so instead of the last step, which would read as still running (owner 2026-10-12)", () => {
-    for (const [lang, text] of [
-      ["en", "Thinking…"],
-      ["zh", "思考中…"],
-    ] as const) {
-      const { container, unmount } = renderWithLocale(
-        <A
-          blocks={[step("Running npm test"), step("↳ exit 0 · 12 lines")]}
-          active={true}
-          thinking={true}
-          turnStartedAt={Date.now() - 9000}
-          backendStartedAt={Date.now() - 9000}
-          lang={lang}
-        />,
-      );
-      expect(container.querySelector(".swap-text__in")?.textContent).toBe(text);
-      unmount();
-    }
-  });
-
-  it("localizes op verbs from the digest under zh, keeping the canonical icon (bug 4)", () => {
+  it("localizes op verbs from the digest under zh in its rows, keeping the canonical icon (bug 4)", () => {
     const opStep = (
       verb: "Reading" | "Writing" | "Running",
       arg: string,
@@ -125,22 +51,12 @@ describe("ActivityBlock", () => {
       digest: { kind: "op", verb, arg },
     });
     const { container } = renderWithLocale(
-      <A
-        lang="zh"
-        blocks={[opStep("Writing", "scripts/a.py")]}
-        active={true}
-        turnStartedAt={Date.now() - 3000}
-        backendStartedAt={Date.now() - 3000}
-      />,
+      <A lang="zh" blocks={[opStep("Writing", "scripts/a.py")]} />,
       { locale: "zh" },
     );
     // Display verb localized (D7: display-only — the canonical body keeps
-    // the English verb; that is what Herta's prompt reads).
-    expect(container.querySelector(".swap-text__in")?.textContent).toBe(
-      "写入 scripts/a.py",
-    );
-    // Expanded history rows localize too, with the icon still keyed off the
-    // canonical English body.
+    // the English verb; that is what Herta's prompt reads), with the icon
+    // still keyed off the canonical English body.
     fireEvent.click(container.querySelector(".activity-line") as Element);
     expect(
       container.querySelector(".activity-line__history .activity-step__body")
@@ -151,76 +67,14 @@ describe("ActivityBlock", () => {
     ).not.toBeNull();
   });
 
-  it("running: click expands the quiet history rows", () => {
-    const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading scripts"), step("Writing a.ts")]}
-        active={true}
-        turnStartedAt={Date.now() - 3000}
-        backendStartedAt={Date.now() - 3000}
-      />,
-    );
-    expect(screen.getByRole("button")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    fireEvent.click(screen.getByRole("button"));
-    expect(screen.getByRole("button")).toHaveAttribute("aria-expanded", "true");
-    const history = container.querySelector(".activity-line__history.is-open");
-    expect(history).not.toBeNull();
-    expect(history?.textContent).toContain("Reading scripts");
-    // The active row still shimmers in the history.
-    expect(container.querySelectorAll(".activity-step.is-active")).toHaveLength(
-      1,
-    );
-  });
-
-  it("done: static dot, summary, duration label, chevron; toggles open", () => {
-    const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading scripts"), done("完成 · 2 files")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
-    expect(screen.getByText("完成 · 2 files")).toBeInTheDocument();
-    // Mounted but collapsed before the click.
-    expect(
-      container.querySelector(".activity-line__history.is-open"),
-    ).toBeNull();
-    expect(
-      container.querySelector(".activity-line__led.is-pulsing"),
-    ).toBeNull();
-    expect(
-      container.querySelector("svg.activity-line__chevron"),
-    ).not.toBeNull();
-    // No swap line when not running.
-    expect(container.querySelector(".swap-text")).toBeNull();
-    fireEvent.click(screen.getByRole("button"));
-    expect(
-      container.querySelector(".activity-line__history.is-open"),
-    ).not.toBeNull();
-    expect(screen.getByText("Reading scripts")).toBeInTheDocument();
-  });
-
   it("the history's rows mount on the FIRST expand and stay mounted after a collapse (ADR 0068 §11)", () => {
-    // A session carries every dispatch it ever ran; before this, every
-    // historical group built and mounted all of its rows — and folded every
-    // write's diff — at session switch, for a panel nobody had opened.
-    // Measured in jsdom, 40 groups × 13 rows with four 300-line diffs each:
-    // mount 531 → 72 ms, 5401 → 401 DOM nodes.
+    // A session carries many groups; before this, every historical group
+    // built and mounted all of its rows — and folded every write's diff — at
+    // session switch, for a panel nobody had opened. Measured in jsdom, 40
+    // groups × 13 rows with four 300-line diffs each: mount 531 → 72 ms,
+    // 5401 → 401 DOM nodes.
     const { container } = renderWithLocale(
-      <A
-        blocks={[
-          step("Reading scripts"),
-          step("Writing a.ts"),
-          done("完成 · 1 file"),
-        ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
+      <A blocks={[step("Reading scripts"), step("Writing a.ts")]} />,
     );
     // Collapsed at mount: the panel exists (the reveal needs an element to
     // size), its rows do not.
@@ -246,12 +100,7 @@ describe("ActivityBlock", () => {
     // cursor turned into a pointer over empty space and clicking there
     // expanded the row, with no affordance anywhere near the click.
     const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading scripts"), done("完成 · 2 files")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={Date.now() - 5000}
-      />,
+      <A blocks={[step("Reading scripts")]} />,
     );
     const row = container.querySelector(".activity-line-row");
     const button = screen.getByRole("button");
@@ -259,332 +108,18 @@ describe("ActivityBlock", () => {
     // The button is a CHILD of the full-width row, not the row itself.
     expect(button.classList.contains("activity-line-row")).toBe(false);
     expect(row?.contains(button)).toBe(true);
-    // The duration sits in the row, OUTSIDE the toggle: it is a fact about
-    // the run, not part of the control's label — and it was what pinned the
-    // button to the full row width.
-    const duration = container.querySelector(".activity-line__duration");
-    expect(duration).not.toBeNull();
-    expect(button.contains(duration)).toBe(false);
-    // Everything the user can see as "the toggle" is still inside it.
+    // Everything the user can see as "the toggle" is inside it.
     expect(button.querySelector(".activity-line__led")).not.toBeNull();
-    expect(button.querySelector(".activity-line__summary")).not.toBeNull();
     expect(button.querySelector("svg.activity-line__chevron")).not.toBeNull();
-  });
-
-  it("done with only a terminal marker (no steps): no chevron, nothing to expand", () => {
-    // Bug 1: a group that is just 完成 · 1 file has no operational rows behind
-    // the chevron — so there must be no chevron, no toggle, no empty panel.
-    const { container } = renderWithLocale(
-      <A
-        blocks={[done("完成 · 1 file")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
-    expect(screen.getByText("完成 · 1 file")).toBeInTheDocument();
-    expect(container.querySelector("svg.activity-line__chevron")).toBeNull();
-    expect(container.querySelector(".activity-line__history")).toBeNull();
-    // The line is not an expandable toggle, and clicking reveals nothing.
-    const btn = screen.getByRole("button");
-    expect(btn).not.toHaveAttribute("aria-expanded");
-    fireEvent.click(btn);
-    expect(container.querySelector(".activity-line__history")).toBeNull();
-  });
-
-  it("structured marker: composes a localized summary (en) instead of the body", () => {
-    renderWithLocale(
-      <A
-        blocks={[
-          step("Reading scripts"),
-          done("完成 · 2 files", {
-            kind: "done",
-            state: "completed",
-            fileCount: 2,
-            riskCount: 0,
-          }),
-        ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-      { locale: "en" },
-    );
-    // The English header reads from the structured marker, NOT the canonical
-    // Chinese body — the body never appears in en mode.
-    expect(screen.getByText("Done · 2 files")).toBeInTheDocument();
-    expect(screen.queryByText("完成 · 2 files")).toBeNull();
-  });
-
-  it("structured marker: composes the same summary in zh", () => {
-    renderWithLocale(
-      <A
-        lang="zh"
-        blocks={[
-          done("完成 · 1 file · tests 1/1", {
-            kind: "done",
-            state: "completed",
-            fileCount: 1,
-            tests: { passed: 1, failed: 0 },
-            riskCount: 0,
-          }),
-        ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-      { locale: "zh" },
-    );
-    expect(screen.getByText("完成 · 1 个文件 · 测试 1/1")).toBeInTheDocument();
-  });
-
-  it("noop marker: renders the localized no-output word (en)", () => {
-    renderWithLocale(
-      <A
-        blocks={[noop()]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-      {
-        locale: "en",
-      },
-    );
-    expect(screen.getByText("No output")).toBeInTheDocument();
-  });
-
-  it("shows no duration for a historical group (never active, no start)", () => {
-    const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading"), done("完成 · 1 file")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
-    expect(container.querySelector(".activity-line__duration")).toBeNull();
-  });
-
-  it("anchors elapsed duration to backendStartedAt, NOT turnStartedAt, when both are set", () => {
-    // turnStartedAt is 80s ago (Herta's turn start, inflated by speech time).
-    // backendStartedAt is 3s ago (actual 板砖 dispatch).
-    // The displayed duration must be ~3s, NOT ~1:20.
-    const turnStartedAt = Date.now() - 80_000;
-    const backendStartedAt = Date.now() - 3_000;
-    const { container } = renderWithLocale(
-      <A
-        blocks={[step("Reading a.ts")]}
-        active={true}
-        turnStartedAt={turnStartedAt}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    const durationEl = container.querySelector(".activity-line__duration");
-    expect(durationEl).not.toBeNull();
-    const text = durationEl?.textContent ?? "";
-    // Should show something like "3s" — definitely not "1:20" or anything over 10s.
-    expect(text).toMatch(/^\d+s$/);
-    const seconds = parseInt(text, 10);
-    expect(seconds).toBeLessThan(10);
-  });
-
-  it("intermediate split part (frozen, not the 完成 part): shows no duration", () => {
-    // A backend run split by a beat: this part was live, then a beat interrupted
-    // it (active → false) with NO terminal marker. Only the final 完成 part shows
-    // the total, so an intermediate part renders no duration (one per run).
-    const backendStartedAt = Date.now() - 3000;
-    const { container, rerender } = renderWithLocale(
-      <A
-        blocks={[step("Reading a.ts")]}
-        active={true}
-        turnStartedAt={null}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    // Active → a live duration shows.
-    expect(container.querySelector(".activity-line__duration")).not.toBeNull();
-    // Beat interrupts: freeze, still no terminal marker.
-    rerender(
-      <A
-        blocks={[step("Reading a.ts")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    expect(container.querySelector(".activity-line__duration")).toBeNull();
-  });
-
-  it("final split part (frozen, with 完成): shows the single total duration", () => {
-    const backendStartedAt = Date.now() - 3000;
-    const { container, rerender } = renderWithLocale(
-      <A
-        blocks={[step("Reading a.ts")]}
-        active={true}
-        turnStartedAt={null}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    // The run completes: 完成 lands and the part goes inactive → shows the total.
-    rerender(
-      <A
-        blocks={[step("Reading a.ts"), done("完成 · 1 file")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    expect(container.querySelector(".activity-line__duration")).not.toBeNull();
-  });
-
-  it("born-done final part (beat split it before 完成): shows the run total from backendStartedAt", () => {
-    // The last beat fired right before 完成, so the final part is JUST [完成] and
-    // was never active — no live timing. It must still show the whole-run total
-    // (完成.at − backendStartedAt), frozen while backendStartedAt is still set.
-    const now = Date.now();
-    const backendStartedAt = now - 5000;
-    const doneBlock: SystemBlock = {
-      kind: "system",
-      label: "差分协处理器",
-      body: "完成 · 1 file",
-      role: "done-marker",
-      at: new Date(now).toISOString(),
-    };
-    const { container } = renderWithLocale(
-      <A
-        blocks={[doneBlock]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={backendStartedAt}
-      />,
-    );
-    const durationEl = container.querySelector(".activity-line__duration");
-    expect(durationEl).not.toBeNull();
-    // 完成 at `now`, backend started 5s earlier → total reads 5s.
-    expect(durationEl?.textContent ?? "").toMatch(/\b5s\b/);
   });
 
   it("record labels follow the SESSION lang, not the UI locale (parity with @Brick)", () => {
     // UI locale is EN (renderWithLocale default) but the session is zh: the
-    // coprocessor chip renders in Chinese, proving the activity line tracks the
-    // session interaction language, not the app chrome.
-    renderWithLocale(
-      <A
-        lang="zh"
-        blocks={[step("Reading a.ts")]}
-        active={true}
-        turnStartedAt={Date.now() - 1000}
-        backendStartedAt={Date.now() - 1000}
-      />,
-    );
+    // chip renders in Chinese, proving the line tracks the session
+    // interaction language, not the app chrome.
+    renderWithLocale(<A lang="zh" blocks={[step("Reading a.ts")]} />);
     expect(screen.getByText("差分协处理器")).toBeInTheDocument();
     expect(screen.queryByText("Coprocessor")).toBeNull();
-  });
-
-  it("the done marker's commit sha opens the commit beside the record; plain text without a viewer (ADR 0059)", async () => {
-    const marker = done("完成 · 1 file · 提交 a1b2c3d", {
-      kind: "done",
-      state: "completed",
-      fileCount: 1,
-      riskCount: 0,
-      git: { commit: "a1b2c3d" },
-    });
-    // No viewer: the sha is text inside the headline.
-    const plain = renderWithLocale(
-      <A
-        blocks={[step("Running git commit"), marker]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
-    expect(
-      plain.container.querySelector(".activity-line__summary")?.textContent,
-    ).toContain("a1b2c3d");
-    expect(plain.container.querySelector(".file-open-name")).toBeNull();
-    plain.unmount();
-
-    const mock = createMockHertaBridge();
-    const readWorkspaceCommit = vi.fn(async () => ({
-      ok: true as const,
-      commit: {
-        sha: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
-        shortSha: "a1b2c3d",
-        subject: "feat: the work",
-        body: "",
-        author: "Tester",
-        authoredAt: "2026-09-07T10:00:00+08:00",
-        parents: [],
-        files: [],
-        filesTotal: 0,
-        patch: "",
-        patchTruncated: false,
-      },
-    }));
-    Object.assign(mock.bridge, {
-      readWorkspaceFile: vi.fn(async () => ({
-        ok: false as const,
-        reason: "not_found" as const,
-      })),
-      readWorkspaceCommit,
-    });
-    const h = renderWithSession(
-      <FileViewerProvider>
-        <A
-          blocks={[step("Running git commit"), marker]}
-          active={false}
-          turnStartedAt={null}
-          backendStartedAt={null}
-        />
-        <FileViewerPanel />
-      </FileViewerProvider>,
-      { mock },
-    );
-    h.openSession("s1");
-    const sha = h.container.querySelector(
-      ".activity-line__summary .file-open-name",
-    );
-    expect(sha?.textContent).toBe("a1b2c3d");
-    expect(sha?.getAttribute("aria-label")).toBe("View commit a1b2c3d");
-    fireEvent.click(sha as Element);
-    await waitFor(() =>
-      expect(readWorkspaceCommit).toHaveBeenCalledWith("s1", "a1b2c3d"),
-    );
-    await waitFor(() =>
-      expect(
-        h.container.querySelector(".file-viewer")?.getAttribute("data-kind"),
-      ).toBe("commit"),
-    );
-    // The click opened the commit, not the history toggle.
-    expect(
-      h.container.querySelector(".activity-line__history.is-open"),
-    ).toBeNull();
-  });
-
-  it("mirror: UI locale zh but session en → English chip + done-marker", () => {
-    const { container } = renderWithLocale(
-      <A
-        lang="en"
-        blocks={[
-          step("Reading a.ts"),
-          done("完成 · 1 file", {
-            kind: "done",
-            state: "completed",
-            fileCount: 1,
-            riskCount: 0,
-          }),
-        ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-      { locale: "zh" },
-    );
-    expect(screen.getByText("Coprocessor")).toBeInTheDocument();
-    expect(screen.queryByText("差分协处理器")).toBeNull();
-    // The done-marker summary is composed from the structured markerSummary in
-    // English too — "Done", not 完成.
-    expect(container.textContent).toContain("Done");
   });
 });
 
@@ -605,12 +140,7 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
 
   it("defaults OPEN — the filenames are the point of the row", () => {
     const { container } = renderWithLocale(
-      <A
-        blocks={[attach("spec.md"), attach("notes.txt")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
+      <A blocks={[attach("spec.md"), attach("notes.txt")]} />,
     );
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
       "true",
@@ -624,14 +154,7 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
   });
 
   it("the user can still collapse it", () => {
-    const { container } = renderWithLocale(
-      <A
-        blocks={[attach("spec.md")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
+    const { container } = renderWithLocale(<A blocks={[attach("spec.md")]} />);
     fireEvent.click(screen.getByRole("button"));
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
       "false",
@@ -642,14 +165,7 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
   });
 
   it("a mixed group counts as backend activity and stays collapsed", () => {
-    renderWithLocale(
-      <A
-        blocks={[attach("spec.md"), step("Reading a.ts")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
+    renderWithLocale(<A blocks={[attach("spec.md"), step("Reading a.ts")]} />);
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
       "false",
     );
@@ -674,9 +190,6 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
             },
           },
         ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
       />,
     );
     const row = screen.getByText(/jiuwen-vs-aisf/);
@@ -718,9 +231,6 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
             },
           },
         ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
         onRemoveAttachment={(p) => () => removed.push(p)}
       />,
     );
@@ -781,9 +291,6 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
               },
             },
           ]}
-          active={false}
-          turnStartedAt={null}
-          backendStartedAt={null}
           onRemoveAttachment={(p) => () => removed.push(p)}
         />
         <FileViewerPanel />
@@ -825,14 +332,7 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
     // Conversation withholds the factory while a turn runs — the removal
     // rides the same out-of-turn record write as the attach, so an ✕ that
     // could only earn a refusal is not rendered.
-    const { container } = renderWithLocale(
-      <A
-        blocks={[attach("spec.md")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
+    const { container } = renderWithLocale(<A blocks={[attach("spec.md")]} />);
     expect(container.querySelector(".activity-step__remove")).toBeNull();
   });
 
@@ -853,9 +353,6 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
             },
           },
         ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
       />,
     );
     expect(
@@ -867,12 +364,7 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
     // Recency-gated off the block's own `at` stamp, decided once at mount —
     // no store flag, no cross-component state (the 2026-07-24 audit class).
     const live = renderWithLocale(
-      <A
-        blocks={[attach("spec.md", { at: new Date().toISOString() })]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
+      <A blocks={[attach("spec.md", { at: new Date().toISOString() })]} />,
     );
     expect(live.container.querySelector(".is-attach-enter")).not.toBeNull();
     live.unmount();
@@ -884,23 +376,13 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
             at: new Date(Date.now() - 60_000).toISOString(),
           }),
         ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
       />,
     );
     expect(loaded.container.querySelector(".is-attach-enter")).toBeNull();
     loaded.unmount();
 
     // No timestamp at all (pre-stamp records): never animate.
-    const unstamped = renderWithLocale(
-      <A
-        blocks={[attach("spec.md")]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
-      />,
-    );
+    const unstamped = renderWithLocale(<A blocks={[attach("spec.md")]} />);
     expect(unstamped.container.querySelector(".is-attach-enter")).toBeNull();
   });
 
@@ -913,9 +395,6 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
             at: new Date().toISOString(),
           },
         ]}
-        active={false}
-        turnStartedAt={null}
-        backendStartedAt={null}
       />,
     );
     expect(container.querySelector(".is-attach-enter")).toBeNull();

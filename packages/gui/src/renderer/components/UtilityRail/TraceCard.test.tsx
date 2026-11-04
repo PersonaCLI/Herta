@@ -3,6 +3,8 @@ import { act } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LiveToolSnapshot, LiveToolView } from "../../ipc/bridge-types.js";
 import { renderWithSession } from "../../testing/renderWithSession.js";
+import { Composer } from "../Workspace/Composer.js";
+import { WorkspaceRefsProvider } from "../Workspace/WorkspaceRefs.js";
 import {
   CARD_HOLD_MS,
   CARD_SLIDE_MS,
@@ -886,5 +888,55 @@ describe("pendingSteps", () => {
       steps: [],
       focus: null,
     });
+  });
+});
+
+describe("the card's steers and its stop (ADR 0085 amendment 2026-11-04)", () => {
+  const steer = (text: string): TerminalRecordBlock =>
+    ({ kind: "user", text, steer: true }) as TerminalRecordBlock;
+
+  it("a steer stands between the nodes where 板砖 took it: its speaker's avatar, then the words", () => {
+    const h = renderWithSession(<TraceCard />);
+    push(
+      h,
+      user(),
+      op("Reading", "a.ts"),
+      steer("先别动 api 目录"),
+      op("Reading", "b.ts"),
+    );
+    const list = h.container.querySelector(".trace-card__list") as Element;
+    expect(
+      Array.from(list.children).map((li) =>
+        li.classList.contains("trace-card__steer") ? "steer" : "node",
+      ),
+    ).toEqual(["node", "steer", "node"]);
+    const row = list.querySelector(".trace-card__steer") as HTMLElement;
+    // In the session's language, as the card is; no 插话 label.
+    expect(
+      row.querySelector('.speaker-avatar.is-trailblazer[aria-label="开拓者"]'),
+    ).not.toBeNull();
+    expect(row.textContent).toBe("先别动 api 目录");
+  });
+
+  it("停止运行 while the run works is the composer's Stop; the card held after the run has none", async () => {
+    const h = renderWithSession(
+      <WorkspaceRefsProvider>
+        <TraceCard />
+        <Composer />
+      </WorkspaceRefsProvider>,
+    );
+    h.startTurn();
+    h.startBackend();
+    push(h, user(), op("Reading", "a.ts"));
+    const stop = h.container.querySelector(
+      ".trace-card__action",
+    ) as HTMLElement;
+    expect(stop.textContent).toBe("停止运行");
+    await act(async () => {
+      stop.click();
+    });
+    expect(h.mock.calls.interrupt).toHaveLength(1);
+    push(h, doneMarker);
+    expect(h.container.querySelector(".trace-card__action")).toBeNull();
   });
 });

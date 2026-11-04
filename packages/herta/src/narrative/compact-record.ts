@@ -200,6 +200,9 @@ export function buildCompactionBody(
   /** The done-marker passed through after this run in her verdict turn
    *  (State 1): an excerpt whose lines it shows folds to the read. */
   shownBy?: SystemBlock,
+  /** The header in place of the history's: a live run's earlier steps
+   *  (ADR 0085 §3). */
+  header: string = COMPACTION_TEXT[lang].header,
 ): string {
   // 1. Each row as a line of what was done (ADR 0079 §2); a failed command
   //    names the command its result row answers. Rows written before the
@@ -266,7 +269,6 @@ export function buildCompactionBody(
   }
 
   // 2. Assemble with header.
-  const header = COMPACTION_TEXT[lang].header;
   return `${header}\n${kept.map((l) => `- ${l}`).join("\n")}`;
 }
 
@@ -340,7 +342,7 @@ export interface CompactOptions {
  */
 /** An attachment block (ADR 0033) — the one system-block shape produced by a
  *  USER act rather than by the bridge or the backend. */
-function isAttachmentBlock(b: TerminalRecordBlock): b is SystemBlock {
+export function isAttachmentBlock(b: TerminalRecordBlock): b is SystemBlock {
   return b.kind === "system" && b.digest?.kind === "attachment";
 }
 
@@ -818,7 +820,18 @@ export function compactRecordForPrompt(
   const minRunSize = opts?.minRunSize ?? 2;
   const lang = opts?.lang ?? "zh";
 
-  const { lastSpeechIdx, userIdxs } = recordLandmarks(record);
+  const { userIdxs } = recordLandmarks(record);
+  // Her last speech that could be a verdict: an answer to talk while the run
+  // worked is not one (ADR 0085 §3), and her view draws it after the run.
+  // With no such answer in the record this is the landmarks' last speech.
+  let lastSpeechIdx = -1;
+  for (let k = record.length - 1; k >= 0; k--) {
+    const b = record[k];
+    if (b?.kind === "herta" && b.surface === "speech" && b.duringRun !== true) {
+      lastSpeechIdx = k;
+      break;
+    }
+  }
 
   // The attachment folds: decided here over `record` in the main-turn shape,
   // or handed in by a caller that decided over a larger record this is a
@@ -857,7 +870,8 @@ export function compactRecordForPrompt(
     // therefore precisely the one generating Herta's SYNTHESIS speech: she
     // reported the run without naming which files changed or what was still
     // open, and ADR 0025's unfinished-todo inheritance was cut at that point.
-    if (b.kind === "herta" && b.surface === "speech") break;
+    if (b.kind === "herta" && b.surface === "speech" && b.duringRun !== true)
+      break;
     if (b.kind === "system" && b.role === "done-marker") {
       passThroughIdx = k;
       break;

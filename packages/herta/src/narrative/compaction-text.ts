@@ -28,6 +28,11 @@ export const COMPACTION_TEXT = {
   zh: {
     /** Header of a compacted contiguous-system-run summary block. */
     header: "板砖之前做过的事（细节不在手边）：",
+    /** A run still working while the Trailblazer talks (ADR 0085 §3): its
+     *  state, named, as the first line of the run in her view… */
+    runLive: (steps: number) => `板砖还在跑，这一趟到现在 ${steps} 步。`,
+    /** …and the header of its earlier steps, folded. */
+    runLiveHeader: "这一趟前面做过的（细节不在手边）：",
     /** Appended to an excerpt citation once its text is gone. Shared with the
      *  attachment citation: the fact is identical ("the body is no longer in
      *  front of you"), and two phrasings for one fact would only invite the
@@ -87,6 +92,9 @@ export const COMPACTION_TEXT = {
   },
   en: {
     header: "What 板砖 did before (details not at hand):",
+    runLive: (steps: number) =>
+      `板砖 is still running: ${steps} step${steps === 1 ? "" : "s"} so far.`,
+    runLiveHeader: "Earlier in this run (details not at hand):",
     excerptElided: "body elided",
     searchElided: "matched lines elided",
     attachmentUnreadable: {

@@ -48,6 +48,10 @@ export interface UserBlock {
    *  regenerate after a crash re-runs it as a resume, not as chat. Never
    *  enters the prompt (the serializer reads `text`). */
   readonly resume?: true;
+  /** Talk while 板砖's run worked (ADR 0085 §2–§3): said to Herta, not to
+   *  板砖 — a steer is the other kind — and not a turn of its own. Her view
+   *  draws it after the run it fell in. Absent on every other user block. */
+  readonly duringRun?: true;
   /** The workspace paths the user mentioned with the composer's `@` (ADR
    *  0072 amendment 2026-10-20), as they appear in `text`. The text keeps the
    *  paths — 板砖, the title and the search read them as written — and this
@@ -106,6 +110,11 @@ export interface HertaBlock {
   readonly surface: "speech" | "thought";
   readonly text: string;
   readonly selfCorrection?: string;
+  /** Her answer to talk while 板砖's run worked (ADR 0085 §2–§3): her view
+   *  draws it after the run, with the talk it answers, and it is not her
+   *  verdict on the run. Absent on every other block, her checkpoints
+   *  included. */
+  readonly duringRun?: true;
   /** Wall-clock ISO time the block was emitted/persisted. See `UserBlock.at`. */
   readonly at?: string;
 }

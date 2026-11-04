@@ -10,6 +10,7 @@ import {
   type TerminalRecord,
 } from "@herta/core";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_ACTOR_HINTS } from "./actor-hints.js";
 import { type ActorTurnDeps, runActorCompletionTurn } from "./actor-turn.js";
 import { makeFireAnswer } from "./actor-turn-beat.js";
 import { COMPACTION_TEXT } from "./compaction-text.js";
@@ -105,6 +106,10 @@ describe("makeFireAnswer — her answer to talk during a run", () => {
       prompt.indexOf(COMPACTION_TEXT.zh.runLive(1)),
     );
     expect(prompt.endsWith("（我 说）\n")).toBe(true);
+    // Her own hint, not the speech hint (step 5: under that one the lab's
+    // answers passed work on without @板砖 and once made up a fact).
+    expect(prompt).toContain(DEFAULT_ACTOR_HINTS.beatTalk);
+    expect(prompt).not.toContain(DEFAULT_ACTOR_HINTS.phase2Speech);
   });
 
   it("a live @板砖 while the run can take it names the sentence that steers; after the run it is a mention", async () => {

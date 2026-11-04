@@ -80,7 +80,7 @@ const attachment: SystemBlock = {
 
 const dispatch = herta("@板砖 查一下登录为什么没反应");
 
-describe("groupRunsForHerta — each run after its dispatch, the talk after it (ADR 0085 §3)", () => {
+describe("groupRunsForHerta — the run still working after its dispatch, the talk after it (ADR 0085 §3)", () => {
   it("with no talk during a run nothing moves: the same array comes back", () => {
     const records: TerminalRecord[] = [
       [
@@ -115,33 +115,56 @@ describe("groupRunsForHerta — each run after its dispatch, the talk after it (
     }
   });
 
-  it("talk during an ended run, with what came with it and her answer, follows the run's marker", () => {
-    const r1 = op("Reading", "a.ts");
-    const r2 = op("Writing", "a.ts");
+  it("an ended run is drawn as it happened: the talk, what came with it and her answer stay where they fell (the lab, owner 2026-11-04)", () => {
     const record: TerminalRecord = [
       user("修一下"),
       dispatch,
-      r1,
+      op("Reading", "a.ts"),
       talk("顺便问下，周末那个会几点？"),
       attachment,
-      answer("三点。"),
-      r2,
+      answer("记不得了，你说。"),
+      op("Writing", "a.ts"),
       marker,
       herta("修好了。"),
     ];
     const g = groupRunsForHerta(record);
+    expect(g.record).toBe(record);
     expect(g.live).toBeNull();
-    expect(g.record).toEqual([
+  });
+
+  it("only the run still working moves: an earlier run with talk stays as it happened", () => {
+    const earlier: TerminalRecord = [
       user("修一下"),
+      dispatch,
+      op("Reading", "a.ts"),
+      talk("几点了？"),
+      answer("不知道。"),
+      marker,
+      herta("修好了。"),
+    ];
+    const r1 = op("Reading", "b.ts");
+    const r2 = op("Reading", "c.ts");
+    const record: TerminalRecord = [
+      ...earlier,
+      user("再看看 b"),
+      dispatch,
+      r1,
+      talk("进展如何？"),
+      r2,
+    ];
+    const g = groupRunsForHerta(record);
+    expect(g.record).toEqual([
+      ...earlier,
+      user("再看看 b"),
       dispatch,
       r1,
       r2,
-      marker,
-      talk("顺便问下，周末那个会几点？"),
-      attachment,
-      answer("三点。"),
-      herta("修好了。"),
+      talk("进展如何？"),
     ]);
+    expect(g.live).toEqual({
+      start: earlier.length + 2,
+      end: earlier.length + 4,
+    });
   });
 
   it("her checkpoint stays inside the run; a steer stays where 板砖 took it", () => {
@@ -262,26 +285,30 @@ describe("her view with talk during a run (ADR 0085 §3)", () => {
     expect(view).toContain("（开拓者 说）\n先别动 api\n（/开拓者 说）");
   });
 
-  it("her answer during the run is not her verdict: the marker keeps its roll-up for the verdict turn", () => {
+  it("an ended run reads in time order: the talk and her answer where they fell, the run's report last, its roll-up for the verdict turn", () => {
     const record: TerminalRecord = [
       user("修一下登录"),
       dispatch,
       op("Reading", "src/Login.jsx"),
-      talk("周末那个会几点？"),
-      answer("三点。"),
+      talk("进展如何？"),
+      answer("还在跑，刚读完 Login.jsx。"),
       op("Writing", "src/Login.jsx"),
       marker,
     ];
     const view = serializeTerminalRecord(record);
     // State 1: the changed file reaches the prompt that writes her verdict.
-    expect(view).toContain("src/Login.jsx");
     const markerAt = view.indexOf("改了：src/Login.jsx");
     expect(markerAt).toBeGreaterThan(-1);
-    // The talk and her answer follow the run.
-    expect(view.indexOf("周末那个会几点？")).toBeGreaterThan(markerAt);
-    expect(view.indexOf("三点。")).toBeGreaterThan(markerAt);
-    // Anti-vacuous: had her answer counted as the verdict, the marker would
-    // have folded with its run (State 2) and the roll-up gone.
+    // The run's report is the newest thing she reads, not the talk or her
+    // mid-run "still running" (the lab: with them after the report, her
+    // verdict answered the talk again and said the run was still going).
+    expect(view.lastIndexOf("（/开拓者 说）")).toBeLessThan(markerAt);
+    expect(view.lastIndexOf("还在跑，刚读完 Login.jsx。")).toBeLessThan(
+      markerAt,
+    );
+    expect(view).not.toContain(COMPACTION_TEXT.zh.runLive(2));
+    // Her answer is not her verdict: once she speaks after the marker, it
+    // folds with its run (State 2) and the roll-up goes.
     const spoken = serializeTerminalRecord([...record, herta("修好了。")]);
     expect(spoken).not.toContain("改了：src/Login.jsx");
   });

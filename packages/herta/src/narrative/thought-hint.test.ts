@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SUPERVISOR_VETO_TEMPLATE } from "./actor-hints.js";
 import {
   actorHintTexts,
+  BEAT_HINT_TALK,
   BEAT_HINT_TOOL_FAIL,
   BEAT_HINT_VERIFICATION_FINISHED,
   BEAT_NO_BANZHUAN_CLAUSE,
@@ -272,6 +273,7 @@ describe("actorHintTexts (EN interaction slice 3b)", () => {
       expect(texts.beatNoBanzhuanClause).toBe(BEAT_NO_BANZHUAN_CLAUSE);
       expect(texts.beatVerification).toBe(BEAT_HINT_VERIFICATION_FINISHED);
       expect(texts.beatToolFail).toBe(BEAT_HINT_TOOL_FAIL);
+      expect(texts.beatTalk).toBe(BEAT_HINT_TALK);
     }
   });
 
@@ -289,6 +291,7 @@ describe("actorHintTexts (EN interaction slice 3b)", () => {
       ...en.thoughtRetry,
       en.beatVerification,
       en.beatToolFail,
+      en.beatTalk,
     ];
     for (const hint of all) {
       expect(hint.startsWith("〔")).toBe(true);
@@ -298,7 +301,7 @@ describe("actorHintTexts (EN interaction slice 3b)", () => {
     }
     // Speech-surface hints name the speech fences; thought-surface
     // hints name the thought fences.
-    for (const hint of [en.phase2Speech, ...en.speechRetry]) {
+    for (const hint of [en.phase2Speech, ...en.speechRetry, en.beatTalk]) {
       expect(hint).toContain("（我 说）");
       expect(hint).toContain("（/我 说）");
     }

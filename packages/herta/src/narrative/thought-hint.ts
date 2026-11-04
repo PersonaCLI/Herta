@@ -391,6 +391,20 @@ const BEAT_HINT_TOOL_FAIL_TEXT: Record<PromptLang, string> = {
 export const BEAT_HINT_TOOL_FAIL = BEAT_HINT_TOOL_FAIL_TEXT.zh;
 
 /**
+ * Her answer to talk while 板砖 works (ADR 0085 step 5, owner 2026-11-04:
+ * "Its own hint"). Under the speech hint, which asks for a thought her
+ * answer does not have, the lab's answers passed work on without @板砖 — so
+ * no steer reached the run — and once made up a time the record did not
+ * hold. No `{{no_banzhuan}}` clause: her @板砖 here is a steer (§4).
+ */
+const BEAT_HINT_TALK_TEXT: Record<PromptLang, string> = {
+  zh: "〔板砖还在跑，他在这当口跟我说话。下面是我回他的话，必须以（我 说）开始，以（/我 说）结束。只回他刚说的那几句：记录里有的照记录说，记录里没有的就说不知道，别编。板砖跑到哪说到哪，没跑完不下结论。他要板砖改做什么、多做什么，就写全 @板砖 把那件事交代给它，它跑着也收得到；不带 @板砖，话到不了它那儿。短，像平常说话。〕",
+  en: "〔板砖 is still running, and they're talking to me in the middle of it. What follows is my reply; it must start with （我 说） and end with （/我 说）. Answer only what they just said: what the record holds, say as the record has it; what it doesn't, say I don't know — no making things up. Say how far 板砖 has got, and give no verdict before it's done. If they want 板砖 to change course or do something more, spell out @板砖 and hand it that one thing — it gets it while it runs; without @板砖 the words never reach it. Every word in English: the markers and @板砖 are the only Chinese it carries. Short, the way I normally talk.〕",
+};
+
+export const BEAT_HINT_TALK = BEAT_HINT_TALK_TEXT.zh;
+
+/**
  * The full set of language-selectable actor hint texts (EN interaction
  * slice 3b). Shape mirrors `ActorHints` in `actor-hints.ts` minus
  * `supervisorVetoTemplate` (that default lives there), plus the shared
@@ -411,6 +425,7 @@ export interface ActorHintTexts {
   readonly beatNoBanzhuanClause: string;
   readonly beatVerification: string;
   readonly beatToolFail: string;
+  readonly beatTalk: string;
 }
 
 export function actorHintTexts(lang: PromptLang = "zh"): ActorHintTexts {
@@ -440,5 +455,6 @@ export function actorHintTexts(lang: PromptLang = "zh"): ActorHintTexts {
     beatNoBanzhuanClause: BEAT_NO_BANZHUAN_CLAUSE_TEXT[lang],
     beatVerification: BEAT_HINT_VERIFICATION_FINISHED_TEXT[lang],
     beatToolFail: BEAT_HINT_TOOL_FAIL_TEXT[lang],
+    beatTalk: BEAT_HINT_TALK_TEXT[lang],
   };
 }

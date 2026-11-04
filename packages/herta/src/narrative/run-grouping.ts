@@ -8,19 +8,27 @@ import { COMPACTION_TEXT } from "./compaction-text.js";
 import type { PromptLang } from "./prompt-lang.js";
 
 /**
- * Her view of the record, a run at a time (ADR 0085 §3).
+ * Her view of the record while a run works (ADR 0085 §3).
  *
- * What is stored keeps time order. What her prompt draws groups each of
- * 板砖's runs right after the （我 说） that dispatched it — its rows, the
- * steers it took, her checkpoints about it — and the talk that fell during
- * it follows: the Trailblazer's words to her (`duringRun`) with what came
- * with them, and her answers. Drawn in time order, a run is shredded between
- * lines of talk, and her book reads as two people talking over a scrolling
- * terminal (§3, Not taken).
+ * What is stored keeps time order. While 板砖's run still works and the
+ * Trailblazer has talked during it, her prompt draws the run right after the
+ * （我 说） that dispatched it — its rows, the steers it took, her checkpoints
+ * about it — and the talk after it: his words to her (`duringRun`) with what
+ * came with them, and her answers. Drawn in time order, a live run is
+ * shredded between lines of talk, and the question she is answering sits
+ * above rows that landed after it (§3, Not taken).
  *
- * With no talk during any run — every record before the lanes (step 3) —
- * nothing moves: the input comes back as the same array, and the view is
- * byte-identical to the one before this existed.
+ * An ended run is drawn as it happened (the lab, owner 2026-11-04: "In time
+ * order"). With the talk after an ended run's report, the newest things her
+ * verdict read were a question and her own mid-run "still running": she
+ * answered the question again and said the run was still going. In time
+ * order the run's report is the newest thing, and it is what her verdict
+ * is about.
+ *
+ * With no talk during the run still working — every record before the lanes
+ * (step 3), and every one whose runs have ended — nothing moves: the input
+ * comes back as the same array, and the view is byte-identical to the one
+ * before this existed.
  */
 export interface RunGrouping {
   /** The record in her view's order: `===` the input when nothing moved. */
@@ -31,84 +39,60 @@ export interface RunGrouping {
   readonly live: { readonly start: number; readonly end: number } | null;
 }
 
-interface Window {
-  readonly start: number;
-  /** Exclusive. */
-  end: number;
-  readonly talk: number[];
-  open: boolean;
-}
-
 /**
  * A run opens at a coprocessor row and holds every block after it until its
  * terminal marker, or until a message that opens a turn (a run cut short
- * before the bridge wrote its marker). A steer is a message to 板砖, and
- * stays inside; `duringRun` talk, the attachments that came with it, and
- * her answers are moved after the run's last block.
+ * before the bridge wrote its marker). Only the last can still be working.
+ * If it is, and talk fell during it, the run is drawn first: a steer is a
+ * message to 板砖 and stays inside, while `duringRun` talk, the attachments
+ * that came with it, and her answers move after the run's last block.
  */
 export function groupRunsForHerta(record: TerminalRecord): RunGrouping {
-  const windows: Window[] = [];
-  let open: Window | null = null;
+  let start = -1;
+  let talk: number[] = [];
   // Inside a talk message's pictures and files (ADR 0048: the record puts
   // them right after the message they came with).
   let withTalk = false;
   for (let i = 0; i < record.length; i++) {
     const b = record[i] as TerminalRecordBlock;
-    if (open === null) {
+    if (start === -1) {
       if (b.kind !== "system" || b.label !== "差分协处理器") continue;
-      open = { start: i, end: record.length, talk: [], open: true };
-      windows.push(open);
+      start = i;
+      talk = [];
     }
     if (b.kind === "user") {
       withTalk = false;
       if (b.steer === true) continue;
       if (b.duringRun === true) {
-        open.talk.push(i);
+        talk.push(i);
         withTalk = true;
         continue;
       }
-      open.end = i;
-      open.open = false;
-      open = null;
+      start = -1;
       continue;
     }
     if (b.kind === "herta") {
       withTalk = false;
-      if (b.duringRun === true) open.talk.push(i);
+      if (b.duringRun === true) talk.push(i);
       continue;
     }
     if (withTalk && isAttachmentBlock(b)) {
-      open.talk.push(i);
+      talk.push(i);
       continue;
     }
     withTalk = false;
-    if (b.role === "done-marker" || b.role === "noop-marker") {
-      open.end = i + 1;
-      open.open = false;
-      open = null;
-    }
+    if (b.role === "done-marker" || b.role === "noop-marker") start = -1;
   }
-  if (windows.every((w) => w.talk.length === 0)) {
-    return { record, live: null };
-  }
+  if (start === -1 || talk.length === 0) return { record, live: null };
 
-  const out: TerminalRecordBlock[] = [];
-  let live: RunGrouping["live"] = null;
-  let at = 0;
-  for (const w of windows) {
-    while (at < w.start) out.push(record[at++] as TerminalRecordBlock);
-    const talk = new Set(w.talk);
-    const start = out.length;
-    for (let k = w.start; k < w.end; k++) {
-      if (!talk.has(k)) out.push(record[k] as TerminalRecordBlock);
-    }
-    const end = out.length;
-    for (const k of w.talk) out.push(record[k] as TerminalRecordBlock);
-    if (w.open && w.talk.length > 0) live = { start, end };
-    at = w.end;
+  const moved = new Set(talk);
+  const out = record.slice(0, start);
+  for (let k = start; k < record.length; k++) {
+    if (!moved.has(k)) out.push(record[k] as TerminalRecordBlock);
   }
-  while (at < record.length) out.push(record[at++] as TerminalRecordBlock);
-  return { record: out, live };
+  const end = out.length;
+  for (const k of talk) out.push(record[k] as TerminalRecordBlock);
+  return { record: out, live: { start, end } };
 }
 
 /** How many of the run's newest steps stay verbatim in its live form. */

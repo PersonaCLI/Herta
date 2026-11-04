@@ -18,6 +18,7 @@ describe("loadActorHints (compiled assets, M-prompts-1)", () => {
       ...hints.thoughtRetry,
       hints.beatVerification,
       hints.beatToolFail,
+      hints.beatTalk,
       hints.supervisorVetoTemplate,
     ]) {
       expect(value.length).toBeGreaterThan(0);
@@ -36,6 +37,18 @@ describe("loadActorHints (compiled assets, M-prompts-1)", () => {
     for (const beat of [hints.beatVerification, hints.beatToolFail]) {
       expect(beat).not.toContain("{{no_banzhuan}}");
       expect(beat).toContain(clause);
+    }
+  });
+
+  it("the talk hint has no {{no_banzhuan}} clause: her @板砖 mid-run is a steer (ADR 0085 §4)", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const hints = loadActorHints(lang);
+      const bundle = lang === "zh" ? PROMPT_ASSETS : PROMPT_ASSETS_EN;
+      const clause = bundle.hints.beat_no_banzhuan_clause?.trimEnd() ?? "";
+      expect(hints.beatTalk).toBe(bundle.hints.beat_talk?.trimEnd());
+      expect(hints.beatTalk).not.toContain(clause);
+      expect(hints.beatTalk).toContain("@板砖");
+      expect(hints.beatTalk).toContain("（我 说）");
     }
   });
 
@@ -102,6 +115,7 @@ describe("defaultActorHintsFor (slice 4)", () => {
     expect(en.thoughtRetry).toEqual(t.thoughtRetry);
     expect(en.beatVerification).toBe(t.beatVerification);
     expect(en.beatToolFail).toBe(t.beatToolFail);
+    expect(en.beatTalk).toBe(t.beatTalk);
     expect(en.supervisorVetoTemplate).toContain("{{reason}}");
     expect(en.supervisorVetoTemplate).not.toBe(
       DEFAULT_ACTOR_HINTS.supervisorVetoTemplate,
@@ -127,5 +141,11 @@ describe("selectBeatHint", () => {
     expect(selectBeatHint(h, "steer:6d1c0a9e")).toBe(h.phase2Speech);
     expect(Object.keys(h)).not.toContain("beatSteer");
     expect(Object.keys(h)).not.toContain("beatPatchPreview");
+  });
+
+  it("her answer to talk has its own hint, not the speech hint (ADR 0085 step 5)", () => {
+    const h = DEFAULT_ACTOR_HINTS;
+    expect(selectBeatHint(h, "talk")).toBe(h.beatTalk);
+    expect(h.beatTalk).not.toBe(h.phase2Speech);
   });
 });

@@ -124,8 +124,10 @@ export function makeFireBeat(
 /**
  * Her answer to talk while 板砖 works (ADR 0085 step 3): one completion over
  * the record as it stands — the run in its live form, the talk after it —
- * streamed like a beat, committed as a `duringRun` speech. The talk is the
- * last thing in her view, so it needs no hint beyond the speech one.
+ * streamed like a beat, committed as a `duringRun` speech. Its hint is its
+ * own (`beat_talk`, step 5): under the speech hint, which asks for a thought
+ * the answer does not have, the lab's answers passed work on without @板砖
+ * and once made up a fact.
  *
  * Her live `@板砖` in it is a steer, not a dispatch (§4): the trigger recheck
  * gates a rhetorical one exactly as it gates the main loop's, and a real one
@@ -316,8 +318,8 @@ async function streamInRunSpeech(
         );
   deps.onPrompt?.("beat-out", `${beatPrompt}${beatText}`);
 
-  // Beats carry bracketed hints too (beat_verification / beat_tool_fail
-  // / beat_tool_fail), so the same echo is possible here. Repair before the
+  // Beats carry bracketed hints too (beat_verification / beat_tool_fail),
+  // so the same echo is possible here. Repair before the
   // slot check below, for the same ordering reason as runPhaseTwo — but
   // ONLY while nothing has streamed (review 2026-08-12): `beatEmittedTail`
   // indexes into the RAW text, so shortening beatText after live emission

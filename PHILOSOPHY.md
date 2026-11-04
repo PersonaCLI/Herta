@@ -38,8 +38,9 @@ Herta inference (DeepSeek completion mode)
             sentence that carries it. Unprompted she speaks only at a
             checkpoint — a failure the record shows — never on routine
             progress; this replaces the v0.1 MicroburstNarrator
-          her view draws the run as one block after the speech that
-            dispatched it, the talk during it after the run
+          while the run works, her view draws it as one block after the
+            speech that dispatched it, the talk during it after the run;
+            once it ends, it reads as it happened, its report last
           backend completes; harness opens a fresh （我 说） for
             Herta's verdict
             Done. (1 final Herta completion + N backend calls

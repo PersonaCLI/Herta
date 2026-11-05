@@ -11,6 +11,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { type AnswerFirer, invokeBanzhuanBridge } from "./backend-bridge.js";
 import { BeatPolicy } from "./beat-policy.js";
+import type { ActorStreamingSink } from "./streaming-sink.js";
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -241,6 +242,212 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
       "herta(answer):它找不到 a.ts。",
     ]);
     expect(fireBeat).not.toHaveBeenCalled();
+  });
+
+  describe("Stop while she writes (review 2026-11-05)", () => {
+    const steer = (
+      bus: InMemoryEventBus<AgentEvent>,
+      id: string,
+      text: string,
+    ) => bus.publish({ type: "user.steer", layer: "actor", id, text });
+
+    /** An answer she is still writing when the turn stops: it ends the way
+     *  a completion ends on an abort. */
+    function writing() {
+      let release: () => void = () => undefined;
+      const composing = new Promise<void>((r) => {
+        release = r;
+      });
+      const answerTalk = vi.fn<AnswerFirer>(async () => {
+        await composing;
+        throw new DOMException("Interrupted", "AbortError");
+      });
+      return { answerTalk, release };
+    }
+
+    it("what queued behind her answer lands, in order, and reaches the sink", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const stop = new AbortController();
+      const { answerTalk, release } = writing();
+      let flushed: TerminalRecord = [];
+      const sink: ActorStreamingSink = {
+        beginHertaStream: () => undefined,
+        streamHertaToken: () => undefined,
+        endHertaStream: () => undefined,
+        flushBlocks: (record) => {
+          flushed = record;
+        },
+      };
+      const out = await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            read(b, "c1", "a.ts");
+            talk(b, "t1", "进展如何？");
+            await tick();
+            await tick();
+            // She is writing, and 板砖 goes on.
+            publishWithLayer(b, "backend", {
+              type: "tool.call.started",
+              id: "c2",
+              tool: "write_new_file",
+              inputSummary: "src/new.ts",
+            } as never);
+            talk(b, "t2", "对了，控制台也看一眼。");
+            steer(b, "s1", "先别动 api 目录");
+            read(b, "c3", "b.ts");
+            await tick();
+            stop.abort(new DOMException("Interrupted", "AbortError"));
+            release();
+            await tick();
+            await tick();
+            // The run's closing rows come after the abort, as a command being
+            // killed reports them.
+            read(b, "c4", "c.ts");
+          }, bus),
+        signal: stop.signal,
+        answerTalk,
+        sink,
+      });
+      const rows = shape(out);
+      expect(rows).toEqual([
+        "row:Reading a.ts",
+        "user(talk):进展如何？",
+        "row:Writing src/new.ts",
+        "user(talk):对了，控制台也看一眼。",
+        "user:先别动 api 目录",
+        "row:Reading b.ts",
+        "row:Reading c.ts",
+        "done-marker",
+      ]);
+      expect(out[4]).toMatchObject({ kind: "user", steer: true });
+      // The persisted copy holds them too, and nothing more was answered.
+      expect(flushed.length).toBe(out.length);
+      expect(answerTalk).toHaveBeenCalledTimes(1);
+    });
+
+    it("a run that finished while she wrote keeps its rows: it does not read 无产出", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const stop = new AbortController();
+      const { answerTalk, release } = writing();
+      const out = await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            talk(b, "t1", "几点？");
+            await tick();
+            await tick();
+            read(b, "c1", "a.ts");
+            read(b, "c2", "b.ts");
+            publishWithLayer(b, "backend", { type: "turn.finished" } as never);
+            await tick();
+            stop.abort(new DOMException("Interrupted", "AbortError"));
+            release();
+          }, bus),
+        signal: stop.signal,
+        answerTalk,
+      });
+      expect(shape(out)).toEqual([
+        "user(talk):几点？",
+        "row:Reading a.ts",
+        "row:Reading b.ts",
+        "done-marker",
+      ]);
+    });
+
+    it("a salvaged answer keeps its place, ahead of the rows that waited for it", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const stop = new AbortController();
+      let release: () => void = () => undefined;
+      const composing = new Promise<void>((r) => {
+        release = r;
+      });
+      const out = await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            talk(b, "t1", "几点？");
+            await tick();
+            await tick();
+            read(b, "c1", "a.ts");
+            await tick();
+            stop.abort(new DOMException("Interrupted", "AbortError"));
+            release();
+            await tick();
+          }, bus),
+        signal: stop.signal,
+        answerTalk: async () => {
+          await composing;
+          return answerBlock("三点，不过");
+        },
+      });
+      expect(shape(out)).toEqual([
+        "user(talk):几点？",
+        "herta(answer):三点，不过",
+        "row:Reading a.ts",
+        "done-marker",
+      ]);
+    });
+
+    it("talk that lands after Stop is recorded and nobody writes an answer to it", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const stop = new AbortController();
+      const answerTalk = vi.fn<AnswerFirer>(async () => answerBlock("答。"));
+      const out = await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            read(b, "c1", "a.ts");
+            stop.abort(new DOMException("Interrupted", "AbortError"));
+            talk(b, "t1", "停了吗？");
+            read(b, "c2", "b.ts");
+            await tick();
+            await tick();
+          }, bus),
+        signal: stop.signal,
+        answerTalk,
+      });
+      expect(shape(out)).toEqual([
+        "row:Reading a.ts",
+        "user(talk):停了吗？",
+        "row:Reading b.ts",
+        "done-marker",
+      ]);
+      expect(answerTalk).not.toHaveBeenCalled();
+    });
+
+    it("no beat fires over a stopped run", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const stop = new AbortController();
+      const fireBeat = vi.fn(async () => ({
+        kind: "herta" as const,
+        surface: "speech" as const,
+        text: "beat",
+      }));
+      await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            stop.abort(new DOMException("Interrupted", "AbortError"));
+            publishWithLayer(b, "backend", {
+              type: "tool.call.finished",
+              id: "c1",
+              tool: "read_file",
+              result: {
+                ok: false,
+                error: { code: "not_found", message: "no a.ts" },
+              },
+            } as never);
+            await tick();
+            await tick();
+            await tick();
+          }, bus),
+        signal: stop.signal,
+        beatPolicy: new BeatPolicy(),
+        fireBeat,
+      });
+      expect(fireBeat).not.toHaveBeenCalled();
+    });
   });
 
   it("with no answer lane (the CLI) talk is recorded and left for her next completion", async () => {

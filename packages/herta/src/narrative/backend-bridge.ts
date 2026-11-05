@@ -296,6 +296,16 @@ async function invokeBanzhuanBridgeInner(
       ready.length > 0 ||
       talkWaiting
     ) {
+      // Stopped: nobody speaks from here on, and the drain still runs to its
+      // end. Whatever queued while she wrote — 板砖's rows, more talk, a
+      // steer — is real and takes its place in the record below; left out,
+      // a finished run read 无产出 (review 2026-11-05).
+      if (signal.aborted) {
+        beatsSuppressed = true;
+        ready = [];
+        staged = [];
+      }
+
       // PHASE 0 — ANSWER talk: her lane, one completion at a time. Ahead of
       // beats, and in place of the ones ready now — she answers with the
       // record that holds their events, so a beat after her answer would be
@@ -326,10 +336,6 @@ async function invokeBanzhuanBridgeInner(
           if (beatsEnabled) {
             for (const t of ready) policy.markFired(t.signature, policy.now());
             ready = [];
-          }
-          if (signal.aborted) {
-            ready = [];
-            break;
           }
         }
       }

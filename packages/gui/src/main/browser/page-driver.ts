@@ -125,6 +125,16 @@ const remoteText = (arg: {
  * and whether 板砖's refs still stand. Attached when the page is made, for
  * its whole life.
  */
+/**
+ * The ref numbers a session has handed out. They count on across its pages:
+ * a page closed and opened again restarted at e1 with the counter inside it,
+ * and an older read's refs clicked whatever now held those numbers
+ * (review 2026-11-05).
+ */
+export interface RefCounter {
+  last: number;
+}
+
 export class PageInstrument {
   private readonly cdp: Cdp;
   private world: number | null = null;
@@ -143,10 +153,12 @@ export class PageInstrument {
   /** 板砖's refs end at a navigation and at the Trailblazer's own input
    *  (§9); a new read gives fresh ones. */
   private refsLive = false;
-  /** The last ref number handed out on this page, across reads and
-   *  documents, and the first of the latest read (M1). */
-  private refLast = 0;
+  /** The first ref number of the latest read (M1). */
   private refFirst = 1;
+  /** Reads go one at a time: two in one parallel batch numbered from the
+   *  same ref, and a smaller one settling last sent the counter back, so a
+   *  ref of one named another element in the other (review 2026-11-05). */
+  private reading: Promise<unknown> = Promise.resolve();
   /** Dispatching 板砖's own input: the Trailblazer's is everything else. */
   private driving = 0;
   /** 板砖's steps in flight, by their abort signals: a dialog that opens
@@ -167,7 +179,11 @@ export class PageInstrument {
   private inspectAside = false;
   status: number | null = null;
 
-  constructor(private readonly wc: WebContents) {
+  constructor(
+    private readonly wc: WebContents,
+    /** The session's ref numbers: they outlive this page (`RefCounter`). */
+    private readonly refCount: RefCounter = { last: 0 },
+  ) {
     this.cdp = wc.debugger;
     try {
       this.cdp.attach("1.3");
@@ -565,45 +581,52 @@ export class PageInstrument {
 
   /** A fresh snapshot: new refs, which stand until the page changes or a
    *  newer read hands out its own. */
-  async snapshot(
-    all: boolean,
-    budget: number,
-    root?: string,
-  ): Promise<ReadElements> {
-    const from = this.refLast;
-    const r = await this.call<ReadElements | { missing: true }>(
-      "snapshot",
-      all,
-      root ?? null,
-      budget,
-      from,
-    );
-    if ("missing" in r)
-      throw new BrowserHostError(
-        this.refsLive && !this.olderRef(root ?? "") ? "no_ref" : "stale_ref",
-        `${root} is not an element of the page now`,
+  snapshot(all: boolean, budget: number, root?: string): Promise<ReadElements> {
+    return this.oneRead(async () => {
+      const from = this.refCount.last;
+      const r = await this.call<ReadElements | { missing: true }>(
+        "snapshot",
+        all,
+        root ?? null,
+        budget,
+        from,
       );
-    this.read(from, r);
-    return r;
+      if ("missing" in r)
+        throw new BrowserHostError(
+          this.refsLive && !this.olderRef(root ?? "") ? "no_ref" : "stale_ref",
+          `${root} is not an element of the page now`,
+        );
+      this.read(from, r);
+      return r;
+    });
   }
 
-  async find(query: string): Promise<ReadElements> {
-    const from = this.refLast;
-    const r = await this.call<ReadElements>(
-      "find",
-      query,
-      20,
-      READ_BUDGET,
-      from,
-    );
-    this.read(from, r);
-    return r;
+  find(query: string): Promise<ReadElements> {
+    return this.oneRead(async () => {
+      const from = this.refCount.last;
+      const r = await this.call<ReadElements>(
+        "find",
+        query,
+        20,
+        READ_BUDGET,
+        from,
+      );
+      this.read(from, r);
+      return r;
+    });
+  }
+
+  /** After the read in front of it, whatever became of that one. */
+  private oneRead<T>(read: () => Promise<T>): Promise<T> {
+    const turn = this.reading.then(read, read);
+    this.reading = turn.catch(() => undefined);
+    return turn;
   }
 
   /** A read handed out refs past `from`: they are the live ones now. */
   private read(from: number, r: ReadElements): void {
     this.refFirst = from + 1;
-    this.refLast = Math.max(from, r.last);
+    this.refCount.last = Math.max(this.refCount.last, r.last);
     this.refsLive = true;
   }
 
@@ -641,24 +664,26 @@ export class PageInstrument {
    *  the Trailblazer's. While the Trailblazer's picker is on, inspect mode
    *  is set aside for the input and put back after: it took 板砖's press as
    *  their pick, a chip landed in the composer and the step reported
-   *  success (review 2026-10-30, M2). */
+   *  success (review 2026-10-30, M2). Both go through `send`: raw, a page
+   *  that stopped answering held the step past Stop and past every bound
+   *  (review 2026-11-05). */
   async drive<T>(run: () => Promise<T>): Promise<T> {
     this.driving += 1;
     const picking = this.onPicked !== null;
     if (picking) {
       this.inspectAside = true;
-      await this.cdp
-        .sendCommand("Overlay.setInspectMode", INSPECT_OFF)
-        .catch(() => undefined);
+      await this.send("Overlay.setInspectMode", INSPECT_OFF).catch(
+        () => undefined,
+      );
     }
     try {
       return await run();
     } finally {
       if (picking) {
         if (this.onPicked !== null)
-          await this.cdp
-            .sendCommand("Overlay.setInspectMode", INSPECT_ON)
-            .catch(() => undefined);
+          await this.send("Overlay.setInspectMode", INSPECT_ON).catch(
+            () => undefined,
+          );
         this.inspectAside = false;
       }
       // The page's own events for this input arrive just after.
@@ -728,15 +753,13 @@ export class PageInstrument {
 
   async wheel(x: number, y: number, deltaY: number): Promise<void> {
     await this.drive(() =>
-      this.cdp
-        .sendCommand("Input.dispatchMouseEvent", {
-          type: "mouseWheel",
-          x,
-          y,
-          deltaX: 0,
-          deltaY,
-        })
-        .then(() => undefined),
+      this.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX: 0,
+        deltaY,
+      }).then(() => undefined),
     );
   }
 

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { WebContents } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PageDriver, PageInstrument } from "./page-driver.js";
+import { PageDriver, PageInstrument, type RefCounter } from "./page-driver.js";
 
 /** 板砖's steps on a page whose debugger is faked (ADR 0083 §6–§8; review
  *  2026-10-30): a dialog, a page that never answers, a scrolled view, a
@@ -12,13 +12,20 @@ interface Sent {
   readonly params?: Record<string, unknown>;
 }
 
-function fakePage(start = "http://localhost:5173/login") {
+function fakePage(
+  start = "http://localhost:5173/login",
+  refCount?: RefCounter,
+) {
   const messages = new EventEmitter();
   const state = {
     url: start,
     sent: [] as Sent[],
     /** A page that never answers an evaluate: a script that does not stop. */
     busy: false,
+    /** A page that never answers inspect mode, answered by its renderer. */
+    overlayHangs: false,
+    /** A page that does not acknowledge a scroll. */
+    wheelHangs: false,
     dialogOpen: false,
     wentBack: false,
     history: [
@@ -74,9 +81,12 @@ function fakePage(start = "http://localhost:5173/login") {
         case "Page.captureScreenshot":
           return { data: "" };
         case "Overlay.setInspectMode":
+          if (state.overlayHangs) return new Promise(() => {});
           state.inspect = String(params?.mode);
           return {};
         case "Input.dispatchMouseEvent":
+          if (params?.type === "mouseWheel" && state.wheelHangs)
+            return new Promise(() => {});
           if (params?.type === "mousePressed" && state.inspect !== "none")
             messages.emit("message", {}, "Overlay.inspectNodeRequested", {
               backendNodeId: 42,
@@ -131,7 +141,7 @@ function fakePage(start = "http://localhost:5173/login") {
       goForward() {},
     },
   });
-  const instrument = new PageInstrument(wc as unknown as WebContents);
+  const instrument = new PageInstrument(wc as unknown as WebContents, refCount);
   const page = { wc: wc as unknown as WebContents, instrument };
   const driver = new PageDriver("s1", {
     live: () => page,
@@ -225,6 +235,29 @@ describe("a dialog, or a page that never answers, cannot hold a step", () => {
     expect(r).toMatchObject({ err: { name: "AbortError" } });
   });
 
+  it("Stop ends a press whose picker a hung page will not set aside (review 2026-11-05)", async () => {
+    const { driver, instrument, state } = fakePage();
+    await instrument.startPick(() => {});
+    state.overlayHangs = true;
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 20);
+    const r = await within(
+      driver.act({ action: "click", x: 100, y: 200 }, stop.signal),
+    );
+    expect(r).toMatchObject({ err: { name: "AbortError" } });
+  });
+
+  it("Stop ends a scroll on a page that does not acknowledge it", async () => {
+    const { instrument, state } = fakePage();
+    state.wheelHangs = true;
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 20);
+    const r = await within(
+      instrument.during(stop.signal, () => instrument.wheel(1, 1, 100)),
+    );
+    expect(r).toMatchObject({ err: { name: "AbortError" } });
+  });
+
   it("a page that never answers fails the step after 10 s", async () => {
     vi.useFakeTimers();
     const { driver, state } = fakePage();
@@ -233,6 +266,102 @@ describe("a dialog, or a page that never answers, cannot hold a step", () => {
     const settled = step.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(10_001);
     expect(await settled).toMatchObject({ code: "unavailable" });
+  });
+});
+
+describe("ref numbers across reads and pages (review 2026-11-05)", () => {
+  /** The read script, over a page of the given elements: refs count on from
+   *  what main passes, and the page keeps the map of the latest read. */
+  function readable(state: ReturnType<typeof fakePage>["state"], el: string[]) {
+    let refs = new Map<string, string>();
+    state.answers.snapshot = (
+      all: boolean,
+      _root: string | null,
+      _budget: number,
+      from?: number | null,
+    ) => {
+      refs = new Map();
+      const names = all ? el : el.slice(1);
+      const lines = names.map((name, i) => {
+        const ref = `e${(from ?? 0) + i + 1}`;
+        refs.set(ref, name);
+        return `${ref} ${name}`;
+      });
+      const text = lines.join("\n");
+      return {
+        lines: text,
+        count: lines.length,
+        shown: lines.length,
+        full: text,
+        last: (from ?? 0) + lines.length,
+      };
+    };
+    state.answers.locate = (ref: string) => {
+      const target = refs.get(ref);
+      return target === undefined
+        ? { missing: true }
+        : {
+            x: 10,
+            y: 10,
+            target,
+            hit: null,
+            password: false,
+            select: false,
+            toggle: false,
+          };
+    };
+  }
+  const elements = ['link "Docs"', 'button "Delete account"', 'button "Save"'];
+
+  it("two reads in one batch number on from each other, so a ref names one thing", async () => {
+    const { driver, state } = fakePage();
+    readable(state, elements);
+    const signal = new AbortController().signal;
+    const [first, second] = await Promise.all([
+      driver.read({ mode: "tree", all: true }, signal),
+      driver.read({ mode: "tree" }, signal),
+    ]);
+    expect(first.text.split("\n")[1]).toBe('e2 button "Delete account"');
+    // Numbered from the same ref, e2 would be "Save" here.
+    expect(second.text).toBe('e4 button "Delete account"\ne5 button "Save"');
+    await expect(
+      driver.act({ action: "click", ref: "e2" }, signal),
+    ).rejects.toMatchObject({ code: "stale_ref" });
+    expect(
+      (await driver.act({ action: "click", ref: "e5" }, signal)).target,
+    ).toBe('button "Save"');
+  });
+
+  it("a read that fails does not hold up the next", async () => {
+    const { driver, state } = fakePage();
+    readable(state, elements);
+    const signal = new AbortController().signal;
+    const answer = state.answers.snapshot;
+    state.answers.snapshot = () => ({ missing: true });
+    const failed = driver.read({ mode: "tree", ref: "e9" }, signal);
+    state.answers.snapshot = answer;
+    await failed.catch(() => undefined);
+    expect((await driver.read({ mode: "tree" }, signal)).text).toContain(
+      'button "Save"',
+    );
+  });
+
+  it("a page closed and opened again counts on: an old ref clicks nothing", async () => {
+    const count: RefCounter = { last: 0 };
+    const first = fakePage(undefined, count);
+    readable(first.state, elements);
+    const signal = new AbortController().signal;
+    expect((await first.driver.read({ mode: "tree" }, signal)).text).toContain(
+      'e2 button "Save"',
+    );
+    const second = fakePage(undefined, count);
+    readable(second.state, ['link "Docs"', 'button "Save"', 'link "Docs"']);
+    expect((await second.driver.read({ mode: "tree" }, signal)).text).toBe(
+      'e3 button "Save"\ne4 link "Docs"',
+    );
+    await expect(
+      second.driver.act({ action: "click", ref: "e2" }, signal),
+    ).rejects.toMatchObject({ code: "stale_ref" });
   });
 });
 

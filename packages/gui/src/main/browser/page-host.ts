@@ -20,7 +20,7 @@ import {
   typedPageUrl,
 } from "../../shared/browser-page.js";
 import type { ShortcutId } from "../../shared/shortcuts.js";
-import { PageDriver, PageInstrument } from "./page-driver.js";
+import { PageDriver, PageInstrument, type RefCounter } from "./page-driver.js";
 import { appCommandForPageKey } from "./page-keys.js";
 
 /** The page's own persistent partition, apart from the app's session
@@ -150,6 +150,7 @@ export class PageHost {
   /** A closed page's address, so showing it again reloads it. */
   private readonly addresses = new Map<string, string>();
   private readonly drivers = new Map<string, PageDriver>();
+  private readonly refCounts = new Map<string, RefCounter>();
   /** The page on the window, and whether it is laid over the tab (shown)
    *  or parked. */
   private onWindow: string | null = null;
@@ -318,6 +319,7 @@ export class PageHost {
   /** The session ended (closed, deleted): its page goes. */
   closeSession(sessionId: string): void {
     this.addresses.delete(sessionId);
+    this.refCounts.delete(sessionId);
     this.drivers.delete(sessionId);
     this.close(sessionId);
   }
@@ -580,13 +582,23 @@ export class PageHost {
     });
     const page: LivePage = {
       view,
-      instrument: new PageInstrument(wc),
+      instrument: new PageInstrument(wc, this.refCountOf(sessionId)),
       lastShown: Date.now(),
       size: { ...DEFAULT_SIZE },
     };
     this.pages.set(sessionId, page);
     this.capLive(sessionId);
     return page;
+  }
+
+  /** The session's ref numbers, kept across its pages. */
+  private refCountOf(sessionId: string): RefCounter {
+    let count = this.refCounts.get(sessionId);
+    if (count === undefined) {
+      count = { last: 0 };
+      this.refCounts.set(sessionId, count);
+    }
+    return count;
   }
 
   /** Past the cap, the page least recently shown closes; its address is

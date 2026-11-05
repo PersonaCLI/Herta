@@ -1348,7 +1348,8 @@ export function Composer(): JSX.Element {
   // pictures also hold it open: the strip is the only sign the pictures are
   // pending, and shrinking would clip it (ADR 0048 §4).
   const hasStaged = images.staged.length > 0;
-  const hasQuotes = composerQuotes.length > 0;
+  // The 插话 tag rides the quotes' row: the composer makes room for it.
+  const hasQuotes = composerQuotes.length > 0 || steerOn;
   const shrunk = !focusWithin && !dragOver && !hasStaged && !hasQuotes;
 
   // The draft's lines, read from an unseen copy laid out at the textarea's
@@ -1802,37 +1803,35 @@ export function Composer(): JSX.Element {
           </ul>
         )}
         {/* The 插话 tag (ADR 0085 §9): while it shows, what is sent goes
-          to 板砖's run as a steer; × gives the composer back to Herta. */}
-        {steerOn && (
-          <ul className="composer-quotes">
-            <li className="composer-quote composer-steer-tag">
-              <span className="composer-quote__label">
-                {t("composer.steer.tag")}
-              </span>
-              <button
-                type="button"
-                className="composer-quote__remove"
-                aria-label={t("composer.steer.off")}
-                onClick={() => sessionStore.setComposerSteer(false)}
-              >
-                <svg
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                </svg>
-              </button>
-            </li>
-          </ul>
-        )}
-        {/* Quotes from the viewer's page (ADR 0078 §6): the source rides
+          to 板砖's run as a steer; × gives the composer back to Herta.
+          Quotes from the viewer's page (ADR 0078 §6): the source rides
           the message when it is sent; × takes one back. */}
-        {composerQuotes.length > 0 && (
+        {hasQuotes && (
           <ul className="composer-quotes">
+            {steerOn && (
+              <li className="composer-quote composer-steer-tag">
+                <span className="composer-quote__label">
+                  {t("composer.steer.tag")}
+                </span>
+                <button
+                  type="button"
+                  className="composer-quote__remove"
+                  aria-label={t("composer.steer.off")}
+                  onClick={() => sessionStore.setComposerSteer(false)}
+                >
+                  <svg
+                    viewBox="0 0 10 10"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                  </svg>
+                </button>
+              </li>
+            )}
             {composerQuotes.map((q) => (
               <li className="composer-quote" key={q.id}>
                 <svg
@@ -1988,12 +1987,14 @@ export function Composer(): JSX.Element {
             // corrections to act on a squiggle.
             spellCheck={false}
             placeholder={
-              suggestion ??
-              t(
-                composerQuotes.length > 0
-                  ? "composer.quote.placeholder"
-                  : "composer.placeholder",
-              )
+              steerOn
+                ? t("composer.steer.placeholder")
+                : (suggestion ??
+                  t(
+                    composerQuotes.length > 0
+                      ? "composer.quote.placeholder"
+                      : "composer.placeholder",
+                  ))
             }
             // The mention list is the textarea's: assistive technology hears
             // it open and follows the highlighted option (review 2026-09-30).

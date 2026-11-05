@@ -86,23 +86,28 @@ type ServerDigest = Extract<
 >;
 
 /** A launcher row (ADR 0083 §5), localized from its digest: the server's
- *  name, command and address are data and stay verbatim. */
+ *  name, command and address are data and stay verbatim. Its ↳ marks the
+ *  result of the step above it, so only 板砖's rows carry one: the
+ *  Trailblazer's Run and Stop and the app's reap stand alone in the chat
+ *  (owner 2026-11-05). */
 function serverStepBody(
   d: ServerDigest,
   t: (key: MessageKey) => string,
 ): string {
   const label = t("activity.server.label");
   switch (d.action) {
-    case "start":
+    case "start": {
+      const lead = d.by === "trailblazer" ? "" : "↳ ";
       return d.already
-        ? `↳ ${label} ${d.name} · ${t("activity.server.already").replace("{route}", d.route)}`
-        : `↳ ${label} ${d.name} · ${
+        ? `${lead}${label} ${d.name} · ${t("activity.server.already").replace("{route}", d.route)}`
+        : `${lead}${label} ${d.name} · ${
             d.by === "trailblazer"
               ? t("activity.server.startedByYou")
               : t("activity.server.ready")
           } · ${d.route}`;
+    }
     case "stop":
-      return `↳ ${label} ${d.name} · ${
+      return `${d.by === "trailblazer" ? "" : "↳ "}${label} ${d.name} · ${
         !d.wasRunning
           ? t("activity.server.notRunning")
           : d.by === "trailblazer"
@@ -118,7 +123,7 @@ function serverStepBody(
         .map((e) => `${e.name} · ${t(`activity.server.state.${e.state}`)}`)
         .join(" / ")}`;
     case "reaped":
-      return `↳ ${t("activity.server.reaped").replace("{names}", d.names.join(", "))}`;
+      return t("activity.server.reaped").replace("{names}", d.names.join(", "));
   }
 }
 

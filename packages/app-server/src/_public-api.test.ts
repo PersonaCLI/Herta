@@ -18,7 +18,6 @@ describe("@herta/app-server — public API surface", () => {
         "normalizeFlowSettings",
         // Long-session windowing (2026-07-12): the shared tail-slice helper
         // used by every full-record payload to the renderer.
-        "RECORD_TAIL_BLOCKS",
         "recordTail",
       ].sort(),
     );

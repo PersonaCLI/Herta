@@ -1,3 +1,5 @@
+import type { TerminalRecord, TerminalRecordBlock } from "@herta/app-server";
+import { RECORD_WINDOW_WEIGHT } from "@herta/core/record-window";
 import {
   act,
   cleanup,
@@ -19,7 +21,6 @@ import {
   IN_FLIGHT_MIN_VISIBLE_MS,
   SUPERVISOR_HINT_DELAY_MS,
   UNPINNED_TRIM_AT,
-  UNPINNED_TRIM_KEEP_TAIL,
 } from "./Conversation.js";
 import { SHADOW_SETTLE_MS } from "./conversation-timing.js";
 import { SCROLL_GLIDE_MAX_MS } from "./scroll-glide.js";
@@ -3622,19 +3623,80 @@ describe("Conversation load-earlier paging (long sessions)", () => {
         backendWorkspaceIsDefault: true,
       });
     });
-    // The row names how much older history exists.
-    const btn = screen.getByText("Load 2 earlier entries");
+    const btn = screen.getByText("Load earlier entries");
     expect(screen.queryByText("an older message")).not.toBeInTheDocument();
     await act(async () => {
       fireEvent.click(btn);
       await Promise.resolve();
     });
-    expect(mock.calls.recordSlice).toEqual([["s", 2, 200]]);
+    expect(mock.calls.recordSlice).toEqual([["s", 2, RECORD_WINDOW_WEIGHT]]);
     // The older block renders ABOVE the tail; one older block remains, so
-    // the row stays with the updated count.
+    // the row stays.
     expect(screen.getByText("an older message")).toBeInTheDocument();
     expect(screen.getByText("the visible tail")).toBeInTheDocument();
-    expect(screen.getByText("Load 1 earlier entries")).toBeInTheDocument();
+    expect(screen.getByText("Load earlier entries")).toBeInTheDocument();
+  });
+
+  describe("the live trim weighs what the chat draws (ADR 0085 amendment 2026-11-05)", () => {
+    const step: TerminalRecordBlock = {
+      kind: "system",
+      label: "差分协处理器",
+      body: "Reading a.ts",
+    };
+    const turn = (steps: number): TerminalRecord => [
+      { kind: "user", text: "修一下" },
+      { kind: "herta", surface: "speech", text: "@板砖 修" },
+      ...Array.from({ length: steps }, () => step),
+      { kind: "herta", surface: "speech", text: "好了" },
+    ];
+    function mountWith(record: TerminalRecord) {
+      const mock = createMockHertaBridge();
+      const { container } = renderWithLocale(
+        <WorkspaceRefsProvider>
+          <HertaBridgeProvider bridge={mock.bridge}>
+            <Conversation />
+          </HertaBridgeProvider>
+        </WorkspaceRefsProvider>,
+      );
+      act(() => {
+        mock.emitReset({
+          sessionId: "s",
+          workspaceRoot: "/r",
+          record,
+          overlay: null,
+          backendWorkspace: "/r",
+          backendWorkspaceIsDefault: true,
+        });
+      });
+      act(() => {
+        mock.emitRecord({
+          kind: "block",
+          blockId: "b-next",
+          block: { kind: "user", text: "the next message" },
+        });
+      });
+      return container;
+    }
+
+    it("a short conversation does not fold, however long its runs: the owner's 264 blocks", () => {
+      const record = [...turn(60), ...turn(60), ...turn(60), ...turn(72)];
+      expect(record).toHaveLength(264);
+      mountWith(record);
+      expect(screen.queryByText(/earlier entries/)).not.toBeInTheDocument();
+    });
+
+    it("a trim lands on a message that opens a turn: no run is cut in half", () => {
+      const record = Array.from({ length: 120 }, () => turn(20)).flat();
+      const container = mountWith(record);
+      expect(screen.getByText("Load earlier entries")).toBeInTheDocument();
+      // The first thing drawn is a message: a window cut inside a run opens
+      // on the tail of that run, its row counting only the steps left.
+      const message = container.querySelector("[data-abs-index]") as Element;
+      const run = container.querySelector('[data-testid="run-row"]') as Element;
+      expect(message.compareDocumentPosition(run)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    });
   });
 
   it("hides the row when the whole record is loaded", () => {
@@ -3666,6 +3728,9 @@ describe("Conversation unpinned live-window trim", () => {
    *  and the scroll position — which is all the trim's binary search reads. */
   const ROW_PX = 40;
   const VIEW_PX = 600;
+  /** Messages only, each weighing 10: the window just past the unpinned
+   *  trim's weight. */
+  const TRIMMABLE_ROWS = UNPINNED_TRIM_AT / 10 + 1;
 
   /**
    * A conversation whose geometry is faked well enough for the trim's two
@@ -3806,7 +3871,7 @@ describe("Conversation unpinned live-window trim", () => {
 
   it("trims history above an unpinned reader and holds the viewport still", () => {
     // Reading deep in the history of a long window, far above the fold.
-    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: 12_000 });
+    const s = setup({ blocks: TRIMMABLE_ROWS, readAt: 12_000 });
     const before = s.rows();
     const scrollBefore = s.scrollTop();
     s.append("live append");
@@ -3821,32 +3886,32 @@ describe("Conversation unpinned live-window trim", () => {
   });
 
   it("keeps the newest blocks whatever the cut (scrolling back down lands on history, not a paging button)", () => {
-    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: 12_000 });
+    const s = setup({ blocks: TRIMMABLE_ROWS, readAt: 12_000 });
     const before = s.rows();
     s.append("live append");
     // A cut really happened (else the tail bound below proves nothing)…
     expect(s.rows()).toBeLessThan(before + 1);
     // …the tail bound held…
-    expect(s.rows()).toBeGreaterThanOrEqual(UNPINNED_TRIM_KEEP_TAIL);
+    expect(s.rows()).toBeGreaterThanOrEqual(RECORD_WINDOW_WEIGHT / 10);
     // …and the newest blocks — the live append and the ones before it — are
     // the survivors, so scrolling back down lands on real history.
     expect(screen.getByText("live append")).toBeInTheDocument();
     expect(
-      screen.getByText(`m${UNPINNED_TRIM_AT}`), // the last pre-append block
+      screen.getByText(`m${TRIMMABLE_ROWS - 1}`), // the last pre-append block
     ).toBeInTheDocument();
   });
 
   it("never trims rows the reader can see — the cut stays a viewport above the fold", () => {
     // Scrolled up only slightly: less than one viewport of content sits
     // above the fold, so no cut respects the margin and none is made.
-    const s = setup({ blocks: UNPINNED_TRIM_AT + 1, readAt: VIEW_PX - 10 });
+    const s = setup({ blocks: TRIMMABLE_ROWS, readAt: VIEW_PX - 10 });
     const before = s.rows();
     s.append("live append");
     expect(s.rows()).toBe(before + 1);
   });
 
   it("does not trim a window that is merely long — the threshold is mounted rows", () => {
-    const s = setup({ blocks: UNPINNED_TRIM_AT - 100, readAt: 5_000 });
+    const s = setup({ blocks: TRIMMABLE_ROWS - 101, readAt: 5_000 });
     const before = s.rows();
     s.append("live append");
     expect(s.rows()).toBe(before + 1);

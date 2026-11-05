@@ -484,7 +484,7 @@ export const en = {
   "workspace.gammaStormLong":
     "The storm has not passed — message still en route…",
   "workspace.jumpToLatest": "Back to bottom",
-  "workspace.loadEarlier": "Load {n} earlier entries",
+  "workspace.loadEarlier": "Load earlier entries",
   "workspace.topicRailAria": "Topic guide",
   "activity.verb.reading": "Reading",
   "activity.verb.writing": "Writing",
@@ -750,6 +750,7 @@ export const en = {
   "run.stop": "Stop the run",
   "run.steer": "Steer",
   "composer.steer.tag": "Steer · Coprocessor",
+  "composer.steer.placeholder": "Steer the coprocessor…",
   "composer.steer.off": "Send to Herta instead",
   "run.undoAll": "Undo this turn's changes",
   "run.speaker.trailblazer": "Trailblazer",

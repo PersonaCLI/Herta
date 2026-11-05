@@ -4777,12 +4777,12 @@ button.session-item__badge--dismiss {
     display: inline-block;
   }
 }
-/* The composer's 插话 tag (ADR 0085 §9): a quote chip in the Trailblazer's
-   gold — what is sent goes to the run, not to her. */
-.composer-quote.composer-steer-tag {
-  background: color-mix(in srgb, var(--speaker-trailblazer) 12%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--speaker-trailblazer) 45%, transparent);
+/* The composer's 插话 tag (ADR 0085 §9, owner 2026-11-05): a quote chip, on
+   the quotes' row inside the composer. Its label is words, not a path, so it
+   takes the interface's type. */
+.composer-steer-tag .composer-quote__label {
+  font-family: inherit;
+  font-size: 12px;
 }
 
 /* A speaker's avatar on a steer row (ADR 0085 amendment 2026-11-04): 18 px,
@@ -9686,14 +9686,6 @@ button.message-quote__label:hover { text-decoration: underline; text-underline-o
   margin-top: 2px;
   font-size: 11.5px;
   color: var(--muted-slate);
-}
-.page-server__log {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--accent);
-  cursor: pointer;
 }
 .page-server__ask {
   min-width: 0;

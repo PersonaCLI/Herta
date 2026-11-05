@@ -26,6 +26,7 @@ import {
   type PickedElement,
   type ServerHost,
 } from "@herta/core";
+import { RECORD_WINDOW_WEIGHT, windowStart } from "@herta/core/record-window";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -373,7 +374,7 @@ export async function buildConfig(
 /** The `session:reset` payload for a session. Exported for testing. */
 export function snapshot(s: Session): SessionSnapshot {
   // Long-session windowing (2026-07-12): the reset snapshot carries only the
-  // trailing RECORD_TAIL_BLOCKS window — a 10MB session no longer crosses IPC
+  // trailing window (`recordTail`) — a 10MB session no longer crosses IPC
   // in one message or mounts thousands of renderer rows. `recordStart` is the
   // absolute index the window begins at; older blocks page in on demand via
   // CMD.recordSlice below.
@@ -973,8 +974,9 @@ export function createSessionService(
     );
     // Long-session windowing: page OLDER record blocks into the renderer's
     // window. `before` is the absolute index the renderer's window currently
-    // starts at; the slice returns up to `count` blocks ending there, with
-    // the absolute index it starts at. Session-bound like every stateful
+    // starts at; `count` is a weight (`@herta/core/record-window`), and the
+    // slice returns that much ending there, back to a message that opens a
+    // turn, with the absolute index it starts at. Session-bound like every stateful
     // command; a mismatch (switch racing the invoke) returns an empty slice
     // the store drops by its own staleness guard anyway.
     handle(
@@ -993,7 +995,11 @@ export function createSessionService(
         }
         const record = active.record;
         const end = Math.min(before, record.length);
-        const start = Math.max(0, end - Math.min(count, 500));
+        const start = windowStart(
+          record,
+          Math.min(count, RECORD_WINDOW_WEIGHT),
+          end,
+        );
         return { start, blocks: record.slice(start, end) };
       },
     );

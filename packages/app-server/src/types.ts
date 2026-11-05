@@ -425,8 +425,8 @@ export type RecordEvent =
       /** Full-record replacement — the subscriber drops its mirror and adopts
        *  `record` wholesale. Emitted by `rewindLastTurn` after the latest turn is
        *  withdrawn; the only event that SHRINKS the record. Long-session
-       *  windowing (2026-07-12): `record` is the trailing RECORD_TAIL_BLOCKS
-       *  window and `start` is the absolute index it begins at (older blocks
+       *  windowing (2026-07-12): `record` is the trailing window (see
+       *  `recordTail`) and `start` is the absolute index it begins at (older blocks
        *  page in via `session:recordSlice`). Absent `start` means 0 — the
        *  window is the whole record. */
       readonly kind: "reset";

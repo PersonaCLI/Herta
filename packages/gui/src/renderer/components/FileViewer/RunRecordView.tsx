@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { makeT, type TFn } from "../../i18n/LocaleProvider.js";
@@ -65,6 +65,11 @@ const NO_PROGRESS = (): string => "";
  *
  * In the session's language, as the rows are in the chat (ADR 0019).
  */
+/** Where each 完整记录 tab was left, by tab path (owner 2026-11-05): a file
+ *  opened from a row takes the panel and this view unmounts, and coming back
+ *  to the tab must land on the row the reader left. */
+const leftAt = new Map<string, number>();
+
 export function RunRecordView(props: { readonly path: string }): JSX.Element {
   return (
     // The tab sits beside the workspace, not inside its lightbox: a
@@ -152,6 +157,14 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
   };
 
   const run = found?.item ?? null;
+  const scroller = useRef<HTMLDivElement>(null);
+  const shown = run !== null;
+  useLayoutEffect(() => {
+    const at = leftAt.get(props.path);
+    if (shown && at !== undefined && scroller.current !== null) {
+      scroller.current.scrollTop = at;
+    }
+  }, [props.path, shown]);
   const facts = useMemo(
     () => (run === null ? null : runFacts(run.blocks, run.dispatchedAt)),
     [run],
@@ -182,7 +195,12 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
 
   return (
     <div className="file-viewer__body">
-      <div className="file-viewer__scroll run-record" data-testid="run-record">
+      <div
+        ref={scroller}
+        className="file-viewer__scroll run-record"
+        data-testid="run-record"
+        onScroll={(e) => leftAt.set(props.path, e.currentTarget.scrollTop)}
+      >
         <RunHead
           facts={facts}
           live={live}

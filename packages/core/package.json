@@ -11,6 +11,7 @@
     "./text-sanitize": "./dist/text-sanitize.js",
     "./banzhuan-alias": "./dist/text/banzhuan-alias.js",
     "./marker-summary": "./dist/text/marker-summary.js",
+    "./record-window": "./dist/text/record-window.js",
     "./repo-path": "./dist/text/repo-path.js",
     "./page-element": "./dist/text/page-element.js",
     "./quoted-pages": "./dist/text/quoted-pages.js",

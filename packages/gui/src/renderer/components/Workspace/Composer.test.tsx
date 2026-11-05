@@ -1095,7 +1095,7 @@ describe("Composer — talking to Herta while 板砖 works (ADR 0085 step 3)", (
   }
   function send(text: string): HTMLTextAreaElement {
     const input = screen.getByPlaceholderText(
-      "Message Herta…",
+      /Message Herta…|Steer the coprocessor…/,
     ) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: text } });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -1121,6 +1121,11 @@ describe("Composer — talking to Herta while 板砖 works (ADR 0085 step 3)", (
     startRun(mock);
     act(() => store().setComposerSteer(true));
     expect(screen.getByText("Steer · Coprocessor")).toBeInTheDocument();
+    // Inside the composer, on the quotes' row, which makes room for it — and
+    // the box says who the words are for.
+    expect(document.querySelector(".composer.has-quotes")).not.toBeNull();
+    expect(document.querySelectorAll(".composer-quotes")).toHaveLength(1);
+    expect(screen.getByPlaceholderText("Steer the coprocessor…")).toBeTruthy();
     send("先别动 api 目录");
     await waitFor(() =>
       expect(mock.calls.steerText).toEqual(["先别动 api 目录"]),
@@ -1128,6 +1133,7 @@ describe("Composer — talking to Herta while 板砖 works (ADR 0085 step 3)", (
     expect(mock.calls.talkText).toHaveLength(0);
     fireEvent.click(screen.getByLabelText("Send to Herta instead"));
     expect(screen.queryByText("Steer · Coprocessor")).toBeNull();
+    expect(screen.getByPlaceholderText("Message Herta…")).toBeTruthy();
     send("那几点？");
     await waitFor(() => expect(mock.calls.talkText).toEqual(["那几点？"]));
   });

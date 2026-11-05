@@ -193,6 +193,28 @@ describe("the 完整记录 tab (ADR 0085 §9, amendment 2026-11-04 later)", () =
     );
   });
 
+  it("coming back from a file lands where the reader left the tab (owner 2026-11-05)", async () => {
+    const { container, readWorkspaceFile } = mount(RUN);
+    openRecord(container);
+    const left = tab();
+    left.scrollTop = 420;
+    fireEvent.scroll(left);
+    // The facts' file, at the end of the tab: it opens in a tab of its own,
+    // and this view leaves with the panel.
+    const opens = within(left).getAllByRole("button", {
+      name: "View file src/Login.jsx",
+    });
+    fireEvent.click(opens[opens.length - 1] as HTMLElement);
+    await waitFor(() =>
+      expect(readWorkspaceFile).toHaveBeenCalledWith("s1", "src/Login.jsx"),
+    );
+    await waitFor(() => expect(screen.queryByTestId("run-record")).toBeNull());
+    fireEvent.click(
+      screen.getByRole("tab", { name: "Coprocessor · Full record" }),
+    );
+    expect(tab().scrollTop).toBe(420);
+  });
+
   it("live while the run works: rows land as they do on the card, the newest shimmering", () => {
     const live = RUN.slice(0, 5);
     const h = mount(live);

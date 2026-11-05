@@ -17,6 +17,7 @@ import type {
   WorkspaceEvent,
 } from "@herta/app-server";
 import { namePickedElements } from "@herta/core/page-element";
+import { RECORD_WINDOW_WEIGHT } from "@herta/core/record-window";
 import { EMPTY_LIVE } from "../../shared/live-tool-feed.js";
 import type {
   HertaBridge,
@@ -793,15 +794,17 @@ export class SessionStore {
   private loadingOlder = false;
 
   /**
-   * Extend the record window BACKWARD by up to `count` blocks (the "load
-   * earlier" affordance for long sessions, 2026-07-12). Pages
-   * `[recordStart - count, recordStart)` from main and prepends it. Guards:
+   * Extend the record window BACKWARD by `count` of weight (the "load
+   * earlier" affordance for long sessions, 2026-07-12; the weight is what the
+   * chat draws, `@herta/core/record-window`). Main answers the blocks ending
+   * at `recordStart`, back to a message that opens a turn, and they are
+   * prepended. Guards:
    * single-flight; no-op when everything is loaded or the bridge lacks
    * recordSlice (fakes); a response is dropped when the session switched or
    * the window start moved (a rewind/heal reset re-anchored it) while the
    * invoke was in flight — the absolute indices would no longer line up.
    */
-  async loadOlderBlocks(count = 200): Promise<void> {
+  async loadOlderBlocks(count = RECORD_WINDOW_WEIGHT): Promise<void> {
     const { sessionId, recordStart } = this.snapshot;
     if (
       this.loadingOlder ||

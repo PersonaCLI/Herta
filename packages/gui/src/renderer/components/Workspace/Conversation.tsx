@@ -49,11 +49,7 @@ export {
   IN_FLIGHT_EXIT_MS,
   IN_FLIGHT_MIN_VISIBLE_MS,
 } from "./useInFlightIndicator.js";
-export {
-  UNPINNED_TRIM_AT,
-  UNPINNED_TRIM_KEEP_TAIL,
-  UNPINNED_TRIM_MIN,
-} from "./useRecordWindow.js";
+export { UNPINNED_TRIM_AT, UNPINNED_TRIM_MIN } from "./useRecordWindow.js";
 export { SUPERVISOR_HINT_DELAY_MS } from "./useSupervisorHold.js";
 
 // memo (user profile 2026-07-12): Conversation takes no props, so every
@@ -303,7 +299,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                 className="load-earlier"
                 onClick={loadEarlier}
               >
-                {t("workspace.loadEarlier", { n: recordStart })}
+                {t("workspace.loadEarlier")}
               </button>
             )}
             {/* Rows are keyed by record index, which COLLIDES across sessions —

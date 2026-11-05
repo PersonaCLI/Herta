@@ -133,6 +133,19 @@ export function PageNewTab({
                 aria-hidden="true"
               />
               <span className="page-server__name">{e.name}</span>
+              {e.logPath !== undefined && openFile !== null && (
+                <button
+                  type="button"
+                  className="page-server__btn"
+                  onClick={() =>
+                    openFile(e.logPath as string, {
+                      label: `${e.name} · ${t("page.servers.log")}`,
+                    })
+                  }
+                >
+                  {t("page.servers.log")}
+                </button>
+              )}
               <button
                 type="button"
                 className="page-server__btn"
@@ -175,22 +188,6 @@ export function PageNewTab({
                 ? ` (${e.exitCode})`
                 : ""}
               {` · ${routeOf(e.url)}`}
-              {e.logPath !== undefined && openFile !== null && (
-                <>
-                  {" · "}
-                  <button
-                    type="button"
-                    className="page-server__log"
-                    onClick={() =>
-                      openFile(e.logPath as string, {
-                        label: `${e.name} · ${t("page.servers.log")}`,
-                      })
-                    }
-                  >
-                    {t("page.servers.log")}
-                  </button>
-                </>
-              )}
             </div>
             {ask !== null && ask.name === e.name && (
               <fieldset className="page-server__ask">

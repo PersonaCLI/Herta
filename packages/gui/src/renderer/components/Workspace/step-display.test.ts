@@ -1047,7 +1047,7 @@ describe("stepDisplayBody — the launcher (ADR 0083 §5)", () => {
       already: false,
     });
     expect(stepDisplayBody(yours, te)).toBe(
-      "↳ dev server web · started by you · localhost:5173",
+      "dev server web · started by you · localhost:5173",
     );
     const reaped = sys("上次应用退出时…", {
       kind: "server",
@@ -1055,7 +1055,23 @@ describe("stepDisplayBody — the launcher (ADR 0083 §5)", () => {
       names: ["web", "api"],
     });
     expect(stepDisplayBody(reaped, te)).toBe(
-      "↳ Dev servers left running at the last exit were stopped: web, api",
+      "Dev servers left running at the last exit were stopped: web, api",
+    );
+    // What the Trailblazer did stands alone in the chat: no ↳ (owner
+    // 2026-11-05). 板砖's own stop answers the step above it.
+    const stop = (by: "trailblazer" | "banzhuan") =>
+      sys("stopped", {
+        kind: "server",
+        action: "stop",
+        by,
+        name: "web",
+        wasRunning: true,
+      });
+    expect(stepDisplayBody(stop("trailblazer"), tz)).toBe(
+      "开发服务器 web · 由你停止",
+    );
+    expect(stepDisplayBody(stop("banzhuan"), tz)).toBe(
+      "↳ 开发服务器 web · 已停止",
     );
   });
 });

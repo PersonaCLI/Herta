@@ -71,7 +71,7 @@ export interface SessionSnapshot {
   readonly workspaceRoot: string;
   readonly record: TerminalRecord;
   /** Long-session windowing (2026-07-12): `record` is the trailing
-   *  RECORD_TAIL_BLOCKS window of the full record and this is the absolute
+   *  trailing window of the full record and this is the absolute
    *  index it starts at (= how many OLDER blocks exist, pageable via
    *  `recordSlice`). Optional on the wire — absent means 0 (the window is
    *  the whole record; older fixtures/fakes stay valid). */
@@ -590,8 +590,9 @@ export interface HertaBridge {
    *  card. OPTIONAL so existing bridge fakes keep compiling — the sidebar
    *  degrades to title-only filtering without it. */
   searchSessions?(query: string): Promise<readonly SessionSearchHit[]>;
-  /** Long-session windowing: fetch up to `count` record blocks ENDING at
-   *  absolute index `before` (exclusive) for the active session — the store's
+  /** Long-session windowing: fetch `count` of weight in record blocks ENDING
+   *  at absolute index `before` (exclusive) for the active session, back to a
+   *  message that opens a turn (`@herta/core/record-window`) — the store's
    *  "load earlier" paging. Resolves `{ start, blocks }` where `start` is the
    *  absolute index of `blocks[0]`; an empty slice means nothing older / a
    *  session mismatch. OPTIONAL so bridge fakes keep compiling — the load-

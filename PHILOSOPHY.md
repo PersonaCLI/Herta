@@ -31,7 +31,7 @@ Herta inference (DeepSeek completion mode)
             reads the runtime TerminalRecord as task evidence
           backend events render into TerminalRecord as
             → 差分协处理器 and → 系统 lines
-          during execution her lane stays open (ADR 0085): the user
+          during execution her lane stays open: the user
             can talk to her and she answers while the run goes on —
             one completion of hers at a time, same substrate as the
             main actor; her @板砖 then steers the run with the

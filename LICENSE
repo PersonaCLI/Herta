@@ -17,6 +17,9 @@ commercial use by this license:
 
   - packages/gui/build/**          app icons (character likeness)
   - packages/gui/resources/**      in-app artwork (character likeness)
+  - packages/gui/src/renderer/assets/**
+                                   avatars and in-app artwork (character
+                                   likeness), opening clips
   - packages/herta/prompts/**      persona material and canon corpora,
   - packages/herta/prompts-en/**   including quoted in-game dialogue
   - website/src/assets/**          site imagery and audio

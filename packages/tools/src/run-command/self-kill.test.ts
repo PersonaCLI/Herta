@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   type AgentEvent,
@@ -18,6 +19,7 @@ import {
   type HostProcess,
   hostIdentity,
   registerHostHelperPids,
+  selfKillDenial,
 } from "./self-kill.js";
 
 /** The CLI on Windows: node.exe at 4242, started by a shell at 4100, with
@@ -210,6 +212,169 @@ describe("the bash contract's lines (2026-11-04)", () => {
     expect(v.kind).toBe("block");
     expect(v.kind === "block" ? v.suggestion : "").toContain("by its own pid");
     expect(shellVerdict("sleep 1; kill 574").kind).toBe("ask");
+  });
+});
+
+describe("nothing a line says reaches a regular expression (review 2026-11-05)", () => {
+  /** One process, so a table can name it. */
+  const named = (name: string, commandLine = name): HostIdentity => ({
+    processes: () => [{ pid: 4242, self: true, name, ppid: 4100, commandLine }],
+  });
+  const denied = (argv: string[], who: HostIdentity): boolean =>
+    selfKillDenial(argv, who, false) !== null;
+
+  /** The classifier is synchronous on the main thread. This command line is
+   *  short on purpose: a backtracking engine spends seconds on it and fails
+   *  the test, where on the app's real one it never comes back and the test
+   *  run would hang with it. */
+  const short = named("node.exe", "a".repeat(26));
+
+  it("a line built to backtrack answers at once", () => {
+    const started = performance.now();
+    const verdicts = [
+      ["pkill", "-f", "(.+)+X"],
+      ["taskkill", "/IM", `${"*".repeat(24)}b`],
+      ["taskkill", "/FI", `PID eq ${" ".repeat(1600)}\nx\ny`],
+    ].map((argv) => classifyCommand(argv, { host: short }).kind);
+    expect(performance.now() - started).toBeLessThan(1000);
+    // Nobody can tell what the pattern selects; a filter it cannot read
+    // lets every process through, the app's own included.
+    expect(verdicts).toEqual(["ask", "ask", "block"]);
+  });
+
+  it("the bash contract's line asks too", () => {
+    const started = performance.now();
+    const v = classifyShellCommandDetailed("sudo pkill -f '(.+)+X'", {
+      workspaceRoot: WS,
+      paths,
+      host: short,
+    }).verdict;
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(v.kind).toBe("ask");
+  });
+
+  it("what a kill is usually written with still reads", () => {
+    for (const argv of [
+      ["pkill", "-x", "node.exe"],
+      ["pkill", "-f", "node.exe"],
+      ["pkill", "-f", "node.*cli"],
+      ["pkill", "-f", "nodejs.+cli\\.js$"],
+      ["pkill", "^node$"],
+      ["pkill", "-f", "vite|herta"],
+      ["pkill", "-i", "NODE"],
+      ["pkill", "."],
+      ["pkill", ""],
+      ["killall", "-r", "no.*"],
+      ["killall", "-r", "vite|node"],
+      ["killall", "-I", "NODE"],
+      ["taskkill", "/IM", "N?DE*"],
+      ["taskkill", "/IM", "*.exe"],
+      ["Stop-Process", "-Name", "no*"],
+      ["tskill", "no*"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).toBe("block");
+    }
+    for (const argv of [
+      ["pkill", "-f", "vite|webpack"],
+      ["pkill", "-x", "no.e.ex"],
+      ["pkill", "-f", "^vite"],
+      ["pkill", "^ode"],
+      ["pkill", "nod$"],
+      ["pkill", "node\\.py"],
+      ["pkill", "-f", "a\\|node"],
+      ["killall", "no.*"],
+      ["killall", "-r", "^ode"],
+      ["taskkill", "/IM", "n?de.py"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).toBe("ask");
+    }
+  });
+
+  it("a pattern a glob cannot say asks, whatever it would match", () => {
+    for (const argv of [
+      ["pkill", "[n]ode"],
+      ["pkill", "no(de)"],
+      ["pkill", "nod+e"],
+      ["pkill", "node?"],
+      ["pkill", "n.?de"],
+      ["pkill", "n.{2}e"],
+      ["pkill", "\\bnode"],
+      ["pkill", "node\\"],
+      ["pkill", "-v", "[p]ython"],
+      ["pkill", "-f", `${"a|".repeat(1000)}node`],
+      ["killall", "-r", "[n]ode"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).toBe("ask");
+    }
+  });
+
+  it("reads a pattern as the program would, against a real engine", () => {
+    const patterns = [
+      "node",
+      "^node",
+      "node$",
+      "^node$",
+      "n.de",
+      "n.*e",
+      "n.+e",
+      "no.*de$",
+      ".*",
+      ".+",
+      ".",
+      "",
+      "a|node",
+      "x|y",
+      "^x|e$",
+      "no\\.de",
+      "^$",
+    ];
+    const names = ["node", "no.de", "xnodex", "ne", "n", ""];
+    for (const pattern of patterns) {
+      for (const name of names) {
+        const who = named(name);
+        const label = `${pattern} on ${name}`;
+        expect(denied(["pkill", pattern], who), label).toBe(
+          new RegExp(pattern).test(name),
+        );
+        expect(denied(["pkill", "-x", pattern], who), `-x ${label}`).toBe(
+          new RegExp(`^(?:${pattern})$`).test(name),
+        );
+        expect(denied(["pkill", "-if", pattern.toUpperCase(), "--"], who)).toBe(
+          new RegExp(pattern.toUpperCase(), "i").test(name),
+        );
+      }
+    }
+    const wildcards = [
+      "*",
+      "?",
+      "n*",
+      "*e",
+      "n?de",
+      "*o*e",
+      "**",
+      "n*d*",
+      "?*",
+    ];
+    for (const wild of [...wildcards, "NODE", "*.DE", "no.d?"]) {
+      for (const name of names) {
+        const source = wild
+          .replace(/\./g, "\\.")
+          .replace(/\*/g, ".*")
+          .replace(/\?/g, ".");
+        expect(
+          denied(["taskkill", "/IM", wild], named(name)),
+          `${wild} on ${name}`,
+        ).toBe(new RegExp(`^${source}$`, "i").test(name));
+      }
+    }
+  });
+
+  it("the file builds no RegExp at all", async () => {
+    const source = await readFile(
+      new URL("./self-kill.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toMatch(/new RegExp|RegExp\(/);
   });
 });
 

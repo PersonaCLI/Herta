@@ -16,6 +16,12 @@ import { basename } from "node:path";
  * the window). Ancestors above the parent, and a kill whose targets arrive
  * through a pipe (`pgrep x | xargs kill`, `Get-Process x | Stop-Process`) or
  * a substitution, are not judged here: they ask as before.
+ *
+ * Nothing a line says reaches a regular expression (review 2026-11-05). This
+ * runs synchronously on the app's main thread and JavaScript's engine
+ * backtracks: `pkill -f '(.+)+X'`, or `taskkill /IM` over thirty `*`, held it
+ * for good, before any card and out of Stop's reach. A name test here is a
+ * glob, walked forward over the text; a pattern a glob cannot say asks.
  */
 
 /** One process that is this app. */
@@ -194,33 +200,143 @@ function anyOf(selectors: ReadonlyArray<Selector | null>): Selector | null {
 /** Every process (all of a user's, all a filter lets through). */
 const EVERY: Selector = { by: "all", matches: () => true };
 
-/** A `*` / `?` wildcard as a whole-string, case-insensitive test. */
-function wildcard(pattern: string): RegExp {
-  const body = pattern
-    .split("")
-    .map((c) =>
-      c === "*"
-        ? ".*"
-        : c === "?"
-          ? "."
-          : c.replace(/[.+^${}()|[\]\\]/g, "\\$&"),
-    )
-    .join("");
-  return new RegExp(`^${body}$`, "i");
-}
+/** A test of one name or command line. */
+type TextTest = (text: string) => boolean;
 
-/** A pattern the program reads as a regular expression; null when it is not
- *  one JavaScript can read either (the program would refuse it too). */
-function regex(pattern: string, flags: string): RegExp | null {
-  try {
-    return new RegExp(pattern, flags);
-  } catch {
-    return null;
+/** Any one character. */
+const ONE = 1;
+/** Any run of characters, none included. */
+const RUN = 2;
+/** A whole-string pattern: literal characters and those two. */
+type Glob = ReadonlyArray<string | typeof ONE | typeof RUN>;
+
+/**
+ * Whether `glob` matches all of `text`. On a miss only the latest `RUN` takes
+ * one more character, so the walk never returns past it: the time is at worst
+ * the text's length times the pattern's, whatever the pattern.
+ */
+function globMatches(glob: Glob, text: string): boolean {
+  let at = 0;
+  let step = 0;
+  let run = -1;
+  let runEnd = 0;
+  while (at < text.length) {
+    const want = glob[step];
+    if (want === RUN) {
+      run = step;
+      runEnd = at;
+      step += 1;
+    } else if (want === ONE || want === text[at]) {
+      step += 1;
+      at += 1;
+    } else if (run < 0) {
+      return false;
+    } else {
+      step = run + 1;
+      runEnd += 1;
+      at = runEnd;
+    }
   }
+  while (glob[step] === RUN) step += 1;
+  return step === glob.length;
 }
 
-function escaped(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A `*` / `?` wildcard as a whole-string, case-insensitive test. */
+function wildcard(pattern: string): TextTest {
+  const glob = pattern
+    .toLowerCase()
+    .split("")
+    .map((c) => (c === "*" ? RUN : c === "?" ? ONE : c));
+  return (text) => globMatches(glob, text.toLowerCase());
+}
+
+/** A name spelled out in full: the whole of it, nothing read as a pattern. */
+function literal(name: string, icase: boolean): TextTest {
+  const want = icase ? name.toLowerCase() : name;
+  return (text) => (icase ? text.toLowerCase() : text) === want;
+}
+
+/** Longer than any pattern a line means: `a|a|a|…` costs a walk per `|`. */
+const PATTERN_CAP = 1024;
+
+/** What a glob cannot say. `.`, a `^` that opens an alternative and a `$`
+ *  that closes one are read before this is asked. */
+const REGEX_SYNTAX: ReadonlySet<string> = new Set("^$*+?()[]{}");
+
+/** A pattern's `|` alternatives; `\|` is not one. */
+function alternatives(source: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "\\") {
+      i += 1;
+    } else if (source[i] === "|") {
+      out.push(source.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(source.slice(from));
+  return out;
+}
+
+/** One `|` alternative as a glob; null when it says more than a glob can. */
+function regexGlob(source: string, exact: boolean): Glob | null {
+  const steps: Array<string | typeof ONE | typeof RUN> = [];
+  const opens = source.startsWith("^");
+  let closes = false;
+  for (let i = opens ? 1 : 0; i < source.length; i += 1) {
+    const c = source[i] as string;
+    const next = source[i + 1];
+    if (c === "\\") {
+      // `\.` is the dot itself. `\d`, `\b`, a trailing `\`: not a character.
+      if (next === undefined || /[A-Za-z0-9]/.test(next)) return null;
+      steps.push(next);
+      i += 1;
+    } else if (c === ".") {
+      if (next === "?") return null;
+      if (next === "+") steps.push(ONE);
+      if (next === "*" || next === "+") {
+        steps.push(RUN);
+        i += 1;
+      } else {
+        steps.push(ONE);
+      }
+    } else if (c === "$" && i === source.length - 1) {
+      closes = true;
+    } else if (REGEX_SYNTAX.has(c)) {
+      return null;
+    } else {
+      steps.push(c);
+    }
+  }
+  if (!exact && !opens) steps.unshift(RUN);
+  if (!exact && !closes) steps.push(RUN);
+  return steps;
+}
+
+/**
+ * A pattern the program reads as a regular expression (`pkill`, `killall -r`).
+ * What such a line is written with reads as globs: `node.*vite`, `cli\.js`,
+ * `vite|webpack`, `^node$`. A class, a group or a repeat of anything but `.`
+ * does not, and null is "cannot tell": the line asks.
+ */
+function regex(
+  pattern: string,
+  exact: boolean,
+  icase: boolean,
+): TextTest | null {
+  if (pattern.length > PATTERN_CAP) return null;
+  const source = icase ? pattern.toLowerCase() : pattern;
+  const globs: Glob[] = [];
+  for (const alternative of alternatives(source)) {
+    const glob = regexGlob(alternative, exact);
+    if (glob === null) return null;
+    globs.push(glob);
+  }
+  return (text) => {
+    const subject = icase ? text.toLowerCase() : text;
+    return globs.some((glob) => globMatches(glob, subject));
+  };
 }
 
 // ── kill (POSIX, and the shells' builtin) ──────────────────────────────────
@@ -375,14 +491,14 @@ function pkillSelector(args: readonly string[]): Selector | null {
         };
   // No pattern: every process of a user (`pkill -u me`), or of a parent.
   if (pattern === undefined) return users ? EVERY : byParent;
-  const re = regex(exact ? `^(?:${pattern})$` : pattern, icase ? "i" : "");
-  if (re === null) return null;
+  const test = regex(pattern, exact, icase);
+  if (test === null) return null;
   const named: Selector = {
     by: "name",
     matches: (p) => {
       const hit = full
-        ? p.commandLine !== undefined && re.test(p.commandLine)
-        : nameMatches(p, (s) => re.test(s));
+        ? p.commandLine !== undefined && test(p.commandLine)
+        : nameMatches(p, test);
       if (p.name === undefined && !full) return false;
       return invert ? !hit : hit;
     },
@@ -447,16 +563,13 @@ function killallSelector(args: readonly string[]): Selector | null {
     }
   }
   if (names.length === 0) return users ? EVERY : null;
-  const flags = icase ? "i" : "";
   const tests = names
-    .map((n) =>
-      regexp ? regex(n, flags) : new RegExp(`^${escaped(n)}$`, flags),
-    )
-    .filter((t): t is RegExp => t !== null);
+    .map((n) => (regexp ? regex(n, false, icase) : literal(n, icase)))
+    .filter((t): t is TextTest => t !== null);
   if (tests.length === 0) return null;
   return {
     by: "name",
-    matches: (p) => nameMatches(p, (s) => tests.some((t) => t.test(s))),
+    matches: (p) => nameMatches(p, (s) => tests.some((test) => test(s))),
   };
 }
 
@@ -471,7 +584,7 @@ function winSwitch(a: string): string | null {
 
 function taskkillSelector(args: readonly string[]): Selector | null {
   const pids: number[] = [];
-  const images: RegExp[] = [];
+  const images: TextTest[] = [];
   const filters: Array<(p: HostProcess) => boolean> = [];
   for (let i = 0; i < args.length; i += 1) {
     const sw = winSwitch(args[i] as string);
@@ -501,8 +614,7 @@ function taskkillSelector(args: readonly string[]): Selector | null {
       ? null
       : {
           by: "name",
-          matches: (p) =>
-            nameMatches(p, (s) => images.some((re) => re.test(s))),
+          matches: (p) => nameMatches(p, (s) => images.some((test) => test(s))),
         };
   // With neither /PID nor /IM, the filters alone choose, from every process.
   const chosen =
@@ -518,22 +630,34 @@ function taskkillSelector(args: readonly string[]): Selector | null {
   };
 }
 
+const FILTER_RELATIONS: ReadonlySet<string> = new Set([
+  "eq",
+  "ne",
+  "gt",
+  "lt",
+  "ge",
+  "le",
+]);
+
 /** One `/FI "NAME OP VALUE"` filter. A filter this guard does not read
  *  (STATUS, USERNAME, MEMUSAGE, WINDOWTITLE …) is taken to match: the process
  *  might pass it. */
 function taskkillFilter(text: string): (p: HostProcess) => boolean {
-  const m = /^\s*(\w+)\s+(eq|ne|gt|lt|ge|le)\s+(.+?)\s*$/i.exec(text);
-  if (m === null) return () => true;
-  const field = (m[1] as string).toLowerCase();
-  const op = (m[2] as string).toLowerCase();
-  const value = m[3] as string;
+  const [name, relation, ...rest] = text.trim().split(/\s+/);
+  const op = relation?.toLowerCase();
+  if (name === undefined || op === undefined || rest.length === 0) {
+    return () => true;
+  }
+  const field = name.toLowerCase();
+  const value = rest.join(" ");
+  if (!FILTER_RELATIONS.has(op)) return () => true;
   if (field === "imagename") {
-    const re = wildcard(value);
+    const test = wildcard(value);
     return (p) => {
       // An unknown name (the parent's) is taken as not the one named, as
       // every name test here takes it.
       if (p.name === undefined) return op === "ne";
-      const hit = nameMatches(p, (s) => re.test(s));
+      const hit = nameMatches(p, test);
       return op === "ne" ? !hit : hit;
     };
   }
@@ -559,8 +683,8 @@ function tskillSelector(args: readonly string[]): Selector | null {
   const target = args.find((a) => winSwitch(a) === null);
   if (target === undefined) return null;
   if (/^\d+$/.test(target)) return byPids([Number(target)]);
-  const re = wildcard(target);
-  return { by: "name", matches: (p) => nameMatches(p, (s) => re.test(s)) };
+  const test = wildcard(target);
+  return { by: "name", matches: (p) => nameMatches(p, test) };
 }
 
 // ── Stop-Process (PowerShell) ──────────────────────────────────────────────
@@ -579,7 +703,7 @@ function psParam(a: string): "id" | "name" | "whatif" | null {
 
 function powershellSelector(args: readonly string[]): Selector | null {
   const pids: number[] = [];
-  const names: RegExp[] = [];
+  const names: TextTest[] = [];
   let param: "id" | "name" | null = null;
   // Stop-Process's first positional parameter is -Id.
   let positional = true;
@@ -614,7 +738,7 @@ function powershellSelector(args: readonly string[]): Selector | null {
       ? null
       : {
           by: "name",
-          matches: (p) => nameMatches(p, (s) => names.some((re) => re.test(s))),
+          matches: (p) => nameMatches(p, (s) => names.some((test) => test(s))),
         },
   ]);
 }

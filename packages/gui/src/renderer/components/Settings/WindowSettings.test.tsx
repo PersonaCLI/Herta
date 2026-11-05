@@ -4,9 +4,13 @@ import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
 import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
 import { resetThemeForTest } from "../../lib/theme.js";
+import { resetTrailblazerAvatarForTest } from "../../lib/trailblazer-avatar.js";
 import { WindowSettings } from "./WindowSettings.js";
 
-afterEach(resetThemeForTest);
+afterEach(() => {
+  resetThemeForTest();
+  resetTrailblazerAvatarForTest();
+});
 
 function setup(platform?: string) {
   const mock = createMockHertaBridge(
@@ -19,6 +23,20 @@ function setup(platform?: string) {
   );
   return mock;
 }
+
+describe("WindowSettings avatar row (ADR 0085 amendment 2026-11-05)", () => {
+  it("offers both avatars with the male mark picked, and a pick persists", () => {
+    setup();
+    expect(screen.getByRole("radiogroup", { name: "Avatar" })).toBeTruthy();
+    const male = screen.getByRole("radio", { name: "Male" });
+    const female = screen.getByRole("radio", { name: "Female" });
+    expect(male).toBeChecked();
+    fireEvent.click(female);
+    expect(female).toBeChecked();
+    expect(male).not.toBeChecked();
+    expect(localStorage.getItem("herta.trailblazer.avatar")).toBe("female");
+  });
+});
 
 describe("WindowSettings appearance row (night-mode slice 2)", () => {
   it("renders the Appearance select alongside close-to-tray", () => {

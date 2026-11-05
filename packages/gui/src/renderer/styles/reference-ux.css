@@ -4786,7 +4786,7 @@ button.session-item__badge--dismiss {
 }
 
 /* A speaker's avatar on a steer row (ADR 0085 amendment 2026-11-04): 18 px,
-   ringed in their colour. With no picture it is the ring on a tint of it. */
+   ringed in their colour. */
 .speaker-avatar {
   flex: none;
   box-sizing: border-box;
@@ -4795,7 +4795,6 @@ button.session-item__badge--dismiss {
   height: 18px;
   border-radius: 50%;
   border: 1.5px solid var(--speaker-color);
-  background: color-mix(in srgb, var(--speaker-color) 20%, transparent);
   overflow: hidden;
 }
 .speaker-avatar.is-trailblazer {
@@ -7913,6 +7912,44 @@ button.commit-view__path:hover {
 .settings-row-title { margin: 0 0 3px; font-size: 14px; color: var(--ink); }
 .settings-row-desc { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 .settings-row-control { flex: none; }
+/* The Trailblazer's two avatars (ADR 0085 amendment 2026-11-05): the pick
+   wears their gold ring, and a radio input covers each picture. */
+.avatar-picker {
+  display: flex;
+  gap: 10px;
+}
+.avatar-picker__option {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  width: 36px;
+  height: 36px;
+  padding: 2px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.avatar-picker__option:has(input:checked) {
+  border-color: var(--speaker-trailblazer);
+}
+.avatar-picker__option:has(input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.avatar-picker__option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.avatar-picker__option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
 /* Voice volume slider (2026-07-11): native range input tinted via
    accent-color, with the current percentage beside it. Dimmed (and disabled
    via the input's own attribute) while the master mute is on — volume has

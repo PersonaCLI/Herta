@@ -3,6 +3,7 @@ import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { AttentionSettings, ThemePref } from "../../ipc/bridge-types.js";
 import { applyThemePref, themePref } from "../../lib/theme.js";
+import { AvatarPicker } from "./AvatarPicker.js";
 import { Select } from "./Select.js";
 import { SettingRow } from "./SettingRow.js";
 import { useRememberedSetting } from "./settings-snapshot.js";
@@ -159,6 +160,11 @@ export function WindowSettings(): JSX.Element {
             onChange={onTheme}
           />
         }
+      />
+      <SettingRow
+        title={t("window.avatar")}
+        description={t("window.avatarDesc")}
+        control={<AvatarPicker />}
       />
       <SettingRow
         title={t(isMac ? "window.closeToTrayMac" : "window.closeToTray")}

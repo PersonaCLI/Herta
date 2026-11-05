@@ -913,7 +913,9 @@ describe("the card's steers and its stop (ADR 0085 amendment 2026-11-04)", () =>
     const row = list.querySelector(".trace-card__steer") as HTMLElement;
     // In the session's language, as the card is; no 插话 label.
     expect(
-      row.querySelector('.speaker-avatar.is-trailblazer[aria-label="开拓者"]'),
+      row.querySelector(
+        '.speaker-avatar.is-trailblazer[aria-label="开拓者"] img',
+      ),
     ).not.toBeNull();
     expect(row.textContent).toBe("先别动 api 目录");
   });

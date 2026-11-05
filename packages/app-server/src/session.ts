@@ -1472,8 +1472,9 @@ export class SessionImpl implements Session {
    * for the loop's next head, and the bus carries `user.steer`, which the
    * bridge projects into the shared record as a user block (Herta sees it,
    * D7) and stages as a beat. Anything else — idle, Herta's own speech,
-   * the commentary after the run — answers `queued`, records nothing, and
-   * leaves the caller holding the text for the next turn.
+   * the commentary after the run, a turn already stopped whose loop has not
+   * seen it yet — answers `queued`, records nothing, and leaves the caller
+   * holding the text for the next turn.
    */
   async steerText(
     text: string,
@@ -1483,6 +1484,7 @@ export class SessionImpl implements Session {
     if (
       trimmed.length === 0 ||
       this.currentTurn === null ||
+      this.currentTurn.abortController.signal.aborted ||
       !this.backendRunning
     ) {
       return { queued: true };
@@ -1512,7 +1514,8 @@ export class SessionImpl implements Session {
    * as a steer — a backend run working — and the same route into the record:
    * the bus carries `user.talk`, and the bridge, the record's one writer
    * while a run works, records it as talk and has her answer it. It never
-   * reaches 板砖. Outside a run: `queued`, nothing recorded.
+   * reaches 板砖. Outside a run, or once the turn is stopped: `queued`,
+   * nothing recorded.
    */
   async talkText(
     text: string,
@@ -1525,6 +1528,7 @@ export class SessionImpl implements Session {
     if (
       trimmed.length === 0 ||
       this.currentTurn === null ||
+      this.currentTurn.abortController.signal.aborted ||
       !this.backendRunning
     ) {
       return { queued: true };
@@ -2495,8 +2499,13 @@ export class SessionImpl implements Session {
       const s = sessionHolder.session;
       if (s === null || ev.layer !== "backend") return;
       if (ev.type === "turn.started") s.backendRunning = true;
-      else if (ev.type === "turn.finished" || ev.type === "turn.failed")
+      else if (ev.type === "turn.finished" || ev.type === "turn.failed") {
         s.backendRunning = false;
+        // Nothing drains the channel from here. A steer left in it would
+        // open a second dispatch in this turn as a message from nowhere
+        // (ADR 0063; review 2026-11-05).
+        steer.clear();
+      }
     });
 
     // 2. Actor stack (shared wiring): providers, static prefix (+ reopen

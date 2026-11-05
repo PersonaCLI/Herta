@@ -11,12 +11,17 @@ import type { PromptLang } from "./prompt-lang.js";
  * Her view of the record while a run works (ADR 0085 §3).
  *
  * What is stored keeps time order. While 板砖's run still works and the
- * Trailblazer has talked during it, her prompt draws the run right after the
- * （我 说） that dispatched it — its rows, the steers it took, her checkpoints
- * about it — and the talk after it: his words to her (`duringRun`) with what
- * came with them, and her answers. Drawn in time order, a live run is
- * shredded between lines of talk, and the question she is answering sits
+ * Trailblazer's words wait for her answer, her prompt draws the run right
+ * after the （我 说） that dispatched it — its rows, the steers it took, her
+ * checkpoints about it — and the talk after it: his words to her (`duringRun`)
+ * with what came with them, and her answers. Drawn in time order, a live run
+ * is shredded between lines of talk, and the question she is answering sits
  * above rows that landed after it (§3, Not taken).
+ *
+ * Once she has answered, nothing is waiting, and a checkpoint is about what
+ * just failed. In the live form the old exchange would be the newest thing
+ * above her hint, the shape the lab found wrong at the verdict; so a run with
+ * no word waiting reads in time order too (review 2026-11-05).
  *
  * An ended run is drawn as it happened (the lab, owner 2026-11-04: "In time
  * order"). With the talk after an ended run's report, the newest things her
@@ -25,15 +30,15 @@ import type { PromptLang } from "./prompt-lang.js";
  * order the run's report is the newest thing, and it is what her verdict
  * is about.
  *
- * With no talk during the run still working — every record before the lanes
- * (step 3), and every one whose runs have ended — nothing moves: the input
- * comes back as the same array, and the view is byte-identical to the one
- * before this existed.
+ * With no word waiting in the run still working — every record before the
+ * lanes (step 3), and every one whose runs have ended — nothing moves: the
+ * input comes back as the same array, and the view is byte-identical to the
+ * one before this existed.
  */
 export interface RunGrouping {
   /** The record in her view's order: `===` the input when nothing moved. */
   readonly record: TerminalRecord;
-  /** The run still working with talk after it, as `[start, end)` of
+  /** The run still working with a word waiting, as `[start, end)` of
    *  `record`: it is drawn in its live form, and the talk after `end` runs
    *  to the record's end. Null when there is no such run. */
   readonly live: { readonly start: number; readonly end: number } | null;
@@ -43,9 +48,10 @@ export interface RunGrouping {
  * A run opens at a coprocessor row and holds every block after it until its
  * terminal marker, or until a message that opens a turn (a run cut short
  * before the bridge wrote its marker). Only the last can still be working.
- * If it is, and talk fell during it, the run is drawn first: a steer is a
- * message to 板砖 and stays inside, while `duringRun` talk, the attachments
- * that came with it, and her answers move after the run's last block.
+ * If it is, and the newest talk in it is his, unanswered, the run is drawn
+ * first: a steer is a message to 板砖 and stays inside, while `duringRun` talk,
+ * the attachments that came with it, and her answers move after the run's
+ * last block.
  */
 export function groupRunsForHerta(record: TerminalRecord): RunGrouping {
   let start = -1;
@@ -83,7 +89,10 @@ export function groupRunsForHerta(record: TerminalRecord): RunGrouping {
     withTalk = false;
     if (b.role === "done-marker" || b.role === "noop-marker") start = -1;
   }
-  if (start === -1 || talk.length === 0) return { record, live: null };
+  const newest = record[talk[talk.length - 1] ?? -1];
+  if (start === -1 || newest === undefined || newest.kind === "herta") {
+    return { record, live: null };
+  }
 
   const moved = new Set(talk);
   const out = record.slice(0, start);

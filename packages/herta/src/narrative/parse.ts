@@ -118,19 +118,61 @@ export function stripBanzhuanTrigger(text: string): string {
   return result;
 }
 
+/** Whether the character at `i` ends a sentence: 。！？ always, `!` and `?`
+ *  before a space (`if (!x)` goes on), and a line break unless a colon leads
+ *  into the next line. A semicolon joins clauses of one sentence. */
+function endsSentence(text: string, i: number): boolean {
+  const c = text[i];
+  if (c === "。" || c === "！" || c === "？") return true;
+  if (c === "!" || c === "?") return /\s/.test(text[i + 1] ?? " ");
+  return c === "\n" && text[i - 1] !== "：" && text[i - 1] !== ":";
+}
+
 /**
  * The sentences of her speech that carry a live `@板砖` — what reaches the
  * running 板砖 when she writes one during a run (ADR 0085 §4; owner
  * 2026-11-04: "the sentence with @板砖", not the whole reply, so her talk to
- * the Trailblazer stays out of 板砖's run). A sentence ends at 。！？!?；;
- * or a line break; a quoted `@板砖` carries nothing. Joined as she wrote
- * them; empty when none does.
+ * the Trailblazer stays out of 板砖's run). Quotation is read over the whole
+ * speech (review 2026-11-05): cut first, a fence or a code span opened in one
+ * piece and closed in another quoted nothing, and the `@板砖` inside went out
+ * as an instruction. Nothing inside quotation ends a sentence or carries a
+ * call. A sentence that is only the token runs on to what it is for. Joined
+ * as she wrote them; empty when none does.
  */
 export function banzhuanSentences(text: string): string {
-  const sentences = text.split(/(?<=[。！？!?；;\n])/u);
-  return sentences
-    .filter((s) => parseHertaBlock(s).hasBanzhuanTrigger)
-    .map((s) => s.trim())
-    .join(" ")
-    .trim();
+  const ranges = quotationRanges(text);
+  const quoted = (i: number): boolean =>
+    ranges.some(([start, end]) => i >= start && i < end);
+  const calls = (from: number, to: number): boolean => {
+    let at = text.indexOf(BANZHUAN_TRIGGER, from);
+    while (at !== -1 && at < to) {
+      if (!quoted(at)) return true;
+      at = text.indexOf(BANZHUAN_TRIGGER, at + 1);
+    }
+    return false;
+  };
+  const ends: number[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    if (!quoted(i) && endsSentence(text, i)) ends.push(i + 1);
+  }
+  ends.push(text.length);
+  const sentences: string[] = [];
+  let start = 0;
+  for (let k = 0; k < ends.length; k += 1) {
+    let end = ends[k] as number;
+    if (calls(start, end)) {
+      while (k + 1 < ends.length && !saysAnything(text.slice(start, end))) {
+        k += 1;
+        end = ends[k] as number;
+      }
+      sentences.push(text.slice(start, end).trim());
+    }
+    start = end;
+  }
+  return sentences.join(" ").trim();
+}
+
+/** Whether a sentence says more than the token and its punctuation. */
+function saysAnything(sentence: string): boolean {
+  return /[\p{L}\p{N}]/u.test(sentence.replaceAll(BANZHUAN_TRIGGER, ""));
 }

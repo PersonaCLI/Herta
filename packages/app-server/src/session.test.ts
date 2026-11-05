@@ -3018,6 +3018,138 @@ describe("Session — steerText, a message while 板砖 works (ADR 0063)", () =>
   }, 20_000);
 });
 
+describe("Session — words around a run's end (review 2026-11-05)", () => {
+  type Adapter = import("@herta/core").ProviderAdapter;
+  type Ev = import("@herta/core").ProviderEvent;
+
+  /** A session whose first backend call is held open until `release()`. */
+  async function heldRun(opts: {
+    actor: Array<{ deltas: string[]; stopReason: "stop" }>;
+    afterGate: () => AsyncGenerator<Ev>;
+    later?: () => AsyncGenerator<Ev>;
+  }) {
+    const cfg = mkConfig();
+    const { V2RecordPersister } = await import("@herta/core");
+    const { randomUUID } = await import("node:crypto");
+    const sessionId = randomUUID();
+    const persister = V2RecordPersister.forNewSession({
+      sessionId,
+      workspaceRoot: cfg.workspaceRoot,
+      startedAt: new Date(),
+      transcriptDir: cfg.transcriptDir,
+    });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let firstCallStarted: () => void = () => {};
+    const firstCall = new Promise<void>((r) => {
+      firstCallStarted = r;
+    });
+    const frames: string[] = [];
+    const backend: Adapter = {
+      streamChat(frame) {
+        frames.push(JSON.stringify(frame));
+        const n = frames.length;
+        return (async function* () {
+          if (n === 1) {
+            firstCallStarted();
+            await gate;
+            yield* opts.afterGate();
+          } else if (opts.later !== undefined) {
+            yield* opts.later();
+          } else {
+            yield { type: "finish", reason: "stop" } as Ev;
+          }
+        })();
+      },
+    };
+    const session = await SessionImpl.create({
+      sessionId,
+      workspaceRoot: cfg.workspaceRoot,
+      effectiveWorkspace: cfg.workspaceRoot,
+      isDefaultWorkspace: false,
+      config: cfg,
+      persister,
+      deps: {
+        providerOverrides: {
+          actor: stubCompletionProvider(opts.actor),
+          backend,
+          router: stubChatProvider([
+            {
+              events: [
+                { type: "text-delta", text: "默认" },
+                { type: "finish", reason: "stop" },
+              ],
+            },
+          ]),
+          title: stubChatProvider([]),
+        },
+        staticPrefixOverride: { bio: "[test-bio]", env: "", fewShots: [] },
+        metaThinkOverride: emptyMetaThinkCorpus(),
+        supervisorReferenceOverride: "",
+        openingOverride: null,
+      },
+    });
+    return { session, firstCall, release, frames };
+  }
+
+  it("right after Stop a message and a steer are held, not accepted: nobody would read them", async () => {
+    const { session, firstCall, release } = await heldRun({
+      actor: [{ deltas: ["@板砖 看看 a.txt。（/我 说）"], stopReason: "stop" }],
+      afterGate: async function* () {
+        yield { type: "finish", reason: "stop" } as Ev;
+      },
+    });
+    const turn = session.submitText("看看 a.txt").catch(() => undefined);
+    await firstCall;
+    // Anti-vacuous: the same window accepts them before Stop.
+    expect(session.backendActive).toBe(true);
+    expect("accepted" in (await session.talkText("进展如何？"))).toBe(true);
+    await session.interrupt();
+    // 板砖's call is still out: the loop has not seen the abort.
+    expect(session.backendActive).toBe(true);
+    expect(await session.talkText("停了吗？")).toEqual({ queued: true });
+    expect(await session.steerText("算了")).toEqual({ queued: true });
+    release();
+    await turn;
+    expect(
+      session.record.filter(
+        (b) => b.kind === "user" && ["停了吗？", "算了"].includes(b.text),
+      ),
+    ).toEqual([]);
+    await session.close();
+  }, 20_000);
+
+  it("a steer the run never read does not open the next dispatch in the turn", async () => {
+    const { session, firstCall, release, frames } = await heldRun({
+      actor: [
+        { deltas: ["@板砖 看看 a.txt。（/我 说）"], stopReason: "stop" },
+        { deltas: ["@板砖 再看看 b.txt。（/我 说）"], stopReason: "stop" },
+        { deltas: ["都看完了。（/我 说）"], stopReason: "stop" },
+      ],
+      afterGate: async function* () {
+        // The provider fails on the call the steer waited behind.
+        yield* [] as Ev[];
+        throw new Error("provider exploded");
+      },
+    });
+    const turn = session.submitText("看看 a.txt");
+    await firstCall;
+    expect("accepted" in (await session.steerText("先别动 api 目录"))).toBe(
+      true,
+    );
+    release();
+    await turn;
+    expect(frames.length).toBeGreaterThan(1);
+    // Run 2 read the record's history, but no steer opened its loop: the
+    // message from nowhere was the channel's text in `messages`.
+    const second = JSON.parse(frames[1] as string) as { messages: unknown[] };
+    expect(JSON.stringify(second.messages)).not.toContain("先别动 api 目录");
+    await session.close();
+  }, 20_000);
+});
+
 describe("Session — the repository probe behind the rail's card (ADR 0058)", () => {
   const sample: RepoContextSnapshot = {
     root: "/repo",

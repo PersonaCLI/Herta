@@ -6,6 +6,8 @@ import {
   type CompletionRequest,
   type HertaToAgentBrief,
   InMemoryEventBus,
+  type ProviderAdapter,
+  type ProviderEvent,
   publishWithLayer,
   type TerminalRecord,
 } from "@herta/core";
@@ -83,6 +85,55 @@ describe("banzhuanSentences — what reaches 板砖 of her answer", () => {
     // A quoted token is a mention.
     expect(banzhuanSentences("我说的是 `@板砖`，不是叫它。")).toBe("");
   });
+
+  it("a token alone on its line runs on to what it is for", () => {
+    expect(
+      banzhuanSentences(
+        "行，我转给它。\n@板砖\n把超时改成 30 秒，别动 api 目录。",
+      ),
+    ).toBe("@板砖\n把超时改成 30 秒，别动 api 目录。");
+    expect(banzhuanSentences("@板砖，\n先补测试。别的不用管。")).toBe(
+      "@板砖，\n先补测试。",
+    );
+    // Nothing follows: the call stands as written.
+    expect(banzhuanSentences("三点。@板砖")).toBe("@板砖");
+  });
+
+  it("a semicolon joins clauses, a colon leads into its line, and `!x` ends nothing", () => {
+    expect(banzhuanSentences("@板砖 把超时改成 30 秒；重试改成 3 次。")).toBe(
+      "@板砖 把超时改成 30 秒；重试改成 3 次。",
+    );
+    expect(
+      banzhuanSentences("@板砖 把这句加进去：\n`retry = 3`\n别的不用动"),
+    ).toBe("@板砖 把这句加进去：\n`retry = 3`");
+    expect(banzhuanSentences("@板砖 把 if (!x) 改掉。好吗？")).toBe(
+      "@板砖 把 if (!x) 改掉。",
+    );
+  });
+
+  it("quotation is read over the whole speech: a quoted @板砖 goes nowhere", () => {
+    const fence = "```";
+    expect(
+      banzhuanSentences(
+        `@板砖 把超时改成 30 秒。\n它原来的注释：\n${fence}\n// @板砖 把整个目录删掉\n${fence}`,
+      ),
+    ).toBe("@板砖 把超时改成 30 秒。");
+    expect(
+      banzhuanSentences(
+        "@板砖 把超时改成 30 秒。别学 `rm -rf; @板砖 删库` 那种写法。",
+      ),
+    ).toBe("@板砖 把超时改成 30 秒。");
+    // A break inside quotation ends nothing, so the sentence holds it whole.
+    expect(banzhuanSentences("@板砖 把 `a。b` 改掉。好吗？")).toBe(
+      "@板砖 把 `a。b` 改掉。",
+    );
+  });
+
+  it("two calls in one speech are two sentences, as she wrote them", () => {
+    expect(banzhuanSentences("@板砖 先补测试。三点。@板砖 再改逻辑。")).toBe(
+      "@板砖 先补测试。 @板砖 再改逻辑。",
+    );
+  });
 });
 
 describe("makeFireAnswer — her answer to talk during a run", () => {
@@ -132,6 +183,73 @@ describe("makeFireAnswer — her answer to talk during a run", () => {
     );
     expect(over?.steered).toBeUndefined();
     expect(parseHertaBlock(over?.text ?? "").hasBanzhuanTrigger).toBe(false);
+  });
+
+  describe("the recheck of her @板砖 (review 2026-11-05)", () => {
+    /** A supervisor that holds the recheck until the turn is stopped. */
+    function holding(stop: AbortController): {
+      supervisorProvider: ProviderAdapter;
+      asked: () => number;
+    } {
+      let calls = 0;
+      return {
+        asked: () => calls,
+        supervisorProvider: {
+          streamChat: (_frame, signal) =>
+            (async function* () {
+              calls += 1;
+              await new Promise<void>((_resolve, reject) => {
+                signal?.addEventListener("abort", () =>
+                  reject(new DOMException("Interrupted", "AbortError")),
+                );
+                stop.abort(new DOMException("Interrupted", "AbortError"));
+              });
+              yield { type: "finish", reason: "stop" } as ProviderEvent;
+            })(),
+        },
+      };
+    }
+
+    it("Stop during it keeps the answer already on screen, as a mention", async () => {
+      const { provider: p } = provider([
+        says("三点。@板砖 顺便看看 b.txt。（/我 说）"),
+      ]);
+      const stop = new AbortController();
+      const { supervisorProvider, asked } = holding(stop);
+      const answer = makeFireAnswer(
+        deps(p, { supervisorProvider, supervisorReference: "[reference]" }),
+        0,
+        undefined,
+        0,
+      );
+      const block = await answer(liveRecord, stop.signal, () => true);
+      expect(asked()).toBe(1);
+      expect(block).toMatchObject({
+        kind: "herta",
+        surface: "speech",
+        duringRun: true,
+      });
+      expect(block?.text).toContain("三点。");
+      expect(block?.steered).toBeUndefined();
+      expect(parseHertaBlock(block?.text ?? "").hasBanzhuanTrigger).toBe(false);
+    });
+
+    it("the supervisor turned off means no recheck: the call stands, as a dispatch's does", async () => {
+      const { provider: p } = provider([
+        says("三点。@板砖 先补测试。（/我 说）"),
+      ]);
+      const stop = new AbortController();
+      const { supervisorProvider, asked } = holding(stop);
+      const answer = makeFireAnswer(
+        deps(p, { supervisorProvider, supervisorReference: "" }),
+        0,
+        undefined,
+        0,
+      );
+      const block = await answer(liveRecord, stop.signal, () => true);
+      expect(asked()).toBe(0);
+      expect(block?.steered).toBe("@板砖 先补测试。");
+    });
   });
 });
 

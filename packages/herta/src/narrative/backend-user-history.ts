@@ -182,26 +182,45 @@ export function documentFailureReason(
  * The head excerpt is deliberately NOT replayed. 板砖 has the path and four
  * tools that read; pre-feeding it content would pay for the same bytes twice
  * and cap what it can see at the head.
+ *
+ * The frame calls the newest message the task, so what was said during a run
+ * since the message that opened the turn goes ahead of that message. It stays
+ * in the replay as the Trailblazer's words, and a second dispatch in the turn
+ * does not take an aside to Herta, or a steer the last run already took, for
+ * its task (review 2026-11-05).
  */
 export function extractUserMessages(
   record: TerminalRecord,
   lang: PromptLang = "zh",
 ): ExtractedUserMessages {
   const all: { text: string }[] = [];
+  const duringRun: { text: string }[] = [];
+  let opener = 0;
   for (const block of record) {
     // A 继续 block is the harness's own turn (ADR 0071 §1.4), not a task
     // the user set: it would enter every later dispatch as the user's
     // words (review 2026-09-30).
     if (block.kind === "user" && block.resume === true) continue;
     if (block.kind === "user") {
+      if (block.duringRun === true || block.steer === true) {
+        duringRun.push({ text: block.text });
+        continue;
+      }
+      // An earlier turn's: they stay where they fell.
+      all.push(...duringRun);
+      duringRun.length = 0;
+      opener = all.length;
       all.push({ text: block.text });
     } else if (block.kind === "system" && block.digest?.kind === "attachment") {
       // An attachment that could not be read is still worth naming: the task
       // may well BE "why can't you read this?", and silence would leave 板砖
       // inventing an answer about a file it was never told about.
-      all.push({ text: attachmentTaskLine(block.digest, lang) });
+      (duringRun.length > 0 ? duringRun : all).push({
+        text: attachmentTaskLine(block.digest, lang),
+      });
     }
   }
+  all.splice(opener, 0, ...duringRun);
   // Keep from the newest backwards until either cap trips. The newest
   // message always survives whole — it IS the task.
   const kept: { text: string }[] = [];

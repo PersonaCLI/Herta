@@ -170,19 +170,33 @@ export function makeFireAnswer(
       // Only a run that can still take a steer, and only a call the recheck
       // lets stand; anything else is a mention.
       // With no supervisor the call stands as written, as a main-loop
-      // dispatch does.
-      const judged = !canSteer()
-        ? { text: neutralizeBanzhuanTrigger(text) }
-        : deps.supervisorProvider !== undefined
-          ? await judgeTriggerAndNeutralize({
-              deps,
-              supervisorProvider: deps.supervisorProvider,
-              signal: abortSignal,
-              record: currentRecord,
-              candidate: text,
-              thought: undefined,
-            })
-          : { text };
+      // dispatch does: the toggle is the main loop's own test.
+      const supervisorProvider = deps.supervisorProvider;
+      const supervised =
+        supervisorProvider !== undefined &&
+        deps.supervisorReference !== undefined &&
+        deps.supervisorReference.length > 0;
+      let judged = { text };
+      if (!canSteer()) {
+        judged = { text: neutralizeBanzhuanTrigger(text) };
+      } else if (supervised) {
+        try {
+          judged = await judgeTriggerAndNeutralize({
+            deps,
+            supervisorProvider,
+            signal: abortSignal,
+            record: currentRecord,
+            candidate: text,
+            thought: undefined,
+          });
+        } catch (err) {
+          // Stopped during the recheck, with the answer already on screen
+          // and its stream closed: it stands, screen == record, as a mention
+          // (review 2026-11-05). The recheck fails soft on everything else.
+          if (!abortSignal.aborted) throw err;
+          judged = { text: neutralizeBanzhuanTrigger(text) };
+        }
+      }
       text = sanitizeActorText(judged.text, { role: "speech" });
       // The run may have ended while the recheck ran.
       if (canSteer()) steered = banzhuanSentences(text);

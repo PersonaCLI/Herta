@@ -166,6 +166,12 @@ async function invokeBanzhuanBridgeInner(
   const eventQueue: (AgentEvent | undefined)[] = [];
   let processedIdx = 0;
   let runBriefDone = false;
+  // The backend's loop has ended. `runBrief` returns later, after its stops,
+  // `git status` and journal: read off the bus as it happens, not at the
+  // queue's pace, because from here no steer reaches 板砖 and there is no run
+  // for her to be "during" (review 2026-11-05).
+  let loopEnded = false;
+  const runOver = (): boolean => runBriefDone || loopEnded;
   let current: TerminalRecord = record;
   // Tracks whether the drain projected ANY backend work block (a `→ 系统` /
   // `→ 差分协处理器` block). Used to pick the terminal block: a true no-op
@@ -196,6 +202,12 @@ async function invokeBanzhuanBridgeInner(
     // projects or beats on them, and they arrive a token or a line at a time.
     if (event.type === "tool.call.delta" || event.type === "tool.call.output")
       return;
+    if (
+      event.layer === "backend" &&
+      (event.type === "turn.finished" || event.type === "turn.failed")
+    ) {
+      loopEnded = true;
+    }
     eventQueue.push(event);
   });
 
@@ -316,10 +328,13 @@ async function invokeBanzhuanBridgeInner(
       if (talkWaiting) {
         talkWaiting = false;
         const answer = deps.answerTalk;
-        if (answer !== undefined && !beatsSuppressed) {
+        // With the run over, her verdict is the next thing she writes, and
+        // it reads this talk. An answer here would tell him 板砖 is still
+        // working (review 2026-11-05).
+        if (answer !== undefined && !beatsSuppressed && !runOver()) {
           let block: HertaBlock | null = null;
           try {
-            block = await answer(current, signal, () => !runBriefDone);
+            block = await answer(current, signal, () => !runOver());
           } catch {
             // Dropped like a failed beat; the talk stays in the record, and
             // her next completion — the verdict at the latest — sees it.
@@ -330,7 +345,7 @@ async function invokeBanzhuanBridgeInner(
             deps.sink?.flushBlocks(current);
             // A run that ended while she wrote takes no steer: the sentence
             // stays hers, in the record, for her verdict to act on.
-            if (block.steered !== undefined && !runBriefDone)
+            if (block.steered !== undefined && !runOver())
               deps.steerBackend?.(block.steered);
           }
           if (beatsEnabled) {

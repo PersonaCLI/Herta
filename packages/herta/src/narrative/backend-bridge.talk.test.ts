@@ -134,7 +134,8 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
           talk(b, "t3", "three");
           read(b, "c2", "b.ts");
           release();
-          await tick();
+          // The run works on: an answer is for a run still working.
+          while (calls < 2) await tick();
         }, bus),
       signal: new AbortController().signal,
       answerTalk,
@@ -242,6 +243,96 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
       "herta(answer):它找不到 a.ts。",
     ]);
     expect(fireBeat).not.toHaveBeenCalled();
+  });
+
+  describe("the end of the run (review 2026-11-05)", () => {
+    const finished = (bus: InMemoryEventBus<AgentEvent>) =>
+      publishWithLayer(bus, "backend", { type: "turn.finished" } as never);
+
+    it("talk still waiting when the run is over goes to her verdict: no answer says 板砖 is working", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const answerTalk = vi.fn<AnswerFirer>(async () =>
+        answerBlock("还在跑。"),
+      );
+      const out = await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            read(b, "c1", "a.ts");
+            talk(b, "t1", "进展如何？");
+            finished(b);
+            // The runtime's own closing work, after its loop's last head.
+            await tick();
+            await tick();
+            await tick();
+          }, bus),
+        signal: new AbortController().signal,
+        answerTalk,
+      });
+      expect(answerTalk).not.toHaveBeenCalled();
+      expect(shape(out)).toEqual([
+        "row:Reading a.ts",
+        "user(talk):进展如何？",
+        "done-marker",
+      ]);
+    });
+
+    it("her @板砖 after the loop's last head is no steer: nothing is handed to a run that is over", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const steerBackend = vi.fn();
+      let release: () => void = () => undefined;
+      const composing = new Promise<void>((r) => {
+        release = r;
+      });
+      let canSteerAtTheEnd: boolean | undefined;
+      await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            talk(b, "t1", "让它顺便补个测试");
+            await tick();
+            await tick();
+            finished(b);
+            release();
+            await tick();
+            await tick();
+            await tick();
+          }, bus),
+        signal: new AbortController().signal,
+        answerTalk: async (_record, _signal, canSteer) => {
+          await composing;
+          canSteerAtTheEnd = canSteer();
+          return answerBlock(
+            "好。@板砖 顺便补个测试。",
+            "@板砖 顺便补个测试。",
+          );
+        },
+        steerBackend,
+      });
+      expect(canSteerAtTheEnd).toBe(false);
+      expect(steerBackend).not.toHaveBeenCalled();
+    });
+
+    it("a failed loop ends the run the same way", async () => {
+      const bus = new InMemoryEventBus<AgentEvent>();
+      const answerTalk = vi.fn<AnswerFirer>(async () => answerBlock("答。"));
+      await invokeBanzhuanBridge([], [], {
+        bus,
+        runtimeFactory: () =>
+          runtimeOf(async (b) => {
+            talk(b, "t1", "怎么了？");
+            publishWithLayer(b, "backend", {
+              type: "turn.failed",
+              error: { kind: "provider", message: "boom" },
+            } as never);
+            await tick();
+            await tick();
+          }, bus),
+        signal: new AbortController().signal,
+        answerTalk,
+      });
+      expect(answerTalk).not.toHaveBeenCalled();
+    });
   });
 
   describe("Stop while she writes (review 2026-11-05)", () => {

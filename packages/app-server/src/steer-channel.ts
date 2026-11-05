@@ -5,8 +5,8 @@
  * One session owns one channel for its whole life; the backend stack's
  * runtime factory closes over `drain`, so every dispatch reads the same
  * channel. The session pushes at acceptance (after publishing the
- * `user.steer` event that projects the text into the record) and clears at
- * turn end, so a steer accepted in a turn the loop never drained again — an
+ * `user.steer` event that projects the text into the record) and clears when
+ * a run ends and at turn end, so a steer the loop never drained again — an
  * interrupt, a provider failure — cannot leak into the next dispatch as a
  * message from nowhere.
  *

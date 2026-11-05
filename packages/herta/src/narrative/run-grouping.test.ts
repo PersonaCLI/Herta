@@ -167,6 +167,40 @@ describe("groupRunsForHerta — the run still working after its dispatch, the ta
     });
   });
 
+  it("once she has answered nothing waits: a live run reads in time order, the newest row last (review 2026-11-05)", () => {
+    const record: TerminalRecord = [
+      dispatch,
+      op("Reading", "a.ts"),
+      talk("顺便问下，周末那个会几点？"),
+      answer("记录里没有这场会。"),
+      op("Reading", "b.ts"),
+      op("Writing", "c.ts"),
+    ];
+    const g = groupRunsForHerta(record);
+    expect(g.record).toBe(record);
+    expect(g.live).toBeNull();
+  });
+
+  it("talk that lands after her answer waits again: the live form comes back", () => {
+    const record: TerminalRecord = [
+      dispatch,
+      op("Reading", "a.ts"),
+      talk("几点？"),
+      answer("三点。"),
+      op("Reading", "b.ts"),
+      talk("那明天呢？"),
+      attachment,
+      op("Reading", "c.ts"),
+    ];
+    const g = groupRunsForHerta(record);
+    expect(g.live).toEqual({ start: 1, end: 4 });
+    expect(
+      g.record
+        .slice(4)
+        .map((b) => (b.kind === "system" ? "attachment" : b.text)),
+    ).toEqual(["几点？", "三点。", "那明天呢？", "attachment"]);
+  });
+
   it("her checkpoint stays inside the run; a steer stays where 板砖 took it", () => {
     const record: TerminalRecord = [
       dispatch,

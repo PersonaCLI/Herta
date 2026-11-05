@@ -149,3 +149,42 @@ describe("selectBeatHint", () => {
     expect(h.beatTalk).not.toBe(h.phase2Speech);
   });
 });
+
+describe("what the lab's runs taught the hints (ADR 0085, 2026-11-05)", () => {
+  const zh = loadActorHints("zh");
+  const en = loadActorHints("en");
+
+  it("a word waiting does not eat the verdict: the run's result is owed first", () => {
+    expect(zh.phase2Speech).toContain("结果就是头一件");
+    expect(en.phase2Speech).toContain("that result comes first");
+    // What she answered mid-run she does not answer again.
+    expect(zh.phase2Speech).toContain("答过的别再答");
+    expect(en.phase2Speech).toContain("never answer it twice");
+  });
+
+  it("a failed step is a failed step: nobody says 板砖 crashed", () => {
+    expect(zh.beatToolFail).not.toContain("板砖崩了");
+    expect(zh.beatToolFail).toContain("没成的是这一步");
+    expect(en.beatToolFail).not.toContain("板砖 crashed");
+    expect(en.beatToolFail).toContain("the step failed, not 板砖");
+  });
+
+  it("the thought is about the newest thing in the record, and asks for no line he did not say", () => {
+    for (const hint of [zh.phase2Thought, zh.thoughtRetry[0]]) {
+      expect(hint).not.toContain("冲着他刚说的那句");
+      expect(hint).toContain("记录里最新的东西");
+    }
+    for (const hint of [en.phase2Thought, en.thoughtRetry[0]]) {
+      expect(hint).not.toContain("about what they just said");
+      expect(hint).not.toContain("aimed at what they just said");
+      expect(hint).toContain("the newest thing in the record");
+    }
+  });
+
+  it("how she calls 板砖 is hers: the rule is not for his screen, or for 板砖", () => {
+    expect(zh.beatTalk).toContain("别讲给他听");
+    expect(zh.beatTalk).not.toContain("写全 @板砖");
+    expect(en.beatTalk).toContain("don't explain it to them");
+    expect(en.beatTalk).not.toContain("spell out @板砖");
+  });
+});

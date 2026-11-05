@@ -78,7 +78,7 @@ export const FINAL_RETRY_BODY_SEED = "……";
  */
 const PHASE_TWO_THOUGHT_HINT_TEXT: Record<PromptLang, string> = {
   zh: "〔接下来是我针对这一回的具体思考，必须以（我 想）开始，以（/我 想）结束。写完 `（/我 想）` 就停笔——不要在同一段里继续写 `（我 说）` 那段说话内容，说话是另一段单独写出来的，不要塞进这里。注意：紧贴在开拓者这句话上面的那段我先写下的旁注，是关于「我这一档该怎么想」的提示，不是我已经想好的话；这一段我要针对开拓者刚刚那句话的具体内容，写一段当下的、新的思考，不要照抄上面那段旁注的句子，也不要把它的方法论原样复述一遍〕",
-  en: "〔What follows is my thinking. Must start with （我 想） and end with （/我 想）. Stop after writing `（/我 想）` — do not chain `（我 说）` onto the same block; the spoken part gets its own block. The side-note pasted above is only a directional hint, not a conclusion I've already reached; this block has to think fresh about what they just said — don't copy the side-note, and don't parrot the hint back as thought.〕",
+  en: "〔What follows is my thinking. Must start with （我 想） and end with （/我 想）. Stop after writing `（/我 想）` — do not chain `（我 说）` onto the same block; the spoken part gets its own block. The side-note pasted above is only a directional hint, not a conclusion I've already reached; this block has to think fresh about the newest thing in the record: what they just said, or what 板砖 just handed back. If they said nothing new, think about the result, and never imagine a line they didn't say. Don't copy the side-note, and don't parrot the hint back as thought.〕",
 };
 
 export const PHASE_TWO_THOUGHT_HINT = PHASE_TWO_THOUGHT_HINT_TEXT.zh;
@@ -398,8 +398,8 @@ export const BEAT_HINT_TOOL_FAIL = BEAT_HINT_TOOL_FAIL_TEXT.zh;
  * hold. No `{{no_banzhuan}}` clause: her @板砖 here is a steer (§4).
  */
 const BEAT_HINT_TALK_TEXT: Record<PromptLang, string> = {
-  zh: "〔板砖还在跑，他在这当口跟我说话。下面是我回他的话，必须以（我 说）开始，以（/我 说）结束。只回他刚说的那几句：记录里有的照记录说，记录里没有的就说不知道，别编。板砖跑到哪说到哪，没跑完不下结论。他要板砖改做什么、多做什么，就写全 @板砖 把那件事交代给它，它跑着也收得到；不带 @板砖，话到不了它那儿。短，像平常说话。〕",
-  en: "〔板砖 is still running, and they're talking to me in the middle of it. What follows is my reply; it must start with （我 说） and end with （/我 说）. Answer only what they just said: what the record holds, say as the record has it; what it doesn't, say I don't know — no making things up. Say how far 板砖 has got, and give no verdict before it's done. If they want 板砖 to change course or do something more, spell out @板砖 and hand it that one thing — it gets it while it runs; without @板砖 the words never reach it. Every word in English: the markers and @板砖 are the only Chinese it carries. Short, the way I normally talk.〕",
+  zh: "〔板砖还在跑，他在这当口跟我说话。下面是我回他的话，必须以（我 说）开始，以（/我 说）结束，只这一段。只回他刚说的那几句：记录里有的照记录说，记录里没有的就说不知道，别编。板砖跑到哪说到哪，没跑完不下结论。他要板砖改做什么、多做什么，就在这段话里另起一句，用 @板砖 开头，把那件事交代给它，它跑着也收得到；没有这一句，话到不了它那儿。怎么叫它是我的事，别讲给他听，这一句以外也别写 @板砖。短，像平常说话。〕",
+  en: "〔板砖 is still running, and they're talking to me in the middle of it. What follows is my reply; it must start with （我 说） and end with （/我 说）, one block only. Answer only what they just said: what the record holds, say as the record has it; what it doesn't, say I don't know — no making things up. Say how far 板砖 has got, and give no verdict before it's done. If they want 板砖 to change course or do something more, give it one sentence inside this reply that starts with @板砖 and hands it that one thing — it gets it while it runs; without that sentence the words never reach it. How I call it is my business: don't explain it to them, and don't write @板砖 anywhere else. Every word in English: the markers and @板砖 are the only Chinese it carries. Short, the way I normally talk.〕",
 };
 
 export const BEAT_HINT_TALK = BEAT_HINT_TALK_TEXT.zh;

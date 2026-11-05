@@ -20,9 +20,12 @@ export function useTopicJump(opts: {
 
   // ── Topic-rail jump (2026-07-12) ─────────────────────────────────────────
   // Jump to a topic's anchoring user block. The anchor may be OLDER than the
-  // loaded window — page history in first (bounded; bails if a fetch makes
-  // no progress). Unpins up front so the prepends' append-follow effect can't
-  // yank the view to the bottom mid-jump; the jump chip is the way back down.
+  // loaded window — bring history in first, in one slice back to the anchor's
+  // turn, however far: paged, a chat-heavy session took dozens of round trips
+  // and fell short past the loop's bound (review 2026-11-05). Bails if the
+  // slice does not arrive. Unpins up front so the prepend's append-follow
+  // effect can't yank the view to the bottom mid-jump; the jump chip is the
+  // way back down.
   // The engine's intents and its scroll anchor are stable (useCallback with
   // fixed deps / a ref), so listing them keeps `jumpToTopic` as stable as
   // before while satisfying the exhaustive-deps rule.
@@ -35,22 +38,14 @@ export function useTopicJump(opts: {
         // switch mid-jump they acted on the NEW session: the loop paged B's
         // history (visible jank on arrival) and the poll smooth-scrolled B to
         // an arbitrary older message, fighting the entrance effect that had
-        // just pinned it. Captured identity + re-check after every await —
+        // just pinned it. Captured identity + re-check after the await —
         // the pattern handleRewind already uses.
         const jumpSessionId = sessionStore.getSnapshot().sessionId;
         releasePin();
-        let guard = 0;
-        while (
-          sessionStore.getSnapshot().recordStart > anchorIndex &&
-          guard < 60
-        ) {
-          guard += 1;
-          const before = sessionStore.getSnapshot().recordStart;
-          await sessionStore.loadOlderBlocks(
-            Math.min(500, before - anchorIndex),
-          );
+        if (sessionStore.getSnapshot().recordStart > anchorIndex) {
+          await sessionStore.loadBackTo(anchorIndex);
           if (sessionStore.getSnapshot().sessionId !== jumpSessionId) return;
-          if (sessionStore.getSnapshot().recordStart >= before) return; // no progress — bail
+          if (sessionStore.getSnapshot().recordStart > anchorIndex) return;
         }
         // Scroll once the anchor row exists: immediately when it is already
         // in the DOM (the common in-window case), else poll briefly for the
@@ -87,7 +82,7 @@ export function useTopicJump(opts: {
   // Search-result landing (2026-07-27): a sidebar card that matched by CONTENT
   // asks, via the store, to land on the matched turn instead of the latest —
   // the search knew the moment and the open used to throw it away. Reuses the
-  // topic jump wholesale: it already pages older blocks in, waits for the row
+  // topic jump wholesale: it already brings older blocks in, waits for the row
   // to commit, and bails on a session switch. Consumed once, then cleared, so
   // a later record change cannot re-fire it.
   useEffect(() => {

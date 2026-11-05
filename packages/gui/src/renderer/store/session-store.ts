@@ -805,6 +805,17 @@ export class SessionStore {
    * invoke was in flight — the absolute indices would no longer line up.
    */
   async loadOlderBlocks(count = RECORD_WINDOW_WEIGHT): Promise<void> {
+    await this.pageOlder(count);
+  }
+
+  /** Extend the window back to block `index`, however far that is, in one
+   *  slice: a jump has to land on its row. Same guards as `loadOlderBlocks`,
+   *  so a call it drops leaves `recordStart` where it was. */
+  async loadBackTo(index: number): Promise<void> {
+    await this.pageOlder(RECORD_WINDOW_WEIGHT, index);
+  }
+
+  private async pageOlder(count: number, to?: number): Promise<void> {
     const { sessionId, recordStart } = this.snapshot;
     if (
       this.loadingOlder ||
@@ -816,7 +827,12 @@ export class SessionStore {
     }
     this.loadingOlder = true;
     try {
-      const r = await this.bridge.recordSlice(sessionId, recordStart, count);
+      const r = await this.bridge.recordSlice(
+        sessionId,
+        recordStart,
+        count,
+        to,
+      );
       if (
         this.snapshot.sessionId !== sessionId ||
         this.snapshot.recordStart !== recordStart ||

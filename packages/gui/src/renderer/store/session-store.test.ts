@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@herta/app-server";
+import { RECORD_WINDOW_WEIGHT } from "@herta/core/record-window";
 import { describe, expect, it } from "vitest";
 import { createMockHertaBridge } from "../ipc/mock-bridge.js";
 import { SessionStore } from "./session-store.js";
@@ -1531,6 +1532,30 @@ describe("SessionStore — long-session record windowing", () => {
       "old-4",
       "tail-5",
     ]);
+    store.dispose();
+  });
+
+  it("loadBackTo asks for the block a jump must reach", async () => {
+    const mock = createMockHertaBridge({
+      recordSliceResult: {
+        start: 3,
+        blocks: [
+          { kind: "user", text: "old-3" },
+          { kind: "user", text: "old-4" },
+        ],
+      },
+    });
+    const store = new SessionStore();
+    store.connect(mock.bridge);
+    mock.emitReset({
+      ...SNAPSHOT_BASE,
+      sessionId: "s",
+      record: [{ kind: "user", text: "tail-5" }],
+      recordStart: 5,
+    });
+    await store.loadBackTo(4);
+    expect(mock.calls.recordSlice).toEqual([["s", 5, RECORD_WINDOW_WEIGHT, 4]]);
+    expect(store.getSnapshot().recordStart).toBe(3);
     store.dispose();
   });
 

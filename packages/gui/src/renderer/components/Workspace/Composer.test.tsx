@@ -1138,6 +1138,63 @@ describe("Composer — talking to Herta while 板砖 works (ADR 0085 step 3)", (
     await waitFor(() => expect(mock.calls.talkText).toEqual(["那几点？"]));
   });
 
+  describe("an approval in the middle of a steer (review 2026-11-05)", () => {
+    const gate = {
+      kind: "pending",
+      overlay: {
+        kind: "pending-permission",
+        requestId: "req-1",
+        risk: "workspace_write",
+        tool: "bash",
+        summary: "writes a file",
+        cacheable: false,
+      },
+    } as const;
+
+    it("keeps the tag: the draft still goes to the run", async () => {
+      const { mock, store } = renderComposer();
+      startRun(mock);
+      act(() => store().setComposerSteer(true));
+      const input = screen.getByPlaceholderText(
+        "Steer the coprocessor…",
+      ) as HTMLTextAreaElement;
+      fireEvent.change(input, { target: { value: "先别动 api 目录" } });
+      // 板砖 reaches a command that asks: the box closes for the card.
+      act(() => mock.emitOverlay(gate));
+      expect(input.disabled).toBe(true);
+      expect(input.value).toBe("先别动 api 目录");
+      act(() => mock.emitOverlay({ kind: "resolved", requestId: "req-1" }));
+      expect(input.disabled).toBe(false);
+      expect(screen.getByText("Steer · Coprocessor")).toBeInTheDocument();
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() =>
+        expect(mock.calls.steerText).toEqual(["先别动 api 目录"]),
+      );
+      expect(mock.calls.talkText).toHaveLength(0);
+    });
+
+    it("the tag set on the card while the approval is up waits for it", () => {
+      const { mock, store } = renderComposer();
+      startRun(mock);
+      act(() => mock.emitOverlay(gate));
+      act(() => store().setComposerSteer(true));
+      expect(store().getSnapshot().composerSteer).toBe(true);
+      act(() => mock.emitOverlay({ kind: "resolved", requestId: "req-1" }));
+      expect(screen.getByText("Steer · Coprocessor")).toBeInTheDocument();
+    });
+
+    it("a run that ends under the card takes the tag with it", () => {
+      const { mock, store } = renderComposer();
+      startRun(mock);
+      act(() => store().setComposerSteer(true));
+      act(() => mock.emitOverlay(gate));
+      act(() => {
+        mock.emitAgent({ kind: "agent", event: backendFinished });
+      });
+      expect(store().getSnapshot().composerSteer).toBe(false);
+    });
+  });
+
   it("the tag belongs to its run: it goes when the run ends", () => {
     const { mock, store } = renderComposer();
     startRun(mock);

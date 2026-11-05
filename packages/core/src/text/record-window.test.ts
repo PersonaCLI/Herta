@@ -6,6 +6,8 @@ import type {
 import {
   blockWeight,
   opensTurn,
+  pageStart,
+  RECORD_WINDOW_WEIGHT,
   recordWeight,
   turnStartAtOrBefore,
   windowStart,
@@ -111,5 +113,36 @@ describe("the chat's window weighs what the chat draws (ADR 0085 amendment 2026-
     expect(turnStartAtOrBefore(record, 9)).toBe(7);
     expect(turnStartAtOrBefore(record, 7)).toBe(7);
     expect(turnStartAtOrBefore(record, 5)).toBe(0);
+  });
+
+  describe("a page of older blocks", () => {
+    const record: TerminalRecord = Array.from({ length: 2000 }, () =>
+      turn(1),
+    ).flat();
+    const end = 4000;
+
+    it("is a budget of weight back, capped at a window's", () => {
+      expect(pageStart(record, 50, end)).toBe(windowStart(record, 50, end));
+      expect(pageStart(record, 1e9, end)).toBe(
+        windowStart(record, RECORD_WINDOW_WEIGHT, end),
+      );
+    });
+
+    it("given a block to reach, goes back to its turn however far that is", () => {
+      // Far past any window's weight, and past what the budget alone reaches.
+      expect(pageStart(record, 50, end, 8)).toBe(8);
+      expect(pageStart(record, 50, end, 9)).toBe(8);
+      expect(pageStart(record, 50, end, 3)).toBe(0);
+      expect(pageStart(record, 50, end, 0)).toBe(0);
+    });
+
+    it("ignores a `to` that is no index older than the page's end", () => {
+      const plain = pageStart(record, 50, end);
+      for (const to of [end, end + 1, -1, 1.5, Number.NaN, Infinity]) {
+        expect(pageStart(record, 50, end, to), String(to)).toBe(plain);
+      }
+      const notANumber = "8" as unknown as number;
+      expect(pageStart(record, 50, end, notANumber)).toBe(plain);
+    });
   });
 });

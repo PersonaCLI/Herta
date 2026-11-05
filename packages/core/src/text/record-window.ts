@@ -78,3 +78,22 @@ export function turnStartAtOrBefore(
   }
   return 0;
 }
+
+/**
+ * Where a page of older blocks ending at `end` starts. `budget` of weight
+ * back, capped at a window's; or, given `to`, the turn that holds that block,
+ * however far back: a jump has to reach its row, and the renderer cannot
+ * weigh blocks it does not hold. A `to` that is no index older than `end`
+ * (it crossed an IPC boundary) is ignored.
+ */
+export function pageStart(
+  record: TerminalRecord,
+  budget: number,
+  end: number,
+  to?: number,
+): number {
+  if (to !== undefined && Number.isInteger(to) && to >= 0 && to < end) {
+    return turnStartAtOrBefore(record, to);
+  }
+  return windowStart(record, Math.min(budget, RECORD_WINDOW_WEIGHT), end);
+}

@@ -26,7 +26,7 @@ import {
   type PickedElement,
   type ServerHost,
 } from "@herta/core";
-import { RECORD_WINDOW_WEIGHT, windowStart } from "@herta/core/record-window";
+import { pageStart } from "@herta/core/record-window";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -976,12 +976,14 @@ export function createSessionService(
     // window. `before` is the absolute index the renderer's window currently
     // starts at; `count` is a weight (`@herta/core/record-window`), and the
     // slice returns that much ending there, back to a message that opens a
-    // turn, with the absolute index it starts at. Session-bound like every stateful
-    // command; a mismatch (switch racing the invoke) returns an empty slice
-    // the store drops by its own staleness guard anyway.
+    // turn, with the absolute index it starts at. `to` is a jump's block: the
+    // slice then reaches the turn that holds it, whatever it weighs.
+    // Session-bound like every stateful command; a mismatch (switch racing
+    // the invoke) returns an empty slice the store drops by its own staleness
+    // guard anyway.
     handle(
       CMD.recordSlice,
-      (_e, sessionId: string, before: number, count: number) => {
+      (_e, sessionId: string, before: number, count: number, to?: number) => {
         const active = host?.activeSession ?? null;
         if (
           active === null ||
@@ -995,11 +997,7 @@ export function createSessionService(
         }
         const record = active.record;
         const end = Math.min(before, record.length);
-        const start = windowStart(
-          record,
-          Math.min(count, RECORD_WINDOW_WEIGHT),
-          end,
-        );
+        const start = pageStart(record, count, end, to);
         return { start, blocks: record.slice(start, end) };
       },
     );

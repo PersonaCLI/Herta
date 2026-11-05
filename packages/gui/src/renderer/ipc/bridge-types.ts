@@ -595,12 +595,14 @@ export interface HertaBridge {
    *  message that opens a turn (`@herta/core/record-window`) — the store's
    *  "load earlier" paging. Resolves `{ start, blocks }` where `start` is the
    *  absolute index of `blocks[0]`; an empty slice means nothing older / a
-   *  session mismatch. OPTIONAL so bridge fakes keep compiling — the load-
-   *  earlier affordance hides without it. */
+   *  session mismatch. `to`, a jump's block: the slice reaches the turn that
+   *  holds it instead, whatever it weighs. OPTIONAL so bridge fakes keep
+   *  compiling — the load-earlier affordance hides without it. */
   recordSlice?(
     sessionId: string,
     before: number,
     count: number,
+    to?: number,
   ): Promise<{ readonly start: number; readonly blocks: TerminalRecord }>;
   /** Both resolve `null` when main has no session host (bootstrap failed) or
    *  the open/create could not produce a session — the previous non-null

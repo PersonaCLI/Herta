@@ -29,8 +29,8 @@ const bridge: HertaBridge = {
   maybePlayEasterEgg: () => ipcRenderer.invoke(CMD.maybePlayEasterEgg),
   listSessions: () => ipcRenderer.invoke(CMD.list),
   searchSessions: (query) => ipcRenderer.invoke(CMD.search, query),
-  recordSlice: (sessionId, before, count) =>
-    ipcRenderer.invoke(CMD.recordSlice, sessionId, before, count),
+  recordSlice: (sessionId, before, count, to) =>
+    ipcRenderer.invoke(CMD.recordSlice, sessionId, before, count, to),
   openSession: (id) => ipcRenderer.invoke(CMD.open, id),
   createSession: (opts) => ipcRenderer.invoke(CMD.create, opts),
   deleteSession: (id) => ipcRenderer.invoke(CMD.deleteSession, id),

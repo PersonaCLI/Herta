@@ -238,7 +238,9 @@ export interface MockHertaBridge {
     openWebPage: Array<[string, string]>;
     listSessions: number;
     searchSessions: string[];
-    recordSlice: Array<[string, number, number]>;
+    recordSlice: Array<
+      [string, number, number] | [string, number, number, number]
+    >;
     pickWorkspace: number;
     setWorkspace: Array<[string, string]>;
     resetWorkspace: string[];
@@ -634,8 +636,12 @@ export function createMockHertaBridge(
       calls.searchSessions.push(query);
       return opts.searchSessionsResult ?? [];
     },
-    recordSlice: async (sessionId, before, count) => {
-      calls.recordSlice.push([sessionId, before, count]);
+    recordSlice: async (sessionId, before, count, to) => {
+      calls.recordSlice.push(
+        to === undefined
+          ? [sessionId, before, count]
+          : [sessionId, before, count, to],
+      );
       return opts.recordSliceResult ?? { start: 0, blocks: [] };
     },
     openSession: async (id) => {

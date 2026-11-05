@@ -530,7 +530,8 @@ export function Composer(): JSX.Element {
   // held text goes as the next turn when this one ends, unless the user
   // interjects it (`steerText`) or takes it back. Herta's own speech keeps
   // the composer as it was: disabled, with Stop.
-  const holding = busy && backendActive && !suppressed;
+  const running = busy && backendActive;
+  const holding = running && !suppressed;
   const canSteer = holding && bridge.steerText !== undefined;
   // While 板砖 works the composer talks to Herta (ADR 0085 step 3): what is
   // sent goes to her, and she answers while the run goes on. The 插话 tag
@@ -538,10 +539,12 @@ export function Composer(): JSX.Element {
   // website demo) holds the message as ADR 0063 did.
   const canTalk = holding && bridge.talkText !== undefined;
   const steerOn = composerSteer && canSteer;
-  // The tag belongs to the run it was set in.
+  // The tag belongs to the run it was set in, and an approval is part of
+  // that run: the box closes for the card and the tag comes back with it.
+  // Dropped there, a steer being typed went to Herta (review 2026-11-05).
   useEffect(() => {
-    if (!holding && composerSteer) sessionStore.setComposerSteer(false);
-  }, [holding, composerSteer, sessionStore]);
+    if (!running && composerSteer) sessionStore.setComposerSteer(false);
+  }, [running, composerSteer, sessionStore]);
   // The turn-end delivery reads the latest held text and language from
   // refs: the effect is keyed on the busy edge, not on either.
   const heldRef = useRef<string | null>(null);

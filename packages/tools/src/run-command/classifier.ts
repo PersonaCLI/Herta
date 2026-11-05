@@ -1251,6 +1251,15 @@ function posixCatastrophe(a0: string, argv: readonly string[]): string | null {
  * `echo "a; shutdown"` from being blocked — the block tier has no override,
  * so a false positive there is a hard failure with no way past it.
  */
+const FIND_EXEC_ACTION = /(?:^|\s)-(?:exec|execdir|ok|okdir)\s/;
+
+/** Whether an odd run of backslashes stands right before `at`. */
+function endsInOneBackslash(text: string, at: number): boolean {
+  let run = 0;
+  for (let i = at - 1; i >= 0 && text[i] === "\\"; i -= 1) run += 1;
+  return run % 2 === 1;
+}
+
 export function splitShellSegments(body: string): string[] {
   const out: string[] = [];
   let current = "";
@@ -1263,6 +1272,20 @@ export function splitShellSegments(body: string): string[] {
   for (let i = 0; i < joined.length; i += 1) {
     const ch = joined[i] as string;
     const prev = i > 0 ? joined[i - 1] : "";
+    // `find … -exec cmd {} \;`: the semicolon is find's own, an argument. Cut
+    // there, the lone `\` left behind read as a system root and the commonest
+    // find line was refused outright (review 2026-11-05). Only after an
+    // `-exec`: in cmd and PowerShell bodies a backslash escapes nothing, and
+    // `\\;` is an escaped backslash and a real separator.
+    if (
+      ch === ";" &&
+      quote === null &&
+      endsInOneBackslash(joined, i) &&
+      FIND_EXEC_ACTION.test(current)
+    ) {
+      current += ch;
+      continue;
+    }
     if (quote !== null) {
       current += ch;
       // A backslash-escaped quote does not close the string (POSIX single
@@ -2529,7 +2552,10 @@ export function classifyCommand(
   // kill earned, since an approval of it — the user's or a review's — closes
   // the app mid-run.
   if (opts?.host !== undefined) {
-    const self = selfKillBlock(argv, opts.host, opts.shell === true, 0);
+    // `$PPID` counts only where the shell expands it: `kill '$PPID'` is a
+    // literal, and the words have lost their quotes by here.
+    const shell = opts.shell === true && opts.unresolved !== false;
+    const self = selfKillBlock(argv, opts.host, shell, 0);
     if (self !== null) return self;
   }
   const guard = opts?.writeGuard;
@@ -2600,13 +2626,114 @@ function selfKillBlock(
     const reentry = extractShellReentry(form);
     if (reentry?.kind !== "body" || depth >= MAX_REENTRY_DEPTH) continue;
     for (const segment of splitShellSegments(reentry.body)) {
-      const tokens = shellBodyTokens(segment);
-      if (tokens.length === 0) continue;
-      const inner = selfKillBlock(tokens, host, true, depth + 1);
-      if (inner !== null) return inner;
+      for (const piece of blockPieces(segment)) {
+        const tokens = commandWords(shellBodyTokens(piece));
+        if (tokens.length === 0) continue;
+        const inner = selfKillBlock(tokens, host, true, depth + 1);
+        if (inner !== null) return inner;
+      }
     }
   }
   return null;
+}
+
+/** `selfKillBlock` for a line the shell lane read itself (`exec kill 1`, a
+ *  heredoc fed to a shell). */
+export function selfKillVerdict(
+  argv: readonly string[],
+  host: HostIdentity,
+): Verdict | null {
+  return selfKillBlock(argv, host, true, 0);
+}
+
+/**
+ * A body's segment cut at the groups and blocks it opens, so each command
+ * inside reads as a command: `(kill 1)`, `{ kill 1; }`, `try { Stop-Process 1 }`
+ * (review 2026-11-05: each asked where `kill 1` blocks). A bracket glued to a
+ * word stays with it: `${PPID}`, `$(id -u)`, `k()`.
+ */
+function blockPieces(segment: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  let quote: string | null = null;
+  // Brackets glued to a word, whose closers belong to them.
+  let glued = 0;
+  for (let i = 0; i < segment.length; i += 1) {
+    const ch = segment[i] as string;
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "(" || ch === "{") {
+      if (i === 0 || /[\s)]/.test(segment[i - 1] as string)) {
+        out.push(segment.slice(from, i));
+        from = i + 1;
+      } else {
+        glued += 1;
+      }
+    } else if (ch === ")" || ch === "}") {
+      if (glued > 0) {
+        glued -= 1;
+      } else {
+        out.push(segment.slice(from, i));
+        from = i + 1;
+      }
+    }
+  }
+  out.push(segment.slice(from));
+  return out;
+}
+
+/** The words that stand before the program of a command in a body. */
+const BODY_HEAD_WORDS: ReadonlySet<string> = new Set([
+  "!",
+  "if",
+  "then",
+  "elif",
+  "else",
+  "do",
+  "while",
+  "until",
+  "time",
+  "coproc",
+  "call",
+  "start",
+]);
+
+/**
+ * A command's words from its program on: past control-flow words, `FOO=1`,
+ * a leading redirect, `$x =` and cmd's `@`, `call`, `start` with its options.
+ */
+function commandWords(tokens: readonly string[]): readonly string[] {
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i] as string;
+    const word = t.toLowerCase();
+    if (BODY_HEAD_WORDS.has(word)) {
+      i += 1;
+      if (word === "start") while (tokens[i]?.startsWith("/") === true) i += 1;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+      i += 1;
+      continue;
+    }
+    // `2>/dev/null`, `>nul`; a redirect's target as a word of its own.
+    if (/^\d*[<>]/.test(t)) {
+      i += /^\d*[<>]+&?$/.test(t) ? 2 : 1;
+      continue;
+    }
+    if (/^\$\w+$/.test(t) && tokens[i + 1] === "=") {
+      i += 2;
+      continue;
+    }
+    break;
+  }
+  const rest = tokens.slice(i);
+  const head = rest[0];
+  if (head === undefined || !head.startsWith("@") || head.length === 1)
+    return rest;
+  return [head.slice(1), ...rest.slice(1)];
 }
 
 /** A `.git` path segment in shell text: `.git/hooks`, `.git\config`,

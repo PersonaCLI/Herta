@@ -16,6 +16,7 @@ import {
   classifyShellBody,
   GIT_INTERNALS_ASK_CODE,
   HARNESS_STATE_ASK_CODE,
+  selfKillVerdict,
   splitShellSegments,
   unresolvedProgramName,
   type Verdict,
@@ -344,7 +345,15 @@ export function classifyShellCommandDetailed(
   // A body with an UNQUOTED delimiter is expanded by bash, so its
   // substitutions are commands too and get classified alongside the outer
   // ones (the body's plain text is still data, not a command).
-  const { text: withoutHeredocs, expanded } = splitHeredocs(trimmed);
+  const { text: withoutHeredocs, expanded, fed } = splitHeredocs(trimmed);
+  // A body fed to a shell is commands, however its delimiter is quoted
+  // (review 2026-11-05: `bash <<'EOF'` around a kill of the app asked).
+  if (opts.host !== undefined) {
+    for (const script of fed) {
+      const self = selfKillVerdict(["bash", "-c", script], opts.host);
+      if (self !== null) return { verdict: self, segments: [] };
+    }
+  }
   const { text, inner } = extractSubstitutions(withoutHeredocs);
   const heredocInner = expanded.flatMap((b) => extractSubstitutions(b).inner);
   const segments = [
@@ -1133,6 +1142,12 @@ function classifySegment(
   }
 
   if (OPAQUE_BUILTINS.has(name)) {
+    // `exec` names what it runs, and a kill aimed at the app is refused
+    // through it too (review 2026-11-05: this branch returned first).
+    if (name === "exec" && opts.host !== undefined) {
+      const self = selfKillVerdict(words, opts.host);
+      if (self !== null) return { verdict: self };
+    }
     // `eval` runs text assembled when it runs: opaque, never reviewed nor
     // rule-eligible (ADR 0075 step 1). `source`/`.`/`exec` name what
     // they run and stay the interpreter class.
@@ -1797,23 +1812,33 @@ export function stripHeredocBodies(body: string): string {
  * `cat <<EOF` / `$(rm -rf /)` / `EOF` classified as a plain `cat` (red team
  * round 3).
  */
-function splitHeredocs(body: string): { text: string; expanded: string[] } {
+function splitHeredocs(body: string): {
+  text: string;
+  expanded: string[];
+  fed: string[];
+} {
   const lines = body.split("\n");
   const out: string[] = [];
   const expanded: string[] = [];
+  const fed: string[] = [];
   let terminator: string | null = null;
   let stripTabs = false;
   let quotedDelimiter = false;
+  let intoShell = false;
   let current: string[] = [];
+  const close = (): void => {
+    if (current.length === 0) return;
+    if (!quotedDelimiter) expanded.push(current.join("\n"));
+    if (intoShell) fed.push(current.join("\n"));
+  };
   for (const line of lines) {
     if (terminator !== null) {
       const probe = stripTabs ? line.replace(/^\t+/, "") : line;
       if (probe === terminator) {
-        if (!quotedDelimiter && current.length > 0)
-          expanded.push(current.join("\n"));
+        close();
         current = [];
         terminator = null;
-      } else if (!quotedDelimiter) {
+      } else if (!quotedDelimiter || intoShell) {
         current.push(line);
       }
       continue;
@@ -1824,13 +1849,17 @@ function splitHeredocs(body: string): { text: string; expanded: string[] } {
       stripTabs = opener.stripTabs;
       terminator = opener.terminator;
       quotedDelimiter = opener.quoted;
+      intoShell = SHELL_HEAD.test(line);
     }
   }
   // An unterminated heredoc still had its lines consumed; keep whatever the
   // expandable one accumulated rather than dropping it silently.
-  if (!quotedDelimiter && current.length > 0) expanded.push(current.join("\n"));
-  return { text: out.join("\n"), expanded };
+  close();
+  return { text: out.join("\n"), expanded, fed };
 }
+
+/** A line whose program is a shell reading its commands from stdin. */
+const SHELL_HEAD = /^\s*(?:\S*[\\/])?(?:ba|z|da|k)?sh(?:\.exe)?(?:\s+-s)?\s*</;
 
 /**
  * The command with its shell comments removed — an unquoted `#` that begins

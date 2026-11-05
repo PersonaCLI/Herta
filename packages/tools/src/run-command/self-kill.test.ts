@@ -31,6 +31,8 @@ const PROCESSES: readonly HostProcess[] = [
     name: "node.exe",
     ppid: 4100,
     commandLine: "C:\\Program Files\\nodejs\\node.exe C:\\apps\\herta\\cli.js",
+    user: "trailblazer",
+    uid: 1000,
   },
   { pid: 4100 },
   { pid: 4300, name: "node.exe" },
@@ -83,10 +85,10 @@ describe("a kill aimed at the app itself is blocked (2026-11-04)", () => {
     for (const argv of [
       ["kill", "-9", "-1"],
       ["kill", "--", "-1"],
-      ["pkill", "-u", "robin"],
-      ["pkill", "--euid=robin"],
-      ["killall", "-u", "robin"],
-      ["taskkill", "/F", "/FI", "USERNAME eq robin"],
+      ["pkill", "-u", "trailblazer"],
+      ["pkill", "--euid=trailblazer"],
+      ["killall", "-u", "trailblazer"],
+      ["taskkill", "/F", "/FI", "USERNAME eq trailblazer"],
       ["pkill", "-v", "python"],
     ]) {
       expect(verdict(argv).kind, argv.join(" ")).toBe("block");
@@ -237,9 +239,8 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
       ["taskkill", "/FI", `PID eq ${" ".repeat(1600)}\nx\ny`],
     ].map((argv) => classifyCommand(argv, { host: short }).kind);
     expect(performance.now() - started).toBeLessThan(1000);
-    // Nobody can tell what the pattern selects; a filter it cannot read
-    // lets every process through, the app's own included.
-    expect(verdicts).toEqual(["ask", "ask", "block"]);
+    // Nobody can tell what the pattern selects, or what that filter does.
+    expect(verdicts).toEqual(["ask", "ask", "ask"]);
   });
 
   it("the bash contract's line asks too", () => {
@@ -378,6 +379,186 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
   });
 });
 
+describe("what cannot touch the app is not refused (review 2026-11-05)", () => {
+  it("a filter it cannot read, another user, signal 0 and a workspace program", () => {
+    for (const argv of [
+      ["taskkill", "/F", "/FI", "WINDOWTITLE eq vite*"],
+      ["taskkill", "/FI", "STATUS eq NOT RESPONDING", "/F"],
+      ["taskkill", "/FI", "MEMUSAGE gt 100000"],
+      ["taskkill", "/FI:PID eq 5678", "/F"],
+      ["pkill", "-u", "root"],
+      ["pkill", "--euid=postgres"],
+      ["pkill", "-U", "0"],
+      ["killall", "-u", "postgres"],
+      ["pkill", "-u", "root", "node"],
+      ["taskkill", "/F", "/FI", "USERNAME eq postgres"],
+      ["kill", "-0", "4242"],
+      ["kill", "-s", "0", "4100"],
+      ["kill", "--signal=0", "4242"],
+      ["pkill", "-0", "node"],
+      ["pkill", "--signal", "0", "node"],
+      ["killall", "-0", "node"],
+      ["killall", "-s", "0", "node"],
+      ["./kill", "4242"],
+      ["scripts/kill", "4242"],
+      ["./scripts/pkill", "node"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).not.toBe("block");
+    }
+  });
+
+  it("a word only the shell reads is the shell's own user, and a quoted $PPID is a word", () => {
+    expect(shellVerdict("pkill -KILL -u $USER").kind).toBe("block");
+    expect(shellVerdict("pkill -u $(id -u)").kind).toBe("block");
+    expect(shellVerdict("killall -u $USER").kind).toBe("block");
+    expect(shellVerdict("kill '$PPID'").kind).not.toBe("block");
+    expect(shellVerdict("kill -0 $PPID").kind).not.toBe("block");
+    expect(shellVerdict('kill "$PPID"').kind).toBe("block");
+  });
+
+  it("the app's own user, a real signal and a real path still block", () => {
+    for (const argv of [
+      ["pkill", "-u", "TRAILBLAZER"],
+      ["pkill", "-u", "1000"],
+      ["pkill", "-u", "root,trailblazer"],
+      ["pkill", "-u", "trailblazer", "node"],
+      ["taskkill", "/F", "/FI", "USERNAME eq DESKTOP-1\\trailblazer"],
+      ["taskkill", "/F", "/FI", "USERNAME ne postgres"],
+      ["kill", "-1", "4242"],
+      ["kill", "-s", "TERM", "4242"],
+      ["/bin/kill", "4242"],
+      ["/usr/bin/pkill", "node"],
+      ["C:\\Windows\\System32\\taskkill.exe", "/PID", "4242"],
+      ["C:/Windows/System32/taskkill", "/PID", "4242"],
+      ["taskkill", "/PID:4242"],
+      ["taskkill", "/IM:node.exe"],
+      ["taskkill", "/FI:PID eq 4242"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).toBe("block");
+    }
+  });
+
+  it("an app that cannot say who it runs as asks about a plain user", () => {
+    const unknown: HostIdentity = {
+      processes: () => [{ pid: 4242, self: true, name: "node.exe" }],
+    };
+    expect(
+      classifyCommand(["pkill", "-u", "trailblazer"], { host: unknown }).kind,
+    ).toBe("ask");
+  });
+});
+
+describe("find's own semicolon (review 2026-11-05)", () => {
+  it("`-exec … \\;` is an argument, and the line classifies as `{} +` does", () => {
+    for (const line of [
+      "find . -type f -name '*.ts' -exec wc -l {} \\;",
+      "find src -name '*.js' -exec grep -l TODO {} \\;",
+      "find . -name '*.orig' -exec rm {} \\;",
+      "find . -name '*.log' -execdir rm {} \\;",
+    ]) {
+      expect(shellVerdict(line).kind, line).toBe("ask");
+    }
+    expect(
+      verdict(["bash", "-c", "find src -name '*.js' -exec grep -l TODO {} \\;"])
+        .kind,
+    ).not.toBe("block");
+  });
+
+  it("what follows it, or an escaped backslash, is still a command", () => {
+    for (const line of [
+      "find . -exec echo {} \\; ; rm -rf /",
+      "find . -exec echo {} \\; && rm -rf /",
+      "find / -name x -exec rm {} \\;",
+      "find . -exec echo \\\\; rm -rf /",
+      "echo a\\\\; rm -rf /",
+      "echo a\\; rm -rf /",
+    ]) {
+      expect(shellVerdict(line).kind, line).toBe("block");
+    }
+  });
+});
+
+describe("a literal kill of the app behind a compound or exec (review 2026-11-05)", () => {
+  it("blocks through exec", () => {
+    for (const line of [
+      "exec kill 4242",
+      "exec kill -9 $PPID",
+      "exec -a x kill 4242",
+      "exec -c kill 4242",
+      "exec taskkill //F //PID 4242",
+      "exec env kill 4242",
+      "exec bash -c 'kill 4242'",
+    ]) {
+      expect(shellVerdict(line).kind, line).toBe("block");
+    }
+    expect(shellVerdict("exec kill 574").kind).toBe("ask");
+    expect(shellVerdict("exec node server.js").kind).toBe("ask");
+  });
+
+  it("blocks inside a group, a subshell, a condition or a block of a body", () => {
+    for (const line of [
+      "bash -c '(kill 4242)'",
+      "bash -c '{ kill 4242; }'",
+      "bash -c '! kill 4242'",
+      "bash -c 'FOO=1 kill 4242'",
+      "bash -c 'x=1 env kill 4242'",
+      "bash -c 'if true; then kill 4242; fi'",
+      "bash -c 'while true; do kill 4242; done'",
+      "bash -c 'k(){ kill 4242; }; k'",
+      "bash -c '2>/dev/null kill 4242'",
+      "bash -c '(kill -9 $PPID)'",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's own `${PPID}`, not a template
+      "bash -c '(kill ${PPID})'",
+      'cmd /c "(taskkill /F /PID 4242)"',
+      'cmd /c "@taskkill /F /PID 4242"',
+      'cmd /c "call taskkill /F /PID 4242"',
+      'cmd /c "start /b taskkill /F /PID 4242"',
+      'cmd /c ">nul taskkill /PID 4242"',
+      "powershell -c '& { Stop-Process -Id 4242 }'",
+      "powershell -c '. { Stop-Process -Id 4242 }'",
+      "powershell -c 'if ($true) { Stop-Process -Id 4242 }'",
+      "powershell -c 'try { Stop-Process -Id 4242 } catch {}'",
+      "powershell -c '$null = Stop-Process -Id 4242'",
+    ]) {
+      expect(shellVerdict(line).kind, line).toBe("block");
+    }
+    for (const argv of [
+      ["bash", "-c", "(kill -9 $PPID)"],
+      ["bash", "-c", "{ kill -9 $PPID; }"],
+      ["bash", "-c", "x=1 kill $PPID"],
+      ["cmd", "/c", "(taskkill /F /PID 4242)"],
+      ["cmd", "/c", "call taskkill /F /PID 4242"],
+    ]) {
+      expect(verdict(argv).kind, argv.join(" ")).toBe("block");
+    }
+  });
+
+  it("blocks in a heredoc fed to a shell, however its delimiter is quoted", () => {
+    for (const line of [
+      "bash <<'EOF'\nkill 4242\nEOF",
+      "bash <<EOF\nkill 4242\nEOF",
+      "sh <<'EOF'\ntaskkill //F //PID 4242\nEOF",
+      "bash -s <<'EOF'\nkill -9 $PPID\nEOF",
+      "/bin/bash <<'EOF'\n(kill 4242)\nEOF",
+    ]) {
+      expect(shellVerdict(line).kind, line).toBe("block");
+    }
+  });
+
+  it("leaves what only mentions it alone", () => {
+    for (const line of [
+      "cat <<'EOF'\nkill 4242\nEOF",
+      "cat > notes.txt <<'EOF'\nkill 4242\nEOF",
+      "bash -c 'echo \"(kill 4242)\"'",
+      "bash -c 'echo kill 4242'",
+      "bash -c '(kill 5678)'",
+      "bash <<'EOF'\nkill 5678\nEOF",
+    ]) {
+      expect(shellVerdict(line).kind, line).not.toBe("block");
+    }
+  });
+});
+
 describe("hostIdentity — this process, its parent, the desktop's helpers", () => {
   afterEach(() => registerHostHelperPids(() => []));
 
@@ -388,6 +569,7 @@ describe("hostIdentity — this process, its parent, the desktop's helpers", () 
     expect(own?.name).toBe(basename(process.execPath));
     expect(own?.ppid).toBe(process.ppid);
     expect(procs.some((p) => p.pid === process.ppid)).toBe(true);
+    expect(own?.user?.length).toBeGreaterThan(0);
   });
 
   it("adds the helpers the desktop registers, and survives a list that throws", () => {

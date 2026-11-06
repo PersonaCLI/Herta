@@ -132,6 +132,64 @@ describe("Launcher", () => {
     expect(log).not.toMatch(/starting on \d+\n\n/u);
   }, 30_000);
 
+  it("a step's Stop ends its wait on a start it joined; the start goes on (review 2026-11-05, M4)", async () => {
+    const ws = workspace();
+    plantServer(ws, { delayMs: 1_500 });
+    const port = await freePort();
+    const launcher = new Launcher();
+    const first = launcher.start(entryFor(ws, port), { by: "trailblazer" });
+    const stop = new AbortController();
+    const joined = launcher.start(entryFor(ws, port), {
+      by: "banzhuan",
+      signal: stop.signal,
+    });
+    const refused = expect(joined).rejects.toMatchObject({ code: "aborted" });
+    const pressed = performance.now();
+    stop.abort();
+    await refused;
+    expect(performance.now() - pressed).toBeLessThan(500);
+    expect((await first).already).toBe(false);
+    expect(await portAnswers(port)).toBe(true);
+    await launcher.stopAll();
+  }, 30_000);
+
+  it("a start during a stop waits for it and starts the server again", async () => {
+    const ws = workspace();
+    plantServer(ws);
+    const port = await freePort();
+    const spawned: number[] = [];
+    const launcher = new Launcher({ onSpawn: (s) => spawned.push(s.pid) });
+    await launcher.start(entryFor(ws, port), { by: "trailblazer" });
+    const stopped = launcher.stop("web");
+    const again = await launcher.start(entryFor(ws, port), { by: "banzhuan" });
+    await stopped;
+    expect(again.already).toBe(false);
+    expect(spawned).toHaveLength(2);
+    expect(await portAnswers(port)).toBe(true);
+    await launcher.stopAll();
+  }, 30_000);
+
+  it("stopAll before the spawn stops that start too", async () => {
+    const ws = workspace();
+    plantServer(ws);
+    const port = await freePort();
+    let answer: (v: boolean) => void = () => undefined;
+    const launcher = new Launcher({
+      probe: () =>
+        new Promise<boolean>((r) => {
+          answer = r;
+        }),
+    });
+    const start = launcher.start(entryFor(ws, port), { by: "banzhuan" });
+    const refused = expect(start).rejects.toMatchObject({ code: "aborted" });
+    await launcher.stopAll();
+    answer(false);
+    await refused;
+    expect(launcher.list()).toEqual([]);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await portAnswers(port)).toBe(false);
+  }, 30_000);
+
   it("a port that already answers starts nothing", async () => {
     const ws = workspace();
     plantServer(ws);

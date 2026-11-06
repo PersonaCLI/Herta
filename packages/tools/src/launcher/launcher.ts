@@ -119,6 +119,9 @@ export class Launcher implements ServerHost {
   /** A start under way, by entry name: a second start of the same entry
    *  waits for it instead of spawning its own. */
   private readonly pending = new Map<string, Promise<ServerStarted>>();
+  /** Counts `stopAll`: a start under way across one is stopped with the rest,
+   *  even if it had not spawned when `stopAll` looked. */
+  private stopAlls = 0;
 
   constructor(private readonly opts: LauncherOptions = {}) {}
 
@@ -141,7 +144,7 @@ export class Launcher implements ServerHost {
     // first and spawns nothing.
     const under = this.pending.get(entry.name);
     if (under !== undefined) {
-      const first = await under;
+      const first = await untilStopped(under, opts.signal, entry.name);
       return { status: first.status, already: true };
     }
     const run = this.launch(entry, opts);
@@ -157,7 +160,16 @@ export class Launcher implements ServerHost {
     entry: LaunchEntry,
     opts: { readonly by: ServerStarter; readonly signal?: AbortSignal },
   ): Promise<ServerStarted> {
+    const stopAlls = this.stopAlls;
     const mine = this.servers.get(entry.name);
+    // A start during a stop waits for the stop: joined, it would answer
+    // `already` for a server about to go.
+    if (mine?.stopping === true) {
+      await Promise.race([
+        mine.closed,
+        new Promise<void>((r) => setTimeout(r, KILL_GRACE_MS)),
+      ]);
+    }
     if (
       mine !== undefined &&
       (mine.state === "starting" || mine.state === "ready")
@@ -223,6 +235,15 @@ export class Launcher implements ServerHost {
       throw new ServerHostError(
         "spawn_failed",
         `could not start ${entry.command} — is it installed, and on PATH?`,
+      );
+    }
+
+    if (this.stopAlls !== stopAlls) {
+      killProcessTree(child);
+      log.end("stopped before it started\n");
+      throw new ServerHostError(
+        "aborted",
+        `the start of ${entry.name} was stopped`,
       );
     }
 
@@ -331,6 +352,7 @@ export class Launcher implements ServerHost {
   }
 
   async stopAll(): Promise<void> {
+    this.stopAlls += 1;
     await Promise.allSettled(
       [...this.servers.values()].map((s) => this.stopRunning(s)),
     );
@@ -413,6 +435,36 @@ export class Launcher implements ServerHost {
       ...(s.exitCode !== undefined ? { exitCode: s.exitCode } : {}),
     };
   }
+}
+
+/** A start this step joined, or the step's Stop, whichever comes first
+ *  (review 2026-11-05, M4). The start is the first caller's and goes on; what
+ *  ends here is this step's wait, which could otherwise outlast Stop by the
+ *  whole ready bound. */
+function untilStopped(
+  start: Promise<ServerStarted>,
+  signal: AbortSignal | undefined,
+  name: string,
+): Promise<ServerStarted> {
+  if (signal === undefined) return start;
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(
+        new ServerHostError(
+          "aborted",
+          `the wait for ${name} was stopped; its start goes on`,
+        ),
+      );
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    void start
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 /** The end of a log: its last lines, bounded. */

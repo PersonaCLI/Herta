@@ -24,6 +24,7 @@ import {
   banzhuanSentences,
   neutralizeBanzhuanTrigger,
   parseHertaBlock,
+  withoutBanzhuanSentences,
 } from "./parse.js";
 import { FORCED_SPEECH_OPEN_TAG, STOP_SPEECH_CLOSE } from "./thought-hint.js";
 
@@ -130,10 +131,11 @@ export function makeFireBeat(
  * and once made up a fact.
  *
  * Her live `@板砖` in it is a steer, not a dispatch (§4): the trigger recheck
- * gates a rhetorical one exactly as it gates the main loop's, and a real one
- * hands 板砖 the sentences that carry it (owner 2026-11-04: the sentence, not
- * the reply). The token stays live in her text — she did call 板砖 — and the
- * block names what reached it.
+ * gates a rhetorical one exactly as it gates the main loop's, and one nobody
+ * asked for (2026-11-06), and takes the sentence out when it refuses. A real
+ * one hands 板砖 the sentences that carry it (owner 2026-11-04: the sentence,
+ * not the reply). The token stays live in her text — she did call 板砖 — and
+ * the block names what reached it.
  */
 export function makeFireAnswer(
   deps: ActorTurnDeps,
@@ -188,7 +190,16 @@ export function makeFireAnswer(
             record: currentRecord,
             candidate: text,
             thought: undefined,
+            duringRun: true,
           });
+          // Refused: the sentence goes, not just the token. It is addressed
+          // to 板砖, so as a mention it would stand on his screen as an
+          // instruction nobody received. An answer that was only that
+          // sentence keeps it as the mention: she has to answer something.
+          if (judged.text !== text) {
+            const rest = withoutBanzhuanSentences(text);
+            if (rest.length > 0) judged = { text: rest };
+          }
         } catch (err) {
           // Stopped during the recheck, with the answer already on screen
           // and its stream closed: it stands, screen == record, as a mention

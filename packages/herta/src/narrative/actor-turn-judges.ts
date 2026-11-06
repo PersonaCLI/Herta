@@ -243,6 +243,8 @@ export async function judgeTriggerAndNeutralize(opts: {
   record: TerminalRecord;
   candidate: string;
   thought: string | undefined;
+  /** The candidate answers talk during a run (`TriggerRecheckInput`). */
+  duringRun?: boolean;
 }): Promise<{ text: string; reason?: string }> {
   const { deps, signal, candidate } = opts;
   let recheckPrompt = "";
@@ -256,6 +258,7 @@ export async function judgeTriggerAndNeutralize(opts: {
           : {}),
         candidateSpeech: candidate,
         lang: deps.lang ?? "zh",
+        ...(opts.duringRun === true ? { duringRun: true } : {}),
         signal: judgeSignal,
         onPromptBuilt: (p) => {
           recheckPrompt = p;

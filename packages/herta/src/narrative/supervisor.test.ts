@@ -733,6 +733,20 @@ describe("prompt language variants (EN interaction slice 3b)", () => {
     expect(renderFeianGrounding([], "en")).toBe("");
   });
 
+  it("buildTriggerRecheckPrompt: an answer during a run carries its rule, in its language, and nothing else does", () => {
+    const line = { recentRecord: [], candidateSpeech: "@板砖 看看" };
+    const zh = "只有开拓者在这趟里说的话要板砖改做什么";
+    const en = "should fire only if what the Trailblazer said during this run";
+    expect(buildTriggerRecheckPrompt(line).prompt).not.toContain(zh);
+    expect(
+      buildTriggerRecheckPrompt({ ...line, duringRun: true }).prompt,
+    ).toContain(zh);
+    expect(
+      buildTriggerRecheckPrompt({ ...line, lang: "en", duringRun: true })
+        .prompt,
+    ).toContain(en);
+  });
+
   it("buildTriggerRecheckPrompt: default equals lang:'zh'; lang:'en' selects the EN recheck prompt around CN tokens", () => {
     const rin = { recentRecord: [], candidateSpeech: "x" } as const;
     expect(buildTriggerRecheckPrompt(rin).prompt).toBe(

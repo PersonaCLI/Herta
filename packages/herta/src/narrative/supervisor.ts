@@ -122,6 +122,9 @@ export interface TriggerRecheckInput {
   /** Prompt-prose language, defaulting `"zh"` — same semantics as
    *  `SupervisorCheckInput.lang` (EN interaction slice 3b). */
   readonly lang?: PromptLang;
+  /** The line answers the Trailblazer while 板砖 runs: its `@板砖` is a steer,
+   *  and stands only if they asked for one (ADR 0085 amendment 2026-11-06). */
+  readonly duringRun?: boolean;
   readonly signal: AbortSignal;
   readonly onPromptBuilt?: (prompt: string) => void;
 }
@@ -255,6 +258,15 @@ const TRIGGER_RECHECK_USER_MESSAGE_TAIL: Record<PromptLang, string> = {
   en: `Judge only whether the \`@板砖\` inside the \`### 我刚才要说出口的话\` code block above should really fire right now (the code fence itself is not part of the line), then output only the final verdict line(s) (OK, or one or more lines of BLOCK：<类别>：<one first-person sentence in English>).`,
 };
 
+/** The recheck's rule for an answer during a run. The hint cannot carry
+ *  this: told when not to write the sentence, she stopped writing it when
+ *  asked to (the lab, 2026-11-06). The judge sits where the sentence is
+ *  already written, and costs no call an answer without one would make. */
+const DURING_RUN_RULE: Record<PromptLang, string> = {
+  zh: `这段话是板砖跑着的时候我回开拓者的。这里的 \`@板砖\` 是把话递给正在跑的板砖，只有开拓者在这趟里说的话要板砖改做什么、多做什么，才该触发。他只是问话、聊天，或者这句只是把板砖手上的活再说一遍、替他加了他没要的活：BLOCK：@板砖未要求：<第一人称一句>。`,
+  en: `This line is my reply to the Trailblazer while 板砖 runs. An \`@板砖\` here hands words to the running 板砖, and should fire only if what the Trailblazer said during this run asks 板砖 to change course or do something more. If they only asked or chatted, or the sentence only repeats the work 板砖 already has, or adds work they did not ask for: BLOCK：@板砖未要求：<one first-person sentence>.`,
+};
+
 /** Closing instruction of the missing-dispatch judge's user message
  *  (ADR 0036) — same three-header body, opposite question. */
 const MISSING_DISPATCH_USER_MESSAGE_TAIL: Record<PromptLang, string> = {
@@ -265,7 +277,11 @@ const MISSING_DISPATCH_USER_MESSAGE_TAIL: Record<PromptLang, string> = {
 function buildTriggerRecheckUserMessage(
   input: Pick<
     TriggerRecheckInput,
-    "recentRecord" | "currentTurnThought" | "candidateSpeech" | "lang"
+    | "recentRecord"
+    | "currentTurnThought"
+    | "candidateSpeech"
+    | "lang"
+    | "duringRun"
   >,
   tail: Record<PromptLang, string> = TRIGGER_RECHECK_USER_MESSAGE_TAIL,
 ): string {
@@ -292,7 +308,7 @@ ${fenceModelText(candidateSafe)}
 
 ---
 
-${tail[lang]}`;
+${input.duringRun === true ? `${DURING_RUN_RULE[lang]}\n\n` : ""}${tail[lang]}`;
 }
 
 /**
@@ -307,7 +323,11 @@ ${tail[lang]}`;
 export function buildTriggerRecheckPrompt(
   input: Pick<
     TriggerRecheckInput,
-    "recentRecord" | "currentTurnThought" | "candidateSpeech" | "lang"
+    | "recentRecord"
+    | "currentTurnThought"
+    | "candidateSpeech"
+    | "lang"
+    | "duringRun"
   >,
 ): { prompt: string; frame: ActorPromptFrame } {
   const systemMessage = buildTriggerRecheckSystemPrompt(input.lang ?? "zh");
@@ -769,6 +789,7 @@ export async function recheckTrigger(
     currentTurnThought: input.currentTurnThought,
     candidateSpeech: input.candidateSpeech,
     lang: input.lang ?? "zh",
+    ...(input.duringRun === true ? { duringRun: true } : {}),
   });
   input.onPromptBuilt?.(prompt);
   let buffered = "";

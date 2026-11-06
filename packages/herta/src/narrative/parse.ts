@@ -140,6 +140,29 @@ function endsSentence(text: string, i: number): boolean {
  * as she wrote them; empty when none does.
  */
 export function banzhuanSentences(text: string): string {
+  return banzhuanSentenceSpans(text)
+    .map(([start, end]) => text.slice(start, end).trim())
+    .join(" ")
+    .trim();
+}
+
+/**
+ * Her speech without those sentences (ADR 0085 amendment 2026-11-06): what
+ * stands of an answer once the recheck refuses the `@板砖` in it. Left in as a
+ * mention, a sentence addressed to 板砖 stays on the Trailblazer's screen as
+ * an instruction nobody received.
+ */
+export function withoutBanzhuanSentences(text: string): string {
+  let kept = "";
+  let from = 0;
+  for (const [start, end] of banzhuanSentenceSpans(text)) {
+    kept += text.slice(from, start);
+    from = end;
+  }
+  return `${kept}${text.slice(from)}`.replace(/\n{3,}/gu, "\n\n").trim();
+}
+
+function banzhuanSentenceSpans(text: string): Array<[number, number]> {
   const ranges = quotationRanges(text);
   const quoted = (i: number): boolean =>
     ranges.some(([start, end]) => i >= start && i < end);
@@ -156,7 +179,7 @@ export function banzhuanSentences(text: string): string {
     if (!quoted(i) && endsSentence(text, i)) ends.push(i + 1);
   }
   ends.push(text.length);
-  const sentences: string[] = [];
+  const spans: Array<[number, number]> = [];
   let start = 0;
   for (let k = 0; k < ends.length; k += 1) {
     let end = ends[k] as number;
@@ -165,11 +188,11 @@ export function banzhuanSentences(text: string): string {
         k += 1;
         end = ends[k] as number;
       }
-      sentences.push(text.slice(start, end).trim());
+      spans.push([start, end]);
     }
     start = end;
   }
-  return sentences.join(" ").trim();
+  return spans;
 }
 
 /** Whether a sentence says more than the token and its punctuation. */

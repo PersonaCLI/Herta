@@ -16,7 +16,11 @@ import { DEFAULT_ACTOR_HINTS } from "./actor-hints.js";
 import { type ActorTurnDeps, runActorCompletionTurn } from "./actor-turn.js";
 import { makeFireAnswer } from "./actor-turn-beat.js";
 import { COMPACTION_TEXT } from "./compaction-text.js";
-import { banzhuanSentences, parseHertaBlock } from "./parse.js";
+import {
+  banzhuanSentences,
+  parseHertaBlock,
+  withoutBanzhuanSentences,
+} from "./parse.js";
 
 async function* streamOf(
   events: CompletionEvent[],
@@ -129,6 +133,22 @@ describe("banzhuanSentences — what reaches 板砖 of her answer", () => {
     );
   });
 
+  it("what stands without them: her talk, with no gap where they were", () => {
+    expect(
+      withoutBanzhuanSentences(
+        "还在跑。\n\n@板砖 看看 a.ts。\n\n有结果我叫你。",
+      ),
+    ).toBe("还在跑。\n\n有结果我叫你。");
+    expect(withoutBanzhuanSentences("板砖还在看。@板砖 查一下 b.ts。")).toBe(
+      "板砖还在看。",
+    );
+    expect(withoutBanzhuanSentences("@板砖 查一下 b.ts。")).toBe("");
+    // A quoted one calls nobody, so it is hers to keep.
+    expect(withoutBanzhuanSentences("他写的是 `@板砖 查一下`。")).toBe(
+      "他写的是 `@板砖 查一下`。",
+    );
+  });
+
   it("two calls in one speech are two sentences, as she wrote them", () => {
     expect(banzhuanSentences("@板砖 先补测试。三点。@板砖 再改逻辑。")).toBe(
       "@板砖 先补测试。 @板砖 再改逻辑。",
@@ -209,6 +229,75 @@ describe("makeFireAnswer — her answer to talk during a run", () => {
         },
       };
     }
+
+    /** A supervisor that answers with `verdict`, and what it was asked. */
+    function judging(verdict: string): {
+      supervisorProvider: ProviderAdapter;
+      heard: () => string;
+    } {
+      let heard = "";
+      return {
+        heard: () => heard,
+        supervisorProvider: {
+          streamChat: (frame) =>
+            (async function* () {
+              heard = frame.messages
+                .map((m) => ("text" in m ? m.text : ""))
+                .join("\n");
+              yield { type: "text-delta", text: verdict } as ProviderEvent;
+              yield { type: "finish", reason: "stop" } as ProviderEvent;
+            })(),
+        },
+      };
+    }
+    const answerTo = async (
+      speech: string,
+      verdict: string,
+    ): Promise<{ text: string; steered?: string; heard: string }> => {
+      const { provider: p } = provider([says(`${speech}（/我 说）`)]);
+      const { supervisorProvider, heard } = judging(verdict);
+      const block = await makeFireAnswer(
+        deps(p, { supervisorProvider, supervisorReference: "[reference]" }),
+        0,
+        undefined,
+        0,
+      )(liveRecord, new AbortController().signal, () => true);
+      return {
+        text: block?.text ?? "",
+        ...(block?.steered !== undefined ? { steered: block.steered } : {}),
+        heard: heard(),
+      };
+    };
+
+    it("is told an answer's @板砖 needs his asking (live run 2026-11-06)", async () => {
+      const { heard } = await answerTo("三点。@板砖 看看 b.txt。", "OK");
+      expect(heard).toContain("这段话是板砖跑着的时候我回开拓者的");
+    });
+
+    it("refused, the sentence goes: no instruction nobody received stays on his screen", async () => {
+      const out = await answerTo(
+        "还在跑。\n\n@板砖 把手上的活做完。",
+        "BLOCK：@板砖未要求：他只是问了一句。",
+      );
+      expect(out.text).toBe("还在跑。");
+      expect(out.steered).toBeUndefined();
+    });
+
+    it("let stand, the sentence steers and stays", async () => {
+      const out = await answerTo("行。@板砖 顺便看看 b.txt。", "OK");
+      expect(out.text).toContain("@板砖 顺便看看 b.txt。");
+      expect(out.steered).toBe("@板砖 顺便看看 b.txt。");
+    });
+
+    it("refused, an answer that was only that sentence stands as a mention", async () => {
+      const out = await answerTo(
+        "@板砖 把手上的活做完。",
+        "BLOCK：@板砖未要求：他只是问了一句。",
+      );
+      expect(out.text).toContain("把手上的活做完");
+      expect(out.steered).toBeUndefined();
+      expect(parseHertaBlock(out.text).hasBanzhuanTrigger).toBe(false);
+    });
 
     it("Stop during it keeps the answer already on screen, as a mention", async () => {
       const { provider: p } = provider([

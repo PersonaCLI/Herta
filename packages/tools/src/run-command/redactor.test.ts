@@ -161,3 +161,100 @@ describe("redactSecrets", () => {
     expect(r).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 });
+
+describe("what reads a secret and what holds one (review 2026-11-05, G8)", () => {
+  it("a keyword argument is code, on its line or over several", () => {
+    for (const line of [
+      "client = OpenAI(api_key=settings.OPENAI_API_KEY)",
+      'client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])',
+      'client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))',
+      "connect(host=host, password=config.db.password, port=5432)",
+      "connect(user=user, password=password)",
+      "OpenAI(api_key=OPENAI_API_KEY)",
+      "    api_key=settings.OPENAI_API_KEY,",
+      "    12\t    token=self.token,",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("a value in a call is still a value when it is not plainly a name", () => {
+    for (const line of [
+      "connect(password=hunter2)",
+      "User(id=1, token=abc123def456.ghi789jkl012)",
+      "(TOKEN=abc.def.ghi)",
+      "API_KEY=settings.foo,",
+    ]) {
+      expect(redactSecrets(line), line).toContain("[REDACTED:env_secret]");
+    }
+  });
+
+  it("what a shell works out is left whole", () => {
+    for (const line of [
+      "TOKEN=$(gh auth token) npm publish",
+      'TOKEN="$(gh auth token)" npm publish',
+      "TOKEN=`gh auth token` npm publish",
+      "TOKEN=$GITHUB_TOKEN npm publish",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell line, not a template
+      "API_KEY=${API_KEY} node run.js",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell line, not a template
+      'API_KEY="${API_KEY}" node run.js',
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("what is written down is masked, whatever it starts with", () => {
+    for (const line of [
+      "PASSWORD=$ecret",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell line, not a template
+      "TOKEN=${FOO:-hunter2}",
+      "TOKEN='$(not a substitution)'",
+      'TOKEN="prefix $(gh auth token)"',
+    ]) {
+      expect(redactSecrets(line), line).toContain("[REDACTED:env_secret]");
+    }
+  });
+
+  it("a dotted value at a config line's left edge is taken for a secret", () => {
+    for (const line of [
+      "password = correct.horse.battery.staple",
+      "JWT_SECRET = v1.public.payload",
+      "    12\tpassword = correct.horse.battery.staple",
+      "app.ini:3:password = correct.horse.battery.staple",
+    ]) {
+      expect(redactSecrets(line), line).toContain("[REDACTED:env_secret]");
+    }
+  });
+
+  it("a dotted value on a line that reads as code is not", () => {
+    for (const line of [
+      "const password = form.elements.password.value;",
+      "let token = session.auth.token",
+      "self.password = config.db.password",
+      "    password = config.db.password",
+      "src/db.py:12:    password = config.db.password",
+      "    12\t    password = config.db.password",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("the .env shape stays masked", () => {
+    for (const line of [
+      "password=correct.horse.battery.staple",
+      "TOKEN=part1.part2.part3",
+      "DB_PASSWORD=foo(bar)",
+      "PASSWORD==hunter2",
+    ]) {
+      expect(redactSecrets(line), line).toContain("[REDACTED:env_secret]");
+    }
+  });
+
+  it("a minified line of keys reads no more of itself than the bound", () => {
+    const line = "a(token=abc.def,".repeat(50_000);
+    const started = performance.now();
+    redactSecrets(line);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+});

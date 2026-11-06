@@ -48,23 +48,90 @@ export const TOKEN_SECRET_PATTERNS = PATTERNS;
 // a quoted value and a one-dot value (`p.ssw0rd`) are still taken for a
 // secret.
 // A call's parenthesis holds no other and closes, or runs to the end (the
-// value stops at a quote: `os.getenv(`). An optional close let each `(`
-// end its group anywhere, and the review of 2026-10-30 timed a 37-character
-// line at 22 s on the main thread.
+// value stops at a quote: `os.getenv(`, `os.environ[`). An optional close let
+// each `(` end its group anywhere, and the review of 2026-10-30 timed a
+// 37-character line at 22 s on the main thread.
 const CODE_REFERENCE_RE =
-  /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*\]|\([^()\n]*(?:\)|$))+[;,)]*$/;
+  /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]\n]*(?:\]|$)|\([^()\n]*(?:\)|$))+[;,)]*$/;
+
+// A value a shell works out when it runs: a substitution, or a variable. It
+// holds no secret, and masking it cut the line in half
+// (`TOKEN=[REDACTED:env_secret] auth token) npm publish`, review 2026-11-05,
+// G8). `${NAME:-default}` is not here (the default is written down), and a
+// `$` name must be upper-case: `PASSWORD=$ecret` is a password.
+const SHELL_READ_RE =
+  /^(?:\$\(.*|`.*|\$\{[A-Za-z_]\w*\}|\$[A-Z_][A-Z0-9_]*|"(?:\$\([^"\n]*\)|`[^"\n]*`|\$\{[A-Za-z_]\w*\}|\$[A-Z_][A-Z0-9_]*)")$/;
+
+// What stands before a key on its line, when all of it is indentation: bare,
+// or behind the gutter of `cat -n` and read_file, or of grep's `path:line:`.
+// A gutter alone is not indentation: it is what the left edge of a config
+// file looks like when it is printed.
+const INDENTED_RE = /^(?:\s*\d+\t|\S*:\d+:)?\s+$/;
+
+/** A variable's name, not its value: `api_key=OPENAI_API_KEY`. */
+const SECRET_NAME_RE = /api_?key|access_?key|secret|passw(?:or)?d|token/i;
+
+/** A long word with a digit in it: an opaque value, not a name. A log's
+ *  `User(id=1, token=abc123def456.ghi789jkl012)` has the shape of code. */
+const OPAQUE_WORD_RE = /(?=\w*\d)\b\w{12,}\b/u;
+
+/** A keyword argument, whose value is code: inside a call this line opens, or
+ *  on a line of its own in a call over several lines. `f(password=hunter2)`
+ *  is a name in Python and a value anywhere else, so a bare word passes only
+ *  when it is plainly a variable's name. */
+function isKeywordArgument(before: string, value: string): boolean {
+  if (OPAQUE_WORD_RE.test(value)) return false;
+  const bare = value.replace(/[,)]+$/u, "");
+  if (
+    !CODE_REFERENCE_RE.test(value) &&
+    !(/^[A-Za-z_]\w*$/u.test(bare) && SECRET_NAME_RE.test(bare))
+  ) {
+    return false;
+  }
+  if (/\w\([^()]*$/u.test(before) && /[(,]\s*$/u.test(before)) return true;
+  if (!INDENTED_RE.test(before)) return false;
+  return value.endsWith(",") || (value.endsWith(")") && !value.includes("("));
+}
+
+/** A dotted name with nothing else to tell it from a dotted password is code
+ *  only where the line reads as code: a read of the environment, a statement's
+ *  end, a declaration, an assignment to a member, or indentation.
+ *  `password = correct.horse.battery` at a line's left edge is a config file
+ *  (review 2026-11-05, G8). */
+function writtenInCode(before: string, value: string): boolean {
+  if (/(?:^|\.)env\.[A-Za-z_]/u.test(value)) return true;
+  if (value.endsWith(";") || before.endsWith(".")) return true;
+  if (/(?:^|\s)(?:const|let|var|val|final|static|auto)\s+$/u.test(before)) {
+    return true;
+  }
+  return INDENTED_RE.test(before);
+}
 
 // The `.env` shape — a bare `=`, no space on either side — is a value
 // written down, never code that reads one. The review of 2026-10-30 (G4)
 // found `password=correct.horse.battery.staple`, `TOKEN=part1.part2.part3`,
 // `DB_PASSWORD=foo(bar)` and `PASSWORD==hunter2` unmasked by the exemption
-// below. Every line the lab met was spaced; a minified line is masked.
-function readsASecret(sep: string, value: string): boolean {
-  if (sep === "=") return false;
+// below. Every line the lab met was spaced; a minified line is masked. Two
+// things are not that shape and read one all the same: what a shell works out
+// when it runs, and a keyword argument (review 2026-11-05, G8).
+function readsASecret(sep: string, value: string, before: string): boolean {
+  if (SHELL_READ_RE.test(value)) return true;
+  if (sep === "=") return isKeywordArgument(before, value);
   if (/^[=>(]/u.test(value)) return true;
   if (!CODE_REFERENCE_RE.test(value)) return false;
+  if (/[()[\];]/.test(value)) return true;
   const accesses = value.match(/\??\.[A-Za-z_$]/g)?.length ?? 0;
-  return accesses >= 2 || /[()[\];]/.test(value);
+  return accesses >= 2 && writtenInCode(before, value);
+}
+
+/** How far back a key's line is read: a bound, because a minified line can
+ *  hold thousands of keys and each would read all of it. */
+const LINE_LOOKBACK = 200;
+
+/** What stands before `offset` on its line, up to the bound. */
+function lineBefore(text: string, offset: number): string {
+  const head = text.slice(Math.max(0, offset - LINE_LOOKBACK), offset);
+  return head.slice(head.lastIndexOf("\n") + 1);
 }
 
 export function redactSecrets(text: string): string {
@@ -72,8 +139,12 @@ export function redactSecrets(text: string): string {
   for (const { kind, re } of PATTERNS) {
     out = out.replace(re, `[REDACTED:${kind}]`);
   }
-  out = out.replace(ENV_SECRET_RE, (match, key, sep: string, value: string) =>
-    readsASecret(sep, value) ? match : `${key}${sep}[REDACTED:env_secret]`,
+  out = out.replace(
+    ENV_SECRET_RE,
+    (match, key, sep: string, value: string, at: number, whole: string) =>
+      readsASecret(sep, value, lineBefore(whole, at))
+        ? match
+        : `${key}${sep}[REDACTED:env_secret]`,
   );
   return out;
 }

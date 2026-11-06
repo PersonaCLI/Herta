@@ -179,7 +179,7 @@ function countDroppedTurns(record: TerminalRecord, boundary: number): number {
   const end = Math.min(boundary, record.length);
   for (let i = 0; i < end; i++) {
     const b = record[i];
-    if (b?.kind === "user" && b.duringRun !== true) n++;
+    if (b?.kind === "user" && b.duringRun !== true && b.steer !== true) n++;
   }
   return n;
 }
@@ -251,7 +251,8 @@ export async function prepareTurnRecap(
       rawCache.boundaryIndex > 0 &&
       rawCache.boundaryIndex < record.length &&
       atBoundary?.kind === "user" &&
-      atBoundary.duringRun !== true;
+      atBoundary.duringRun !== true &&
+      atBoundary.steer !== true;
     // Text distrust is symmetric with the boundary distrust above — see
     // distrustCachedRecapText.
     const cache =

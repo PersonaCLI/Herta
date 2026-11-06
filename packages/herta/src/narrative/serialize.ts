@@ -127,7 +127,9 @@ export function serializeBlock(
       // 0072 amendment 2026-10-20): the chip the user saw.
       // An element picked on the page reads as the element (ADR 0083 §4).
       // A quoted Flow post's page reads as its host (ADR 0084 §9).
-      return `（开拓者 说）\n${escapeUserText(namePicks(nameMentionedPaths(nameQuotedPagesForHerta(block.text, opts?.lang ?? "zh"), block.mentions), block.picks, opts?.lang ?? "zh"))}\n（/开拓者 说）`;
+      // Picks first: they are found by their whole line, and a mention
+      // rewritten inside one left her the page's raw HTML (review 2026-11-05).
+      return `（开拓者 说）\n${escapeUserText(nameMentionedPaths(namePicks(nameQuotedPagesForHerta(block.text, opts?.lang ?? "zh"), block.picks, opts?.lang ?? "zh"), block.mentions))}\n（/开拓者 说）`;
     case "herta": {
       const [openTag, closeTag] =
         block.surface === "thought"

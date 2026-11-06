@@ -106,6 +106,20 @@ describe("selectBoundary", () => {
     expect(b).toBeGreaterThan(0);
   });
 
+  it("never lands on a steer: a cut there splits the run it fell in (review 2026-11-05, H5)", () => {
+    const rec: TerminalRecordBlock[] = [];
+    for (let k = 0; k < 6; k++) {
+      rec.push(u(`问题${"啊".repeat(6)}`));
+      rec.push(s(`回答${"哦".repeat(6)}`));
+      rec.push({ kind: "user", text: `先别动${"呀".repeat(6)}`, steer: true });
+      rec.push(s(`收到${"哦".repeat(6)}`));
+    }
+    const b = selectBoundary(rec, cfg);
+    expect(b).toBeGreaterThan(0);
+    expect(rec[b]).toMatchObject({ kind: "user" });
+    expect(rec[b]).not.toHaveProperty("steer");
+  });
+
   it("honors minRecentTurns even when one turn is huge", () => {
     const big = "啊".repeat(100);
     const rec: TerminalRecord = [u("a"), s("b"), u("c"), s(big)];

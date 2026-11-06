@@ -70,6 +70,60 @@ describe("segmentSession", () => {
       h("docs 我看看。", at(7)),
     ];
 
+    describe("words said during a run (review 2026-11-05, H6)", () => {
+      const AFTER = Date.parse("2026-11-08T00:00:00Z");
+      const later = (min: number): string =>
+        new Date(AFTER + min * 60_000).toISOString();
+      const twoRuns = (word: TerminalRecordBlock): TerminalRecordBlock[] => [
+        u("fix the parser", later(1)),
+        h("@板砖 修一下 parser", later(2)),
+        done(later(3)),
+        h("@板砖 再跑一遍测试", later(4)),
+        word,
+        done(later(6)),
+        h("都过了。", later(7)),
+      ];
+      const spans = (rec: TerminalRecordBlock[]) =>
+        segmentSession("s1", rec, {
+          ...OPTS,
+          segmentationV2SinceMs: CUT,
+        }).map((e) => [e.startIndex, e.endIndex]);
+
+      it("talk in a turn's second run stays in its episode", () => {
+        const talk: TerminalRecordBlock = {
+          kind: "user",
+          text: "好了吗",
+          at: later(5),
+          duringRun: true,
+        };
+        expect(spans(twoRuns(talk))).toEqual([[0, 7]]);
+      });
+
+      it("so does a steer, from the day this shipped", () => {
+        const steer: TerminalRecordBlock = {
+          kind: "user",
+          text: "先别动 api",
+          at: later(5),
+          steer: true,
+        };
+        expect(spans(twoRuns(steer))).toEqual([[0, 7]]);
+      });
+
+      it("a steer stamped before keeps its cut, so its episodes keep their hashes", () => {
+        const before = "2026-11-01T00:00:00.000Z";
+        const rec = twoRuns({
+          kind: "user",
+          text: "先别动 api",
+          at: before,
+          steer: true,
+        }).map((b, i) => ({
+          ...b,
+          at: new Date(Date.parse(before) + (i - 4) * 60_000).toISOString(),
+        }));
+        expect(spans(rec)).toHaveLength(2);
+      });
+    });
+
     it("keeps Herta's verdict in the episode with the run's evidence once the cutover has passed", () => {
       const eps = segmentSession("s1", commission(t), {
         ...OPTS,

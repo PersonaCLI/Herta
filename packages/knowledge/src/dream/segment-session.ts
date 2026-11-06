@@ -119,6 +119,21 @@ export function countsTowardBlockCap(
  *   (c) duration cap    — episode wall-clock span exceeds maxEpisodeMs
  *   (d) per-turn fallback — herta→user when timestamps are unavailable
  */
+/** From here a steer stays in its run's episode. Before, it cut there, and
+ *  those episodes keep their hashes: a dreamed one must not read as new. Talk
+ *  during a run has no such past: it never reached a released dream. */
+const STEER_STAYS_SINCE_MS = Date.parse("2026-11-07T00:00:00.000Z");
+
+/** Whether a message opens a turn: words said during a run do not, or the
+ *  verdict after a run's second dispatch came away from its ask (review
+ *  2026-11-05, H6). */
+function opensTurn(block: TerminalRecordBlock): boolean {
+  if (block.kind !== "user" || block.duringRun === true) return false;
+  if (block.steer !== true) return true;
+  const at = parseAt(block);
+  return at === undefined || at < STEER_STAYS_SINCE_MS;
+}
+
 function isBoundary(
   prev: TerminalRecordBlock,
   cur: TerminalRecordBlock,
@@ -147,7 +162,7 @@ function isBoundary(
   if (
     (prevMs === undefined || curMs === undefined) &&
     prev.kind === "herta" &&
-    cur.kind === "user"
+    opensTurn(cur)
   ) {
     return true;
   }
@@ -231,7 +246,7 @@ export function segmentSession(
 
     if (
       isBoundary(prev, cur, episodeStartMs, opts) ||
-      (verdictPending && cur.kind === "user") ||
+      (verdictPending && opensTurn(cur)) ||
       counted >= opts.maxEpisodeBlocks
     ) {
       flush(i);

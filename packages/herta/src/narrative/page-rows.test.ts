@@ -469,6 +469,22 @@ describe("an element the user picked on the page (ADR 0083 §4)", () => {
     expect(serializeBlock(user, { lang: "zh" })).not.toContain("<button");
     expect(user.text).toContain("<button");
   });
+
+  it("a path mentioned in the same message cannot break the pick open (review 2026-11-05, H8)", () => {
+    const line =
+      'localhost:5173/login · img "Logo" · <img alt="Logo" class="hero" src="assets/logo.png">';
+    const out = serializeBlock(
+      {
+        kind: "user",
+        text: `这个 ${line} 用的是 assets/logo.png`,
+        mentions: ["assets/logo.png"],
+        picks: [{ line, element: 'img "Logo"', route: "localhost:5173/login" }],
+      },
+      { lang: "zh" },
+    );
+    expect(out).not.toContain("<img");
+    expect(out).toContain("用的是 logo.png");
+  });
 });
 
 describe("beats", () => {

@@ -123,6 +123,33 @@ describe("ActivityBlock — a group that stands on its own line", () => {
   });
 });
 
+describe("ActivityBlock — the undo line", () => {
+  const undo: SystemBlock = {
+    kind: "system",
+    label: "系统",
+    body: "Undid 板砖's file changes from this turn: deleted a.md (created this turn).",
+    digest: {
+      kind: "undo",
+      files: [{ path: "a.md", result: "deleted" }],
+      commands: [],
+      commandsUnknown: false,
+      incomplete: false,
+    },
+  };
+
+  it("names Brick in an English session: the record keeps 板砖, the display aliases it (live run 2026-11-06)", () => {
+    // Beside another row the group draws each row's own body.
+    const { container } = renderWithLocale(
+      <A blocks={[undo, step("Reading a.ts")]} />,
+    );
+    const toggle = container.querySelector("[aria-expanded]") as HTMLElement;
+    if (toggle.getAttribute("aria-expanded") === "false")
+      fireEvent.click(toggle);
+    expect(container.textContent).toContain("Undid Brick's file changes");
+    expect(container.textContent).not.toContain("板砖");
+  });
+});
+
 describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () => {
   const attach = (name: string, over: { at?: string } = {}): SystemBlock => ({
     kind: "system",

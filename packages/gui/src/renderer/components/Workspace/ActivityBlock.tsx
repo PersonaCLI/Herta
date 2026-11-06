@@ -270,6 +270,7 @@ export const ActivityBlock = memo(function ActivityBlock(
     if (!rowsMounted) return NO_ROWS;
     const ctx: RowViewContext = {
       t,
+      lang,
       openFile,
       openLightbox,
       onRemoveAttachment,
@@ -280,6 +281,7 @@ export const ActivityBlock = memo(function ActivityBlock(
   }, [
     rows,
     t,
+    lang,
     openFile,
     onRemoveAttachment,
     onOpenWebPage,

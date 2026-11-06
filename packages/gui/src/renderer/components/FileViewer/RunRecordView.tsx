@@ -129,12 +129,13 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
   const ctx = useMemo(
     (): RowViewContext => ({
       t,
+      lang,
       openFile,
       openLightbox,
       onOpenWebPage,
       progressLabel: NO_PROGRESS,
     }),
-    [t, openFile, openLightbox, onOpenWebPage],
+    [t, lang, openFile, openLightbox, onOpenWebPage],
   );
   // A row's view is kept while its blocks are the same objects: a live run
   // re-reads the record at every commit, and only its new rows are new.

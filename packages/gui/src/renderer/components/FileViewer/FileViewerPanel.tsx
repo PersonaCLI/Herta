@@ -432,7 +432,7 @@ export function FileViewerPanel(): JSX.Element | null {
           {v.tabs.map((tab, i) => (
             <span
               key={tabKey(tab)}
-              className={`file-viewer__tab${i === v.active ? " is-active" : ""}`}
+              className={`file-viewer__tab${i === v.active ? " is-active" : ""}${tab.kind === "run" ? " is-run" : ""}`}
             >
               <button
                 type="button"

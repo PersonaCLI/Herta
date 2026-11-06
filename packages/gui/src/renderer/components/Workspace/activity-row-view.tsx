@@ -7,6 +7,7 @@ import { memo } from "react";
 import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import type { TFn } from "../../i18n/LocaleProvider.js";
+import { aliasBanzhuanPlain } from "../../lib/banzhuan-mention.js";
 import type {
   OpenFileOpts,
   ViewerAnchor,
@@ -83,6 +84,8 @@ export interface RowView {
 export interface RowViewContext {
   /** Session-language translator: the rows follow the session (ADR 0019). */
   readonly t: TFn;
+  /** The session's language, for the 板砖→Brick display alias. */
+  readonly lang: "zh" | "en";
   /** The viewer's stable opener, or null when there is no viewer. */
   readonly openFile: ((path: string, opts?: OpenFileOpts) => void) | null;
   readonly openLightbox: (img: LightboxImage) => void;
@@ -296,7 +299,12 @@ export function rowView(row: ActivityRow, ctx: RowViewContext): RowView {
     body:
       pendingName !== undefined
         ? `${t("activity.attachment.label")} ${middleTruncateName(pendingName)}`
-        : stepDisplayBody(b, t),
+        : // The one row whose body is a sentence naming 板砖: the record keeps
+          // the name and the display aliases it. Not every row: a command's
+          // own text is what it ran.
+          b.digest?.kind === "undo"
+          ? aliasBanzhuanPlain(stepDisplayBody(b, t), ctx.lang)
+          : stepDisplayBody(b, t),
     progress:
       pendingIndex !== undefined
         ? { index: pendingIndex, label: ctx.progressLabel }

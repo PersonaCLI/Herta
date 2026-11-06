@@ -239,7 +239,12 @@ export class Launcher implements ServerHost {
     }
 
     if (this.stopAlls !== stopAlls) {
+      const gone = new Promise<void>((r) => child.once("close", () => r()));
       killProcessTree(child);
+      await Promise.race([
+        gone,
+        new Promise<void>((r) => setTimeout(r, KILL_GRACE_MS)),
+      ]);
       log.end("stopped before it started\n");
       throw new ServerHostError(
         "aborted",

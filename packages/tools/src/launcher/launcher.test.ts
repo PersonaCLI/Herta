@@ -20,7 +20,15 @@ const dirs: string[] = [];
 const servers: Server[] = [];
 afterEach(() => {
   for (const s of servers.splice(0)) s.close();
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  // A killed server lets go of its directory a moment later on Windows.
+  for (const d of dirs.splice(0)) {
+    rmSync(d, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 100,
+    });
+  }
 });
 
 function workspace(): string {
@@ -186,7 +194,6 @@ describe("Launcher", () => {
     answer(false);
     await refused;
     expect(launcher.list()).toEqual([]);
-    await new Promise((r) => setTimeout(r, 400));
     expect(await portAnswers(port)).toBe(false);
   }, 30_000);
 

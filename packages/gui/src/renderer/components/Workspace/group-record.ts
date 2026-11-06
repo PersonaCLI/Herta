@@ -332,7 +332,14 @@ export function groupRuns(items: readonly RenderItem[]): RenderItem[] {
     let restStart = item.startIndex;
     while (rest.length > 0) {
       if (open === null) {
-        if (!rest.some((b) => b.label === "差分协处理器")) {
+        // A patch preview is 板砖's too: a run whose first call is a write that
+        // asks has nothing else to show while the card is up (review
+        // 2026-11-05, N7).
+        if (
+          !rest.some(
+            (b) => b.label === "差分协处理器" || b.digest?.kind === "patch",
+          )
+        ) {
           out.push(
             rest === item.blocks
               ? item

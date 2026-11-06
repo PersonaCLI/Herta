@@ -525,6 +525,35 @@ describe("groupRuns — one row per dispatch (ADR 0085 §6)", () => {
     expect(run.dispatchedAt).toBe("2026-11-04T08:00:00.000Z");
   });
 
+  describe("a run whose first call is a write that asks (review 2026-11-05, N7)", () => {
+    const preview: TerminalRecordBlock = {
+      kind: "system",
+      label: "系统",
+      body: "patch preview: notes.md (+1 -0)",
+      digest: { kind: "patch", files: ["notes.md"], add: 1, del: 0 },
+    };
+
+    it("is the run from its preview, while the card is up", () => {
+      const items = runs([user("新建 notes.md"), herta("交给它"), preview]);
+      expect(kinds(items)).toEqual(["user", "herta", "run@2"]);
+    });
+
+    it("stays one run through what is said under the card", () => {
+      const items = runs([
+        user("新建 notes.md"),
+        herta("交给它"),
+        preview,
+        { kind: "user", text: "快点", duringRun: true },
+        sys("Writing notes.md"),
+        done,
+      ]);
+      expect(kinds(items)).toEqual(["user", "herta", "run@2", "user"]);
+      const run = items[2];
+      if (run?.kind !== "run") throw new Error("not a run");
+      expect(run.blocks).toContain(preview);
+    });
+  });
+
   it("a steer is a bubble where it was sent and an entry of the run where 板砖 took it", () => {
     const items = runs([
       user("fix it"),

@@ -808,6 +808,7 @@ export const en = {
   "evidence.risks": "risks",
   "evidence.todos": "to do",
   "evidence.evidence": "findings",
+  "evidence.earlier": "({n} earlier not listed)",
   "evidence.error": "error",
   // The crash marker's open steps (ADR 0071 §1.2), each with the outcome the
   // harness decided for it when the session next opened.

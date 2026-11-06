@@ -172,6 +172,27 @@ describe("the done-marker reads as a sentence", () => {
     );
   });
 
+  it("says how many steps a Based on leaves out, or she reads them as not done (live run 2026-11-06)", () => {
+    const detail = "↳ 依据: ran `node --version` (exit 0, 0.10s)";
+    const block: SystemBlock = {
+      ...marker("completed"),
+      evidenceDetail: detail,
+      evidence: [
+        {
+          kind: "evidence",
+          items: ["ran `node --version` (exit 0, 0.10s)"],
+          earlier: 3,
+        },
+      ],
+    };
+    expect(read(block)).toContain(
+      "依据：（此前还有 3 步，这里没列）运行 `node --version`",
+    );
+    expect(read(block, "en")).toContain(
+      "Based on: (3 earlier steps not listed) ran `node --version`",
+    );
+  });
+
   it("in English its labels are plain words, never the report D3 names (ADR 0079 §3)", () => {
     const out = read(
       {

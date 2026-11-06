@@ -800,6 +800,7 @@ export const zh = {
   "evidence.risks": "风险",
   "evidence.todos": "待办",
   "evidence.evidence": "依据",
+  "evidence.earlier": "（此前 {n} 步未列出）",
   "evidence.error": "错误",
   // Pinned to the canonical words the crash marker's body detail uses
   // (CUTOFF_WORD in backend-record-projection.ts).

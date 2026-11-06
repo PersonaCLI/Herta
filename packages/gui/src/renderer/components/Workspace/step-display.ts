@@ -492,7 +492,11 @@ export function stepDisplayDetail(
         case "todos":
           return `↳ ${t("evidence.todos")}: ${s.items.join("; ")}`;
         case "evidence":
-          return `↳ ${t("evidence.evidence")}: ${s.items.join("; ")}`;
+          return `↳ ${t("evidence.evidence")}: ${
+            s.earlier !== undefined
+              ? `${t("evidence.earlier").replace("{n}", String(s.earlier))} `
+              : ""
+          }${s.items.join("; ")}`;
         case "findings":
           return `↳ ${t("evidence.findings")}: ${s.items.join("; ")}`;
         case "attachment": {

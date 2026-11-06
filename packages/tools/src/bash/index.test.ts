@@ -61,6 +61,20 @@ const call = (command: string, id = "c1") => ({
   input: { command },
 });
 
+d("the receipt of a long command (live run 2026-11-06)", () => {
+  it("bounds the command, not the cd in front of it", async () => {
+    ws = await mkTmpWorkspace({ "a.txt": "hello\n" });
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+    const here = ws.root.replaceAll("\\", "/");
+    const cd = `cd "${here}" && `;
+    const ran = `cat a.txt && echo ${"y".repeat(60)} && node --version`;
+    const r = await tool.run(call(`${cd}${ran}`), ctx, noopProgress);
+    expect(r.summary).toContain(ran);
+    await ctx.bg.stopAll();
+  });
+});
+
 describe("bash schema", () => {
   it("the hand-written wire schema and the zod schema agree on shape", () => {
     expect(bashJsonSchema.required).toEqual(["command"]);

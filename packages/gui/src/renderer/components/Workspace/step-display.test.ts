@@ -582,6 +582,22 @@ describe("stepDisplayBody — attachment rows, incl. PDF / Word (ADR 0038)", () 
   });
 });
 
+describe("stepDisplayDetail — the receipts a marker leaves out (live run 2026-11-06)", () => {
+  it("says how many, in the session's language", () => {
+    const block: SystemBlock = {
+      kind: "system",
+      label: "差分协处理器",
+      body: "完成",
+      evidenceDetail: "↳ 依据: ran `a`",
+      evidence: [{ kind: "evidence", items: ["ran `a`"], earlier: 3 }],
+    };
+    const of = (catalog: Record<MessageKey, string>) =>
+      stepDisplayDetail(block, (key) => catalog[key]);
+    expect(of(en)).toBe("↳ findings: (3 earlier not listed) ran `a`");
+    expect(of(zh)).toBe("↳ 依据: （此前 3 步未列出） ran `a`");
+  });
+});
+
 describe("stepDisplayDetail — the evidence pane localizes (2026-08-01)", () => {
   /** A block whose canonical detail is the Chinese the bridge composes, with
    *  the structured mirror alongside it — exactly what projectBackendEvent

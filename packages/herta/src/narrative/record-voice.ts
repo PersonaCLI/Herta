@@ -60,6 +60,8 @@ type Texts = {
   readonly done: (m: DoneMarkerSummary) => string;
   readonly labels: Record<string, string>;
   readonly ran: (cmd: string, exit: string) => string;
+  /** How many earlier receipts a `Based on` leaves out. */
+  readonly earlier: (n: number) => string;
   readonly timedOut: (cmd: string) => string;
   readonly listJoin: string;
   readonly aside: (note: string) => string;
@@ -188,6 +190,7 @@ const TEXTS: Record<PromptLang, Texts> = {
     },
     ran: (cmd, exit) =>
       exit === "0" ? `运行 \`${cmd}\`` : `运行 \`${cmd}\`（退出码 ${exit}）`,
+    earlier: (n) => `（此前还有 ${n} 步，这里没列）`,
     timedOut: (cmd) => `运行 ${cmd} 超时`,
     listJoin: "、",
     aside: (note) => `（${note}）`,
@@ -296,6 +299,7 @@ const TEXTS: Record<PromptLang, Texts> = {
     },
     ran: (cmd, exit) =>
       exit === "0" ? `ran \`${cmd}\`` : `ran \`${cmd}\` (exit code ${exit})`,
+    earlier: (n) => `(${n} earlier ${n === 1 ? "step" : "steps"} not listed) `,
     timedOut: (cmd) => `${cmd} timed out`,
     listJoin: ", ",
     aside: (note) => ` (${note})`,
@@ -433,7 +437,12 @@ export function detailForHerta(
             // address, as the findings do (review 2026-10-30: a read of
             // `snap-2.txt` reached her verdict turn as its stored path).
             const receipts = items("evidence") ?? rest.split("; ");
-            return `${plain}${receipts.map((r) => nameReceipt(r, lang)).join(sep)}`;
+            const section = sections.find((e) => e.kind === "evidence");
+            const earlier =
+              section?.kind === "evidence" && section.earlier !== undefined
+                ? t.earlier(section.earlier)
+                : "";
+            return `${plain}${earlier}${receipts.map((r) => nameReceipt(r, lang)).join(sep)}`;
           }
           if (label === "结论" || label === "风险") {
             const listed = items(label === "结论" ? "findings" : "risks");

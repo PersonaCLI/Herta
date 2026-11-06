@@ -772,6 +772,10 @@ export type EvidenceSection =
        *  it). */
       readonly kind: "evidence";
       readonly items: readonly string[];
+      /** How many earlier receipts `items` leaves out: it holds a run's
+       *  last. Absent when it holds them all, and on older records, whose
+       *  list was a run's first. */
+      readonly earlier?: number;
     }
   | {
       /** An attached document's head excerpt (`↳ 附件 <name>`). Verbatim from

@@ -96,6 +96,9 @@ function clipForModel(text: string): { out: string; truncated: boolean } {
 
 /** The shell's own spelling of the workspace, for the 板砖 prompt line —
  *  spawns nothing (mapping only) until a shell has run. */
+/** A leading `cd <dir> &&`, as a model writes it ahead of the command. */
+const CD_PREFIX = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*&&\s*/u;
+
 export function shellWorkspaceHint(
   bashPath: string | null,
   workspaceRoot: string,
@@ -309,8 +312,12 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         .join("\n");
 
       const firstLine = command.trimStart().split(/\r?\n/)[0] ?? command;
+      // The bound is the command's, not the `cd` in front of it: a workspace
+      // path left a receipt 22 characters of what it ran (live run 2026-11-06).
+      const cd = CD_PREFIX.exec(firstLine)?.[0] ?? "";
+      const ran = firstLine.slice(cd.length);
       const displayCmd = redactSecrets(
-        firstLine.length > 120 ? `${firstLine.slice(0, 119)}…` : firstLine,
+        `${cd}${ran.length > 120 ? `${ran.slice(0, 119)}…` : ran}`,
       );
       const logPath = await writeRunLog(
         ctx.workspaceRoot,

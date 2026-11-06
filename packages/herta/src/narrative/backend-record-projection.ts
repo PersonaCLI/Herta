@@ -364,6 +364,8 @@ export function sanitizeSystemBlock(block: SystemBlock): SystemBlock {
 /** Presentation bounds for a projected search-hit list. Lines/chars match
  *  show_excerpt's presentation lane (this is reading, not a log tail); the
  *  per-line clip keeps a minified one-liner from eating the whole budget. */
+/** How many of a run's receipts its marker lists: its last. */
+const RECEIPTS_LISTED = 6;
 const SEARCH_ROW_MAX_ITEMS = 40;
 const SEARCH_ROW_MAX_CHARS = 4000;
 const SEARCH_ROW_MAX_LINE_CHARS = 200;
@@ -1196,15 +1198,23 @@ export function buildDoneMarker(
     sections.push({ kind: "findings", items });
   }
   if (receipts.length > 0) {
+    // The last ones, with how many are left out. It was the first six: a long
+    // run's reads, with what it did at the end unlisted, and in the live run
+    // of 2026-11-06 she read that as not done, said so and dispatched it again.
     const items = receipts
-      .slice(0, 6)
+      .slice(-RECEIPTS_LISTED)
       .map((e) =>
         e.source !== undefined && e.source.length > 0
           ? `${e.summary}（${e.source}）`
           : e.summary,
       );
+    const earlier = receipts.length - items.length;
     detailParts.push(`↳ 依据: ${items.join("; ")}`);
-    sections.push({ kind: "evidence", items });
+    sections.push({
+      kind: "evidence",
+      items,
+      ...(earlier > 0 ? { earlier } : {}),
+    });
   }
   const evidenceDetail =
     detailParts.length > 0 ? detailParts.join("\n") : undefined;

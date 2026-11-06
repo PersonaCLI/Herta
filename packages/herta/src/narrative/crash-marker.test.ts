@@ -113,3 +113,39 @@ describe("the crash marker (ADR 0071 §1.2)", () => {
     );
   });
 });
+
+describe("buildDoneMarker — the receipts of a long run (live run 2026-11-06)", () => {
+  const receipts = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      kind: "tool" as const,
+      summary: `ran \`step ${i + 1}\` (exit 0, 0.10s)`,
+      source: `c${i + 1}`,
+    }));
+  const report = (n: number) => ({
+    taskId: "t",
+    status: "completed" as const,
+    changedFiles: [],
+    evidence: receipts(n),
+    tests: [],
+    permissions: [],
+    residualRisks: [],
+  });
+
+  it("lists its last six and counts the rest: its end is what its report rests on", () => {
+    const marker = buildDoneMarker(report(9), undefined, undefined);
+    const section = marker.evidence?.find((s) => s.kind === "evidence");
+    expect(section?.kind === "evidence" ? section.items : []).toEqual(
+      [4, 5, 6, 7, 8, 9].map(
+        (n) => `ran \`step ${n}\` (exit 0, 0.10s)（c${n}）`,
+      ),
+    );
+    expect(section).toMatchObject({ earlier: 3 });
+  });
+
+  it("a run of six or fewer leaves nothing out", () => {
+    const marker = buildDoneMarker(report(6), undefined, undefined);
+    const section = marker.evidence?.find((s) => s.kind === "evidence");
+    expect(section?.kind === "evidence" ? section.items : []).toHaveLength(6);
+    expect(section).not.toHaveProperty("earlier");
+  });
+});

@@ -30,8 +30,8 @@ describe("defaultDirsFor", () => {
 
   it("handles a Windows-style workspaceRoot", () => {
     const dirs = defaultDirsFor({
-      workspaceRoot: "C:\\Users\\robin\\Project\\HERTA",
-      homedir: "C:\\Users\\robin",
+      workspaceRoot: "C:\\Users\\trailblazer\\Project\\app",
+      homedir: "C:\\Users\\trailblazer",
     });
     // path.join normalizes separators per platform; on Windows
     // this produces backslashes, on POSIX it produces forward

@@ -180,11 +180,19 @@ export class PageHost {
     return this.sandboxOff && /^https?:/i.test(url) && !isLoopbackUrl(url);
   }
 
-  /** Send an outside page to the system browser — never one 板砖's step
-   *  led to, which is refused and nothing more: the system browser opens
-   *  only for the Trailblazer. */
-  private sendOut(sessionId: string, url: string): void {
-    if (this.pages.get(sessionId)?.instrument.stepping === true) return;
+  /** Send an outside page to the system browser, for the Trailblazer alone:
+   *  an address typed (`typed`), or a page's move right after a press or a
+   *  key of theirs, and one tab a gesture (review 2026-11-05, M7). Without
+   *  that test a page that moved just after a step opened a tab, a hidden
+   *  page's retry loop opened one every 1.5 s, and their own click during a
+   *  read of 板砖's was dropped. A step's own move is refused, and the step
+   *  says so (M5). */
+  private sendOut(sessionId: string, url: string, typed = false): void {
+    const instrument = this.pages.get(sessionId)?.instrument;
+    if (!typed && instrument?.takeGesture() !== true) {
+      if (instrument?.stepping === true) instrument.noteRefused(url);
+      return;
+    }
     const now = Date.now();
     const last = this.sentOutAt.get(sessionId);
     if (last !== undefined && now - last < SEND_OUT_GAP_MS) return;
@@ -282,7 +290,7 @@ export class PageHost {
       const url = typedPageUrl(to.url);
       if (url === null) return;
       if (this.outsideHere(url)) {
-        this.sendOut(sessionId, url);
+        this.sendOut(sessionId, url, true);
         return;
       }
       const page = this.pages.get(sessionId) ?? this.create(sessionId);
@@ -541,7 +549,16 @@ export class PageHost {
       }
     };
     wc.on("will-navigate", guard);
-    wc.on("will-redirect", guard);
+    wc.on("will-redirect", (event, url) => {
+      // A frame's redirect is the frame's: stopped if it may not load, and
+      // no tab for it (review 2026-11-05, M6).
+      if (event.isMainFrame === false) {
+        if (!pageUrlAllowed(url) || this.outsideHere(url))
+          event.preventDefault();
+        return;
+      }
+      guard(event, url);
+    });
     wc.on("will-frame-navigate", (event) => {
       if (event.isMainFrame) guard(event, event.url);
     });

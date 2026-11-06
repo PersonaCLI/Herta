@@ -23,6 +23,10 @@ const h = vi.hoisted(() => ({
   opened: [] as string[],
   /** One of 板砖's steps runs on the page. */
   stepping: false,
+  /** The Trailblazer has just pressed or typed on it. */
+  gesture: false,
+  /** What a step was stopped from going to. */
+  refused: [] as string[],
 }));
 
 vi.mock("electron", () => {
@@ -95,6 +99,14 @@ vi.mock("./page-driver.js", () => ({
     get stepping(): boolean {
       return h.stepping;
     }
+    takeGesture(): boolean {
+      const was = h.gesture;
+      h.gesture = false;
+      return was;
+    }
+    noteRefused(url: string): void {
+      h.refused.push(url);
+    }
     detach(): void {}
   },
 }));
@@ -151,6 +163,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   h.views.length = 0;
   h.opened.length = 0;
+  h.refused.length = 0;
+  h.gesture = false;
   h.stepping = false;
 });
 afterEach(() => {
@@ -219,6 +233,7 @@ describe("with Chromium's sandbox off, an outside page opens in the system brows
     const host = new PageHost(w.win, events, false, true);
     host.navigate("s1", { url: "localhost:5173" });
     const page = h.views[0]?.webContents as FakeContents;
+    h.gesture = true;
     expect(fire(page, "will-navigate", "https://news.example.com/a")).toBe(
       true,
     );
@@ -229,6 +244,7 @@ describe("with Chromium's sandbox off, an outside page opens in the system brows
     );
     expect(h.opened).toHaveLength(1);
     vi.advanceTimersByTime(1500);
+    h.gesture = true;
     expect(page.openHandler?.({ url: "https://docs.example.com/" })).toEqual({
       action: "deny",
     });
@@ -250,6 +266,50 @@ describe("with Chromium's sandbox off, an outside page opens in the system brows
     const page = h.views[0]?.webContents as FakeContents;
     h.stepping = true;
     expect(fire(page, "will-navigate", "https://github.com/login")).toBe(true);
+    expect(h.opened).toEqual([]);
+    // …and the step is told, so it does not read as one that worked (M5).
+    expect(h.refused).toEqual(["https://github.com/login"]);
+    host.dispose();
+  });
+
+  it("a page that moves on its own opens no tab: only a gesture does, and one (M7)", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false, true);
+    host.navigate("s1", { url: "localhost:5173" });
+    const page = h.views[0]?.webContents as FakeContents;
+    expect(fire(page, "will-navigate", "https://ads.example.com/a")).toBe(true);
+    vi.advanceTimersByTime(1500);
+    expect(fire(page, "will-navigate", "https://ads.example.com/b")).toBe(true);
+    expect(h.opened).toEqual([]);
+    expect(h.refused).toEqual([]);
+    // Their own click, during a read of 板砖's, goes through.
+    h.stepping = true;
+    h.gesture = true;
+    expect(fire(page, "will-navigate", "https://docs.example.com/")).toBe(true);
+    expect(h.opened).toEqual(["https://docs.example.com/"]);
+    expect(h.refused).toEqual([]);
+    host.dispose();
+  });
+
+  it("a frame's redirect off this machine is stopped, with no tab (M6)", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, false, true);
+    host.navigate("s1", { url: "localhost:5173" });
+    const page = h.views[0]?.webContents as FakeContents;
+    h.gesture = true;
+    let stopped = false;
+    for (const l of page.listeners["will-redirect"] ?? []) {
+      l(
+        {
+          isMainFrame: false,
+          preventDefault: () => {
+            stopped = true;
+          },
+        },
+        "https://tracker.example.com/pixel",
+      );
+    }
+    expect(stopped).toBe(true);
     expect(h.opened).toEqual([]);
     host.dispose();
   });

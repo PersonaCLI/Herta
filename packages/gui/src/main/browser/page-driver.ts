@@ -25,6 +25,8 @@ const READ_BUDGET = 8000;
 const CONSOLE_BUDGET = 2000;
 /** A navigation waits this long, an action's aftermath this long. */
 const NAV_TIMEOUT_MS = 15_000;
+/** How long a press or a key counts as what led to a page's navigation. */
+const GESTURE_FRESH_MS = 1500;
 const SETTLE_MAX_MS = 5000;
 const NETWORK_QUIET_MS = 500;
 /** One debugger command of a step: a page that never answers (a script that
@@ -161,6 +163,10 @@ export class PageInstrument {
   private reading: Promise<unknown> = Promise.resolve();
   /** Dispatching 板砖's own input: the Trailblazer's is everything else. */
   private driving = 0;
+  /** The Trailblazer's last press or key on the page. */
+  private gestureAt = 0;
+  /** Where a step's navigation was stopped from going (`noteRefused`). */
+  private refused: string | null = null;
   /** 板砖's steps in flight, by their abort signals: a dialog that opens
    *  during one is his (review 2026-10-30 — an alert after the input's
    *  150 ms held every later evaluate), and an abort ends the command a
@@ -226,9 +232,39 @@ export class PageInstrument {
         input.type === "mouseDown" ||
         input.type === "keyDown" ||
         input.type === "rawKeyDown"
-      )
+      ) {
         this.refsLive = false;
+        this.gestureAt = Date.now();
+      }
     });
+    // A crash takes its requests with it, and no finish will ever come for
+    // them (review 2026-11-05, M8).
+    wc.on("render-process-gone", () => {
+      this.inflight.clear();
+      this.loading = false;
+      this.world = null;
+      this.refsLive = false;
+    });
+  }
+
+  /** Whether the Trailblazer has just pressed or typed on the page. One
+   *  gesture answers once: a page's retry loop gets no tab from it. */
+  takeGesture(): boolean {
+    const fresh = Date.now() - this.gestureAt <= GESTURE_FRESH_MS;
+    this.gestureAt = 0;
+    return fresh;
+  }
+
+  /** The page was stopped from going to `url` while a step ran. */
+  noteRefused(url: string): void {
+    this.refused = url;
+  }
+
+  /** Where the step in hand was stopped from going, once. */
+  takeRefused(): string | null {
+    const url = this.refused;
+    this.refused = null;
+    return url;
   }
 
   /** Pick an element: Chromium's own inspect mode — a hover highlights, a
@@ -361,6 +397,10 @@ export class PageInstrument {
           this.mainFrame = f.id;
           this.world = null;
           this.refsLive = false;
+          // The old document's requests end with it, whether or not a
+          // finish comes: three left over made every later act wait out
+          // the five seconds (review 2026-11-05, M8).
+          this.inflight.clear();
         }
         break;
       }
@@ -884,7 +924,16 @@ export class PageDriver implements BrowserHost {
   /** A step that ended off this machine — a redirect, a link, a script —
    *  reads nothing there (§7, review 2026-10-30): the page is the
    *  Trailblazer's, signed in as him. */
-  private leftMachine(wc: WebContents): void {
+  private leftMachine(wc: WebContents, instrument: PageInstrument): void {
+    // Stopped on its way out, the page stays where it was, and that used to
+    // read as a step that worked, with the old page's elements (review
+    // 2026-11-05, M5).
+    const refused = instrument.takeRefused();
+    if (refused !== null)
+      throw new BrowserHostError(
+        "off_loopback",
+        `the page tried to go on to ${hostOf(refused)}, not on this machine — it was stopped, and the step did not land`,
+      );
     const url = wc.getURL();
     if (url !== "" && !isLoopbackUrl(url))
       throw new BrowserHostError(
@@ -962,6 +1011,7 @@ export class PageDriver implements BrowserHost {
   ): Promise<PageNavigated> {
     const mark = instrument.mark();
     instrument.status = null;
+    instrument.takeRefused();
     const done = new Promise<void>((resolve, reject) => {
       const stop = (): void => {
         cleanup();
@@ -1013,7 +1063,7 @@ export class PageDriver implements BrowserHost {
     await done;
     if (signal.aborted)
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
-    this.leftMachine(wc);
+    this.leftMachine(wc, instrument);
     return {
       url: wc.getURL(),
       title: wc.getTitle(),
@@ -1074,6 +1124,7 @@ export class PageDriver implements BrowserHost {
     req: PageAction,
     signal: AbortSignal,
   ): Promise<PageActed> {
+    instrument.takeRefused();
     const before = wc.getURL();
     const mark = instrument.mark();
     let target: string | undefined;
@@ -1178,7 +1229,7 @@ export class PageDriver implements BrowserHost {
     await instrument.settle(signal);
     if (signal.aborted)
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
-    this.leftMachine(wc);
+    this.leftMachine(wc, instrument);
     return {
       url: wc.getURL(),
       title: wc.getTitle(),

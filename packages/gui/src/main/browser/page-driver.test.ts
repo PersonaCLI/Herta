@@ -159,7 +159,7 @@ function fakePage(
   const message = (method: string, params: Record<string, unknown>): void => {
     messages.emit("message", {}, method, params);
   };
-  return { driver, instrument, state, openDialog, message };
+  return { driver, instrument, state, openDialog, message, wc };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -542,7 +542,85 @@ describe("the Trailblazer's picker (review 2026-10-30, M2)", () => {
   });
 });
 
+describe("requests that will never finish (review 2026-11-05, M8)", () => {
+  const started = (
+    message: (m: string, p: Record<string, unknown>) => void,
+  ) => {
+    for (const id of ["a", "b", "c"]) {
+      message("Network.requestWillBeSent", {
+        requestId: id,
+        request: { method: "GET", url: `http://localhost:5173/${id}.js` },
+        type: "Script",
+      });
+    }
+  };
+  const settles = async (instrument: PageInstrument): Promise<boolean> => {
+    let settled = false;
+    void instrument.settle(new AbortController().signal).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    return settled;
+  };
+
+  it("end with their document", async () => {
+    vi.useFakeTimers();
+    const { instrument, message } = fakePage();
+    started(message);
+    message("Page.frameNavigated", { frame: { id: "main" } });
+    expect(await settles(instrument)).toBe(true);
+  });
+
+  it("a frame's navigation leaves the page's alone", async () => {
+    vi.useFakeTimers();
+    const { instrument, message } = fakePage();
+    started(message);
+    message("Page.frameNavigated", { frame: { id: "ad", parentId: "main" } });
+    expect(await settles(instrument)).toBe(false);
+  });
+
+  it("end with a crashed renderer", async () => {
+    vi.useFakeTimers();
+    const { instrument, message, wc } = fakePage();
+    started(message);
+    wc.emit("render-process-gone");
+    expect(await settles(instrument)).toBe(true);
+  });
+});
+
+describe("what the system browser may open for (review 2026-11-05, M7)", () => {
+  it("the Trailblazer's press counts once, and not for long; 板砖's never", () => {
+    vi.useFakeTimers();
+    const { instrument, wc } = fakePage();
+    wc.emit("input-event", {}, { type: "mouseDown" });
+    expect(instrument.takeGesture()).toBe(true);
+    expect(instrument.takeGesture()).toBe(false);
+    wc.emit("input-event", {}, { type: "keyDown" });
+    vi.advanceTimersByTime(1600);
+    expect(instrument.takeGesture()).toBe(false);
+    wc.emit("input-event", {}, { type: "mouseMove" });
+    expect(instrument.takeGesture()).toBe(false);
+  });
+});
+
 describe("a step never reads a page off this machine (§7)", () => {
+  it("a step whose move was stopped fails, and names where it was going (review 2026-11-05, M5)", async () => {
+    const { driver, instrument, state, wc } = fakePage();
+    const load = wc.loadURL.bind(wc);
+    wc.loadURL = async (url: string) => {
+      instrument.noteRefused("https://accounts.example.com/signin?next=%2F");
+      return load(url);
+    };
+    const r = await within(
+      driver.navigate({ url: "localhost:5173/" }, new AbortController().signal),
+    );
+    expect(r).toMatchObject({ err: { code: "off_loopback" } });
+    const told = String((r as { err: Error }).err.message);
+    expect(told).toContain("accounts.example.com");
+    expect(told).not.toContain("signin");
+    void state;
+  });
+
   it("back past the app is refused before it goes", async () => {
     const { driver, state } = fakePage();
     const r = await within(

@@ -12,11 +12,12 @@ import { makeBashRule } from "../bash/rule.js";
 import { classifyShellCommandDetailed } from "../bash/shell-classifier.js";
 import { makeMsysPaths, type ShellPaths } from "../bash/shell-paths.js";
 import { mkTmpWorkspace, type TmpWorkspace } from "../testing/tmp-workspace.js";
-import { classifyCommand } from "./classifier.js";
+import { classifyCommand, pipedKills } from "./classifier.js";
 import { makeRunCommandRule } from "./rule.js";
 import {
   type HostIdentity,
   type HostProcess,
+  helperNames,
   hostIdentity,
   registerHostHelperPids,
   selfKillDenial,
@@ -559,6 +560,96 @@ describe("a literal kill of the app behind a compound or exec (review 2026-11-05
   });
 });
 
+describe("the rest of what reaches the app (review 2026-11-05, G3–G5, G12)", () => {
+  const blocks = (argv: string[]) =>
+    expect(verdict(argv).kind, argv.join(" ")).toBe("block");
+
+  it("a pid in another spelling is that pid", () => {
+    blocks(["kill", "+4242"]);
+    blocks(["kill", "' 4242'"]);
+    blocks(["Stop-Process", "-Id:4242"]);
+    blocks(["Stop-Process", "-Id", "0x1092"]);
+    blocks(["Stop-Process", "-Id", "+4242"]);
+    blocks(["kill", "-Id:4242"]);
+    blocks(["Stop-Process", "-Name:node"]);
+  });
+
+  it("-WhatIf ends nothing, unless it is turned off", () => {
+    expect(verdict(["Stop-Process", "-Id", "4242", "-WhatIf"]).kind).not.toBe(
+      "block",
+    );
+    blocks(["Stop-Process", "-Id", "4242", "-WhatIf:$false"]);
+  });
+
+  it("a helper is a child of the app, so pkill -P reaches it", () => {
+    const parent: HostIdentity = {
+      processes: () => [
+        { pid: 4242, self: true, name: "Herta" },
+        { pid: 4300, name: "Herta", ppid: 4242 },
+      ],
+    };
+    expect(
+      classifyCommand(["pkill", "-P", "4242"], { host: parent }).kind,
+    ).toBe("block");
+    expect(
+      classifyCommand(["pkill", "-P", "1234"], { host: parent }).kind,
+    ).not.toBe("block");
+  });
+
+  it("names a Mac's helpers, which are programs of their own", () => {
+    expect(helperNames("Herta", "darwin")).toContain("Herta Helper (Renderer)");
+    expect(helperNames("Herta", "win32")).toEqual(["Herta"]);
+    const mac: HostIdentity = {
+      processes: () => [
+        { pid: 4242, self: true, name: "Herta" },
+        { pid: 4300, name: "Herta Helper (GPU)" },
+      ],
+    };
+    expect(
+      classifyCommand(["killall", "Herta Helper (GPU)"], { host: mac }).kind,
+    ).toBe("block");
+    expect(classifyCommand(["pkill", "-vx", "Herta"], { host: mac }).kind).toBe(
+      "block",
+    );
+  });
+
+  it("a pipe that is a kill by name is that kill", () => {
+    for (const line of [
+      "pgrep node | xargs kill -9",
+      "pgrep -f cli.js | xargs -r kill",
+      "pidof node.exe | xargs kill",
+      "Get-Process node | Stop-Process -Force",
+      "gps node | kill",
+    ]) {
+      expect(pipedKills(line).length, line).toBe(1);
+      blocks(["bash", "-c", line]);
+    }
+    expect(shellVerdict("pgrep node | xargs kill -9").kind).toBe("block");
+  });
+
+  it("a pipe that ends something else, or reads, is left alone", () => {
+    for (const line of [
+      "pgrep vite | xargs kill",
+      "pgrep node | wc -l",
+      "pgrep node || xargs kill",
+      "Get-Process vite | Stop-Process",
+      "Get-Process node | Select-Object Id",
+      "echo 'pgrep node | xargs kill'",
+    ]) {
+      expect(verdict(["bash", "-c", line]).kind, line).not.toBe("block");
+    }
+  });
+
+  it("a shell it did not know no longer hides a block-tier body", () => {
+    for (const shell of ["fish", "ash", "csh", "tcsh", "mksh", "yash"]) {
+      expect(classifyCommand([shell, "-c", "rm -rf /"], {}).kind, shell).toBe(
+        "block",
+      );
+      blocks([shell, "-c", "kill 4242"]);
+    }
+  });
+});
+
 describe("hostIdentity — this process, its parent, the desktop's helpers", () => {
   afterEach(() => registerHostHelperPids(() => []));
 
@@ -568,7 +659,10 @@ describe("hostIdentity — this process, its parent, the desktop's helpers", () 
     expect(own?.pid).toBe(process.pid);
     expect(own?.name).toBe(basename(process.execPath));
     expect(own?.ppid).toBe(process.ppid);
-    expect(procs.some((p) => p.pid === process.ppid)).toBe(true);
+    // Not on Windows, where the number can outlive its process (G7).
+    expect(procs.some((p) => p.pid === process.ppid)).toBe(
+      process.platform !== "win32",
+    );
     expect(own?.user?.length).toBeGreaterThan(0);
   });
 

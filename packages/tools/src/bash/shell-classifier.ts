@@ -16,6 +16,7 @@ import {
   classifyShellBody,
   GIT_INTERNALS_ASK_CODE,
   HARNESS_STATE_ASK_CODE,
+  pipedKillVerdict,
   selfKillVerdict,
   splitShellSegments,
   unresolvedProgramName,
@@ -355,6 +356,10 @@ export function classifyShellCommandDetailed(
     }
   }
   const { text, inner } = extractSubstitutions(withoutHeredocs);
+  if (opts.host !== undefined) {
+    const self = pipedKillVerdict(text, opts.host);
+    if (self !== null) return { verdict: self, segments: [] };
+  }
   const heredocInner = expanded.flatMap((b) => extractSubstitutions(b).inner);
   const segments = [
     ...splitShellSegments(normalizeFdRedirects(text)),
@@ -1859,7 +1864,8 @@ function splitHeredocs(body: string): {
 }
 
 /** A line whose program is a shell reading its commands from stdin. */
-const SHELL_HEAD = /^\s*(?:\S*[\\/])?(?:ba|z|da|k)?sh(?:\.exe)?(?:\s+-s)?\s*</;
+const SHELL_HEAD =
+  /^\s*(?:\S*[\\/])?(?:(?:ba|z|da|k|mk|ya|a|c|tc)?sh|fish)(?:\.exe)?(?:\s+-s)?\s*</;
 
 /**
  * The command with its shell comments removed — an unquoted `#` that begins

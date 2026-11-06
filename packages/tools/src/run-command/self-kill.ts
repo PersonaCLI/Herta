@@ -15,8 +15,9 @@ import { basename } from "node:path";
  * (the shell that started the CLI, the dev server that started Electron);
  * and, on the desktop, Electron's other processes (killing a renderer blanks
  * the window). Ancestors above the parent, and a kill whose targets arrive
- * through a pipe (`pgrep x | xargs kill`, `Get-Process x | Stop-Process`) or
- * a substitution, are not judged here: they ask as before.
+ * through a substitution, are not judged here: they ask as before. The two
+ * pipes that are a kill by name (`pgrep x | xargs kill`, `Get-Process x |
+ * Stop-Process`) are read as that kill by the classifier (`pipedKills`).
  *
  * Nothing a line says reaches a regular expression (review 2026-11-05). This
  * runs synchronously on the app's main thread and JavaScript's engine
@@ -73,7 +74,12 @@ export function hostIdentity(): HostIdentity {
           ...ownUser(),
         },
       ];
-      if (process.ppid > 0) out.push({ pid: process.ppid });
+      // Not on Windows: nothing re-parents a process there, so `process.ppid`
+      // stays the starter's pid after it exits, and a block has no override
+      // for whichever process gets that number next (review 2026-11-05, G7).
+      if (process.ppid > 0 && process.platform !== "win32") {
+        out.push({ pid: process.ppid });
+      }
       let helpers: readonly number[] = [];
       try {
         helpers = helperPids?.() ?? [];
@@ -82,11 +88,23 @@ export function hostIdentity(): HostIdentity {
         // catch the kills that matter most.
       }
       for (const pid of helpers) {
-        if (pid !== process.pid) out.push({ pid, name });
+        if (pid === process.pid) continue;
+        for (const helper of helperNames(name, process.platform)) {
+          out.push({ pid, name: helper, ppid: process.pid });
+        }
       }
       return out;
     },
   };
+}
+
+/** What Electron's other processes are called: the app's own name, but on a
+ *  Mac, where they are separate programs in its bundle (G5). */
+export function helperNames(name: string, platform: string): readonly string[] {
+  if (platform !== "darwin") return [name];
+  return ["", " (Renderer)", " (GPU)", " (Plugin)"].map(
+    (kind) => `${name} Helper${kind}`,
+  );
 }
 
 /** Who this process runs as; nothing when the system cannot say. */
@@ -169,7 +187,7 @@ function unquote(a: string): string {
 /** PowerShell's `kill` is Stop-Process; one of its parameter names, spelled
  *  out, says which `kill` a line is. (`-n` is POSIX kill's signal flag.) */
 const PS_KILL_WORD =
-  /^-(?:id|name|processname|force|passthru|whatif|confirm|inputobject)$/i;
+  /^-(?:id|name|processname|force|passthru|whatif|confirm|inputobject)(?::|$)/i;
 
 function selectorFor(
   id: string,
@@ -437,15 +455,18 @@ function posixKillSelector(
   const pids: number[] = [];
   let all = false;
   let parent = false;
-  for (const a of args.slice(i)) {
+  for (const raw of args.slice(i)) {
+    // Spelled as the shell passes it: `+4242`, or `' 4242'`, are 4242.
+    const a = raw.trim();
     if (shell && PPID_WORD.test(a)) {
       parent = true;
       continue;
     }
-    if (!/^-?\d+$/.test(a)) continue;
+    if (!/^[+-]?\d+$/.test(a)) continue;
     const n = Number(a);
     // `-1` is every process the user owns; any other negative number is a
-    // process group, which a pid started from a shell leads.
+    // process group, which a pid started from a shell leads. `0` is the
+    // caller's own group: a command runs in one of its own, so it asks.
     if (n === -1) all = true;
     else pids.push(Math.abs(n));
   }
@@ -798,23 +819,31 @@ function powershellSelector(args: readonly string[]): Selector | null {
   let param: "id" | "name" | null = null;
   // Stop-Process's first positional parameter is -Id.
   let positional = true;
-  for (const raw of args) {
-    const p = psParam(raw);
-    if (p === "whatif") return null;
+  for (const word of args) {
+    // `-Id:4242`: a parameter and its value in one word.
+    const colon = word.startsWith("-") ? word.indexOf(":") : -1;
+    const p = psParam(colon > 0 ? word.slice(0, colon) : word);
+    if (p === "whatif") {
+      if (colon <= 0 || !/^\$?false$/i.test(word.slice(colon + 1))) return null;
+      continue;
+    }
     if (p !== null) {
       param = p;
       positional = false;
-      continue;
-    }
-    if (raw.startsWith("-")) {
+      if (colon <= 0) continue;
+    } else if (word.startsWith("-")) {
       param = null;
       continue;
     }
+    const raw = p !== null ? word.slice(colon + 1) : word;
     const target = param ?? (positional ? "id" : null);
     if (target === null) continue;
     for (const v of raw.split(",").map(unquote)) {
       if (v === "") continue;
-      if (target === "id" && /^\d+$/.test(v)) pids.push(Number(v));
+      // `[int]` as PowerShell reads it: `+4242`, and `0x1092`.
+      if (target === "id" && /^(?:\+?\d+|0x[0-9a-f]+)$/i.test(v)) {
+        pids.push(Number(v));
+      }
       if (target === "name") names.push(wildcard(v));
     }
     // A list goes on while its words end in a comma.

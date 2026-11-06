@@ -711,7 +711,21 @@ function textFilterVerdict(
   return null;
 }
 
-const SH_FAMILY = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+/** The shells whose `-c` body is read. An unknown one hid a block-tier
+ *  body behind an ordinary ask (review 2026-11-05, G12). */
+const SH_FAMILY = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "mksh",
+  "yash",
+  "ash",
+  "fish",
+  "csh",
+  "tcsh",
+]);
 /** Not shells themselves, but they hand a shell command string to one. */
 const COMMAND_STRING_WRAPPERS = new Set(["su", "runuser", "script"]);
 const POWERSHELL_FAMILY = new Set(["powershell", "pwsh"]);
@@ -2625,6 +2639,10 @@ function selfKillBlock(
     }
     const reentry = extractShellReentry(form);
     if (reentry?.kind !== "body" || depth >= MAX_REENTRY_DEPTH) continue;
+    for (const kill of pipedKills(reentry.body)) {
+      const inner = selfKillBlock(kill, host, true, depth + 1);
+      if (inner !== null) return inner;
+    }
     for (const segment of splitShellSegments(reentry.body)) {
       for (const piece of blockPieces(segment)) {
         const tokens = commandWords(shellBodyTokens(piece));
@@ -2644,6 +2662,88 @@ export function selfKillVerdict(
   host: HostIdentity,
 ): Verdict | null {
   return selfKillBlock(argv, host, true, 0);
+}
+
+/** A line the shell lane reads: the kills its pipes spell. */
+export function pipedKillVerdict(
+  line: string,
+  host: HostIdentity,
+): Verdict | null {
+  for (const kill of pipedKills(line)) {
+    const self = selfKillBlock(kill, host, true, 0);
+    if (self !== null) return self;
+  }
+  return null;
+}
+
+/** The pipelines of a shell line, each cut at its `|`. */
+function pipelinesOf(body: string): string[][] {
+  const lines: string[][] = [];
+  let stages: string[] = [];
+  let stage = "";
+  let quote: string | null = null;
+  const endStage = (): void => {
+    stages.push(stage);
+    stage = "";
+  };
+  const endLine = (): void => {
+    endStage();
+    if (stages.length > 1) lines.push(stages);
+    stages = [];
+  };
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i] as string;
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      stage += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      stage += ch;
+    } else if (ch === "|" && body[i + 1] !== "|" && body[i - 1] !== "|") {
+      endStage();
+    } else if (ch === ";" || ch === "\n" || ch === "|" || ch === "&") {
+      if (stage.trim().length > 0 || stages.length > 0) endLine();
+    } else {
+      stage += ch;
+    }
+  }
+  endLine();
+  return lines;
+}
+
+/**
+ * The kill by name a pipe spells (review 2026-11-05, G4): `pgrep x | xargs
+ * kill` is `pkill x`, `pidof x | xargs kill` is `killall x`, and `Get-Process
+ * x | Stop-Process` is `Stop-Process -Name x`. Only those: any other pipe's
+ * targets cannot be told from the line, and it asks as before.
+ */
+export function pipedKills(body: string): string[][] {
+  const kills: string[][] = [];
+  for (const stages of pipelinesOf(body)) {
+    for (let i = 0; i + 1 < stages.length; i += 1) {
+      const left = commandWords(shellBodyTokens(stages[i] as string));
+      const right = commandWords(shellBodyTokens(stages[i + 1] as string));
+      const from = (left[0] ?? "").toLowerCase().replace(/\.exe$/u, "");
+      const to = (right[0] ?? "").toLowerCase();
+      const xargsKill = to === "xargs" && right.includes("kill");
+      if (from === "pgrep" && xargsKill) {
+        kills.push(["pkill", ...left.slice(1)]);
+      } else if (from === "pidof" && xargsKill) {
+        kills.push(["killall", ...left.slice(1)]);
+      } else if (
+        (from === "get-process" || from === "gps") &&
+        (to === "stop-process" || to === "spps" || to === "kill")
+      ) {
+        const named = left[1]?.startsWith("-") === true;
+        kills.push([
+          "Stop-Process",
+          ...(named ? [] : ["-Name"]),
+          ...left.slice(1),
+        ]);
+      }
+    }
+  }
+  return kills;
 }
 
 /**

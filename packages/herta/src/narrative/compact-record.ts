@@ -641,6 +641,7 @@ function attachmentFoldDecision(
   block: SystemBlock,
   lastSpeechIdx: number,
   userIdxs: readonly number[],
+  turnIdxs: readonly number[],
   attachmentNames: readonly string[],
 ): AttachmentFoldState {
   if (idx >= lastSpeechIdx) return "verbatim";
@@ -668,7 +669,7 @@ function attachmentFoldDecision(
     }
   }
   let turnsAfterAnchor = 0;
-  for (const ui of userIdxs) {
+  for (const ui of turnIdxs) {
     if (ui > anchor) turnsAfterAnchor += 1;
   }
   if (turnsAfterAnchor < ATTACHMENT_VERBATIM_USER_TURNS) return "verbatim";
@@ -732,13 +733,17 @@ function foldStrandedDetail(
  * she has not yet responded to stays verbatim regardless of the user-turn
  * window. Speech only, same rule as the done-marker walk and for the same
  * reason (audit 2026-07-24, 1.10): a （我 想） committed after the block must
- * not flip it. The user indices are what the attachment fold's window and
- * anchor search count (attachmentFoldDecision) and what the diff re-read
- * hint counts; collected once per record.
+ * not flip it. The user indices are what the attachment fold's anchor search
+ * reads (a message that names a file keeps it, whenever it was said). The turn
+ * indices are what its window and the diff re-read hint count: a message
+ * during a run and a steer are not turns, or three of them would fold the
+ * document the run was commissioned from, mid-run and at her verdict
+ * (review 2026-11-05, H7). Collected once per record.
  */
 function recordLandmarks(record: TerminalRecord): {
   lastSpeechIdx: number;
   userIdxs: readonly number[];
+  turnIdxs: readonly number[];
 } {
   let lastSpeechIdx = -1;
   for (let k = record.length - 1; k >= 0; k--) {
@@ -749,10 +754,13 @@ function recordLandmarks(record: TerminalRecord): {
     }
   }
   const userIdxs: number[] = [];
+  const turnIdxs: number[] = [];
   record.forEach((b, k) => {
-    if (b.kind === "user") userIdxs.push(k);
+    if (b.kind !== "user") return;
+    userIdxs.push(k);
+    if (b.duringRun !== true && b.steer !== true) turnIdxs.push(k);
   });
-  return { lastSpeechIdx, userIdxs };
+  return { lastSpeechIdx, userIdxs, turnIdxs };
 }
 
 /**
@@ -764,7 +772,7 @@ function recordLandmarks(record: TerminalRecord): {
  * attachmentFolds` for why the piece must not decide for itself.
  */
 export function decideAttachmentFolds(record: TerminalRecord): AttachmentFolds {
-  const { lastSpeechIdx, userIdxs } = recordLandmarks(record);
+  const { lastSpeechIdx, userIdxs, turnIdxs } = recordLandmarks(record);
   // Every attachment display name in the record (lowercased) — the sibling
   // set mentionsFile uses to keep a short name from matching inside a longer
   // sibling's occurrence (the CJK-flank collision the boundary class cannot
@@ -785,6 +793,7 @@ export function decideAttachmentFolds(record: TerminalRecord): AttachmentFolds {
           b,
           lastSpeechIdx,
           userIdxs,
+          turnIdxs,
           attachmentNames,
         ),
       );
@@ -820,7 +829,7 @@ export function compactRecordForPrompt(
   const minRunSize = opts?.minRunSize ?? 2;
   const lang = opts?.lang ?? "zh";
 
-  const { userIdxs } = recordLandmarks(record);
+  const { turnIdxs } = recordLandmarks(record);
   // Her last speech that could be a verdict: an answer to talk while the run
   // worked is not one (ADR 0085 §3), and her view draws it after the run.
   // With no such answer in the record this is the landmarks' last speech.
@@ -910,7 +919,7 @@ export function compactRecordForPrompt(
       const b = record[k];
       if (b?.kind === "system" && b.role === "done-marker") {
         let turnsAfter = 0;
-        for (const ui of userIdxs) {
+        for (const ui of turnIdxs) {
           if (ui > k) turnsAfter += 1;
         }
         if (turnsAfter <= DIFF_REREAD_HINT_USER_TURNS) diffHintIdx = k;

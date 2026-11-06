@@ -1284,6 +1284,58 @@ describe("decideAttachmentFolds / foldAttachments — the fold lane on its own (
     readB,
   ];
 
+  it("messages during a run and steers are not turns: the commission's document stays (review 2026-11-05, H7)", () => {
+    const talk = (text: string): TerminalRecord[number] => ({
+      kind: "user",
+      text,
+      duringRun: true,
+    });
+    const said = (text: string): TerminalRecord[number] => ({
+      kind: "herta",
+      surface: "speech",
+      text,
+      duringRun: true,
+    });
+    const midRun: TerminalRecord = [
+      attachment,
+      { kind: "user", text: "照这份改 @板砖" },
+      { kind: "herta", surface: "speech", text: "@板砖，照它改。" },
+      readA,
+      talk("顺便问一句"),
+      said("嗯。"),
+      talk("还有"),
+      said("说。"),
+      { kind: "user", text: "先别动 b.ts", steer: true },
+      talk("好了吗"),
+      said("快了。"),
+    ];
+    expect(decideAttachmentFolds(midRun).get(attachment)).toBe("verbatim");
+    // Three turns after it still fold it, with talk among them or not.
+    const later: TerminalRecord = [
+      ...midRun,
+      { kind: "user", text: "聊点别的" },
+      { kind: "herta", surface: "speech", text: "行。" },
+      { kind: "user", text: "再聊点别的" },
+      { kind: "herta", surface: "speech", text: "行。" },
+    ];
+    expect(decideAttachmentFolds(later).get(attachment)).toBe("citation-hint");
+  });
+
+  it("a message during a run that names the file keeps it, as any message does", () => {
+    const named: TerminalRecord = [
+      attachment,
+      { kind: "user", text: "一" },
+      { kind: "herta", surface: "speech", text: "嗯。" },
+      { kind: "user", text: "二" },
+      { kind: "herta", surface: "speech", text: "嗯。" },
+      { kind: "user", text: "三" },
+      { kind: "herta", surface: "speech", text: "嗯。" },
+      { kind: "user", text: "spec.md 第二节呢", duringRun: true },
+      { kind: "herta", surface: "speech", text: "看着。", duringRun: true },
+    ];
+    expect(decideAttachmentFolds(named).get(attachment)).toBe("verbatim");
+  });
+
   it("the pre-decided folds are compactRecordForPrompt's own decision", () => {
     const folds = decideAttachmentFolds(record);
     expect(folds.size).toBe(1);

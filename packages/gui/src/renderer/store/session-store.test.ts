@@ -435,6 +435,82 @@ describe("SessionStore", () => {
     expect(store.getSnapshot().record).toHaveLength(1);
   });
 
+  describe("two messages to Herta before the first has landed (review 2026-11-05, N3)", () => {
+    const land = (
+      mock: ReturnType<typeof createMockHertaBridge>,
+      text: string,
+      extra: { duringRun?: true; steer?: true } = { duringRun: true },
+    ): void => {
+      mock.emitRecord({
+        kind: "block",
+        blockId: text,
+        block: { kind: "user", text, ...extra },
+      });
+    };
+    const setup = () => {
+      const mock = createMockHertaBridge();
+      const store = new SessionStore();
+      store.connect(mock.bridge);
+      return { mock, store };
+    };
+
+    it("the second waits behind the first, and moves up when the first lands", () => {
+      const { mock, store } = setup();
+      store.markPendingTalk("一", ["a.ts"]);
+      store.markPendingTalk("二", ["b.ts"]);
+      expect(store.getSnapshot().pendingUser).toBe("一");
+      expect(store.getSnapshot().pendingUserMentions).toEqual(["a.ts"]);
+      expect(store.getSnapshot().pendingTalk.map((p) => p.text)).toEqual([
+        "二",
+      ]);
+      land(mock, "一");
+      expect(store.getSnapshot().pendingUser).toBe("二");
+      expect(store.getSnapshot().pendingUserMentions).toEqual(["b.ts"]);
+      expect(store.getSnapshot().pendingTalk).toEqual([]);
+      land(mock, "二");
+      expect(store.getSnapshot().pendingUser).toBeNull();
+      expect(store.getSnapshot().pendingUserMentions).toBeNull();
+    });
+
+    it("the same words twice are two messages", () => {
+      const { mock, store } = setup();
+      store.markPendingTalk("好");
+      store.markPendingTalk("好");
+      land(mock, "好");
+      expect(store.getSnapshot().pendingUser).toBe("好");
+      land(mock, "好");
+      expect(store.getSnapshot().pendingUser).toBeNull();
+    });
+
+    it("a steer landing takes no echo", () => {
+      const { mock, store } = setup();
+      store.markPendingTalk("问她的");
+      land(mock, "说给板砖的", { steer: true });
+      expect(store.getSnapshot().pendingUser).toBe("问她的");
+    });
+
+    it("a message the run could no longer take leaves the other's echo", () => {
+      const { store } = setup();
+      store.markPendingTalk("一");
+      store.markPendingTalk("二");
+      store.withdrawPendingUser("二");
+      expect(store.getSnapshot().pendingUser).toBe("一");
+      expect(store.getSnapshot().pendingTalk).toEqual([]);
+      store.markPendingTalk("三");
+      store.withdrawPendingUser("一");
+      expect(store.getSnapshot().pendingUser).toBe("三");
+    });
+
+    it("the turn's end clears them all", () => {
+      const { mock, store } = setup();
+      store.markPendingTalk("一");
+      store.markPendingTalk("二");
+      mock.emitTurn({ kind: "finished", turnId: "t1" });
+      expect(store.getSnapshot().pendingUser).toBeNull();
+      expect(store.getSnapshot().pendingTalk).toEqual([]);
+    });
+  });
+
   it("clears a dangling pendingUser echo on turn failed", () => {
     const mock = createMockHertaBridge();
     const store = new SessionStore();

@@ -68,6 +68,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     pendingUserImages,
     pendingUserMentions,
     pendingUserPicks,
+    pendingTalk,
     retracting,
     retractKeepLen,
     turnStartedAt,
@@ -200,6 +201,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     reduced,
     record: shownRecord,
     pendingUser,
+    pendingTalk,
     status,
     showInFlight: inFlight.showInFlight,
     inFlightExiting: inFlight.inFlightExiting,
@@ -332,6 +334,16 @@ export const Conversation = memo(function Conversation(): JSX.Element {
                   : {})}
               />
             )}
+            {pendingTalk.map((p) => (
+              <UserBubble
+                key={`${p.at}|${p.text}`}
+                text={p.text}
+                lang={lang}
+                at={p.at}
+                {...(p.mentions !== null ? { mentions: p.mentions } : {})}
+                {...(p.picks !== null ? { picks: p.picks } : {})}
+              />
+            ))}
             {/* Not gated on the echo: when the turn's real user block lands
               mid-flight (a typed @板砖 — no router call heads its turn), the
               clone flies on onto the real row (useOutgoingMorph). */}

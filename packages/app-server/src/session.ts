@@ -850,6 +850,14 @@ export class SessionImpl implements Session {
     return this._record;
   }
 
+  /** What the chat has been sent, each block with the stamp it went with
+   *  (review 2026-11-05, N5). `record` is stale mid-turn, and this sitting's
+   *  blocks are stamped only on their way out, so a page of it cost a run its
+   *  耗时 and an open 完整记录 tab its run. */
+  get shownRecord(): TerminalRecord {
+    return this.sink.flushedRecord() ?? this._record;
+  }
+
   get overlay(): ApprovalOverlayState | null {
     return this._overlay;
   }
@@ -1608,7 +1616,7 @@ export class SessionImpl implements Session {
     // is the only event that shrinks the record, and the renderer cannot work
     // the pruning out for itself: a topic anchored in surviving history but
     // BORN in the withdrawn turn looks alive from there (user 2026-07-30).
-    const tail = recordTail(this._record);
+    const tail = recordTail(this.shownRecord);
     this.projector.emitRecord({
       kind: "reset",
       record: tail.record,

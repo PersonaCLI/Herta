@@ -739,6 +739,9 @@ export interface Session {
    *  Read once on subscribe; consume `subscribeRecord()` to stay
    *  current. */
   readonly record: TerminalRecord;
+  /** The record as the chat was sent it, stamps included: what a page of
+   *  older blocks answers from. Absent: `record`. */
+  readonly shownRecord?: TerminalRecord;
   /** Synchronous snapshot of the current pending overlay, or null when idle. */
   readonly overlay: ApprovalOverlayState | null;
   /** Current session title (generated after the first turn, or the user's

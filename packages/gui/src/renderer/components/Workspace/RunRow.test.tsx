@@ -251,9 +251,10 @@ describe("RunRow — a run of 板砖's in the chat (ADR 0085 §9)", () => {
     fireEvent.click(open);
     const viewer = h.container.querySelector(".file-viewer");
     expect(viewer?.getAttribute("data-kind")).toBe("run");
-    expect(screen.getByRole("tab", { name: "差分协处理器 · 完整记录" })).toBe(
-      screen.getByRole("tab", { selected: true }),
-    );
+    // Its time first: every run's tab used to read the same (N6).
+    expect(
+      screen.getByRole("tab", { name: /· 差分协处理器 · 完整记录$/u }),
+    ).toBe(screen.getByRole("tab", { selected: true }));
     // A run's record is not a file: nothing to copy or open in the OS.
     expect(screen.queryByRole("button", { name: "Copy path" })).toBeNull();
   });
@@ -304,6 +305,25 @@ describe("RunRow — a run of 板砖's in the chat (ADR 0085 §9)", () => {
       fireEvent.click(stop);
     });
     expect(h.mock.calls.interrupt).toHaveLength(1);
+    // Under an approval it still answers: the button stays on the screen,
+    // and an interrupt ends the gate (review 2026-11-05, N4).
+    act(() => {
+      h.mock.emitOverlay({
+        kind: "pending",
+        overlay: {
+          kind: "pending-permission",
+          requestId: "req-1",
+          risk: "workspace_write",
+          tool: "bash",
+          summary: "writes a file",
+          cacheable: false,
+        },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(stop);
+    });
+    expect(h.mock.calls.interrupt).toHaveLength(2);
     h.unmount();
     // Ended: no stop.
     row({ blocks: [op("Reading", "a.ts"), done("完成")] });

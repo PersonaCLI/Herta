@@ -484,6 +484,26 @@ describe("BusActorStreamingSink.flushBlocks (canonical-diff record emit)", () =>
     expect(emitted).toHaveLength(1);
   });
 
+  it("a reseed from the driver's copy keeps the stamps the chat was sent (review 2026-11-05, N5)", () => {
+    const bus = new InMemoryEventBus<AgentEvent>();
+    const sink = new BusActorStreamingSink(
+      bus,
+      () => undefined,
+      () => undefined,
+      () => 0.5,
+      () => "2026-11-06T08:00:00.000Z",
+    );
+    const driverCopy = [
+      { kind: "user" as const, text: "a" },
+      { kind: "user" as const, text: "b" },
+    ];
+    sink.flushBlocks(driverCopy);
+    sink.seedEmittedCount(1, driverCopy.slice(0, 1));
+    expect(sink.flushedRecord()).toEqual([
+      { kind: "user", text: "a", at: "2026-11-06T08:00:00.000Z" },
+    ]);
+  });
+
   it("seedEmittedCount skips pre-existing blocks (resume / opening seed)", () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const emitted: RecordEvent[] = [];

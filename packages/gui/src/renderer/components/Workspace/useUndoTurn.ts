@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback } from "react";
+import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import type { SessionStore } from "../../store/session-store.js";
 
@@ -7,29 +8,30 @@ import type { SessionStore } from "../../store/session-store.js";
  * time, idle only — the same guards as the rewind, and main checks both
  * again. What came back shows on its own: main appends the `→ 系统` line to
  * the record and withdraws the offer, and the card reads both. Only a
- * refusal needs saying here.
+ * refusal needs saying here. The chat's row and the 完整记录 tab both offer
+ * it, so the busy flag is the store's: with one each, the second press was
+ * answered `turn_in_progress` and read as a failed undo (N8).
  */
 export function useUndoTurn(sessionStore: SessionStore): {
   readonly handleUndo: () => Promise<void>;
   readonly undoBusy: boolean;
 } {
   const t = useT();
-  const [undoBusy, setUndoBusy] = useState(false);
-  const busy = useRef(false);
+  const undoBusy = useSessionSelector((s) => s.undoBusy);
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionStore is stable; `t` is the varying input
   const handleUndo = useCallback(async () => {
-    if (busy.current) return;
-    if (sessionStore.getSnapshot().status !== "idle") return;
-    busy.current = true;
-    setUndoBusy(true);
+    const now = sessionStore.getSnapshot();
+    if (now.undoBusy || now.rewindUndo === "busy" || now.status !== "idle") {
+      return;
+    }
+    sessionStore.setUndoBusy(true);
     try {
       const r = await sessionStore.undoTurnEdits("latest");
       if (r !== null && !r.ok) {
         sessionStore.setComposerNotice(t("workspace.undoFailed"));
       }
     } finally {
-      busy.current = false;
-      setUndoBusy(false);
+      sessionStore.setUndoBusy(false);
     }
   }, [t]);
   return { handleUndo, undoBusy };

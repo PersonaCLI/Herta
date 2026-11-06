@@ -19,6 +19,7 @@ import {
   isSafeSessionId,
   mainNavigationBlock,
   pickLatest,
+  recordPage,
   resolveWorkspaceRoot,
   sanitizeCreateOpts,
   sanitizeLogQuery,
@@ -548,6 +549,40 @@ describe("resolveWorkspaceRoot", () => {
     }
     vi.stubEnv("HERTA_WORKSPACE_ROOT", link);
     expect(resolveWorkspaceRoot()).toBe(real);
+  });
+});
+
+describe("recordPage — a page of older blocks (review 2026-11-05, N5)", () => {
+  it("answers from what the chat was sent, stamps and all, when the session has it", () => {
+    const at = "2026-11-06T08:00:00.000Z";
+    const page = recordPage(
+      {
+        ...fakeSession(),
+        record: [{ kind: "user", text: "a" }],
+        shownRecord: [
+          { kind: "user", text: "a", at },
+          { kind: "user", text: "b", at },
+        ],
+      } as Session,
+      2,
+      100,
+    );
+    expect(page).toEqual({
+      start: 0,
+      blocks: [
+        { kind: "user", text: "a", at },
+        { kind: "user", text: "b", at },
+      ],
+    });
+  });
+
+  it("falls back to the record", () => {
+    const page = recordPage(
+      { ...fakeSession(), record: [{ kind: "user", text: "a" }] } as Session,
+      1,
+      100,
+    );
+    expect(page.blocks).toEqual([{ kind: "user", text: "a" }]);
   });
 });
 

@@ -178,7 +178,7 @@ describe("the 完整记录 tab (ADR 0085 §9, amendment 2026-11-04 later)", () =
     );
     // The file opened in a tab of its own; the run's is one click back.
     fireEvent.click(
-      screen.getByRole("tab", { name: "Coprocessor · Full record" }),
+      screen.getByRole("tab", { name: /Coprocessor · Full record$/u }),
     );
     // The exit row opens to its output's tail, and the log it names opens.
     const toggles = within(tab()).getAllByRole("button", {
@@ -210,7 +210,7 @@ describe("the 完整记录 tab (ADR 0085 §9, amendment 2026-11-04 later)", () =
     );
     await waitFor(() => expect(screen.queryByTestId("run-record")).toBeNull());
     fireEvent.click(
-      screen.getByRole("tab", { name: "Coprocessor · Full record" }),
+      screen.getByRole("tab", { name: /Coprocessor · Full record$/u }),
     );
     expect(tab().scrollTop).toBe(420);
   });

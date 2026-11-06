@@ -405,7 +405,18 @@ export class BusActorStreamingSink implements ActorStreamingSink {
    */
   seedEmittedCount(n: number, record?: TerminalRecord): void {
     this.emittedCount = n;
-    this.mirror = record !== undefined ? record.slice(0, n) : [];
+    // The driver's copy holds no stamps. A block the chat already has keeps
+    // the one it was sent with, through a rewind and a failed turn alike.
+    const sent = this.mirror;
+    this.mirror =
+      record !== undefined
+        ? record.slice(0, n).map((block, i) => {
+            const at = sent[i]?.at;
+            return block.at === undefined && at !== undefined
+              ? { ...block, at }
+              : block;
+          })
+        : [];
   }
 
   /**

@@ -19,6 +19,7 @@ export function useTurnFollow(opts: {
   readonly reduced: boolean;
   readonly record: TerminalRecord;
   readonly pendingUser: string | null;
+  readonly pendingTalk: readonly unknown[];
   readonly status: SessionStatus;
   readonly showInFlight: boolean;
   readonly inFlightExiting: boolean;
@@ -33,6 +34,7 @@ export function useTurnFollow(opts: {
     reduced,
     record,
     pendingUser,
+    pendingTalk,
     status,
     showInFlight,
     inFlightExiting,
@@ -56,6 +58,7 @@ export function useTurnFollow(opts: {
   }, [
     record,
     pendingUser,
+    pendingTalk,
     status,
     showInFlight,
     // The row leaves on its own timer, and its removal changes the flow's

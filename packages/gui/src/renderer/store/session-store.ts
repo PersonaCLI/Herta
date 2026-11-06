@@ -84,6 +84,15 @@ export interface SessionSnapshotView {
    *  echo draws them as chips, as the record's user block will. Cleared
    *  with `pendingUser`. */
   readonly pendingUserPicks: readonly PagePick[] | null;
+  /** Messages to Herta sent while an earlier one still waits for its block
+   *  (review 2026-11-05, N3). Talk lands when her drain reaches it, behind
+   *  whatever she is writing, so a second message can come before the first
+   *  has landed. These are the ones after `pendingUser`, in the order sent;
+   *  the next moves up as a block lands. Cleared with `pendingUser`. */
+  readonly pendingTalk: readonly PendingTalk[];
+  /** 撤销 is running, from the row or the 完整记录 tab: one request at a
+   *  time across both (review 2026-11-05, N8). */
+  readonly undoBusy: boolean;
   /** True while the supervisor-veto retract morph is in flight:
    *  streamingText holds the vetoed candidate (the morph's shrink source)
    *  and retryText buffers the retry's deltas. Cleared when the finalized
@@ -262,6 +271,51 @@ export interface SessionSnapshotView {
   } | null;
 }
 
+/** A message to Herta waiting behind an earlier one for its record block. */
+export interface PendingTalk {
+  readonly text: string;
+  readonly at: string;
+  readonly mentions: readonly string[] | null;
+  readonly picks: readonly PagePick[] | null;
+}
+
+type EchoFields = Pick<
+  SessionSnapshotView,
+  | "pendingUser"
+  | "pendingUserImages"
+  | "pendingUserMentions"
+  | "pendingUserPicks"
+  | "pendingTalk"
+>;
+
+/** The echo once its message has gone: the next waiting one moves up. */
+function nextEcho(waiting: readonly PendingTalk[]): EchoFields {
+  const [next, ...rest] = waiting;
+  return {
+    pendingUser: next?.text ?? null,
+    pendingUserImages: null,
+    pendingUserMentions: next?.mentions ?? null,
+    pendingUserPicks: next?.picks ?? null,
+    pendingTalk: rest,
+  };
+}
+
+/** The echoes once a user block has landed. A turn's block ends them all;
+ *  talk ends its own, found by its text. Talk whose text no echo holds ends
+ *  the first, so an echo can never outlive the block it stood for. */
+function landEcho(
+  s: SessionSnapshotView,
+  text: string,
+  talk: boolean,
+): EchoFields | Pick<EchoFields, "pendingTalk"> {
+  if (!talk) return nextEcho([]);
+  const waiting = s.pendingTalk.findIndex((p) => p.text === text);
+  if (s.pendingUser !== text && waiting !== -1) {
+    return { pendingTalk: s.pendingTalk.filter((_, i) => i !== waiting) };
+  }
+  return nextEcho(s.pendingTalk);
+}
+
 const INITIAL: SessionSnapshotView = {
   sessionId: null,
   lang: "zh",
@@ -277,6 +331,8 @@ const INITIAL: SessionSnapshotView = {
   pendingUserImages: null,
   pendingUserMentions: null,
   pendingUserPicks: null,
+  pendingTalk: [],
+  undoBusy: false,
   retracting: false,
   retryText: null,
   retractKeepLen: null,
@@ -482,6 +538,12 @@ export class SessionStore {
     return this.snapshot.sessionId === sessionId ? r : null;
   }
 
+  /** 撤销 went out, or came back (N8). */
+  setUndoBusy(busy: boolean): void {
+    if (this.snapshot.undoBusy === busy) return;
+    this.emit({ ...this.snapshot, undoBusy: busy });
+  }
+
   /** The rewind notice's 撤销改动 is running (or offered again). */
   setRewindUndo(state: "offer" | "busy" | null): void {
     if (this.snapshot.rewindUndo === state) return;
@@ -553,16 +615,49 @@ export class SessionStore {
     });
   }
 
+  /** Echo a message to Herta sent during a run. It takes the echo when the
+   *  echo is free, and waits behind it when not (N3). */
+  markPendingTalk(
+    text: string,
+    mentions?: readonly string[],
+    picks?: readonly PagePick[],
+  ): void {
+    if (this.snapshot.pendingUser === null) {
+      this.markPendingUser(text, undefined, mentions, picks);
+      return;
+    }
+    this.emit({
+      ...this.snapshot,
+      pendingTalk: [
+        ...this.snapshot.pendingTalk,
+        {
+          text,
+          at: new Date().toISOString(),
+          mentions:
+            mentions !== undefined && mentions.length > 0 ? mentions : null,
+          picks: picks !== undefined && picks.length > 0 ? picks : null,
+        },
+      ],
+    });
+  }
+
   /** Withdraw a rejected submit's optimistic echo (audit 2026-07-10): when
    *  `submitText` rejects BEFORE any turn lifecycle event (single-turn
    *  invariant), no safety net will clear the echo. Matching text only — a
    *  stale rejection must never clear a NEWER submit's echo — and the text
    *  goes back to the composer draft so nothing typed is lost. */
   withdrawPendingUser(text: string, images?: readonly StagedImageInfo[]): void {
-    if (this.snapshot.pendingUser !== text) return;
+    const waiting = this.snapshot.pendingTalk.findIndex((p) => p.text === text);
+    if (this.snapshot.pendingUser !== text && waiting === -1) return;
     this.emit({
       ...this.snapshot,
-      pendingUser: null,
+      ...(this.snapshot.pendingUser === text
+        ? nextEcho(this.snapshot.pendingTalk)
+        : {
+            pendingTalk: this.snapshot.pendingTalk.filter(
+              (_, i) => i !== waiting,
+            ),
+          }),
       composerDraft: text,
       // The pictures go back too: their staged copies still exist main-side
       // (the submit never reached `commit`), so the ids restage cleanly.
@@ -891,6 +986,9 @@ export class SessionStore {
     if (next.pendingUser === null && next.pendingUserPicks !== null) {
       next = { ...next, pendingUserPicks: null };
     }
+    if (next.pendingUser === null && next.pendingTalk.length > 0) {
+      next = { ...next, pendingTalk: [] };
+    }
     if (next.composerDraft === null && next.composerDraftImages !== null) {
       next = { ...next, composerDraftImages: null };
     }
@@ -949,6 +1047,8 @@ export class SessionStore {
       pendingUserImages: null,
       pendingUserMentions: null,
       pendingUserPicks: null,
+      pendingTalk: [],
+      undoBusy: false,
       retracting: false,
       retryText: null,
       retractKeepLen: null,
@@ -1155,9 +1255,12 @@ export class SessionStore {
     const retryText = block.kind === "herta" ? null : this.snapshot.retryText;
     const retractKeepLen =
       block.kind === "herta" ? null : this.snapshot.retractKeepLen;
-    // The turn's real user block replaces the optimistic echo.
-    const pendingUser =
-      block.kind === "user" ? null : this.snapshot.pendingUser;
+    // The turn's real user block replaces the optimistic echo. A steer has
+    // no echo, and talk takes its own (N3).
+    const echo =
+      block.kind === "user" && block.steer !== true
+        ? landEcho(this.snapshot, block.text, block.duringRun === true)
+        : null;
     // Capture the FIRST user message of this activation (frozen after). These
     // are streamed blocks (the activation's initial record arrives via reset,
     // not onRecord), so the first one here is this activation's first message.
@@ -1174,7 +1277,7 @@ export class SessionStore {
       retracting,
       retryText,
       retractKeepLen,
-      pendingUser,
+      ...echo,
       activationFirstUser,
     });
   }

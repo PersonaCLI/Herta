@@ -65,9 +65,11 @@ const NO_PROGRESS = (): string => "";
  *
  * In the session's language, as the rows are in the chat (ADR 0019).
  */
-/** Where each 完整记录 tab was left, by tab path (owner 2026-11-05): a file
- *  opened from a row takes the panel and this view unmounts, and coming back
- *  to the tab must land on the row the reader left. */
+/** Where each 完整记录 tab was left, by session and tab path (owner
+ *  2026-11-05): a file opened from a row takes the panel and this view
+ *  unmounts, and coming back to the tab must land on the row the reader left.
+ *  The session is in the key because a run with no stamp, in a record older
+ *  than stamps, has the same path as another session's at that index. */
 const leftAt = new Map<string, number>();
 
 export function RunRecordView(props: { readonly path: string }): JSX.Element {
@@ -159,12 +161,13 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
   const run = found?.item ?? null;
   const scroller = useRef<HTMLDivElement>(null);
   const shown = run !== null;
+  const leftKey = `${sessionId ?? ""}|${props.path}`;
   useLayoutEffect(() => {
-    const at = leftAt.get(props.path);
+    const at = leftAt.get(leftKey);
     if (shown && at !== undefined && scroller.current !== null) {
       scroller.current.scrollTop = at;
     }
-  }, [props.path, shown]);
+  }, [leftKey, shown]);
   const facts = useMemo(
     () => (run === null ? null : runFacts(run.blocks, run.dispatchedAt)),
     [run],
@@ -199,7 +202,7 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
         ref={scroller}
         className="file-viewer__scroll run-record"
         data-testid="run-record"
-        onScroll={(e) => leftAt.set(props.path, e.currentTarget.scrollTop)}
+        onScroll={(e) => leftAt.set(leftKey, e.currentTarget.scrollTop)}
       >
         <RunHead
           facts={facts}

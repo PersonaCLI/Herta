@@ -371,6 +371,20 @@ export async function buildConfig(
   };
 }
 
+/** A page of older blocks, for `session:recordSlice`: from what the chat was
+ *  sent, stamps included. Exported for testing. */
+export function recordPage(
+  s: Session,
+  before: number,
+  count: number,
+  to?: number,
+): { readonly start: number; readonly blocks: Session["record"] } {
+  const record = s.shownRecord ?? s.record;
+  const end = Math.min(before, record.length);
+  const start = pageStart(record, count, end, to);
+  return { start, blocks: record.slice(start, end) };
+}
+
 /** The `session:reset` payload for a session. Exported for testing. */
 export function snapshot(s: Session): SessionSnapshot {
   // Long-session windowing (2026-07-12): the reset snapshot carries only the
@@ -995,10 +1009,7 @@ export function createSessionService(
         ) {
           return { start: 0, blocks: [] };
         }
-        const record = active.record;
-        const end = Math.min(before, record.length);
-        const start = pageStart(record, count, end, to);
-        return { start, blocks: record.slice(start, end) };
+        return recordPage(active, before, count, to);
       },
     );
     handle(CMD.open, async (_e, id: string) => {

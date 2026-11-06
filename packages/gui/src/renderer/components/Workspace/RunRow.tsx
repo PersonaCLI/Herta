@@ -11,6 +11,7 @@ import {
 } from "../FileViewer/file-viewer-context.js";
 import { textWithLinks } from "./ActivityStep.js";
 import { DiffStat } from "./DiffStat.js";
+import { formatTime } from "./format-time.js";
 import type { SystemBlock } from "./group-record.js";
 import { composeMarkerSummary } from "./marker-summary.js";
 import { formatDuration, liveState, runFacts, runTookMs } from "./run-facts.js";
@@ -169,7 +170,12 @@ export const RunRow = memo(function RunRow(props: RunRowProps): JSX.Element {
             onClick={() =>
               openFile(runTabPath(props.absIndex, first.at), {
                 kind: "run",
-                label: t("run.tab"),
+                // Its time first, so the part that tells two tabs apart
+                // survives the strip's ellipsis.
+                label:
+                  first.at === undefined
+                    ? t("run.tab")
+                    : `${formatTime(first.at, lang)} · ${t("run.tab")}`,
               })
             }
           >

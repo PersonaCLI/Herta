@@ -1568,6 +1568,30 @@ describe("Session — rewindLastTurn", () => {
     await cleanup();
   });
 
+  it("shownRecord holds the stamps record does not, and a rewind keeps them (review 2026-11-05, N5)", async () => {
+    const cfg = mkConfig();
+    const { session, cleanup } = await mkStubSession(cfg, undefined, 2);
+    await session.submitText("在吗");
+    await session.submitText("再来");
+    expect(session.record[0]?.at).toBeUndefined();
+    const stamp = session.shownRecord[0]?.at;
+    expect(stamp).toBeDefined();
+    expect(session.shownRecord).toHaveLength(session.record.length);
+    const seen: RecordEvent[] = [];
+    const consumer = (async () => {
+      for await (const ev of session.subscribeRecord()) {
+        seen.push(ev);
+        if (ev.kind === "reset") break;
+      }
+    })();
+    await session.rewindLastTurn();
+    await consumer;
+    const reset = seen[seen.length - 1];
+    expect(reset?.kind === "reset" ? reset.record[0]?.at : null).toBe(stamp);
+    expect(session.shownRecord[0]?.at).toBe(stamp);
+    await cleanup();
+  });
+
   it("emits a reset RecordEvent carrying the truncated record", async () => {
     const cfg = mkConfig();
     const { session, cleanup } = await mkStubSession(cfg);

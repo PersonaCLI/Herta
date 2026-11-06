@@ -564,14 +564,16 @@ export function Composer(): JSX.Element {
   };
   useEscapeStop(busy && !suppressed, stopTurn, taRef);
   // 停止运行 on the run's card and row (ADR 0085 §9) is this Stop, by its
-  // command: the voice cut and the held message dropped as here.
+  // command: the voice cut and the held message dropped as here. The buttons
+  // stay on the screen under an approval, so this answers there too: an
+  // interrupt ends the gate (Escape is the card's own, and denies).
   useShortcut(
     "stopRun",
     () => {
       stopTurn();
       return true;
     },
-    busy && !suppressed,
+    busy,
   );
   /** The held card's DOM node — the flying clone lifts off from its rect. */
   const heldCardRef = useRef<HTMLElement>(null);
@@ -686,9 +688,8 @@ export function Composer(): JSX.Element {
         return;
       }
       const mentions = expandChips(text, chips).mentions;
-      sessionStore.markPendingUser(
+      sessionStore.markPendingTalk(
         words,
-        undefined,
         mentions.length > 0 ? mentions : undefined,
         picks.length > 0 ? picks : undefined,
       );
@@ -964,7 +965,8 @@ export function Composer(): JSX.Element {
   // say what happened in the notice's place. The withdrawn turn is out of
   // the record, so this notice is the only place a file left alone shows.
   const undoWithdrawn = async (): Promise<void> => {
-    if (sessionStore.getSnapshot().rewindUndo !== "offer") return;
+    const now = sessionStore.getSnapshot();
+    if (now.rewindUndo !== "offer" || now.undoBusy) return;
     sessionStore.setRewindUndo("busy");
     const r = await sessionStore.undoTurnEdits("withdrawn");
     // The session changed under the answer: the notice went with it.

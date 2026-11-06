@@ -258,3 +258,49 @@ describe("what reads a secret and what holds one (review 2026-11-05, G8)", () =>
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 });
+
+describe("one long word (review 2026-11-05, G11)", () => {
+  it("is read in linear time, whatever it repeats", () => {
+    for (const word of [
+      "TOKEN",
+      "eyJ-",
+      "API_KEY",
+      "sk-",
+      "eyJaaaaaaaaaaaa.",
+    ]) {
+      const line = word.repeat(Math.ceil(300_000 / word.length));
+      const started = performance.now();
+      redactSecrets(line);
+      expect(performance.now() - started, word).toBeLessThan(1_000);
+    }
+  });
+
+  it("the jwt walk answers as the pattern did", () => {
+    const pattern =
+      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
+    const pieces = ["eyJ", "-", ".", "abcdefghij", "x", "_", " ", "abc", "é"];
+    let seed = 7;
+    const next = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    for (let round = 0; round < 4000; round += 1) {
+      let text = "";
+      for (let i = next(12); i >= 0; i -= 1) {
+        text += pieces[next(pieces.length)];
+      }
+      expect(redactSecrets(text), text).toBe(
+        text.replace(pattern, "[REDACTED:jwt]"),
+      );
+    }
+  });
+
+  it("the env walk leaves a key's neighbour to be read", () => {
+    expect(redactSecrets("foo=TOKEN=abc")).toBe(
+      "foo=TOKEN=[REDACTED:env_secret]",
+    );
+    expect(redactSecrets('a=1 PASSWORD=x b=2 secret = "y"')).toBe(
+      "a=1 PASSWORD=[REDACTED:env_secret] b=2 secret = [REDACTED:env_secret]",
+    );
+  });
+});

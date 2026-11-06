@@ -215,6 +215,32 @@ describe("browser_navigate / read / act / screenshot (ADR 0083 §6)", () => {
     }
   });
 
+  it("a private key's BEGIN in one element's name hides that element, not the ones after it (review 2026-11-05, G9)", async () => {
+    ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
+    const view = {
+      title: "Keys",
+      elements: {
+        lines: 'e1 text "-----BEGIN RSA PRIVATE KEY-----"\ne2 button "Sign in"',
+        count: 2,
+        shown: 2,
+      },
+      consoleErrors: [] as string[],
+    };
+    const host = fakeHost({
+      async navigate() {
+        host.url = "http://localhost:5173/keys";
+        return { ...view, url: host.url, status: 200 };
+      },
+    });
+    const nav = await browserNavigateTool({ host }).run(
+      call("browser_navigate", { url: "localhost:5173/keys" }),
+      ctx(),
+      () => {},
+    );
+    expect(nav.modelText).toContain('e2 button "Sign in"');
+    expect(nav.modelText).not.toContain("BEGIN RSA");
+  });
+
   it("read before any page fails with the move that fixes it; find needs a query", async () => {
     ws = realpathSync(mkdtempSync(join(tmpdir(), "browser-")));
     const host = fakeHost();

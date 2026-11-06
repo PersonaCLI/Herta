@@ -30,8 +30,15 @@ const PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
 //   `[A-Z0-9_]*` absorbs any prefix/suffix around the sensitive stem.
 // - the value group rejected quotes, so `PASSWORD="hunter2"` passed through —
 //   quoted alternatives now match.
-const ENV_SECRET_RE =
-  /\b([A-Z0-9_]*(?:API_?KEY|ACCESS_KEY|SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE_KEY)[A-Z0-9_]*)(\s*=\s*)("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/gi;
+//
+// Read in three steps, each linear (review 2026-11-05, G11): the key, its stem,
+// its value. One pattern with `[A-Z0-9_]*` either side of the stem tried every
+// stem in a word against the rest of that word: 300 KB of `TOKENTOKEN…` held
+// the main thread over 11 s.
+const ENV_KEY_RE = /\b[A-Z0-9_]+(?=\s*=)/gi;
+const ENV_STEM_RE =
+  /API_?KEY|ACCESS_KEY|SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE_KEY/i;
+const ENV_VALUE_RE = /(\s*=\s*)("[^"\n]*"|'[^'\n]*'|[^\s'"]+)/y;
 
 /** The token shapes by known prefix, for a check that refuses rather than
  *  redacts (the web fetch's URL check, ADR 0080 §2). Global regexes: test
@@ -134,17 +141,84 @@ function lineBefore(text: string, offset: number): string {
   return head.slice(head.lastIndexOf("\n") + 1);
 }
 
+function redactEnvSecrets(text: string): string {
+  const keys = new RegExp(ENV_KEY_RE.source, ENV_KEY_RE.flags);
+  const value = new RegExp(ENV_VALUE_RE.source, ENV_VALUE_RE.flags);
+  let out = "";
+  let copied = 0;
+  for (let key = keys.exec(text); key !== null; key = keys.exec(text)) {
+    if (!ENV_STEM_RE.test(key[0])) continue;
+    value.lastIndex = key.index + key[0].length;
+    const found = value.exec(text);
+    if (found === null) continue;
+    keys.lastIndex = value.lastIndex;
+    const sep = found[1] ?? "";
+    if (readsASecret(sep, found[2] ?? "", lineBefore(text, key.index))) {
+      continue;
+    }
+    out += `${text.slice(copied, key.index)}${key[0]}${sep}[REDACTED:env_secret]`;
+    copied = value.lastIndex;
+  }
+  return `${out}${text.slice(copied)}`;
+}
+
+const isWordChar = (c: string | undefined): boolean =>
+  c !== undefined && /\w/u.test(c);
+
+/** Where the run of a JWT piece's characters starting at `from` ends. */
+function pieceEnd(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && /[A-Za-z0-9_-]/u.test(text[i] as string)) i += 1;
+  return i;
+}
+
+const JWT_PIECE_MIN = 10;
+
+/**
+ * The `jwt` pattern, walked forward (G11). The pattern started again at every
+ * `eyJ` after a `-`, and each start read to the end of the word and back:
+ * 300 KB of `eyJ-eyJ-…` held the main thread over 20 s. Every start in one
+ * piece shares that piece's end and the two pieces after it, so one try per
+ * piece answers for them all.
+ */
+function redactJwts(text: string): string {
+  let out = "";
+  let copied = 0;
+  let at = text.indexOf("eyJ");
+  while (at !== -1) {
+    if (isWordChar(text[at - 1])) {
+      at = text.indexOf("eyJ", at + 1);
+      continue;
+    }
+    const first = pieceEnd(text, at);
+    let end = -1;
+    if (first - (at + 3) >= JWT_PIECE_MIN && text[first] === ".") {
+      const second = pieceEnd(text, first + 1);
+      if (second - (first + 1) >= JWT_PIECE_MIN && text[second] === ".") {
+        let third = pieceEnd(text, second + 1);
+        while (third > second + 1 && !isWordChar(text[third - 1])) third -= 1;
+        if (third - (second + 1) >= JWT_PIECE_MIN) end = third;
+      }
+    }
+    if (end === -1) {
+      at = text.indexOf("eyJ", Math.max(first, at + 1));
+      continue;
+    }
+    out += `${text.slice(copied, at)}[REDACTED:jwt]`;
+    copied = end;
+    at = text.indexOf("eyJ", end);
+  }
+  return `${out}${text.slice(copied)}`;
+}
+
+/** Everything but `jwt`, which has its own walk. */
+const LINEAR_PATTERNS = PATTERNS.filter((p) => p.kind !== "jwt");
+
 export function redactSecrets(text: string): string {
   let out = text.replace(PEM_BLOCK_RE, "[REDACTED:private_key]");
-  for (const { kind, re } of PATTERNS) {
+  for (const { kind, re } of LINEAR_PATTERNS) {
     out = out.replace(re, `[REDACTED:${kind}]`);
+    if (kind === "github_token") out = redactJwts(out);
   }
-  out = out.replace(
-    ENV_SECRET_RE,
-    (match, key, sep: string, value: string, at: number, whole: string) =>
-      readsASecret(sep, value, lineBefore(whole, at))
-        ? match
-        : `${key}${sep}[REDACTED:env_secret]`,
-  );
-  return out;
+  return redactEnvSecrets(out);
 }

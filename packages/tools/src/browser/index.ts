@@ -243,7 +243,13 @@ function elementsBlock(view: PageView): string[] {
   if (e.count === 0) return ["Interactive elements: none."];
   return [
     `Interactive elements (${e.count}${e.shown < e.count ? `, first ${e.shown} shown — browser_read mode tree for the rest` : ""}):`,
-    redactSecrets(e.lines),
+    // Line by line: a private key's BEGIN with no END is masked to the end
+    // of the text, and over the joined list that was every element after it
+    // (review 2026-11-05, G9).
+    e.lines
+      .split("\n")
+      .map((line) => redactSecrets(line))
+      .join("\n"),
   ];
 }
 

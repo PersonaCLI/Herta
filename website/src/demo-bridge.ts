@@ -24,7 +24,14 @@
  *     (demo-freeze, user retest 2026-07-06);
  *   - only the visitor-created session can be deleted; createSession is
  *     idempotent so the opening line can never stack (the new-session icon
- *     is also frozen in the chrome — see freeze-chrome.ts).
+ *     is also frozen in the chrome — see freeze-chrome.ts);
+ *   - the showcase's last topic is a commission still in hand: opening the
+ *     session plays its run live, once (0.1.11). What the app does during a
+ *     run is only visible during one: the open composer, the Steer tag, the
+ *     trace card and its steer rows, her answers, 停止运行. The visitor can
+ *     talk and steer it, and the scene answers without leaving its script.
+ *     The posters are shot from it: `?poster=1`, 1440×900 at 2×, the showcase
+ *     opened, 1.5 s into her answer that steers, downscaled to 1640×1025.
  *
  * Voice cues are never emitted (herta-voice:// protocol is Electron-only).
  */
@@ -33,6 +40,8 @@ import { codePieces } from "@gui/components/FileViewer/piece-segments";
 import { viewerKindFor } from "@gui/components/FileViewer/viewer-kind";
 import type {
   HertaBridge,
+  LiveToolSnapshot,
+  LiveToolView,
   SessionError,
   SessionNoSession,
   SessionSnapshot,
@@ -62,7 +71,12 @@ import type {
 // so `openingVoiceMs` below still describes it.
 import openingVoiceUrl from "./assets/opening-voice.opus";
 import { createDemoFlow } from "./demo-flow.js";
-import { demoWorkspaceFiles, eventBusAfterPatch } from "./demo-workspace.js";
+import {
+  demoWorkspaceFiles,
+  eventBusAfterPatch,
+  sessionBus,
+  sessionBusTest,
+} from "./demo-workspace.js";
 
 export type DemoLang = "zh" | "en";
 
@@ -119,6 +133,12 @@ interface DemoContent {
     record: TerminalRecordBlock[];
     topics: SessionTopic[];
   };
+  /** The run the showcase's last topic commissions, played on open. */
+  readonly liveRun: () => readonly LiveStep[];
+  /** Her verdict once it ends. */
+  readonly liveVerdict: string;
+  /** The composer's suggestion after it. */
+  readonly livePrediction: string;
   /** The showcase workspace's repository, as the rail's repository card
    *  shows it (ADR 0058; on the site since 2026-09-10): what the record
    *  implies — the patched bus and its new test uncommitted, the last
@@ -371,6 +391,26 @@ const patchPreview = (file: string, diff: string): SystemBlock => {
     digest: { kind: "patch", files: [file], add, del },
   };
 };
+/** A DETECTED test run that went red (`data.testRun.status`): the same row,
+ *  with the runner's output on the detail lane. */
+const testsFailedRow = (
+  summary: string,
+  out: readonly string[],
+): SystemBlock => ({
+  kind: "system",
+  label: CO,
+  body: `↳ tests: ${summary}`,
+  digest: { kind: "tests", status: "failed", summary },
+  evidenceDetail: `↳ 输出:\n${out.join("\n")}`,
+  evidence: [{ kind: "output", text: out.join("\n") }],
+});
+/** report_finding's row (ADR 0039): the claim, and what it cites. */
+const findingRow = (claim: string, cites: readonly string[]): SystemBlock => ({
+  kind: "system",
+  label: CO,
+  body: `↳ finding: ${claim} — ${cites.join(", ")}`,
+  digest: { kind: "finding", claim, cites },
+});
 /** The run-terminal marker. `tests` counts test COMMANDS, not cases — one
  *  `pnpm test` run is `测试 1/1`, however many cases it executed. */
 const doneMarker = (m: {
@@ -424,6 +464,34 @@ interface ShowcaseTopic {
    *  topic — it is the rail anchor. */
   readonly blocks: readonly TerminalRecordBlock[];
 }
+
+/**
+ * One step of the live run, in the order it plays. `wait` is the pause before
+ * it. A `call` opens a tool call: its op row lands and, while the call stays
+ * open, `ticker` flows through the trace card; `result` closes the open call.
+ * A `talk` is a message to Herta and her answer, `steered` the sentence of it
+ * that reached 板砖; a `steer` is said to 板砖, and she does not answer it; a
+ * `beat` is her speaking unprompted, which she does only at a failure.
+ */
+type LiveStep = { readonly wait: number } & (
+  | {
+      readonly kind: "call";
+      readonly verb: OpVerb;
+      readonly arg: string;
+      readonly tool: string;
+      readonly ticker?: readonly string[];
+    }
+  | { readonly kind: "result"; readonly row?: SystemBlock }
+  | { readonly kind: "row"; readonly row: SystemBlock }
+  | {
+      readonly kind: "talk";
+      readonly text: string;
+      readonly answer: string;
+      readonly steered?: string;
+    }
+  | { readonly kind: "steer"; readonly text: string }
+  | { readonly kind: "beat"; readonly text: string }
+);
 
 /** The showcase topics (one topic-rail entry each), the EventBus cleanup
  *  last so it stays the session title (latest topic = current title). Rail entries are
@@ -558,6 +626,120 @@ const ALERTS_EXCERPT_ARG = `${ALERTS_EXCERPT.path}:${ALERTS_EXCERPT.from}-${ALER
  *  the number Herta quotes — all four must be the same measurement. */
 const EVENT_BUS_LINES = countDiff(EVENT_BUS_DIFF_ZH);
 
+/** Lines `from`–`to` of a file, as show_excerpt would cite them. */
+const linesOf = (file: string, from: number, to: number): string =>
+  file
+    .split("\n")
+    .slice(from - 1, to)
+    .join("\n");
+
+const BUS_TEST_PATH = "packages/app-server/src/session-bus.test.ts";
+const BUS_PATH = "packages/app-server/src/session-bus.ts";
+const BUS_TEST_ARG = `${BUS_TEST_PATH}:6-12`;
+const BUS_ARG = `${BUS_PATH}:5-11`;
+
+/** What the runner prints as the suite goes by: the trace card's ticker. */
+const SUITE_TICKER = [
+  " ✓ packages/core/src/event-bus.test.ts (1)",
+  " ✓ packages/core/src/backend/backend-turn-loop.test.ts (64)",
+  " ✓ packages/tools/src/run-command/classifier.test.ts (212)",
+  " ✓ packages/herta/src/narrative/parse.test.ts (88)",
+  " ✓ packages/app-server/src/session.test.ts (105)",
+  " ❯ packages/app-server/src/session-bus.test.ts (1 | 1 failed)",
+  " ✓ packages/gui/src/renderer/store/session-store.test.ts (95)",
+];
+const SUITE_OUTPUT = [
+  " FAIL  packages/app-server/src/session-bus.test.ts > SessionBus > hands the event over before publish returns",
+  "AssertionError: expected [] to deeply equal [ 'turn.finished' ]",
+  " ❯ packages/app-server/src/session-bus.test.ts:11:18",
+  "",
+  " Test Files  1 failed | 211 passed (212)",
+  "      Tests  1 failed | 1842 passed (1843)",
+];
+const BUILD_OUTPUT = ["Scope: 9 of 10 workspace projects", "Done in 31.4s"];
+
+/** The live run's rows are one record in both languages; only what she and
+ *  the Trailblazer say, and what 板砖 reports, is the session's. */
+function liveRunSteps(say: {
+  readonly talk: { readonly text: string; readonly answer: string };
+  readonly beat: string;
+  readonly steer: string;
+  readonly ask: {
+    readonly text: string;
+    readonly answer: string;
+    readonly steered: string;
+  };
+  readonly finding: string;
+}): readonly LiveStep[] {
+  return [
+    {
+      kind: "call",
+      wait: 900,
+      verb: "Running",
+      arg: "pnpm -r build",
+      tool: "run_command",
+      ticker: ["packages/core build: Done", "packages/herta build: Done"],
+    },
+    { kind: "result", wait: 2800, row: exitRow(0, BUILD_OUTPUT) },
+    {
+      kind: "call",
+      wait: 600,
+      verb: "Running",
+      arg: "pnpm test",
+      tool: "run_command",
+      ticker: SUITE_TICKER,
+    },
+    { kind: "talk", wait: 3200, ...say.talk },
+    {
+      kind: "result",
+      wait: 3000,
+      row: testsFailedRow("exit 1, 48.20s", SUITE_OUTPUT),
+    },
+    { kind: "beat", wait: 900, text: say.beat },
+    {
+      kind: "call",
+      wait: 800,
+      verb: "Reading",
+      arg: BUS_TEST_ARG,
+      tool: "show_excerpt",
+    },
+    {
+      kind: "result",
+      wait: 1100,
+      row: excerptRow(BUS_TEST_PATH, 6, 12, linesOf(sessionBusTest(), 6, 12)),
+    },
+    { kind: "steer", wait: 1500, text: say.steer },
+    { kind: "talk", wait: 2200, ...say.ask },
+    {
+      kind: "call",
+      wait: 900,
+      verb: "Reading",
+      arg: BUS_ARG,
+      tool: "show_excerpt",
+    },
+    {
+      kind: "result",
+      wait: 1100,
+      row: excerptRow(BUS_PATH, 5, 11, linesOf(sessionBus(), 5, 11)),
+    },
+    {
+      kind: "row",
+      wait: 1000,
+      row: findingRow(say.finding, [`${BUS_TEST_PATH}:11`, `${BUS_PATH}:10`]),
+    },
+    {
+      kind: "row",
+      wait: 900,
+      row: doneMarker({
+        body: "完成 · 测试 0/1",
+        fileCount: 0,
+        tests: { passed: 0, failed: 1 },
+        output: SUITE_OUTPUT,
+      }),
+    },
+  ];
+}
+
 /** The two showcase pictures (ADR 0048). ONE pair of stored paths for both
  *  languages — the bytes are the bundled demo-panel assets, keyed by these
  *  exact paths in demo-attachment-image.ts; only the captions are per-session
@@ -587,7 +769,7 @@ const ZH: DemoContent = {
     "提醒一句，小家伙：这里只是官网的橱窗。想让我和板砖真动手，先装桌面版——下载入口就在这页下面，源码全在 GitHub 上。",
   funnelShort: "我说过了。先装本体，再谈委托。",
   titleVisit: "参观登记",
-  showTitle: "EventBus 回调大扫除",
+  showTitle: "说好的全量",
   sealed: {
     voice: "茶包消耗的统计问题",
     window: "人偶#2811 的抽搐记录",
@@ -787,7 +969,44 @@ const ZH: DemoContent = {
           say("知道就好。"),
         ],
       },
+      // The commission still in hand: she told him that run was not the full
+      // suite, and here he opens the one she said to. Opening the session
+      // plays its run live (liveRun below). Every number and name she says
+      // there is on a row.
+      {
+        title: "说好的全量",
+        minutesAgo: 1,
+        blocks: [
+          ask(
+            "行，全量的委托我开了：所有包跑一遍。挂了先别修，告诉我是哪条就行。",
+          ),
+          say(
+            "范围、约束都给全了。看来上回没白教。\n@板砖，全量跑一遍。红了别动手，原样报上来。",
+          ),
+        ],
+      },
     ]),
+  liveRun: () =>
+    liveRunSteps({
+      talk: {
+        text: "全量得跑多久？我泡碗面来得及吗？",
+        answer:
+          "不知道，板砖又不报工期。\n\n你的面你自己盯着，泡烂了别算我头上。",
+      },
+      beat: "面泡上了吗？测试先红了——pnpm test，exit 1。\n\n板砖在查是哪条，别催。",
+      steer: "先别重跑全量，就盯挂的这一条。",
+      ask: {
+        text: "等下，这条会不会是上回改 event-bus 弄挂的？让它看看。",
+        answer:
+          "哼，我还以为要等我开口。\n\n@板砖 查一下这条跟上回 event-bus 的改动有没有关系，只读。",
+        steered: "@板砖 查一下这条跟上回 event-bus 的改动有没有关系，只读。",
+      },
+      finding:
+        "这条是上回的改动弄挂的：addListener 改走 drain 之后，回调晚一拍才到，而 session-bus.test.ts 在 publish 返回时就断言已收到。",
+    }),
+  liveVerdict:
+    "1842 条绿，1 条红：session-bus.test.ts。还真是上回那笔改动弄挂的，算你猜对了。\n\n你圈的那层壳，签名一个字没动，时序动了：走了 `drain` 之后回调晚一拍才到，这条用例偏要当场收到。core 那一包碰不到这儿。所以我说，那不是全量。\n\n板砖没动手，按你说的。要修，再开一条委托，把 session-bus 换成 subscribe。\n\n面该坨了。先去吃。",
+  livePrediction: "行，那就改：session-bus 换成 subscribe，改完再跑一遍全量。",
 };
 
 const EN: DemoContent = {
@@ -801,7 +1020,7 @@ const EN: DemoContent = {
   funnelShort:
     "I already told you. Install the real thing first, then we talk commissions.",
   titleVisit: "Visitor log",
-  showTitle: "EventBus callback purge",
+  showTitle: "The full suite you promised",
   sealed: {
     voice: "The tea-bag consumption stats",
     window: "Puppet #2811's twitching log",
@@ -985,7 +1204,43 @@ const EN: DemoContent = {
           say("Good that you know."),
         ],
       },
+      // The twin of the commission still in hand; see the zh comment.
+      {
+        title: "The full suite you promised",
+        minutesAgo: 1,
+        blocks: [
+          ask(
+            "Fine, the full-suite commission's open: every package. If something fails, don't fix it yet, just tell me which one.",
+          ),
+          say(
+            "Scope and constraint, both stated. So last time wasn't wasted on you.\n@板砖, run the full suite. If anything goes red, hands off: report it as it stands.",
+          ),
+        ],
+      },
     ]),
+  liveRun: () =>
+    liveRunSteps({
+      talk: {
+        text: "How long does the full suite take? Do I have time to make noodles?",
+        answer:
+          "No idea. Brick doesn't file estimates.\n\nWatch your own noodles. If they go soggy, that's not on me.",
+      },
+      beat: "Noodles on yet? The tests went red first — pnpm test, exit 1.\n\nBrick's finding out which one. Don't hover.",
+      steer: "Don't rerun the whole suite. Stay on the one that failed.",
+      ask: {
+        text: "Wait, could this be from the last event-bus change? Have it check.",
+        answer:
+          "Hmph. I thought I'd have to say it for you.\n\n@板砖 check whether this failure ties back to the last event-bus change. Read-only.",
+        steered:
+          "@板砖 check whether this failure ties back to the last event-bus change. Read-only.",
+      },
+      finding:
+        "The last change broke this: since addListener went through drain, the callback arrives a tick late, and session-bus.test.ts asserts it has arrived as soon as publish returns.",
+    }),
+  liveVerdict:
+    "1842 green, 1 red: session-bus.test.ts. It was the last change after all. Call it a lucky guess.\n\nThe shell you circled kept its signature to the letter and lost its timing: through `drain` the callback arrives a tick late, and this test wants it on the spot. Core's own tests never reach this. That's why I said it wasn't the full suite.\n\nBrick touched nothing, as you asked. If you want it fixed, open another commission and move session-bus to subscribe.\n\nYour noodles have gone soggy by now. Go eat first.",
+  livePrediction:
+    "Fine, fix it: move session-bus to subscribe, then run the full suite again.",
 };
 
 const CONTENT: Record<DemoLang, DemoContent> = { zh: ZH, en: EN };
@@ -1023,30 +1278,9 @@ function splitUnits(text: string, lang: DemoLang): string[] {
   return text.match(/\S+\s*|\s+/gu) ?? [];
 }
 
-export interface DemoBridgeOptions {
-  /**
-   * Hold the showcase transcript's CLOSING line out of its loaded record and
-   * stream it when the session opens, instead of shipping it pre-committed.
-   *
-   * Capture seam only (`?poster=1`), for the narrow-screen posters — the live
-   * site never sets it, so a visitor still gets the settled record. The
-   * posters replace the interactive demo on mobile, and a settled record
-   * leaves the composer's tide wave in its calm `listening` state, which is
-   * a near-flat hairline: the poster looked switched-off (owner 2026-07-31).
-   * A real stream is the only way to get the speaking wave — the site can't
-   * reach the other route (a playing voice clip also forces it, but the demo
-   * plays its opening audio with a plain Audio element, not the renderer's
-   * voice store, so `voicePlaying` is always false here). The capture then
-   * shoots just after the turn ends, where the record is settled and the
-   * composer idle but the wave is still carrying the sentence.
-   */
-  readonly streamShowcaseTail?: boolean;
-}
-
 export function createDemoBridge(
   lang: DemoLang = "zh",
   theme: "light" | "dark" = "light",
-  options: DemoBridgeOptions = {},
 ): HertaBridge {
   const c = CONTENT[lang];
   /** The showcase workspace's files, for the viewer panel (ADR 0050/0054 on
@@ -1066,6 +1300,7 @@ export function createDemoBridge(
   const workspace = new Channel<WorkspaceEvent>();
   const voice = new Channel<VoiceCueEvent>();
   const windowMax = new Channel<boolean>();
+  const liveFeed = new Channel<LiveToolSnapshot>();
 
   const meta = (id: string, startedAgo: number, activeAgo: number) => ({
     sessionId: id,
@@ -1077,28 +1312,6 @@ export function createDemoBridge(
   /** All demo sessions, keyed by id. Only OPENABLE ids ever leave the sidebar:
    *  sealed archives exist as metadata alone — openSession rejects them. */
   const showcase = c.showcase();
-  /** Her closing line, withheld from the loaded record so opening the session
-   *  streams it (see DemoBridgeOptions.streamShowcaseTail). Consumed once. */
-  let showcaseTail: string | null = null;
-  if (options.streamShowcaseTail === true) {
-    // Walk back to the last herta block LONG enough to move the tide wave.
-    // The record closes on a short exchange (`不愧是黑塔女士。` / `知道就好。`),
-    // and streaming a few characters leaves the composer almost flat — the
-    // exact switched-off look this path exists to avoid. Blocks after the
-    // chosen one are dropped for the capture only; a poster is one frame.
-    // English spends about three times the characters on the same line, so
-    // its bar is higher: "Good that you know." passed 12 and the English
-    // posters ended on the pleasantry the Chinese ones skip (2026-10-14).
-    const minChars = lang === "en" ? 40 : 12;
-    for (let i = showcase.record.length - 1; i >= 0; i -= 1) {
-      const b = showcase.record[i];
-      if (b !== undefined && b.kind === "herta" && b.text.length >= minChars) {
-        showcaseTail = b.text;
-        showcase.record.length = i;
-        break;
-      }
-    }
-  }
   const sessions = new Map<string, DemoSession>([
     [
       SHOWCASE_ID,
@@ -1150,6 +1363,14 @@ export function createDemoBridge(
   let draining = false; // interrupt pressed: finish the stream instantly
   let gen = 0; // session switches cancel in-flight scripts
   let openingAudio: HTMLAudioElement | null = null;
+  /** The showcase's live run: played once a page load. */
+  let liveRunPlayed = false;
+  /** It is on, and can take talk and a steer. */
+  let liveRunOn = false;
+  /** Stop was pressed during it. */
+  let liveRunStopped = false;
+  /** She is speaking in the run: one speech at a time, as the drain does. */
+  let inRunSpeech: Promise<void> = Promise.resolve();
 
   /** Stop the opening clip — on interrupt, session switch, or delete. */
   const stopOpeningVoice = (): void => {
@@ -1210,6 +1431,42 @@ export function createDemoBridge(
     }
   };
 
+  /** Her words as paced deltas: zh per glyph, en per word. A stop flushes the
+   *  rest at once; a switch of session (`my` gone stale) ends it silently. */
+  async function streamDeltas(
+    text: string,
+    my: number,
+    paceMs?: number,
+  ): Promise<void> {
+    let sent = 0;
+    for (const unit of splitUnits(text, lang)) {
+      if (my !== gen) return;
+      if (draining) {
+        agent.emit({
+          kind: "agent",
+          event: {
+            type: "assistant.delta",
+            layer: "actor",
+            text: text.slice(sent),
+          } as AgentEvent,
+        });
+        return;
+      }
+      agent.emit({
+        kind: "agent",
+        event: {
+          type: "assistant.delta",
+          layer: "actor",
+          text: unit,
+        } as AgentEvent,
+      });
+      sent += unit.length;
+      await sleep(
+        lang === "zh" ? (paceMs ?? charPause(unit)) : wordPause(unit),
+      );
+    }
+  }
+
   /** One actor turn: lifecycle + paced deltas + the settled block. Mirrors the
    *  real sink's cadence — zh per glyph (~80ms/char), en per word. */
   async function actorTurn(
@@ -1241,34 +1498,7 @@ export function createDemoBridge(
       return;
     }
     beforeStream?.();
-    const units = splitUnits(text, lang);
-    let sent = 0;
-    for (const unit of units) {
-      if (my !== gen) return; // switched away: abandon silently
-      if (draining) {
-        agent.emit({
-          kind: "agent",
-          event: {
-            type: "assistant.delta",
-            layer: "actor",
-            text: text.slice(sent),
-          } as AgentEvent,
-        });
-        break;
-      }
-      agent.emit({
-        kind: "agent",
-        event: {
-          type: "assistant.delta",
-          layer: "actor",
-          text: unit,
-        } as AgentEvent,
-      });
-      sent += unit.length;
-      const delay =
-        lang === "zh" ? (paceMs ?? charPause(unit)) : wordPause(unit);
-      await sleep(delay);
-    }
+    await streamDeltas(text, my, paceMs);
     if (my !== gen) return;
     commitBlock(id, {
       kind: "herta",
@@ -1277,6 +1507,285 @@ export function createDemoBridge(
       at: new Date().toISOString(),
     });
     turn.emit({ kind: "finished", turnId });
+  }
+
+  /** One in-run speech: paced deltas, then the settled `duringRun` block. */
+  async function speakInRun(
+    id: string,
+    text: string,
+    steered?: string,
+  ): Promise<void> {
+    await streamDeltas(text, gen);
+    commitBlock(id, {
+      kind: "herta",
+      surface: "speech",
+      text,
+      duringRun: true,
+      ...(steered !== undefined ? { steered } : {}),
+      at: new Date().toISOString(),
+    });
+  }
+
+  /** Words to her during the run: they land, and she answers. The drain is
+   *  one lane, so a message waits for whatever she is saying. */
+  const talkInRun = (
+    id: string,
+    text: string,
+    answer: string,
+    steered?: string,
+  ): Promise<void> => {
+    inRunSpeech = inRunSpeech.then(async () => {
+      commitBlock(id, {
+        kind: "user",
+        text,
+        duringRun: true,
+        at: new Date().toISOString(),
+      });
+      await sleep(1100);
+      await speakInRun(id, answer, steered);
+    });
+    return inRunSpeech;
+  };
+
+  /** The script from step `from` on, committed with nobody watching: a run
+   *  the visitor walked away from still ends where it would have. */
+  function settleLiveRun(
+    id: string,
+    steps: readonly LiveStep[],
+    from: number,
+  ): void {
+    const land = (block: TerminalRecordBlock): void =>
+      commitBlock(id, { ...block, at: new Date().toISOString() });
+    const inRun = (text: string, steered?: string): void =>
+      land({
+        kind: "herta",
+        surface: "speech",
+        text,
+        duringRun: true,
+        ...(steered !== undefined ? { steered } : {}),
+      });
+    for (const step of steps.slice(from)) {
+      switch (step.kind) {
+        case "call":
+          land(op(step.verb, step.arg));
+          break;
+        case "result":
+          if (step.row !== undefined) land(step.row);
+          break;
+        case "row":
+          land(step.row);
+          break;
+        case "talk":
+          land({ kind: "user", text: step.text, duringRun: true });
+          inRun(step.answer, step.steered);
+          break;
+        case "steer":
+          land({ kind: "user", text: step.text, steer: true });
+          break;
+        case "beat":
+          inRun(step.text);
+          break;
+      }
+    }
+    land({ kind: "herta", surface: "speech", text: c.liveVerdict });
+  }
+
+  /**
+   * The showcase's live run. It speaks the wire a real one does, so every
+   * surface of it is the renderer's own.
+   */
+  async function playLiveRun(id: string): Promise<void> {
+    const my = gen;
+    const turnId = `demo-turn-${++seq}`;
+    const steps = c.liveRun();
+    const left = (): boolean => my !== gen;
+
+    liveRunOn = true;
+    liveRunStopped = false;
+    draining = false;
+    turn.emit({ kind: "started", turnId });
+    agent.emit({
+      kind: "agent",
+      event: { type: "turn.started", layer: "backend" } as AgentEvent,
+    });
+
+    const views: LiveToolView[] = [];
+    let ops = 0;
+    let open: LiveToolView | null = null;
+    let ticker: ReturnType<typeof setInterval> | null = null;
+    const update = (view: LiveToolView): void => {
+      views[views.length - 1] = view;
+      open = view.done ? null : view;
+      liveFeed.emit({ views: [...views], startedOps: ops, focus: view.id });
+    };
+    const stopTicker = (): void => {
+      if (ticker !== null) clearInterval(ticker);
+      ticker = null;
+    };
+    const closeCall = (): void => {
+      stopTicker();
+      if (open === null) return;
+      const { id: callId, tool } = open;
+      update({ ...open, done: true, ok: true });
+      agent.emit({
+        kind: "agent",
+        event: {
+          type: "tool.call.finished",
+          layer: "backend",
+          id: callId,
+          tool,
+        } as unknown as AgentEvent,
+      });
+    };
+
+    let at = 0;
+    for (; at < steps.length; at += 1) {
+      const step = steps[at] as LiveStep;
+      await sleep(step.wait);
+      await inRunSpeech;
+      if (left() || liveRunStopped) break;
+      switch (step.kind) {
+        case "call": {
+          const callId = `demo-call-${++seq}`;
+          const inputSummary = `${step.verb} ${step.arg}`;
+          agent.emit({
+            kind: "agent",
+            event: {
+              type: "tool.call.started",
+              layer: "backend",
+              id: callId,
+              tool: step.tool,
+              inputSummary,
+            } as AgentEvent,
+          });
+          const lines = step.ticker ?? [];
+          views.push({
+            id: callId,
+            tool: step.tool,
+            stage: "running",
+            started: true,
+            done: false,
+            summary: inputSummary,
+            streams: lines.length > 0,
+            commandLine: step.arg,
+            mode: "text",
+            tail: "",
+            lines: 0,
+            ordinal: ops,
+          });
+          ops += 1;
+          update(views[views.length - 1] as LiveToolView);
+          commitBlock(id, {
+            ...op(step.verb, step.arg),
+            at: new Date().toISOString(),
+          });
+          let printed = 0;
+          if (lines.length > 0) {
+            ticker = setInterval(() => {
+              if (open === null || printed >= lines.length) return;
+              printed += 1;
+              update({
+                ...open,
+                tail: lines.slice(0, printed).join("\n"),
+                lines: printed,
+              });
+            }, 900);
+          }
+          break;
+        }
+        case "result":
+          closeCall();
+          if (step.row !== undefined) {
+            commitBlock(id, { ...step.row, at: new Date().toISOString() });
+          }
+          break;
+        case "row":
+          commitBlock(id, { ...step.row, at: new Date().toISOString() });
+          break;
+        case "talk":
+          await talkInRun(id, step.text, step.answer, step.steered);
+          break;
+        case "steer":
+          commitBlock(id, {
+            kind: "user",
+            text: step.text,
+            steer: true,
+            at: new Date().toISOString(),
+          });
+          break;
+        case "beat":
+          inRunSpeech = inRunSpeech.then(() => speakInRun(id, step.text));
+          await inRunSpeech;
+          break;
+      }
+    }
+    await inRunSpeech;
+
+    if (left()) {
+      stopTicker();
+      liveRunOn = false;
+      settleLiveRun(id, steps, at);
+      return;
+    }
+
+    // Stopped: the record keeps what it reached, as a stopped run does.
+    if (liveRunStopped) {
+      closeCall();
+      liveRunOn = false;
+      commitBlock(id, {
+        kind: "system",
+        label: CO,
+        body: "中断",
+        role: "done-marker",
+        markerSummary: {
+          kind: "done",
+          state: "interrupted",
+          fileCount: 0,
+          riskCount: 0,
+        },
+        at: new Date().toISOString(),
+      });
+      agent.emit({
+        kind: "agent",
+        event: {
+          type: "turn.failed",
+          layer: "backend",
+          error: { kind: "interrupted", message: "interrupted" },
+        } as unknown as AgentEvent,
+      });
+      turn.emit({
+        kind: "failed",
+        turnId,
+        error: { code: "AbortError", message: "interrupted" },
+      });
+      return;
+    }
+
+    // The run is over: talk and steers go to the next turn from here.
+    liveRunOn = false;
+    agent.emit({
+      kind: "agent",
+      event: {
+        type: "agent.report",
+        layer: "backend",
+        report: { status: "completed" },
+      } as unknown as AgentEvent,
+    });
+    agent.emit({
+      kind: "agent",
+      event: { type: "turn.finished", layer: "backend" } as AgentEvent,
+    });
+    await sleep(1500);
+    await streamDeltas(c.liveVerdict, my);
+    commitBlock(id, {
+      kind: "herta",
+      surface: "speech",
+      text: c.liveVerdict,
+      at: new Date().toISOString(),
+    });
+    if (left()) return;
+    turn.emit({ kind: "finished", turnId });
+    turn.emit({ kind: "predicted", turnId, text: c.livePrediction });
   }
 
   const bridge: HertaBridge = {
@@ -1322,8 +1831,30 @@ export function createDemoBridge(
 
     interrupt: async () => {
       draining = true;
+      if (liveRunOn) liveRunStopped = true;
       stopOpeningVoice();
       return { ok: true };
+    },
+
+    // The composer's two lanes during the live run (ADR 0085): a message to
+    // her, and with the tag a steer to 板砖. Outside it, as in the app, they
+    // answer `queued` and the composer holds the words.
+    talkText: async (text) => {
+      if (!liveRunOn || activeId === null) return { queued: true };
+      const reply = hinted ? c.funnelShort : c.funnelFull;
+      hinted = true;
+      void talkInRun(activeId, text.trim(), reply);
+      return { accepted: "demo-live-run" };
+    },
+    steerText: async (text) => {
+      if (!liveRunOn || activeId === null) return { queued: true };
+      commitBlock(activeId, {
+        kind: "user",
+        text: text.trim(),
+        steer: true,
+        at: new Date().toISOString(),
+      });
+      return { accepted: "demo-live-run" };
     },
 
     rewindLastTurn: async (sessionId) => {
@@ -1402,15 +1933,30 @@ export function createDemoBridge(
       gen += 1;
       stopOpeningVoice();
       activeId = sessionId;
+      // The run starts now, so its commission is stamped now: the run row
+      // counts from the dispatch, and the page may have been open for a while.
+      const startRun = sessionId === SHOWCASE_ID && !liveRunPlayed;
+      if (startRun) {
+        const s = sessions.get(SHOWCASE_ID);
+        const [opener, dispatch] = s?.record.slice(-2) ?? [];
+        if (s !== undefined && opener !== undefined && dispatch !== undefined) {
+          s.record.splice(
+            -2,
+            2,
+            { ...opener, at: iso(20_000) },
+            { ...dispatch, at: iso(2_000) },
+          );
+        }
+      }
       const snap = snapshot(sessionId);
       setTimeout(() => reset.emit(snap), 0);
-      // Poster capture only: stream the withheld closing line once the
-      // switch entrance has settled, so the shot has a live wave.
-      if (showcaseTail !== null && sessionId === SHOWCASE_ID) {
-        const tail = showcaseTail;
-        showcaseTail = null;
+      // Once the switch entrance has settled, the run goes.
+      if (startRun) {
+        liveRunPlayed = true;
+        const my = gen;
         setTimeout(() => {
-          void actorTurn(SHOWCASE_ID, tail, 250);
+          if (my === gen) void playLiveRun(SHOWCASE_ID);
+          else settleLiveRun(SHOWCASE_ID, c.liveRun(), 0);
         }, 700);
       }
       return snap;
@@ -1591,6 +2137,7 @@ export function createDemoBridge(
     windowIsMaximized: async () => false,
     onWindowMaximized: (cb) => windowMax.sub(cb),
 
+    onLive: (cb) => liveFeed.sub(cb),
     onWorkspace: (cb) => workspace.sub(cb),
     onRecord: (cb) => record.sub(cb),
     onOverlay: (cb) => overlay.sub(cb),

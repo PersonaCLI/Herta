@@ -40,18 +40,8 @@ if (demoTheme === "dark") {
 // the theme stamp, because the sheet is drawn in the theme's ink.
 startOpeningGlyphSheet();
 
-// Capture seam for the narrow-screen posters (?poster=1, never set by the
-// site): streams the showcase's closing line instead of loading it settled,
-// so the still can be shot with the composer's wave alive. See
-// DemoBridgeOptions.streamShowcaseTail.
-const poster = params.get("poster") === "1";
-
 createRoot(rootEl).render(
   <StrictMode>
-    <App
-      bridge={createDemoBridge(demoLang, demoTheme, {
-        streamShowcaseTail: poster,
-      })}
-    />
+    <App bridge={createDemoBridge(demoLang, demoTheme)} />
   </StrictMode>,
 );

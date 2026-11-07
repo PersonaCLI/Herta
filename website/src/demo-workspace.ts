@@ -146,6 +146,41 @@ describe("InMemoryEventBus", () => {
 `;
 }
 
+/** The caller the patched bus breaks (the live run, 0.1.11): it expects its
+ *  callback before `publish` returns, as the old addListener delivered it. */
+export function sessionBus(): string {
+  return `import type { AgentEvent, InMemoryEventBus } from "@herta/core";
+
+/** One session's listener on the shared bus. */
+export class SessionBus {
+  constructor(
+    private readonly bus: InMemoryEventBus,
+    onTurn: (e: AgentEvent) => void,
+  ) {
+    this.bus.addListener("turn.finished", onTurn);
+  }
+}
+`;
+}
+
+/** The test the full suite finds red: core's own tests never reach it. */
+export function sessionBusTest(): string {
+  return `import { InMemoryEventBus } from "@herta/core";
+import { describe, expect, it } from "vitest";
+import { SessionBus } from "./session-bus.js";
+
+describe("SessionBus", () => {
+  it("hands the event over before publish returns", () => {
+    const bus = new InMemoryEventBus();
+    const seen: string[] = [];
+    new SessionBus(bus, (e) => seen.push(e.type));
+    bus.publish({ type: "turn.finished", layer: "actor", turnId: "t1" });
+    expect(seen).toEqual(["turn.finished"]);
+  });
+});
+`;
+}
+
 /** Stored path → content, keyed exactly as the showcase rows spell them. */
 export function demoWorkspaceFiles(
   eventBusNote: string,
@@ -153,6 +188,8 @@ export function demoWorkspaceFiles(
   return {
     "packages/core/src/event-bus.ts": eventBusAfterPatch(eventBusNote),
     "packages/core/src/event-bus.test.ts": eventBusTest(),
+    "packages/app-server/src/session-bus.ts": sessionBus(),
+    "packages/app-server/src/session-bus.test.ts": sessionBusTest(),
     "logs/alerts/2026-07-31.log": alertsLog(),
     ".herta/attachments/s-4f1c/crash-2026-08-02-3f9c1a20.log": crashLog(),
   };

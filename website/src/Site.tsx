@@ -446,7 +446,8 @@ const ZH: SiteCopy = {
   ),
   ctaDl: "下载桌面版",
   ctaGh: "GitHub",
-  tryHint: "接入空间站，跟她说句话试试。",
+  tryHint:
+    "接入空间站跟她说句话，或者点开左边的「说好的全量」，看一条正在跑的委托。",
   demoPosterNote: "可交互演示请用桌面浏览器打开。下图是她工作时的界面。",
   whyKicker: "为什么 · why a self",
   whyH2: "扮演与自我。",
@@ -648,7 +649,8 @@ const EN: SiteCopy = {
   ),
   ctaDl: "Download the desktop app",
   ctaGh: "GitHub",
-  tryHint: "Connect to the station and say something to her.",
+  tryHint:
+    "Connect to the station and say something to her, or open “The full suite you promised” on the left and watch a commission run.",
   demoPosterNote:
     "The live demo needs a desktop browser. Below is what she looks like at work.",
   whyKicker: "why a self · 自我，而非扮演",

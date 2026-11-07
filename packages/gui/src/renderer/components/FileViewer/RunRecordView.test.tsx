@@ -163,6 +163,23 @@ describe("the 完整记录 tab (ADR 0085 §9, amendment 2026-11-04 later)", () =
     ).toContain("src/Login.jsx");
   });
 
+  it("her steer in an English session names Brick, as her bubble does", () => {
+    const { container } = mount([
+      ...RUN.slice(0, 3),
+      {
+        kind: "herta",
+        surface: "speech",
+        text: "Decent question.\n\n@板砖 stay read-only.",
+        steered: "@板砖 stay read-only.",
+        at: at(3),
+      },
+      ...RUN.slice(3),
+    ]);
+    openRecord(container);
+    const steer = tab().querySelector(".run-record__steer") as HTMLElement;
+    expect(steer.textContent).toBe("@Brick stay read-only.");
+  });
+
   it("a read links its file, a clipped command its full log, a changed file opens", async () => {
     const { container, readWorkspaceFile } = mount(RUN);
     openRecord(container);

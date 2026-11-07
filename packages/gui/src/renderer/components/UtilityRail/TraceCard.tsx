@@ -6,6 +6,7 @@ import { usePresence } from "../../hooks/usePresence.js";
 import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { makeT, type TFn } from "../../i18n/LocaleProvider.js";
 import type { LiveToolView } from "../../ipc/bridge-types.js";
+import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { runShortcut } from "../../lib/shortcut-registry.js";
 import { hoverTipProps } from "../common/hover-tip.js";
 import { SpeakerAvatar } from "../common/SpeakerAvatar.js";
@@ -199,7 +200,7 @@ export function TraceCard(): JSX.Element | null {
                   className="trace-card__text"
                   {...hoverTipProps(row.item.text, { whenClipped: true })}
                 >
-                  {row.item.text}
+                  {renderBanzhuanText(row.item.text, "bubble", lang)}
                 </span>
               </li>
             );

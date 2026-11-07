@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionSelector } from "../../hooks/useSessionSelector.js";
 import { makeT, type TFn } from "../../i18n/LocaleProvider.js";
+import { renderBanzhuanText } from "../../lib/banzhuan-text.js";
 import { SpeakerAvatar } from "../common/SpeakerAvatar.js";
 import {
   type FileLinkTarget,
@@ -234,7 +235,11 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
                     t={t}
                   />
                   <span className="run-record__steer-text">
-                    {steerOf(section.block).text}
+                    {renderBanzhuanText(
+                      steerOf(section.block).text,
+                      "bubble",
+                      lang,
+                    )}
                   </span>
                 </li>
               ) : (

@@ -920,6 +920,18 @@ describe("the card's steers and its stop (ADR 0085 amendment 2026-11-04)", () =>
     expect(row.textContent).toBe("先别动 api 目录");
   });
 
+  it("her steer in an English session names Brick, as her bubble does", () => {
+    const h = renderCard({ locale: "en", lang: "en" });
+    push(h, user(), op("Reading", "a.ts"), {
+      kind: "herta",
+      surface: "speech",
+      text: "Decent question.\n\n@板砖 stay read-only.",
+      steered: "@板砖 stay read-only.",
+    } as TerminalRecordBlock);
+    const row = h.container.querySelector(".trace-card__steer") as HTMLElement;
+    expect(row.textContent).toBe("@Brick stay read-only.");
+  });
+
   it("停止运行 while the run works is the composer's Stop; the card held after the run has none", async () => {
     const h = renderWithSession(
       <WorkspaceRefsProvider>

@@ -5063,6 +5063,12 @@ button.session-item__badge--dismiss {
      space back to the card. */
   padding-bottom: 12px;
   margin-bottom: -12px;
+  /* Room on the left for a steer's avatar, which sits centred on the
+     hairline and so reaches 4.5px past the list's edge: the list scrolls,
+     so it clips on both axes, and the avatar lost its left side (owner
+     2026-11-08). The negative margin keeps every row where it was. */
+  padding-left: 5px;
+  margin-left: -5px;
 }
 .trace-node {
   position: relative;

@@ -23,6 +23,12 @@ env:
   # LAUNCHES Electron (vitest runs under node/jsdom; `electron-vite build`
   # only bundles), so skip the download on every job.
   ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  # Skipping it at install is not enough: since Electron 43 a plain
+  # require("electron") downloads the missing binary on the spot, and the
+  # main-process tests load it that way. A 504 from GitHub's releases failed
+  # four of them on 2026-11-08 though every test that ran passed. With an
+  # override the module only names a path, and nothing in CI runs it.
+  ELECTRON_OVERRIDE_DIST_PATH: /tmp/electron-not-installed
 
 jobs:
   check:

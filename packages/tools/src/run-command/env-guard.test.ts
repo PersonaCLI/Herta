@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { allowedEnvKeys, findDisallowedEnvKey } from "./env-guard.js";
+import {
+  allowedEnvKeys,
+  findDisallowedEnvKey,
+  isShellLocalName,
+} from "./env-guard.js";
 
 describe("findDisallowedEnvKey", () => {
   it("passes the inert config keys the parameter exists for", () => {
@@ -127,5 +131,37 @@ describe("findDisallowedEnvKey", () => {
     expect(allowedEnvKeys).toContain("PORT");
     expect(allowedEnvKeys).not.toContain("PATH");
     expect(allowedEnvKeys.every((k) => k === k.toUpperCase())).toBe(true);
+  });
+});
+
+describe("isShellLocalName (review 2026-11-10)", () => {
+  it("takes the names a script gives its own variables", () => {
+    for (const name of ["f", "i", "line", "file", "dir", "_", "pkg_name", "n2"])
+      expect(isShellLocalName(name), name).toBe(true);
+  });
+
+  it("refuses anything with a capital in it — the environment's own spelling", () => {
+    for (const name of ["PATH", "NODE_OPTIONS", "FILE", "Path", "myVar", "F"])
+      expect(isShellLocalName(name), name).toBe(false);
+  });
+
+  it("refuses the lower-case names programs do read", () => {
+    for (const name of [
+      "npm_config_script_shell",
+      "npm_package_name",
+      "http_proxy",
+      "https_proxy",
+      "no_proxy",
+      "tmp",
+      "temp",
+      "tmpdir",
+      "windir",
+    ])
+      expect(isShellLocalName(name), name).toBe(false);
+  });
+
+  it("is not a name at all: no verdict of local", () => {
+    for (const name of ["", "1f", "a-b", "a b", "a=b", "$f"])
+      expect(isShellLocalName(name), name).toBe(false);
   });
 });

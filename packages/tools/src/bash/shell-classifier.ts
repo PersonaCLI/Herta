@@ -22,7 +22,10 @@ import {
   unresolvedProgramName,
   type Verdict,
 } from "../run-command/classifier.js";
-import { findDisallowedEnvKey } from "../run-command/env-guard.js";
+import {
+  findDisallowedEnvKey,
+  isShellLocalName,
+} from "../run-command/env-guard.js";
 import { readPatchTargets } from "../run-command/patch-targets.js";
 import type { HostIdentity } from "../run-command/self-kill.js";
 import type { ShellPaths } from "./shell-paths.js";
@@ -104,8 +107,13 @@ const RISK_RANK: Record<RiskLevel, number> = {
  *   - `let`, `[[`, `test`   — evaluate arithmetic, which expands (and so RUNS)
  *                             a command substitution even inside single
  *                             quotes.
+ *   - `set -a`, `getopts`   — turns every later assignment into an export /
+ *                             assigns its target (review 2026-11-10; the
+ *                             same review found `export NAME`, `declare -x
+ *                             NAME`, `export NAME+=…` and a loop's variable
+ *                             unread).
  *
- * The last four groups keep their membership because their ordinary spellings
+ * The last five groups keep their membership because their ordinary spellings
  * really are inert; each is intercepted ABOVE this check and only falls
  * through to it once the dangerous shape has been ruled out. Anything added
  * here in future must satisfy the invariant in all of its argument forms, not
@@ -800,6 +808,35 @@ function envAsk(verb: string, key: string): Extract<Verdict, { kind: "ask" }> {
   };
 }
 
+/** A name given a value by something other than a spelled `K=V` — a loop's
+ *  variable, `getopts`' target. It asks unless it is on the env allow-list or
+ *  plainly the script's own (`isShellLocalName`). */
+function assignsEnvName(name: string): boolean {
+  return (
+    !isShellLocalName(name) && findDisallowedEnvKey({ [name]: "" }) !== null
+  );
+}
+
+/** True when `set …` turns `allexport` on: `a` in a short cluster, or `-o
+ *  allexport`. `set +a` does not, and neither does anything after `--` or
+ *  the first operand — those are positional parameters. An option word the
+ *  line does not spell out (`set -$x`) counts: it may be the one. */
+function turnsOnAllexport(words: readonly string[]): boolean {
+  for (let i = 1; i < words.length; i += 1) {
+    const w = words[i] as string;
+    if (w.startsWith("-") && (/[$`]/.test(w) || w.includes("__SUBST__")))
+      return true;
+    if (!/^[-+][A-Za-z]+$/.test(w)) return false;
+    const named = w.includes("o");
+    if (w.startsWith("-")) {
+      if (w.includes("a")) return true;
+      if (named && words[i + 1] === "allexport") return true;
+    }
+    if (named) i += 1;
+  }
+  return false;
+}
+
 function classifySegment(
   rawSeg: string,
   opts: ShellClassifyOpts,
@@ -1022,18 +1059,29 @@ function classifySegment(
           }
         }
       }
-      const out = segmentVerdict(asks);
+      // The loop ASSIGNS its variable, once per item, and nothing read the
+      // name: `for NODE_OPTIONS in --require=./x.js; do npm test; done` gave
+      // an exported variable its value behind an allow-tier command, and
+      // `for PATH in ./bin; do git status; done` chose the directory `git`
+      // was looked up in (review 2026-11-10). `for ((…))` has no name here.
       const variable = words[1];
+      const loopVariable =
+        variable !== undefined &&
+        variable !== "in" &&
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)
+          ? variable
+          : null;
+      if (loopVariable !== null && assignsEnvName(loopVariable))
+        asks.push(envAsk("sets", loopVariable));
+      const out = segmentVerdict(asks);
       if (
         kw === "for" &&
         staticList &&
         items.length > 0 &&
         items.length <= MAX_LOOP_ITEMS &&
-        variable !== undefined &&
-        variable !== "in" &&
-        /^[A-Za-z_][A-Za-z0-9_]*$/.test(variable)
+        loopVariable !== null
       ) {
-        return { ...out, bindings: { [variable]: items } };
+        return { ...out, bindings: { [loopVariable]: items } };
       }
       return out;
     }
@@ -1085,13 +1133,55 @@ function classifySegment(
     name === "readonly" ||
     name === "local"
   ) {
+    // A bare NAME under an exporting form hands the variable's CURRENT
+    // value to every later program, and only `NAME=value` words were read:
+    // `export NODE_OPTIONS`, `declare -x …`, `declare -gx …` and `local -x …`
+    // all allowed, whatever had given the variable its value (review
+    // 2026-11-10). `export -n` takes the attribute away, `-f` names
+    // functions, `-p` prints; `+x` is not `-x`.
+    const flags = words
+      .slice(1)
+      .filter((w) => /^-[A-Za-z]+$/.test(w))
+      .join("");
+    const exporting =
+      name === "export"
+        ? !/[nfp]/.test(flags)
+        : name !== "readonly" && flags.includes("x");
     const env: Record<string, string> = {};
     for (const w of words.slice(1)) {
-      const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(w);
+      // `NAME+=value` and `NAME[0]=value` assign too. The pattern read `=`
+      // only, so `export NODE_OPTIONS+=--require=./x.js` was no assignment.
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=(.*)$/s.exec(w);
       if (m) env[m[1] as string] = m[2] as string;
+      else if (exporting && /^[A-Za-z_][A-Za-z0-9_]*$/.test(w)) env[w] = "";
     }
     const bad = Object.keys(env).length > 0 ? findDisallowedEnvKey(env) : null;
     if (bad !== null) asks.push(envAsk("exports", bad));
+    return segmentVerdict(asks);
+  }
+
+  // `set -a` / `set -o allexport`: from here on EVERY assignment is an
+  // export, for the rest of the session.
+  if (name === "set" && turnsOnAllexport(words)) {
+    asks.push({
+      kind: "ask",
+      risk: "workspace_write",
+      code: "command_ask_env",
+      reason:
+        "set -a exports every variable assigned after it, for the rest of the session — a later assignment would reach the programs that run",
+    });
+    return segmentVerdict(asks);
+  }
+
+  // `getopts OPTSTRING NAME` assigns NAME on every call.
+  if (name === "getopts") {
+    const target = words[2];
+    if (
+      target !== undefined &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(target) &&
+      assignsEnvName(target)
+    )
+      asks.push(envAsk("assigns", target));
     return segmentVerdict(asks);
   }
 
@@ -1275,8 +1365,11 @@ function classifySegment(
       for (let i = 1; i < words.length; i += 1) {
         const w = words[i] as string;
         if (w.startsWith("-")) {
-          // `-p PROMPT`, `-d DELIM`, `-n N`, `-N N`, `-t T`, `-u FD`, `-a ARR`
-          if (/^-[pdnNtua]$/.test(w)) i += 1;
+          // `-p PROMPT`, `-d DELIM`, `-n N`, `-N N`, `-t T`, `-u FD` take a
+          // word that is not a target. `-a ARR` takes one that IS: skipped
+          // with the others, `read -a PATH <<< ./bin` assigned unread — and
+          // bash looks a command up in an array PATH's first element.
+          if (/^-[pdnNtu]$/.test(w)) i += 1;
           continue;
         }
         if (!seenFormat && name !== "read") {

@@ -95,3 +95,31 @@ export function findDisallowedEnvKey(
   }
   return null;
 }
+
+/** Lower-case names some setups do export: a Cygwin-style shell's own temp
+ *  variables, and Windows' spelling of its system directory. */
+const LOWERCASE_ENV_NAMES = new Set(["tmp", "temp", "tmpdir", "windir"]);
+
+/**
+ * True when `name` reads as a script's own variable — `f`, `i`, `line`, `_` —
+ * and not as one a program takes from its environment.
+ *
+ * For the sites that assign WITHOUT spelling `K=V`: a loop's variable,
+ * `getopts`' target. `for f in a b c` is the most ordinary loop a model
+ * writes, and a card about `f` would be one nobody reads. But the loop is an
+ * assignment all the same, and to a variable the shell already exports it is
+ * an assignment every later program sees: `for NODE_OPTIONS in
+ * --require=./x.js; do npm test; done` ran with no card (review 2026-11-10).
+ * So what such a site asks is whether the name could be one of those. The
+ * environment's names are upper-case by convention; the lower-case ones are
+ * few, and refused here by family — npm's `npm_config_*` / `npm_package_*`,
+ * the `*_proxy` names, and the short list above.
+ *
+ * This widens nothing: `findDisallowedEnvKey` is untouched, a spelled `n=0`
+ * asks as it did, and so does every export.
+ */
+export function isShellLocalName(name: string): boolean {
+  if (!/^[a-z_][a-z0-9_]*$/.test(name)) return false;
+  if (name.startsWith("npm_") || name.endsWith("_proxy")) return false;
+  return !LOWERCASE_ENV_NAMES.has(name);
+}

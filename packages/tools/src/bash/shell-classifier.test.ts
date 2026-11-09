@@ -1592,3 +1592,127 @@ describe("classifyShellCommand — macOS's wrappers and writers (Mac findings 20
     }
   });
 });
+
+describe("classifyShellCommand — a name given a value without `K=V` (review 2026-11-10)", () => {
+  const envAsks = (cmd: string): boolean => {
+    const d = classifyShellCommandDetailed(cmd, opts);
+    return (
+      d.verdict.kind === "ask" &&
+      (d.codes ?? [d.verdict.code]).includes("command_ask_env")
+    );
+  };
+
+  it("a loop's variable is an assignment: an environment name asks", () => {
+    for (const line of [
+      "for NODE_OPTIONS in --require=./x.js; do npm test; done",
+      "for NODE_OPTIONS in --require=./x.js; do export NODE_OPTIONS; npm test; done",
+      "for PATH in ./bin; do git status; done",
+      "select PATH in ./bin; do git status; done",
+      "for npm_config_script_shell in ./x.sh; do npm test; done",
+      "for http_proxy in http://127.0.0.1:9; do npm test; done",
+      "for FILE in a b c; do echo $FILE; done",
+      "for GIT_EXTERNAL_DIFF; do git diff; done",
+    ])
+      expect(envAsks(line), line).toBe(true);
+    expect(ask("for PATH in ./bin; do git status; done").reason).toContain(
+      "PATH",
+    );
+  });
+
+  it("…and a script's own name, or an allow-listed one, does not", () => {
+    for (const line of [
+      "for f in a b c; do echo $f; done",
+      "for i in 1 2 3; do npm test; done",
+      "for _ in 1 2 3; do npm test; done",
+      "for f; do echo $f; done",
+      "for pkg_dir in packages/tools packages/core; do ls $pkg_dir; done",
+      "for PORT in 3000 3001; do echo $PORT; done",
+      "select f in a b; do echo $f; done",
+    ])
+      expect(kind(line), line).toBe("allow");
+  });
+
+  it("a bare name under an exporting form goes through the allow-list", () => {
+    for (const line of [
+      "export NODE_OPTIONS",
+      "export f",
+      "export -- NODE_OPTIONS",
+      "declare -x NODE_OPTIONS",
+      "declare -gx NODE_OPTIONS",
+      "typeset -x PATH",
+      "local -x NODE_OPTIONS",
+    ])
+      expect(envAsks(line), line).toBe(true);
+    expect(ask("export NODE_OPTIONS").reason).toContain(
+      "exports the environment variable NODE_OPTIONS",
+    );
+  });
+
+  it("…and the forms that export nothing stay as they were", () => {
+    for (const line of [
+      "export NODE_ENV",
+      "export -n NODE_OPTIONS",
+      "export -p",
+      "declare -p PATH",
+      "declare -r NODE_OPTIONS",
+      "readonly NODE_OPTIONS",
+      "local count",
+    ])
+      expect(kind(line), line).toBe("allow");
+  });
+
+  it("`NAME+=value` and `NAME[0]=value` are assignments", () => {
+    for (const line of [
+      "export NODE_OPTIONS+=--require=./x.js",
+      "export PATH+=:./bin",
+      "declare -x PATH+=:./bin",
+      "declare PATH[0]=./bin",
+      "readonly NODE_OPTIONS+=x",
+    ])
+      expect(envAsks(line), line).toBe(true);
+    expect(kind("export NODE_ENV+=x")).toBe("allow");
+  });
+
+  it("`set -a` asks, however it is spelled", () => {
+    for (const line of [
+      "set -a",
+      "set -ea",
+      "set -e -a",
+      "set -o allexport",
+      "set -eo allexport",
+      "set -eu -o allexport",
+      "set -$flags",
+    ])
+      expect(envAsks(line), line).toBe(true);
+    expect(ask("set -a").reason).toContain("exports every variable");
+  });
+
+  it("…and the ordinary `set` lines do not", () => {
+    for (const line of [
+      "set -e",
+      "set -euo pipefail",
+      "set -eu -o pipefail",
+      "set +a",
+      "set +o allexport",
+      "set -- -a",
+      "set -- a b",
+      "set -e a -a",
+      "set -x",
+    ])
+      expect(kind(line), line).toBe("allow");
+  });
+
+  it("`getopts`' target is an assignment", () => {
+    expect(envAsks("getopts ab NODE_OPTIONS")).toBe(true);
+    expect(envAsks("while getopts ab PATH; do git status; done")).toBe(true);
+    expect(kind('getopts "ab" opt')).toBe("allow");
+    expect(kind('while getopts "ab" opt; do echo $opt; done')).toBe("allow");
+  });
+
+  it("`read -a` names a target like any other", () => {
+    expect(envAsks("read -a PATH")).toBe(true);
+    expect(envAsks("read -r -a NODE_OPTIONS")).toBe(true);
+    // The words the other options take are still not targets.
+    expect(kind("read -p PATH -t 1 TERM")).toBe("allow");
+  });
+});

@@ -84,6 +84,7 @@ import {
   readMiniMaxKeyPlain,
   readMiniMaxPlanKeyPlain,
 } from "./key-store.js";
+import { runsWhenOpened } from "./open-guard.js";
 import {
   readWorkspaceBytesBounded,
   readWorkspaceFileBounded,
@@ -1342,7 +1343,10 @@ export function createSessionService(
     );
     // The viewer's 打开: hand the jailed path to the OS default app. The
     // same resolution as the read — an outside-resolving name never
-    // reaches shell.openPath.
+    // reaches shell.openPath. Nor does a file the OS would RUN when opened
+    // (a program, a script, a shortcut): that one is shown in its folder
+    // instead, so a file 板砖 wrote is never one click from running with
+    // nothing asked (`open-guard.ts`, review 2026-11-10).
     handle(
       CMD.openWorkspaceFile,
       async (_e, sessionId: string, path: string) => {
@@ -1350,6 +1354,10 @@ export function createSessionService(
         if (s === null || s.sessionId !== sessionId) return false;
         const r = await resolveInsideWorkspace(s.backendWorkspace, path);
         if (r.kind !== "ok") return false;
+        if (await runsWhenOpened(r.abs)) {
+          shell.showItemInFolder(r.abs);
+          return true;
+        }
         return (await shell.openPath(r.abs)) === "";
       },
     );

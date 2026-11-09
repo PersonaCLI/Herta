@@ -758,7 +758,9 @@ export interface HertaBridge {
     sessionId: string,
   ): Promise<ReadWorkspaceBranchesReply>;
   /** The viewer's 打开 button: open the jailed path with the OS default
-   *  application (shell.openPath). False when refused/missing. */
+   *  application (shell.openPath). A file the OS would run when opened — a
+   *  program, a script, a shortcut — is shown in its folder instead, and
+   *  that answers true as well. False when refused/missing. */
   openWorkspaceFile?(sessionId: string, path: string): Promise<boolean>;
   /** A file chip's 在资源管理器中显示 (ADR 0072 amendment 2026-10-20): show
    *  the jailed path in the OS file manager. False when refused/missing. */

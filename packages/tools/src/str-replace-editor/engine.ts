@@ -3,7 +3,11 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { countDiffLinesFor, type ToolContext } from "@herta/core";
 import type { ShellPaths } from "../bash/shell-paths.js";
-import { computeUnifiedDiff } from "../edit-file/engine.js";
+import {
+  computeUnifiedDiff,
+  isCrlfOnly,
+  withCrlf,
+} from "../edit-file/engine.js";
 import { resolveSafePath, type SafePathResult } from "../path-safety.js";
 import type { StrReplaceEditorInput } from "./schema.js";
 
@@ -212,13 +216,18 @@ export type PlannedEdit =
   | { ok: false; code: string; message: string };
 
 /** Compute the post-edit content for str_replace / insert against `before`
- *  — the trained error strings on failure. `relPath` labels the diff. */
+ *  — the trained error strings on failure. `relPath` labels the diff.
+ *
+ *  In a file whose every line ends `\r\n`, the line breaks the model wrote
+ *  are read as the file's (review 2026-11-10; `inFileTerms` in edit_file's
+ *  engine says why). The messages still quote `old_str` as it was written. */
 export function planEdit(
   input: StrReplaceEditorInput,
   before: string,
   display: string,
   relPath: string,
 ): PlannedEdit {
+  const crlf = isCrlfOnly(before);
   if (input.command === "str_replace") {
     const oldStr = input.old_str;
     if (typeof oldStr !== "string" || oldStr.length === 0) {
@@ -228,14 +237,15 @@ export function planEdit(
         message: "Parameter `old_str` is required for command: str_replace",
       };
     }
-    const newStr = input.new_str ?? "";
+    const sought = crlf ? withCrlf(oldStr) : oldStr;
+    const newStr = crlf ? withCrlf(input.new_str ?? "") : (input.new_str ?? "");
     const offsets: number[] = [];
     let off = 0;
     while (true) {
-      const i = before.indexOf(oldStr, off);
+      const i = before.indexOf(sought, off);
       if (i === -1) break;
       offsets.push(i);
-      off = i + oldStr.length;
+      off = i + sought.length;
     }
     if (offsets.length === 0) {
       return {
@@ -255,7 +265,7 @@ export function planEdit(
     }
     const at = offsets[0] as number;
     const after =
-      before.slice(0, at) + newStr + before.slice(at + oldStr.length);
+      before.slice(0, at) + newStr + before.slice(at + sought.length);
     return {
       ok: true,
       after,
@@ -278,7 +288,10 @@ export function planEdit(
       message: "Parameter `new_str` is required for command: insert",
     };
   }
-  const lines = before.split("\n");
+  // Line by line with `\n` between, whatever the file's own ending: the
+  // inserted lines then take it with every other line, on the way out.
+  const lines = (crlf ? before.replace(/\r\n/g, "\n") : before).split("\n");
+  const added = crlf ? input.new_str.replace(/\r\n/g, "\n") : input.new_str;
   const n = line as number;
   if (n < 0 || n > lines.length) {
     return {
@@ -287,11 +300,12 @@ export function planEdit(
       message: `Invalid \`insert_line\` parameter: ${n}. It should be within the range of lines of the file: [0, ${lines.length}]`,
     };
   }
-  const after = [
+  const joined = [
     ...lines.slice(0, n),
-    ...input.new_str.split("\n"),
+    ...added.split("\n"),
     ...lines.slice(n),
   ].join("\n");
+  const after = crlf ? withCrlf(joined) : joined;
   return { ok: true, after, diff: computeUnifiedDiff(before, after, relPath) };
 }
 

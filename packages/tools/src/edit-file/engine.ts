@@ -85,10 +85,47 @@ function countOccurrences(haystack: string, needle: string): number {
   }
 }
 
-export function validateHunks(
+/**
+ * Whether every line break in `text` is `\r\n` — a Windows file. One bare
+ * `\n` and the file is taken exactly as it stands: nothing says which of its
+ * two endings a new line should have.
+ */
+export function isCrlfOnly(text: string): boolean {
+  return text.includes("\r\n") && !/(?:^|[^\r])\n/.test(text);
+}
+
+/** What the model wrote, its line breaks spelled as a `\r\n` file spells
+ *  them. A break already written `\r\n` stays one. */
+export function withCrlf(text: string): string {
+  return text.replace(/\r?\n/g, "\r\n");
+}
+
+/**
+ * The hunks in the file's own terms.
+ *
+ * A model writes `\n`. Against a file whose lines end `\r\n`, a search of
+ * two lines then matched nothing — `hunk_not_found` for text the model had
+ * just read — and a replacement of two lines left a bare `\n` in the middle
+ * of the file (review 2026-11-10). In such a file the hunk's own line breaks
+ * are read as the file's. Everything that matched before still matches, and
+ * where it did, what it writes differs only in those bare `\n`.
+ */
+function inFileTerms(
   content: string,
   hunks: ReadonlyArray<Hunk>,
+): ReadonlyArray<Hunk> {
+  if (!isCrlfOnly(content)) return hunks;
+  return hunks.map((h) => ({
+    search: withCrlf(h.search),
+    replace: withCrlf(h.replace),
+  }));
+}
+
+export function validateHunks(
+  content: string,
+  given: ReadonlyArray<Hunk>,
 ): ValidateResult {
+  const hunks = inFileTerms(content, given);
   let current = content;
   const replacementRanges: ApplyTrace[] = [];
   for (let i = 0; i < hunks.length; i++) {
@@ -142,8 +179,9 @@ export function validateHunks(
 
 export function applyHunks(
   content: string,
-  hunks: ReadonlyArray<Hunk>,
+  given: ReadonlyArray<Hunk>,
 ): string {
+  const hunks = inFileTerms(content, given);
   let current = content;
   for (const h of hunks) {
     const idx = current.indexOf(h.search);
@@ -210,18 +248,27 @@ interface DiffOp {
  * preview stops being worth a main-process stall.
  */
 const MAX_LCS_CELLS = 2_000_000;
-/** Unchanged lines kept either side of the changed span once trimming starts. */
+/** Unchanged lines kept either side of the changed span. */
 const TRIM_CONTEXT = 3;
 
 /**
  * The diff body, computed within a bounded budget.
  *
- * Under the budget this is exactly the whole-file walk it has always been, so
- * ordinary edits are byte-identical to before. Over it, the identical head and
- * tail are peeled first — a one-line replacement in a 30,000-line file has a
- * tiny middle, which is the case that used to be fatal — and only the middle is
- * walked. If even the middle is too large, the span is emitted as one complete
- * replacement.
+ * The identical head and tail are peeled first, at every size, and only the
+ * middle is walked — a one-line replacement has a tiny middle whatever the
+ * file's length. If even the middle is too large, the span is emitted as one
+ * complete replacement.
+ *
+ * Until the review of 2026-11-10 a file under the budget took the whole-file
+ * walk instead, and it paid twice. The table is quadratic right up to the
+ * budget: one changed line in a 1,400-line file cost some 45 ms on the main
+ * thread, in the permission rule and again in the tool. And the diff carried every
+ * unchanged line of the file, so the record held the file once per edit and
+ * the prompt's and the terminal's collapse (`collapseLongDiffs`, which keeps
+ * a diff's FIRST lines) kept the unchanged head and dropped the change. The
+ * counts are the same either way: a common head and tail are part of some
+ * longest common subsequence, so peeling them changes no `+N -M`. Unchanged
+ * lines BETWEEN two changes are still shown in full.
  *
  * The coarse form is deliberately NOT truncated: `countDiffLines` derives the
  * report's `+N -M` from this text, so dropping lines here would fabricate the
@@ -229,10 +276,6 @@ const TRIM_CONTEXT = 3;
  * allocation was the failure.
  */
 function diffBody(a: string[], b: string[]): string {
-  if (a.length * b.length <= MAX_LCS_CELLS) {
-    return render(diffOps(a, b, longestCommonSubsequence(a, b)));
-  }
-
   let prefix = 0;
   while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) {
     prefix += 1;

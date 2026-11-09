@@ -118,6 +118,44 @@ describe("applyHunks", () => {
     );
   });
 
+  it("a search written with \\n finds its lines in a \\r\\n file, and what it writes ends \\r\\n (review 2026-11-10)", () => {
+    const file = "a\r\nb\r\nc\r\n";
+    const hunks = [{ search: "a\nb", replace: "A\nB\nB2" }];
+    expect(validateHunks(file, hunks)).toEqual({ ok: true });
+    expect(applyHunks(file, hunks)).toBe("A\r\nB\r\nB2\r\nc\r\n");
+  });
+
+  it("a one-line search whose replacement adds a line leaves no bare \\n in a \\r\\n file", () => {
+    expect(applyHunks("a\r\nb\r\n", [{ search: "a", replace: "a\nx" }])).toBe(
+      "a\r\nx\r\nb\r\n",
+    );
+  });
+
+  it("a hunk already written with \\r\\n is taken as written, and a second hunk still finds its place", () => {
+    const file = "a\r\nb\r\nc\r\nd\r\n";
+    const hunks = [
+      { search: "a\r\nb", replace: "A\r\nB" },
+      { search: "c\nd\n", replace: "" },
+    ];
+    expect(validateHunks(file, hunks)).toEqual({ ok: true });
+    expect(applyHunks(file, hunks)).toBe("A\r\nB\r\n");
+  });
+
+  it("a file with both endings, and a \\n file, are edited exactly as written", () => {
+    const mixed = "a\r\nb\nc\n";
+    expect(validateHunks(mixed, [{ search: "a\nb", replace: "x" }])).toEqual({
+      ok: false,
+      code: "hunk_not_found",
+      message: "hunk[0] search not found",
+    });
+    expect(applyHunks(mixed, [{ search: "b\nc", replace: "B\nC" }])).toBe(
+      "a\r\nB\nC\n",
+    );
+    expect(applyHunks("a\nb\n", [{ search: "a", replace: "A\r\nA2" }])).toBe(
+      "A\r\nA2\nb\n",
+    );
+  });
+
   it("preserves trailing newline", () => {
     expect(applyHunks("hi\n", [{ search: "hi", replace: "hello" }])).toBe(
       "hello\n",
@@ -280,13 +318,75 @@ describe("computeUnifiedDiff — bounded cost (2026-08-25)", () => {
     expect(d).toContain("too large to align");
   });
 
-  it("below the budget nothing changes — still the whole-file walk", () => {
+  it("a small file's diff is its change and three lines either side, not the file (review 2026-11-10)", () => {
     const before = lines(300);
-    const after = before.replace("line 10\n", "TEN\n");
+    const after = before.replace("line 200\n", "TWO HUNDRED\n");
     const d = computeUnifiedDiff(before, after, "f.txt");
-    expect(d).not.toContain("unchanged lines omitted");
-    expect(d.split("\n").filter((l) => l.startsWith(" ")).length).toBe(299);
-    expect(count(d, "+")).toBe(1);
-    expect(count(d, "-")).toBe(1);
+    expect(d.split("\n")).toEqual([
+      "--- a/f.txt",
+      "+++ b/f.txt",
+      "\\ 197 unchanged lines omitted",
+      " line 197",
+      " line 198",
+      " line 199",
+      "+TWO HUNDRED",
+      "-line 200",
+      " line 201",
+      " line 202",
+      " line 203",
+      "\\ 96 unchanged lines omitted",
+    ]);
+  });
+
+  it("a change at a file's edge has no marker on that side", () => {
+    const before = lines(10);
+    const top = computeUnifiedDiff(
+      before,
+      before.replace("line 0\n", "ZERO\n"),
+      "f.txt",
+    );
+    expect(top.split("\n").slice(2, 7)).toEqual([
+      "+ZERO",
+      "-line 0",
+      " line 1",
+      " line 2",
+      " line 3",
+    ]);
+    expect(top).toContain("\\ 6 unchanged lines omitted");
+    const end = computeUnifiedDiff(
+      before,
+      before.replace("line 9\n", "NINE\n"),
+      "f.txt",
+    );
+    expect(end.split("\n").slice(-5)).toEqual([
+      " line 6",
+      " line 7",
+      " line 8",
+      "+NINE",
+      "-line 9",
+    ]);
+  });
+
+  it("the lines between two changes are all there, and the counts are the walk's", () => {
+    const before = lines(40);
+    const after = before
+      .replace("line 5\n", "FIVE\n")
+      .replace("line 30\n", "THIRTY\nTHIRTY-AND-A-HALF\n");
+    const d = computeUnifiedDiff(before, after, "f.txt");
+    expect(count(d, "+")).toBe(3);
+    expect(count(d, "-")).toBe(2);
+    // 3 before the first change, the 24 between the two, 3 after the second.
+    expect(d.split("\n").filter((l) => l.startsWith(" ")).length).toBe(30);
+    expect(d).toContain("\\ 2 unchanged lines omitted");
+    expect(d).toContain("\\ 6 unchanged lines omitted");
+  });
+
+  it("a mid-sized file's one-line change is not a quadratic walk", () => {
+    // 1,400 lines sat just under the table's budget: some 45 ms a diff.
+    const before = lines(1400);
+    const after = before.replace("line 700\n", "SEVEN HUNDRED\n");
+    const started = performance.now();
+    for (let i = 0; i < 20; i += 1) computeUnifiedDiff(before, after, "f.txt");
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });

@@ -331,6 +331,7 @@ export {
   type BackendRunNote,
   type ReviewNote,
   reportUsageNote,
+  type SupervisorNote,
   setUsageNoteSink,
   type UsageNote,
   type UsageNoteSink,

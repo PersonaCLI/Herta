@@ -11,7 +11,7 @@ import type {
   ProviderAdapter,
   TerminalRecord,
 } from "@herta/core";
-import { errorMessage } from "@herta/core";
+import { errorMessage, reportUsageNote } from "@herta/core";
 import {
   ActorTurnAbortedError,
   type ActorTurnDeps,
@@ -145,6 +145,12 @@ export interface SupervisorVerdict {
  * contract) and aborts record-carrying (audit 2026-07-13 T2.5 — a raw
  * rethrow reverted the driver to its pre-turn record, losing blocks a prior
  * @板砖 dispatch already put on screen and disk, D7).
+ *
+ * Every verdict reached leaves one line in the usage log (`SupervisorNote`,
+ * review 2026-11-10): what it was, how long the call held the speech, and —
+ * for a fail-soft — why no verdict was read. Fail-soft is silent on screen by
+ * design, so that line is the only place a supervisor that has stopped
+ * answering differs from one that approves.
  */
 export async function runSupervisorVerdict(opts: {
   deps: ActorTurnDeps;
@@ -158,6 +164,7 @@ export async function runSupervisorVerdict(opts: {
 }): Promise<SupervisorVerdict> {
   const { deps, signal } = opts;
   return withJudgmentWindow(deps.bus, signal, async (judgeSignal) => {
+    const started = Date.now();
     try {
       let buffered = "";
       let reasoning = "";
@@ -184,7 +191,16 @@ export async function runSupervisorVerdict(opts: {
           rawOutput: buffered,
         }),
       );
-      return parseSupervisorVerdict(buffered);
+      const verdict = parseSupervisorVerdict(buffered);
+      reportUsageNote({
+        kind: "supervisor",
+        verdict: verdict.verdict,
+        // The parser reads anything that is not a block as an approval,
+        // nothing at all included.
+        ...(buffered.trim().length === 0 ? { why: "empty" as const } : {}),
+        ms: Date.now() - started,
+      });
+      return verdict;
     } catch (err) {
       if (signal.aborted) {
         await abandonController(opts.controller);
@@ -202,6 +218,12 @@ export async function runSupervisorVerdict(opts: {
             : `[supervisor failed: ${errorMsg}]`,
         }),
       );
+      reportUsageNote({
+        kind: "supervisor",
+        verdict: "ok",
+        why: timedOut ? "timeout" : "error",
+        ms: Date.now() - started,
+      });
       return { verdict: "ok", blockFindings: [] };
     }
   });

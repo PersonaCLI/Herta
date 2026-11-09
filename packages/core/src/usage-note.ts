@@ -79,7 +79,32 @@ export interface WebNote {
   readonly ms: number;
 }
 
-export type UsageNote = BackendRunNote | ActorTurnNote | ReviewNote | WebNote;
+/** One supervisor verdict on a candidate speech (review 2026-11-10). The
+ *  call fails soft: a provider error, the deadline and an empty answer all
+ *  commit the candidate as written, so on screen a supervisor that has
+ *  stopped answering looks exactly like one that approves everything. This
+ *  line tells the two apart. It is also where the gate's cost and its use
+ *  are read: the speech's tail is held for `ms`, and the share of `block`
+ *  lines is how often that hold changed anything. A turn the user
+ *  interrupted reports nothing — no verdict was reached. */
+export interface SupervisorNote {
+  readonly kind: "supervisor";
+  /** What the candidate was committed on. */
+  readonly verdict: "ok" | "block";
+  /** Set when no verdict was read and `ok` is the fail-soft: the call threw
+   *  (`error`), ran out its deadline (`timeout`), or answered with nothing
+   *  (`empty`). */
+  readonly why?: "error" | "timeout" | "empty";
+  /** Wall time of the call. */
+  readonly ms: number;
+}
+
+export type UsageNote =
+  | BackendRunNote
+  | ActorTurnNote
+  | ReviewNote
+  | WebNote
+  | SupervisorNote;
 
 export type UsageNoteSink = (note: UsageNote) => void;
 

@@ -39,6 +39,13 @@ const ROTATE_AT_BYTES = 4 * 1024 * 1024;
  *
  *   {"at":"…","note":"web","endpoint":"fetch","ok":true,"ms":4620}
  *
+ * And one line per supervisor verdict on a candidate speech (review
+ * 2026-11-10). The call fails soft and silently, so a supervisor that has
+ * stopped answering reads on screen as one that approves; here it does not:
+ *
+ *   {"at":"…","note":"supervisor","verdict":"block","ms":9870}
+ *   {"at":"…","note":"supervisor","verdict":"ok","why":"timeout","ms":60003}
+ *
  * Installs the providers' and core's process-wide sinks, so one call covers
  * every provider and run the host builds. Writes are queued and
  * asynchronous — a model call never waits on the disk — and a failed write

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactSecrets } from "./redactor.js";
+import { hasOpaqueWord, redactSecrets } from "./redactor.js";
 
 describe("redactSecrets", () => {
   it("redacts AWS access keys", () => {
@@ -301,6 +301,46 @@ describe("one long word (review 2026-11-05, G11)", () => {
     );
     expect(redactSecrets('a=1 PASSWORD=x b=2 secret = "y"')).toBe(
       "a=1 PASSWORD=[REDACTED:env_secret] b=2 secret = [REDACTED:env_secret]",
+    );
+  });
+});
+
+describe("a long word with no digit in it (review 2026-11-10)", () => {
+  it("is read in linear time behind a key", () => {
+    for (const line of [
+      `TOKEN=${"a".repeat(200_000)}`,
+      `f(token=${"a".repeat(200_000)})`,
+      `  password=${"snake_case_".repeat(20_000)},`,
+    ]) {
+      const started = performance.now();
+      redactSecrets(line);
+      expect(performance.now() - started, line.slice(0, 20)).toBeLessThan(500);
+    }
+  });
+
+  it("the walk answers as the pattern did", () => {
+    const pattern = /(?=\w*\d)\b\w{12,}\b/u;
+    const pieces = ["abcdef", "x", "_", "7", "0123", ".", " ", "-", "é", "("];
+    let seed = 11;
+    const next = (n: number): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    for (let round = 0; round < 6000; round += 1) {
+      let text = "";
+      for (let i = next(8); i >= 0; i -= 1) {
+        text += pieces[next(pieces.length)];
+      }
+      expect(hasOpaqueWord(text), text).toBe(pattern.test(text));
+    }
+  });
+
+  it("still tells an opaque value from a name inside a call", () => {
+    expect(
+      redactSecrets("User(id=1, token=abc123def456.ghi789jkl012)"),
+    ).not.toContain("abc123def456");
+    expect(redactSecrets("connect(password=db_password,")).toBe(
+      "connect(password=db_password,",
     );
   });
 });

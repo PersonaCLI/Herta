@@ -79,15 +79,26 @@ const INDENTED_RE = /^(?:\s*\d+\t|\S*:\d+:)?\s+$/;
 const SECRET_NAME_RE = /api_?key|access_?key|secret|passw(?:or)?d|token/i;
 
 /** A long word with a digit in it: an opaque value, not a name. A log's
- *  `User(id=1, token=abc123def456.ghi789jkl012)` has the shape of code. */
-const OPAQUE_WORD_RE = /(?=\w*\d)\b\w{12,}\b/u;
+ *  `User(id=1, token=abc123def456.ghi789jkl012)` has the shape of code.
+ *
+ *  Two passes, each linear. As one pattern (`/(?=\w*\d)\b\w{12,}\b/`) the
+ *  lookahead ran to the word's end from every character of it, so one long
+ *  word with no digit — `TOKEN=` and 40 000 letters — held the main thread
+ *  for 0.8 s, four times that at twice the length (review 2026-11-10).
+ *  Exported for its test, which holds it to that pattern. */
+export function hasOpaqueWord(value: string): boolean {
+  for (const word of value.matchAll(/\w{12,}/g)) {
+    if (/\d/.test(word[0])) return true;
+  }
+  return false;
+}
 
 /** A keyword argument, whose value is code: inside a call this line opens, or
  *  on a line of its own in a call over several lines. `f(password=hunter2)`
  *  is a name in Python and a value anywhere else, so a bare word passes only
  *  when it is plainly a variable's name. */
 function isKeywordArgument(before: string, value: string): boolean {
-  if (OPAQUE_WORD_RE.test(value)) return false;
+  if (hasOpaqueWord(value)) return false;
   const bare = value.replace(/[,)]+$/u, "");
   if (
     !CODE_REFERENCE_RE.test(value) &&

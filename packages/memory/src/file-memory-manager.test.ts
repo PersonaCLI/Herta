@@ -260,4 +260,109 @@ describe("FileMemoryManager", () => {
     await m.recall({}); // triggers ensureCache; file missing → empty
     expect(m.currentItems()).toEqual([]);
   });
+
+  describe("replace — a correction (ADR 0077 amendment 2026-11-09)", () => {
+    const WRONG = "3f9c2a71-0b4e-4d1a-9c55-1e2f3a4b5c6d";
+    const OTHER = "8a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+    function seeded() {
+      const { shim, state } = makeShim();
+      const wrong = mkItem({
+        id: WRONG,
+        kind: "test_command",
+        text: "the tests run with node --test test/",
+      });
+      const other = mkItem({
+        id: OTHER,
+        kind: "style_preference",
+        text: "tabs",
+      });
+      state.files.set(
+        FILE_PATH,
+        `${JSON.stringify(wrong)}\n${JSON.stringify(other)}\n`,
+      );
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      return { m, state, wrong, other };
+    }
+
+    it("the named fact goes and the correction takes its place; the rest stay", async () => {
+      const { m, wrong, other } = seeded();
+      const fixed = mkItem({
+        id: "new-1",
+        kind: "test_command",
+        text: "the tests run with bare node --test",
+        lastSeen: "2026-11-09T00:00:00.000Z",
+      });
+      const outcome = await m.replace("3f9c2a71", fixed);
+      expect(outcome).toEqual({ ok: true, replaced: wrong });
+      expect(await m.recall({})).toEqual([other, fixed]);
+    });
+
+    it("names a fact by the handle recall shows, the whole id, or with an id: lead-in", async () => {
+      for (const name of ["3f9c2a71", WRONG, "id:3F9C2A71", "#3f9c2a71"]) {
+        const { m } = seeded();
+        const outcome = await m.replace(name, mkItem({ id: "n", text: "x" }));
+        expect(outcome.ok, name).toBe(true);
+      }
+    });
+
+    it("writes nothing when no fact has the id, or when the name is shorter than a handle", async () => {
+      for (const name of ["deadbeef", "3f9c2a7", ""]) {
+        const { m, state } = seeded();
+        const before = state.files.get(FILE_PATH);
+        const outcome = await m.replace(name, mkItem({ id: "n", text: "x" }));
+        expect(outcome, name).toEqual({ ok: false, reason: "not_found" });
+        expect(state.files.get(FILE_PATH)).toBe(before);
+      }
+    });
+
+    it("writes nothing when more than one fact has an id that starts so", async () => {
+      const { shim, state } = makeShim();
+      state.files.set(
+        FILE_PATH,
+        [
+          mkItem({ id: "aaaaaaaa-1111", text: "one" }),
+          mkItem({ id: "aaaaaaaa-2222", text: "two" }),
+        ]
+          .map((it) => JSON.stringify(it))
+          .join("\n"),
+      );
+      const before = state.files.get(FILE_PATH);
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      const outcome = await m.replace(
+        "aaaaaaaa",
+        mkItem({ id: "n", text: "x" }),
+      );
+      expect(outcome).toEqual({ ok: false, reason: "ambiguous" });
+      expect(state.files.get(FILE_PATH)).toBe(before);
+    });
+
+    it("a correction that says what another saved fact says re-confirms that one", async () => {
+      const { m, other } = seeded();
+      const outcome = await m.replace(
+        "3f9c2a71",
+        mkItem({
+          id: "n",
+          kind: "style_preference",
+          text: "tabs",
+          lastSeen: "2026-11-09T00:00:00.000Z",
+        }),
+      );
+      expect(outcome.ok).toBe(true);
+      const items = await m.recall({});
+      expect(items).toHaveLength(1);
+      expect(items[0]?.id).toBe(other.id);
+      expect(items[0]?.lastSeen).toBe("2026-11-09T00:00:00.000Z");
+    });
+
+    it("waits in the same queue as save, so neither drops the other", async () => {
+      const { m } = seeded();
+      await Promise.all([
+        m.save(mkItem({ id: "s", kind: "repo_fact", text: "saved alongside" })),
+        m.replace("3f9c2a71", mkItem({ id: "n", text: "corrected" })),
+      ]);
+      const texts = (await m.recall({})).map((it) => it.text).sort();
+      expect(texts).toEqual(["corrected", "saved alongside", "tabs"]);
+    });
+  });
 });

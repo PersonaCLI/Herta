@@ -413,6 +413,54 @@ describe("板砖's other rows", () => {
   });
 });
 
+describe("a correction, as the bridge writes it (ADR 0077 amendment 2026-11-09)", () => {
+  const corrected: SystemBlock = (() => {
+    const event: AgentEvent = {
+      type: "tool.call.finished",
+      layer: "backend",
+      id: "m2",
+      tool: "memory_save",
+      result: {
+        ok: true,
+        summary: "remembered: test_command, replacing 3f9c2a71",
+        data: {
+          id: "y",
+          kind: "test_command",
+          text: "测试用不带参数的 node --test",
+          why: "这次实测 node --test test/ 失败",
+          replaced: {
+            id: "3f9c2a71-0b4e",
+            kind: "test_command",
+            text: "测试用 node --test test/",
+          },
+        },
+      },
+    };
+    const block = projectBackendEvent(event);
+    if (block === null) throw new Error("the bridge wrote no row");
+    return block;
+  })();
+
+  it("one row names the new fact and the one it took out", () => {
+    expect(corrected.digest).toBeUndefined();
+    expect(corrected.body).toBe(
+      "↳ remembered: 测试用不带参数的 node --test · replaces: 测试用 node --test test/",
+    );
+  });
+
+  it("she reads both, in the session's language, fresh and folded", () => {
+    expect(read(corrected)).toBe(
+      "板砖记下了：测试用不带参数的 node --test（换掉了旧的一条：测试用 node --test test/）",
+    );
+    expect(read(corrected, "en")).toBe(
+      "板砖 noted: 测试用不带参数的 node --test (in place of: 测试用 node --test test/)",
+    );
+    expect(foldedRunLine(corrected, "zh")).toBe(
+      "板砖记下了：测试用不带参数的 node --test（换掉了旧的一条：测试用 node --test test/）",
+    );
+  });
+});
+
 describe("a memory save, as the bridge writes it — no digest (ADR 0079 §2)", () => {
   // Longer than the 60 characters the legacy fold cut a row's first line to.
   const fact =

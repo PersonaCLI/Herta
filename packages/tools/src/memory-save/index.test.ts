@@ -1,6 +1,11 @@
-import type { MemoryItem, MemoryManager, MemoryQuery } from "@herta/core";
+import type {
+  MemoryItem,
+  MemoryManager,
+  MemoryQuery,
+  MemoryReplaceOutcome,
+} from "@herta/core";
 import { FileMemoryManager } from "@herta/memory";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { mkTmpWorkspace } from "../testing/tmp-workspace.js";
 import { mkToolContext } from "../testing/tool-context.js";
 import { memorySaveTool } from "./index.js";
@@ -12,6 +17,12 @@ class CapturingMemoryManager implements MemoryManager {
   }
   async save(item: MemoryItem): Promise<void> {
     this.saved.push(item);
+  }
+  async replace(
+    _handle: string,
+    _item: MemoryItem,
+  ): Promise<MemoryReplaceOutcome> {
+    return { ok: false, reason: "not_found" };
   }
   currentItems(): readonly MemoryItem[] {
     return this.saved;
@@ -170,5 +181,76 @@ describe("memory_save tool", () => {
     expect(stored).toContain("[REDACTED:aws_access_key]");
     // The reason is redacted the same way.
     expect(memory.saved[0]?.why ?? "").not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
+  describe("replaces — a correction (ADR 0077 amendment 2026-11-09)", () => {
+    async function run(memory: MemoryManager, input: Record<string, unknown>) {
+      return memorySaveTool().run(
+        { id: "c", tool: "memory_save", input },
+        mkToolContext({ workspaceRoot: "/tmp/x", memory }),
+        () => {},
+      );
+    }
+
+    it("takes the named fact out and says which, in its data and its summary", async () => {
+      const ws = await mkTmpWorkspace({});
+      onTestFinished(() => ws.cleanup());
+      const memory = new FileMemoryManager({ workspaceRoot: ws.root });
+      const first = await run(memory, {
+        kind: "test_command",
+        text: "the tests run with node --test test/",
+        why: "the user said so",
+      });
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      const oldId = (first.data as { id: string }).id;
+
+      const r = await run(memory, {
+        kind: "test_command",
+        text: "the tests run with bare node --test",
+        why: "node --test test/ failed on Node 22 in this run; bare node --test passed",
+        replaces: `id:${oldId.slice(0, 8)}`,
+      });
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const data = r.data as { replaced?: { id: string; text: string } };
+      expect(data.replaced).toEqual({
+        id: oldId,
+        kind: "test_command",
+        text: "the tests run with node --test test/",
+      });
+      expect(r.summary).toBe(
+        `remembered: test_command, replacing ${oldId.slice(0, 8)}`,
+      );
+      const texts = (await memory.recall({})).map((it) => it.text);
+      expect(texts).toEqual(["the tests run with bare node --test"]);
+    });
+
+    it("an id that names no fact saves nothing, and says how to name one", async () => {
+      const ws = await mkTmpWorkspace({});
+      onTestFinished(() => ws.cleanup());
+      const memory = new FileMemoryManager({ workspaceRoot: ws.root });
+      const r = await run(memory, {
+        kind: "test_command",
+        text: "bare node --test",
+        why: "it passed",
+        replaces: "deadbeef",
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.error?.code).toBe("replaces_not_found");
+      expect(r.error?.retryable).toBe(true);
+      expect(r.suggestion).toContain("id:");
+      expect(await memory.recall({})).toEqual([]);
+    });
+
+    it("its schema field is described for the model", () => {
+      const schema = memorySaveTool().schema().inputSchema as {
+        properties: Record<string, { description?: string }>;
+        required?: string[];
+      };
+      expect(schema.properties.replaces?.description).toContain("id:");
+      expect(schema.required ?? []).not.toContain("replaces");
+    });
   });
 });

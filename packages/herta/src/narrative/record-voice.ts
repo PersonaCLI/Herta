@@ -38,6 +38,8 @@ type Texts = {
   readonly output: string;
   readonly moreNotShown: string;
   readonly remembered: string;
+  /** What a correction took out (ADR 0077 amendment 2026-11-09). */
+  readonly rememberedInPlaceOf: (old: string) => string;
   readonly tests: Record<"passed" | "failed" | "skipped" | "not_run", string>;
   readonly change: (files: string, add?: number, del?: number) => string;
   readonly excerpt: (path: string, from: number, to: number) => string;
@@ -108,6 +110,7 @@ const TEXTS: Record<PromptLang, Texts> = {
     moreNotShown: "……（后面还有，没贴全）",
     // 板砖's note, not hers: a saved fact is not something she knows.
     remembered: "板砖记下了：",
+    rememberedInPlaceOf: (old) => `（换掉了旧的一条：${old}）`,
     tests: {
       passed: "测试通过",
       failed: "测试没过",
@@ -216,6 +219,7 @@ const TEXTS: Record<PromptLang, Texts> = {
     output: "Output:",
     moreNotShown: "…(more, not shown)",
     remembered: "板砖 noted: ",
+    rememberedInPlaceOf: (old) => ` (in place of: ${old})`,
     tests: {
       passed: "Tests passed",
       failed: "Tests failed",
@@ -461,6 +465,18 @@ export function detailForHerta(
 
 /** The memory-save row's opening, as the bridge writes it (ADR 0077). */
 const REMEMBERED = "↳ remembered: ";
+/** Between a correction and the fact it took out, on the same row (ADR 0077
+ *  amendment 2026-11-09). */
+export const REMEMBERED_REPLACES = " · replaces: ";
+
+/** A memory-save row's fact in her words, the fact a correction took out
+ *  after it. */
+function voicedRemembered(fact: string, t: Texts): string {
+  const at = fact.indexOf(REMEMBERED_REPLACES);
+  if (at < 0) return `${t.remembered}${fact}`;
+  const old = fact.slice(at + REMEMBERED_REPLACES.length);
+  return `${t.remembered}${fact.slice(0, at)}${t.rememberedInPlaceOf(old)}`;
+}
 
 /**
  * What a memory-save row says was saved, or null for any other row. The
@@ -533,7 +549,7 @@ export function systemRowForHerta(
   if (block.role === "noop-marker") return { ...rest, body: t.noop };
 
   const fact = rememberedFact(block);
-  if (fact !== null) return { ...rest, body: `${t.remembered}${fact}` };
+  if (fact !== null) return { ...rest, body: voicedRemembered(fact, t) };
 
   const d = block.digest;
   if (d === undefined) return block;
@@ -886,7 +902,7 @@ export function foldedRunLine(
   }
   if (block.role === "noop-marker") return t.noop;
   const fact = rememberedFact(block);
-  if (fact !== null) return `${t.remembered}${fact}`;
+  if (fact !== null) return voicedRemembered(fact, t);
   const d = block.digest;
   if (d === undefined) return null;
   if (isPageDigest(d)) return pageFoldLine(d, lang);

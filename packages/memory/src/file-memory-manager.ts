@@ -1,6 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { MemoryItem, MemoryManager, MemoryQuery } from "@herta/core";
+import {
+  type MemoryItem,
+  type MemoryManager,
+  type MemoryQuery,
+  type MemoryReplaceOutcome,
+  normalizeMemoryHandle,
+} from "@herta/core";
 
 const ITEM_CAP = 200;
 const MEMORY_DIR_NAME = ".herta/memory";
@@ -59,6 +65,35 @@ function confirmedAt(item: MemoryItem): string {
   return item.lastSeen ?? item.createdAt;
 }
 
+/** The store with `item` saved into it: a re-confirmation when the same
+ *  fact is there, otherwise an append, the least recently confirmed fact
+ *  giving way at the cap. */
+function withSaved(existing: MemoryItem[], item: MemoryItem): MemoryItem[] {
+  const incomingKey = dedupeKey(item);
+  const same = existing.findIndex((it) => dedupeKey(it) === incomingKey);
+  if (same >= 0) {
+    // The same fact saved again RE-CONFIRMS it (ADR 0077): recall shows
+    // its age from the last confirmation, and a newer reason replaces the
+    // old one. Its place and its id stay.
+    const prior = existing[same] as MemoryItem;
+    const confirmed: MemoryItem = {
+      ...prior,
+      lastSeen: item.lastSeen,
+      ...(item.why !== undefined ? { why: item.why } : {}),
+    };
+    return existing.map((it, i) => (i === same ? confirmed : it));
+  }
+  if (existing.length >= ITEM_CAP) {
+    // The least recently confirmed fact gives way.
+    const sorted = [...existing].sort((a, b) =>
+      confirmedAt(a).localeCompare(confirmedAt(b)),
+    );
+    sorted.shift();
+    return [...sorted, item];
+  }
+  return [...existing, item];
+}
+
 export class FileMemoryManager implements MemoryManager {
   private readonly fs: FsShim;
   private readonly dir: string;
@@ -91,17 +126,30 @@ export class FileMemoryManager implements MemoryManager {
   }
 
   save(item: MemoryItem): Promise<void> {
-    // Serialize the process's saves to this file behind a promise chain
+    return this.queued(() => this.saveInner(item));
+  }
+
+  /**
+   * A correction (ADR 0077 amendment 2026-11-09): the fact `handle` names
+   * goes and `item` is saved in its place, in the same queue as `save` and
+   * against the same on-disk truth.
+   */
+  replace(handle: string, item: MemoryItem): Promise<MemoryReplaceOutcome> {
+    return this.queued(() => this.replaceInner(handle, item));
+  }
+
+  private queued<T>(work: () => Promise<T>): Promise<T> {
+    // Serialize the process's writes to this file behind a promise chain
     // (audit 2026-07-10, finding 19; per file since 2026-10-13); a failed
-    // save never poisons the chain, and its rejection reaches its own
+    // write never poisons the chain, and its rejection reaches its own
     // caller. The entry goes once the chain is idle.
     const key = fileKey(this.path);
     const tail = saveTails.get(key) ?? Promise.resolve();
-    const run = tail.then(
-      () => this.saveInner(item),
-      () => this.saveInner(item),
+    const run = tail.then(work, work);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
     );
-    const settled = run.catch(() => undefined);
     saveTails.set(key, settled);
     void settled.then(() => {
       if (saveTails.get(key) === settled) saveTails.delete(key);
@@ -118,30 +166,41 @@ export class FileMemoryManager implements MemoryManager {
     // (last-writer-wins). Re-reading narrows the race to the write window
     // below; a cross-process file lock is deliberately out of scope.
     const existing = await this.readAll();
-    const incomingKey = dedupeKey(item);
-    let next: MemoryItem[];
-    const same = existing.findIndex((it) => dedupeKey(it) === incomingKey);
-    if (same >= 0) {
-      // The same fact saved again RE-CONFIRMS it (ADR 0077): recall shows
-      // its age from the last confirmation, and a newer reason replaces the
-      // old one. Its place and its id stay.
-      const prior = existing[same] as MemoryItem;
-      const confirmed: MemoryItem = {
-        ...prior,
-        lastSeen: item.lastSeen,
-        ...(item.why !== undefined ? { why: item.why } : {}),
+    await this.writeAll(withSaved(existing, item));
+  }
+
+  private async replaceInner(
+    handle: string,
+    item: MemoryItem,
+  ): Promise<MemoryReplaceOutcome> {
+    const existing = await this.readAll();
+    const h = normalizeMemoryHandle(handle);
+    const named =
+      h === null
+        ? []
+        : existing.filter(
+            (it) =>
+              typeof it.id === "string" && it.id.toLowerCase().startsWith(h),
+          );
+    if (named.length !== 1) {
+      this.cache = existing;
+      return {
+        ok: false,
+        reason: named.length === 0 ? "not_found" : "ambiguous",
       };
-      next = existing.map((it, i) => (i === same ? confirmed : it));
-    } else if (existing.length >= ITEM_CAP) {
-      // The least recently confirmed fact gives way.
-      const sorted = [...existing].sort((a, b) =>
-        confirmedAt(a).localeCompare(confirmedAt(b)),
-      );
-      sorted.shift();
-      next = [...sorted, item];
-    } else {
-      next = [...existing, item];
     }
+    const replaced = named[0] as MemoryItem;
+    await this.fs.mkdir(this.dir, { recursive: true });
+    await this.writeAll(
+      withSaved(
+        existing.filter((it) => it !== replaced),
+        item,
+      ),
+    );
+    return { ok: true, replaced };
+  }
+
+  private async writeAll(next: MemoryItem[]): Promise<void> {
     this.cache = next;
     const serialized = `${next.map((it) => JSON.stringify(it)).join("\n")}\n`;
     // Unique tmp per save AND per process: with the shared `.tmp` name, two

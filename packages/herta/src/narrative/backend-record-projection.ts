@@ -35,6 +35,7 @@ import { sanitizeActorText } from "./escape.js";
 import type { GitOutcome } from "./git-outcome.js";
 import { projectPageResult } from "./page-record-projection.js";
 import { isPageDigest } from "./page-voice.js";
+import { REMEMBERED_REPLACES } from "./record-voice.js";
 import { projectServerResult } from "./server-record-projection.js";
 
 /** system-body sanitize for one string field (see `sanitizeSystemBlock`). */
@@ -647,16 +648,27 @@ export function projectBackendEventUnsanitized(
         // A saved fact, as the store holds it — redacted (ADR 0077). The op
         // row names only its kind; this says what 板砖 will remember, so the
         // user and Herta can see it (PHILOSOPHY §9). Bounded: a fact is one
-        // sentence by schema.
+        // sentence by schema. A correction also names the fact it took out
+        // (amendment 2026-11-09): a forgotten fact is as much the user's
+        // business as a remembered one.
         if (event.tool === "memory_save") {
-          const data = event.result.data as { text?: unknown } | undefined;
+          const data = event.result.data as
+            | { text?: unknown; replaced?: { text?: unknown } }
+            | undefined;
           if (typeof data?.text !== "string") return null;
-          const fact =
-            data.text.length > 200 ? `${data.text.slice(0, 200)}…` : data.text;
+          const bounded = (text: string, max: number): string =>
+            (text.length > max ? `${text.slice(0, max)}…` : text)
+              .replace(/\s+/g, " ")
+              .trim();
+          const old = data.replaced?.text;
           return {
             kind: "system",
             label: "差分协处理器",
-            body: `↳ remembered: ${fact.replace(/\s+/g, " ").trim()}`,
+            body: `↳ remembered: ${bounded(data.text, 200)}${
+              typeof old === "string"
+                ? `${REMEMBERED_REPLACES}${bounded(old, 120)}`
+                : ""
+            }`,
           };
         }
         // search_text surfaces its hits (2026-08-17). Same reasoning as

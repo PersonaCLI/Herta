@@ -161,8 +161,15 @@ export type {
   MemoryKind,
   MemoryManager,
   MemoryQuery,
+  MemoryReplaceOutcome,
 } from "./memory-manager.js";
-export { MEMORY_KINDS, NoopMemoryManager } from "./memory-manager.js";
+export {
+  MEMORY_HANDLE_LENGTH,
+  MEMORY_KINDS,
+  memoryHandle,
+  NoopMemoryManager,
+  normalizeMemoryHandle,
+} from "./memory-manager.js";
 export {
   isPathInside,
   isPathInsideWith,

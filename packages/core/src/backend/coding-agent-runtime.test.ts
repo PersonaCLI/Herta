@@ -8,6 +8,7 @@ import {
   type MemoryItem,
   type MemoryManager,
   type MemoryQuery,
+  type MemoryReplaceOutcome,
   NoopMemoryManager,
 } from "../memory-manager.js";
 import {
@@ -602,6 +603,9 @@ describe("CodingAgentRuntime.runBrief", () => {
         return this.items;
       }
       async save(_item: MemoryItem): Promise<void> {}
+      async replace(): Promise<MemoryReplaceOutcome> {
+        return { ok: false, reason: "not_found" };
+      }
       currentItems(): readonly MemoryItem[] {
         return this.items;
       }
@@ -715,6 +719,7 @@ describe("CodingAgentRuntime.runBrief", () => {
           throw new Error("EACCES: project.jsonl");
         },
         save: async () => {},
+        replace: async () => ({ ok: false, reason: "not_found" }),
         currentItems: () => [],
       };
       const runtime = makeRuntimeWith(provider, broken);

@@ -260,4 +260,35 @@ describe("renderScopedMemory — the store is data, not instructions (ADR 0060 �
       "- [test_command · today] ".length + 501,
     );
   });
+
+  it("each line carries the id a correction names, last in its brackets (ADR 0077 amendment 2026-11-09)", () => {
+    const text = render(
+      [item({ id: "3f9c2a71-0b4e-4d1a-9c55-1e2f3a4b5c6d", text: "pnpm test" })],
+      "en",
+    );
+    expect(text.split("\n")[1]).toBe(
+      "- [test_command · today · id:3f9c2a71] pnpm test",
+    );
+    const zh = render(
+      [item({ id: "3F9C2A71-0b4e-4d1a-9c55-1e2f3a4b5c6d", text: "pnpm test" })],
+      "zh",
+    );
+    expect(zh.split("\n")[1]).toBe(
+      "- [test_command · 今天 · id:3f9c2a71] pnpm test",
+    );
+  });
+
+  it("an id the tool would not have written shows no handle", () => {
+    for (const id of [
+      "short",
+      "x]y-0123456789",
+      "abc def ghij",
+      "a".repeat(80),
+    ]) {
+      const text = render([item({ id, text: "pnpm test" })], "en");
+      expect(text.split("\n")[1], id).toBe(
+        "- [test_command · today] pnpm test",
+      );
+    }
+  });
 });

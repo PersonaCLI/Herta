@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, waitFor } from "@testing-library/react";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import { LocaleProvider } from "../../../i18n/LocaleProvider.js";
 import type { ViewerAnchor } from "../file-viewer-context.js";
@@ -14,7 +15,10 @@ const FIXTURE = readFileSync(join(__dirname, "__fixtures__", "fixture.docx"));
 /** A wait over one real docx render: FileViewerPanel.piece.test.tsx's. */
 const RENDER_WAIT = { timeout: 5_000 };
 
-function view(bytes: Uint8Array, anchor: ViewerAnchor): JSX.Element {
+function view(
+  bytes: Uint8Array,
+  anchor: ViewerAnchor | undefined,
+): JSX.Element {
   return (
     <LocaleProvider locale="en" onLocaleChange={() => {}}>
       <DocxView bytes={bytes} anchor={anchor} />
@@ -61,4 +65,43 @@ describe("DocxView — a quote's anchor", () => {
     expect(scrolled).toHaveLength(count);
     // Two waits of up to RENDER_WAIT each: more than the default 5 s.
   }, 15_000);
+});
+
+/** A Word package can embed a whole HTML document (an `altChunk` part).
+ *  docx-preview draws one as an `<iframe srcdoc>` unless told not to, and
+ *  a script that frame names by a `file:` URL runs there, with `parent` the
+ *  app's own window (ADR 0054 amendment 2026-11-10). */
+describe("DocxView — an embedded HTML part", () => {
+  function withEmbeddedHtml(): Uint8Array {
+    const parts = unzipSync(new Uint8Array(FIXTURE));
+    const rels = parts["word/_rels/document.xml.rels"];
+    const doc = parts["word/document.xml"];
+    if (rels === undefined || doc === undefined)
+      throw new Error("the fixture has no document part");
+    parts["word/embedded.html"] = strToU8(
+      "<html><body><script>parent.reached = true</script>embedded</body></html>",
+    );
+    parts["word/_rels/document.xml.rels"] = strToU8(
+      strFromU8(rels).replace(
+        "</Relationships>",
+        '<Relationship Id="rIdAlt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="embedded.html"/></Relationships>',
+      ),
+    );
+    const body = strFromU8(doc);
+    expect(body).toContain("<w:sectPr>");
+    parts["word/document.xml"] = strToU8(
+      body.replace("<w:sectPr>", '<w:altChunk r:id="rIdAlt"/><w:sectPr>'),
+    );
+    return zipSync(parts);
+  }
+
+  it("is not drawn: the page has no frame", async () => {
+    const ui = render(view(withEmbeddedHtml(), undefined));
+    await waitFor(
+      () =>
+        expect(ui.container.textContent).toContain("Plain, bold and italic."),
+      RENDER_WAIT,
+    );
+    expect(ui.container.querySelector("iframe")).toBeNull();
+  }, 10_000);
 });

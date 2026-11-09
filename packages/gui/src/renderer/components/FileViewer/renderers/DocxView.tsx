@@ -23,7 +23,9 @@ let docxQuoteSeq = 0;
  * headers and footers. `ignoreWidth` because a fixed Letter/A4 page is
  * wider than the panel; the page keeps its margins and flows at the
  * panel's width instead. Links are inert (the scroller swallows clicks on
- * anchors); `will-navigate` remains the backstop.
+ * anchors); `will-navigate` remains the backstop. An HTML part the package
+ * embeds is not drawn at all — the one piece of a document that would run
+ * as a page of its own.
  *
  * Piece quoting (ADR 0078 amendment 2026-10-29): with the switch on, the
  * mask cuts the page into sections (`docx-pieces.ts`), and a quote counts
@@ -77,6 +79,12 @@ export function DocxView({
       renderEndnotes: true,
       useBase64URL: true,
       renderChanges: false,
+      // An embedded HTML part (`altChunk`) would be drawn as an
+      // `<iframe srcdoc>` of the document's own HTML. The page's policy
+      // does not stop that frame, and a `<script src>` in it that names a
+      // `file:` URL runs, with `parent` this window (measured: ADR 0054
+      // amendment 2026-11-10). On by default in docx-preview, off here.
+      renderAltChunks: false,
       trimXmlDeclaration: true,
     }).then(
       (doc: unknown) => {

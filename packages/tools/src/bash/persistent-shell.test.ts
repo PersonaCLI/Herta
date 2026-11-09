@@ -249,6 +249,46 @@ d("PersistentShell (real bash)", () => {
     expect(r.freshShell).toBe(false);
   });
 
+  it("`set -x` and `set -v` do not hide a call's end, and neither outlives its call (review 2026-11-10)", async () => {
+    // Either one echoed the wrapper's marker line, the marker without its
+    // exit code, and the call waited out its timeout and lost the shell.
+    const x = await shell.run("set -x; echo hi; false", {
+      timeoutMs: 10_000,
+    });
+    expect(x.timedOut).toBe(false);
+    expect(x.exitCode).toBe(1);
+    expect(x.output).toBe("+ echo hi\nhi\n+ false\n");
+    const afterX = await shell.run("echo again", { timeoutMs: 10_000 });
+    expect(afterX.output).toBe("again\n");
+    expect(afterX.freshShell).toBe(false);
+
+    const v = await shell.run("set -v; echo hi; (exit 4)", {
+      timeoutMs: 10_000,
+    });
+    expect(v.timedOut).toBe(false);
+    expect(v.exitCode).toBe(4);
+    expect(v.output).toBe("hi\n");
+    const afterV = await shell.run("echo again", { timeoutMs: 10_000 });
+    expect(afterV.output).toBe("again\n");
+    expect(afterV.freshShell).toBe(false);
+  });
+
+  it("a call ends at its marker's line, not at the marker's first appearance — a trap that keeps tracing on cannot hold it open", async () => {
+    // The trap turns tracing back on before every command, the wrapper's
+    // own included: its marker line is traced, marker and all, first.
+    const r = await shell.run("trap 'set -x' DEBUG; echo hi", {
+      timeoutMs: 10_000,
+    });
+    expect(r.timedOut).toBe(false);
+    expect(r.exitCode).toBe(0);
+    expect(r.output).toContain("hi\n");
+    const off = await shell.run("trap - DEBUG", { timeoutMs: 10_000 });
+    expect(off.timedOut).toBe(false);
+    expect(off.freshShell).toBe(false);
+    const clean = await shell.run("echo again", { timeoutMs: 10_000 });
+    expect(clean.output).toBe("again\n");
+  });
+
   it("puts the shell back into the workspace when a command leaves it, and says so", async () => {
     const r = await shell.run("cd .. && pwd", { timeoutMs: 10_000 });
     expect(r.cwdReset).toBe(true);

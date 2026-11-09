@@ -27,6 +27,13 @@ import { type ShellPaths, shellPathsFor } from "./shell-paths.js";
  * classifier reasons about relative paths against the workspace, and that
  * invariant must hold when the next command is classified.
  *
+ * `set -x` and `set -v` last for the call that sets them: the wrapper turns
+ * both off, unseen, before its marker line. Left on, either one echoed that
+ * line — the marker in it, with no exit code behind it — and the call waited
+ * out its whole timeout, then lost its shell (review 2026-11-10). The reader
+ * holds its own end as well: a call ends at the marker's LINE, never at the
+ * marker's first appearance.
+ *
  * Timeout kills the whole process tree and the next call respawns a fresh
  * shell (state lost — the model is told). Registered with the brief's
  * BackgroundHost as an INTERNAL entry, so `stopAll()` at brief end reaps it
@@ -88,6 +95,10 @@ const TASKKILL_TIMEOUT_MS = 15_000;
 
 interface Waiter {
   marker: string;
+  /** The marker's own line — `<marker>:<exit code>:<0|1>:<$PWD>` — which is
+   *  what ends the command. An echo of the wrapper has the marker in it and
+   *  not this shape. */
+  markerLine: RegExp;
   resolve: (r: Omit<ShellRunResult, "durationMs" | "freshShell">) => void;
   timer: ReturnType<typeof setTimeout> | null;
   onAbort: (() => void) | null;
@@ -598,11 +609,14 @@ export class PersistentShell implements BackgroundProcess {
     // The marker is in: every later chunk must come back here until its
     // line is complete — the window test above no longer sees it.
     this.markerSeen = true;
-    const after = this.buf.slice(idx + w.marker.length);
-    const m = /^:(-?\d+):([01]):([^\n]*)\n/.exec(after);
+    // From the marker's first appearance on, for its LINE: a shell that
+    // echoes what it runs shows the marker first inside the wrapper's own
+    // text, and stopping there waited for an exit code that never follows.
+    const m = w.markerLine.exec(this.buf.slice(idx));
     if (m === null) return; // marker line not complete yet
-    const rawOutput = this.buf.slice(0, idx).replace(/\n$/, "");
-    this.buf = after.slice(m[0].length);
+    const lineAt = idx + m.index;
+    const rawOutput = this.buf.slice(0, lineAt).replace(/\n$/, "");
+    this.buf = this.buf.slice(lineAt + m[0].length);
     this.waiter = null;
     this.markerSeen = false;
     if (w.timer !== null) clearTimeout(w.timer);
@@ -689,6 +703,8 @@ export class PersistentShell implements BackgroundProcess {
     >((resolvePromise) => {
       const w: Waiter = {
         marker,
+        // The marker is letters, digits and underscores: itself as a pattern.
+        markerLine: new RegExp(`${marker}:(-?\\d+):([01]):([^\\n]*)\\n`),
         resolve: resolvePromise,
         timer: null,
         onAbort: null,
@@ -748,12 +764,16 @@ export class PersistentShell implements BackgroundProcess {
       // `set +e +u` first: a `set -e` the model wrote in an earlier call must
       // not make THIS call's first non-zero status kill the shell (its own
       // `set -e` inside the command still applies within that command).
+      // `set +xv` after it, on the group's own closing line: that line was
+      // read with the group, before a `set -v` inside it could echo it, and
+      // its `2>/dev/null` swallows what `set -x` would trace of it. Neither
+      // then reaches the marker line below.
       const script = [
         "{",
         "set +e; set +u",
         command,
-        "} </dev/null",
-        `__herta_rc=$?; __herta_reset=0; case "$PWD/" in "$__herta_ws"/*) ;; *) cd "$__herta_ws" && __herta_reset=1 ;; esac; printf '\\n%s:%s:%s:%s\\n' '${marker}' "$__herta_rc" "$__herta_reset" "$PWD"`,
+        "} </dev/null; { __herta_rc=$?; set +xv; } 2>/dev/null",
+        `__herta_reset=0; case "$PWD/" in "$__herta_ws"/*) ;; *) cd "$__herta_ws" && __herta_reset=1 ;; esac; printf '\\n%s:%s:%s:%s\\n' '${marker}' "$__herta_rc" "$__herta_reset" "$PWD"`,
         "",
       ].join("\n");
       child.stdin?.write(script);

@@ -148,6 +148,25 @@ describe("FlowTrigger.tick", () => {
     expect(t.state().lastFailure).toBeNull();
   });
 
+  // Review 2026-11-10, second pass: the backoff never ended.
+  it("does not back off for a failure stamped by a clock that was days ahead", async () => {
+    const t = setup();
+    t.clock.t = at(30, 9) + 5 * 24 * 60 * 60 * 1000;
+    await t.trig.tick();
+    await t.finish({ ok: false, reason: "network" });
+    // The clock is set right: the failure is five days in the future.
+    t.clock.t = at(30, 10);
+    expect(await t.trig.tick()).toBe("started");
+  });
+
+  it("still backs off when the clock was corrected by a minute", async () => {
+    const t = setup();
+    await t.trig.tick();
+    await t.finish({ ok: false, reason: "network" });
+    t.clock.t = at(30, 9) - 60_000;
+    expect(await t.trig.tick()).toBe("backoff");
+  });
+
   it("makes at most three automatic attempts a day, and counts afresh tomorrow", async () => {
     const t = setup();
     for (let i = 0; i < FLOW_ATTEMPTS_PER_DAY; i++) {

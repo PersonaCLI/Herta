@@ -138,7 +138,11 @@ export class FlowTrigger {
         s.lastFailure?.at ?? Number.NEGATIVE_INFINITY,
         floor.failedAt ?? Number.NEGATIVE_INFINITY,
       );
-      if (t - failedAt < FLOW_RETRY_MS) return "backoff";
+      // Within the hour either side. A failure stamped further ahead than
+      // that was stamped by a clock since set back: `t - failedAt` stayed
+      // negative and the backoff never ended (review 2026-11-10, second
+      // pass). The day's three attempts still bound what follows.
+      if (Math.abs(t - failedAt) < FLOW_RETRY_MS) return "backoff";
       const attempts = Math.max(s.attempts, floor.attempts);
       if (attempts >= FLOW_ATTEMPTS_PER_DAY) return "attempts";
       // A missed day stays missed: only today's date is ever gathered.

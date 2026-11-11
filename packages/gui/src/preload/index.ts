@@ -13,7 +13,11 @@ function subscribe<T>(channel: string, cb: (e: T) => void): () => void {
   return () => ipcRenderer.off(channel, handler);
 }
 
-const bridge: HertaBridge = {
+// `Required`: most of the bridge's members are optional in its type, so that
+// a test or an older preload can leave one out. This is the real one, and a
+// member forgotten here compiled into a button that did nothing (review
+// 2026-11-10). Now it does not compile.
+const bridge: Required<HertaBridge> = {
   platform: process.platform,
   submitText: (text, stagedImageIds, mentions, picks) =>
     ipcRenderer.invoke(CMD.submitText, text, stagedImageIds, mentions, picks),

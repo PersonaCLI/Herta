@@ -173,6 +173,26 @@ const EMPTY_SPEECH_RETRY_TEMPERATURES = [1.1, 1.2, 1.3] as const;
 const PRIMARY_COMPLETION_MAX_TOKENS = 2048;
 
 /**
+ * How many times a speech cut at that cap is continued (owner 2026-11-11:
+ * "Continue it").
+ *
+ * The cap is there for a runaway, and it also cut what was not one: a long
+ * answer asked for by name. The finish reason was not read, so a speech
+ * that stopped at token 2 048 in the middle of a sentence was committed as
+ * a whole one, and nothing on screen said otherwise (review 2026-11-10).
+ * The substrate has the remedy in it: the block so far goes onto the end
+ * of the prompt and the next completion writes on from its last character.
+ * It is still one block, in her words, with no mark of the seam.
+ *
+ * Twice, so a speech may run to three caps' worth. A runaway now runs three
+ * times as long before it is stopped, which is the price; past that a
+ * speech is cut where it stands, as before. A thought is not continued:
+ * nobody is waiting to read its end, and she speaks next either way. Nor is
+ * a beat or an answer during a run, whose caps are short on purpose.
+ */
+const MAX_SPEECH_CONTINUATIONS = 2;
+
+/**
  * Index of the FIRST complete stop marker in `buffered`, or `buffered.length`
  * when none is present. Fence-fuzz finding (2026-07-09): a provider that
  * fails to honor its stop sequences can stream text PAST a complete
@@ -977,36 +997,70 @@ async function consumePhaseTwoStream(opts: {
     }
   };
 
-  for await (const ev of opts.provider.streamCompletion(
-    {
-      model: opts.model,
-      prompt: opts.prompt,
-      stop: [...STOP_SEQS],
-      // Capped (slice 3); the supervisor call is deadline-only by design —
-      // see PRIMARY_COMPLETION_MAX_TOKENS.
-      maxTokens: PRIMARY_COMPLETION_MAX_TOKENS,
-      ...(opts.temperature !== undefined
-        ? { temperature: opts.temperature }
-        : {}),
-    },
-    opts.signal,
-  )) {
-    if (ev.type === "text-delta") {
-      buffered += ev.text;
-      // LIVE_EMIT_HOLD_SEQS also holds partial STRAY tags (slice 4).
-      // firstStopIndex caps the emit at any COMPLETE stop marker a
-      // misbehaving provider streamed past (fence-fuzz, 2026-07-09). Both
-      // read the body as a line start, so a page heading on its first line
-      // never types on screen either (ADR 0070).
-      flushToSink(
-        Math.min(
-          safeEmitBoundaryAtLineStart(buffered, LIVE_EMIT_HOLD_SEQS),
-          firstStopIndexAtLineStart(buffered, STOP_SEQS),
-        ),
-      );
-    } else if (ev.type === "finish") {
+  // One pass, or more when a speech is cut at the cap: see
+  // MAX_SPEECH_CONTINUATIONS.
+  for (let pass = 0; ; pass += 1) {
+    let cutAtCap = false;
+    for await (const ev of opts.provider.streamCompletion(
+      {
+        model: opts.model,
+        // On a later pass the block so far is the end of the prompt.
+        prompt: `${opts.prompt}${buffered}`,
+        stop: [...STOP_SEQS],
+        // Capped (slice 3); the supervisor call is deadline-only by design
+        // — see PRIMARY_COMPLETION_MAX_TOKENS.
+        maxTokens: PRIMARY_COMPLETION_MAX_TOKENS,
+        ...(opts.temperature !== undefined
+          ? { temperature: opts.temperature }
+          : {}),
+      },
+      opts.signal,
+    )) {
+      if (ev.type === "text-delta") {
+        buffered += ev.text;
+        // LIVE_EMIT_HOLD_SEQS also holds partial STRAY tags (slice 4).
+        // firstStopIndex caps the emit at any COMPLETE stop marker a
+        // misbehaving provider streamed past (fence-fuzz, 2026-07-09). Both
+        // read the body as a line start, so a page heading on its first
+        // line never types on screen either (ADR 0070).
+        flushToSink(
+          Math.min(
+            safeEmitBoundaryAtLineStart(buffered, LIVE_EMIT_HOLD_SEQS),
+            firstStopIndexAtLineStart(buffered, STOP_SEQS),
+          ),
+        );
+        // A continuation that has closed the block is done. The provider
+        // stops a completion at a marker it writes whole, and cannot see
+        // one whose start was in the prompt.
+        if (
+          pass > 0 &&
+          firstStopIndexAtLineStart(buffered, STOP_SEQS) < buffered.length
+        ) {
+          break;
+        }
+      } else if (ev.type === "finish") {
+        cutAtCap = ev.reason === "length";
+        break;
+      }
+    }
+    if (
+      !cutAtCap ||
+      opts.surface !== "speech" ||
+      pass >= MAX_SPEECH_CONTINUATIONS
+    ) {
       break;
     }
+    // Closed already: the cap caught only what a provider wrote past it.
+    if (firstStopIndexAtLineStart(buffered, STOP_SEQS) < buffered.length) {
+      break;
+    }
+    // A marker the cap cut in half is written again from its start, so the
+    // provider sees it whole and stops there. Nothing of it was on screen:
+    // the emit above never passes this boundary.
+    buffered = buffered.slice(
+      0,
+      safeEmitBoundaryAtLineStart(buffered, STOP_SEQS),
+    );
   }
 
   // Cut exactly at the FIRST complete stop marker

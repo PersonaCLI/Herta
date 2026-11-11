@@ -7456,3 +7456,139 @@ describe("runActorCompletionTurn — live-feed supervised reveal (LFR T4)", () =
     expect((speech as { text: string }).text).toBe("嗯。重写好了。");
   });
 });
+
+describe("a speech cut at the length cap is continued (owner 2026-11-11)", () => {
+  const speechOf = (record: TerminalRecord): string =>
+    (
+      record.find((b) => b.kind === "herta" && b.surface === "speech") as {
+        text: string;
+      }
+    ).text;
+
+  it("goes on from its last character: one block, streamed as one, the seam nowhere", async () => {
+    const parts = [
+      "这件事要分三层讲。第一层，",
+      "先看数据怎么流；第二层，",
+      "再看谁在改它。",
+    ] as const;
+    const { provider, prompts, requests } = mkProvider([
+      [
+        { type: "text-delta", text: parts[0] },
+        { type: "finish", reason: "length" },
+      ],
+      [
+        { type: "text-delta", text: parts[1] },
+        { type: "finish", reason: "length" },
+      ],
+      [
+        { type: "text-delta", text: parts[2] },
+        { type: "finish", reason: "stop" },
+      ],
+    ]);
+    const sinkBundle = mkSink();
+    const { record } = await runActorCompletionTurn(
+      { record: [] as TerminalRecord },
+      "讲讲这个模块",
+      { ...mkDeps({ provider }), sink: sinkBundle.sink },
+    );
+
+    // Before, the finish reason was not read: the first part was committed
+    // as her whole answer.
+    expect(speechOf(record)).toBe(parts.join(""));
+    expect(sinkBundle.tokens.join("")).toBe(parts.join(""));
+    // One speech on screen, not three.
+    expect(sinkBundle.beginCalls).toEqual(["thought", "speech"]);
+    expect(sinkBundle.endStreamCalls).toBe(2);
+    // Each later completion is asked to write on from where the block is.
+    expect(prompts).toHaveLength(3);
+    expect(prompts[1]).toBe(`${prompts[0]}${parts[0]}`);
+    expect(prompts[2]).toBe(`${prompts[0]}${parts[0]}${parts[1]}`);
+    // Under the same cap and the same stops as the first.
+    expect(requests[1]?.maxTokens).toBe(requests[0]?.maxTokens);
+    expect(requests[2]?.stop).toEqual(requests[0]?.stop);
+  });
+
+  it("twice and no more: a runaway is still stopped", async () => {
+    const cut = (text: string): CompletionEvent[] => [
+      { type: "text-delta", text },
+      { type: "finish", reason: "length" },
+    ];
+    const { provider, prompts } = mkProvider([
+      cut("一。"),
+      cut("二。"),
+      cut("三。"),
+      cut("四，不该被问到。"),
+    ]);
+    const { record } = await runActorCompletionTurn(
+      { record: [] as TerminalRecord },
+      "hi",
+      mkDeps({ provider }),
+    );
+    expect(prompts).toHaveLength(3);
+    expect(speechOf(record)).toBe("一。二。三。");
+  });
+
+  it("a close tag the cap cut in half is written again whole, and none of it shows", async () => {
+    const { provider, prompts } = mkProvider([
+      [
+        { type: "text-delta", text: "说到这里。（/我" },
+        { type: "finish", reason: "length" },
+      ],
+      [
+        // What follows the tag is what a provider that cannot stop at a
+        // marker begun in its prompt would go on to write.
+        { type: "text-delta", text: "（/我 说）" },
+        { type: "text-delta", text: "（开拓者 说）不该出现" },
+        { type: "finish", reason: "stop" },
+      ],
+    ]);
+    const sinkBundle = mkSink();
+    const { record } = await runActorCompletionTurn(
+      { record: [] as TerminalRecord },
+      "hi",
+      { ...mkDeps({ provider }), sink: sinkBundle.sink },
+    );
+    // The half tag is not handed back as part of her words.
+    expect(prompts[1]).toBe(`${prompts[0]}说到这里。`);
+    expect(speechOf(record)).toBe("说到这里。");
+    expect(sinkBundle.tokens.join("")).toBe("说到这里。");
+  });
+
+  it("a speech that closed before the cap is not continued", async () => {
+    const { provider, prompts } = mkProvider([
+      [
+        { type: "text-delta", text: "够了。（/我 说）后面是多写的" },
+        { type: "finish", reason: "length" },
+      ],
+    ]);
+    const { record } = await runActorCompletionTurn(
+      { record: [] as TerminalRecord },
+      "hi",
+      mkDeps({ provider }),
+    );
+    expect(prompts).toHaveLength(1);
+    expect(speechOf(record)).toBe("够了。");
+  });
+
+  it("a thought cut at the cap is not: she speaks next either way", async () => {
+    const { provider, prompts } = mkScriptedThoughtsProvider([
+      [
+        { type: "text-delta", text: "想得太长，写到上限" },
+        { type: "finish", reason: "length" },
+      ],
+      [
+        { type: "text-delta", text: "好。" },
+        { type: "finish", reason: "stop" },
+      ],
+    ]);
+    const { record } = await runActorCompletionTurn(
+      { record: [] as TerminalRecord },
+      "hi",
+      mkDeps({ provider }),
+    );
+    // Two calls: the thought, once, and the speech.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]?.endsWith("（我 想）\n")).toBe(true);
+    expect(speechOf(record)).toBe("好。");
+  });
+});

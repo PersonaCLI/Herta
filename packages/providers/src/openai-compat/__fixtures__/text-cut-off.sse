@@ -1,0 +1,6 @@
+data: {"id":"x","choices":[{"index":0,"delta":{"role":"assistant","content":"The report so far"}}]}
+
+data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]
+

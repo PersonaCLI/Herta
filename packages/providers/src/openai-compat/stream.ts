@@ -122,6 +122,38 @@ export async function* mapStream(
     if (reason === null || reason === undefined) continue;
 
     sawFinish = true;
+    if (reason === "length" && toolBuf.size > 0) {
+      // Cut off at the output limit while a call's arguments were being
+      // written (review 2026-11-10): a long file in one heredoc, usually.
+      // The loop ended the brief on `length`, the retry wrote the same
+      // file, and it ended there again. The call goes to the loop instead,
+      // marked as cut off, and the loop answers the model the way it
+      // answers arguments that are not JSON: nothing ran, write it in
+      // smaller pieces. Calls that arrived whole before it run as usual. A
+      // call cut before its id or name has nothing to answer and is dropped.
+      const cut = [...toolBuf.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, entry]) => entry)
+        .filter((entry) => entry.id !== undefined && entry.name !== undefined);
+      if (cut.length > 0) {
+        for (const entry of cut) {
+          yield {
+            type: "tool-call-request",
+            call: parseCall(
+              {
+                id: entry.id as string,
+                name: entry.name as string,
+                argsBuf: entry.argsBuf,
+              },
+              true,
+            ),
+          };
+        }
+        toolBuf.clear();
+        yield { type: "finish", reason: "tool_calls" };
+        continue;
+      }
+    }
     if (reason === "stop" || reason === "length") {
       yield { type: "finish", reason };
       continue;
@@ -182,13 +214,21 @@ export async function* mapStream(
   }
 }
 
-function parseCall(entry: {
-  id: string;
-  name: string;
-  argsBuf: string;
-}): ToolCallRequest {
+function parseCall(
+  entry: {
+    id: string;
+    name: string;
+    argsBuf: string;
+  },
+  /** The turn ended at the output limit: arguments that do not parse were
+   *  cut off, not mis-escaped, and none at all is not "no arguments". */
+  cutOff = false,
+): ToolCallRequest {
   let input: unknown;
   try {
+    if (cutOff && entry.argsBuf.trim().length === 0) {
+      throw new Error("no arguments arrived");
+    }
     input = entry.argsBuf.length > 0 ? JSON.parse(entry.argsBuf) : {};
   } catch (cause) {
     // Do NOT throw. This used to raise ProviderError{code:"tool-args",
@@ -205,6 +245,7 @@ function parseCall(entry: {
       malformedArgs: {
         raw: entry.argsBuf,
         parseError: errorMessage(cause),
+        ...(cutOff ? { truncated: true as const } : {}),
       },
     };
   }

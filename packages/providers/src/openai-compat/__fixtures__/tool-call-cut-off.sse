@@ -1,0 +1,8 @@
+data: {"id":"x","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo ok\"}"}}]}}]}
+
+data: {"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"bash","arguments":"{\"command\":\"cat > big.txt <<'EOF'\\nline 1\\nline 2"}}]}}]}
+
+data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}
+
+data: [DONE]
+

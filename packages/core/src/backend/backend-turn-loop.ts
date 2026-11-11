@@ -975,8 +975,27 @@ const MAX_MALFORMED_TOOL_ARGS = 3;
  */
 function malformedArgsResult(
   toolName: string,
-  malformed: { raw: string; parseError: string },
+  malformed: { raw: string; parseError: string; truncated?: true },
 ): ToolResult {
+  if (malformed.truncated === true) {
+    // Not an escaping slip: the same call written again would be cut at
+    // the same place, so the answer names the one thing that helps.
+    return {
+      ok: false,
+      error: {
+        code: "malformed_tool_args",
+        message: `arguments for ${toolName} were cut off at the output limit, ${malformed.raw.length} characters in`,
+        retryable: false,
+      },
+      suggestion:
+        "The tool did NOT run — nothing changed. One message of yours can only be so long, " +
+        "and this call's arguments ran past that limit, so they never arrived whole. " +
+        "Sending the same call again will be cut off at the same place. Do it in smaller pieces: " +
+        "create a long file with its first part and append the rest in further calls, " +
+        "or split a large edit into several.",
+      summary: `failed: arguments for ${toolName} cut off at the output limit`,
+    };
+  }
   return {
     ok: false,
     error: {

@@ -261,3 +261,42 @@ describe("mapStream truncation (audit BL4)", () => {
     ]);
   });
 });
+
+describe("mapStream — a turn cut off at the output limit (review 2026-11-10)", () => {
+  it("hands the call it was writing to the loop, marked as cut off, and runs the one before it", async () => {
+    const events = (await eventsFromFixture("tool-call-cut-off.sse")).filter(
+      (e) => e.type !== "tool-call-delta",
+    );
+    expect(events).toHaveLength(3);
+    const [whole, cut, finish] = events;
+    if (whole?.type !== "tool-call-request") throw new Error("no first call");
+    expect(whole.call).toEqual({
+      id: "call_1",
+      tool: "bash",
+      input: { command: "echo ok" },
+    });
+    if (cut?.type !== "tool-call-request") throw new Error("no second call");
+    expect(cut.call.id).toBe("call_2");
+    expect(cut.call.input).toEqual({});
+    expect(cut.call.malformedArgs?.truncated).toBe(true);
+    expect(cut.call.malformedArgs?.raw).toContain("cat > big.txt");
+    // The loop takes its tool branch, where a marked call is answered.
+    expect(finish).toEqual({ type: "finish", reason: "tool_calls" });
+  });
+
+  it("text cut off with no call in hand is still `length`", async () => {
+    const events = await eventsFromFixture("text-cut-off.sse");
+    expect(events).toEqual([
+      { type: "text-delta", text: "The report so far" },
+      { type: "finish", reason: "length" },
+    ]);
+  });
+
+  it("arguments that are not JSON at an ordinary finish are not marked", async () => {
+    const events = await eventsFromFixture("malformed-args.sse");
+    const call = events.find((e) => e.type === "tool-call-request");
+    if (call?.type !== "tool-call-request") throw new Error("no call");
+    expect(call.call.malformedArgs).toBeDefined();
+    expect(call.call.malformedArgs?.truncated).toBeUndefined();
+  });
+});

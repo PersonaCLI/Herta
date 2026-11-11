@@ -2471,3 +2471,64 @@ describe("long runs and live views: the run's note, the stop, the live argument 
     }
   });
 });
+
+describe("a tool call cut off at the output limit (review 2026-11-10)", () => {
+  it("is answered with what helps, and the brief goes on", async () => {
+    // Before, `length` ended the brief; the retry wrote the same long file
+    // in one call and ended there again.
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request" as const,
+            call: {
+              id: "c1",
+              tool: "run_command",
+              input: {},
+              malformedArgs: {
+                raw: '{"command":"cat > big.txt <<EOF\\nline 1',
+                parseError: "Unterminated string in JSON at position 38",
+                truncated: true as const,
+              },
+            },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "written in parts" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const deps = buildDeps(provider);
+    let ran = 0;
+    deps.tools.register({
+      name: "run_command",
+      schema: () => ({ name: "run_command", description: "", inputSchema: {} }),
+      run: async () => {
+        ran += 1;
+        return { ok: true, summary: "ran" };
+      },
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+      signal: new AbortController().signal,
+      userMessages: sampleUserMessages,
+    })) {
+      events.push(e);
+    }
+
+    expect(events.some((e) => e.type === "turn.failed")).toBe(false);
+    expect(events.some((e) => e.type === "turn.finished")).toBe(true);
+    expect(ran).toBe(0);
+    const fin = events.find((e) => e.type === "tool.call.finished");
+    if (fin?.type !== "tool.call.finished") throw new Error("no finish");
+    expect(fin.result.ok).toBe(false);
+    expect(fin.result.error?.message).toContain("cut off at the output limit");
+    expect(fin.result.suggestion).toContain("did NOT run");
+    expect(fin.result.suggestion).toContain("smaller pieces");
+    // Not the advice for a mis-escaped regex: it would send the same call.
+    expect(fin.result.suggestion).not.toContain("backslash");
+  });
+});

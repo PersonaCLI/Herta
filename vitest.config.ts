@@ -19,7 +19,12 @@ export default defineConfig({
   test: {
     // Once per run: sweep the `herta-*` temp dirs earlier runs left behind
     // (the ones a test process itself held open — see the file's header).
-    globalSetup: ["./packages/core/test-setup/sweep-tmp-dirs.ts"],
+    // And say so when a package's build is older than its source: a test
+    // of another package imports the build (see the file's header).
+    globalSetup: [
+      "./packages/core/test-setup/sweep-tmp-dirs.ts",
+      "./packages/core/test-setup/warn-stale-dist.ts",
+    ],
     projects: [
       // Default project: all non-gui packages. Node environment,
       // .test.ts only (no React / JSX in these packages).

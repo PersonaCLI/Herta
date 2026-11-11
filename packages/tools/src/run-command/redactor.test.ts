@@ -344,3 +344,405 @@ describe("a long word with no digit in it (review 2026-11-10)", () => {
     );
   });
 });
+
+describe("a fine-grained GitHub token (review 2026-11-10)", () => {
+  it("is masked like the classic one", () => {
+    const pat = `github_pat_11ABCDEFG0aBcDeFgHiJkL_${"a1B2".repeat(15)}`;
+    expect(redactSecrets(`remote said ${pat} was revoked`)).toBe(
+      "remote said [REDACTED:github_token] was revoked",
+    );
+    expect(redactSecrets("ghp_abcdefghijklmnopqrstuvwxyz0123456789")).toBe(
+      "[REDACTED:github_token]",
+    );
+  });
+
+  it("a name that starts the same way is not one", () => {
+    const line = "github_pat_token and github_patterns";
+    expect(redactSecrets(line)).toBe(line);
+  });
+});
+
+describe("a password in a URL (review 2026-11-10)", () => {
+  const mask = "[REDACTED:url_password]";
+
+  it("is masked, and the user and the host stay", () => {
+    for (const [line, masked] of [
+      [
+        "postgres://admin:s3cretPassw0rd@db.example.com/app",
+        `postgres://admin:${mask}@db.example.com/app`,
+      ],
+      [
+        "origin\thttps://robin:hunter2hunter2@git.example.com/team/repo.git (fetch)",
+        `origin\thttps://robin:${mask}@git.example.com/team/repo.git (fetch)`,
+      ],
+      [
+        "DATABASE_URL=postgres://admin:s3cretPassw0rd@db.example.com/app",
+        `DATABASE_URL=postgres://admin:${mask}@db.example.com/app`,
+      ],
+      [
+        "redis://:s3cretPassw0rd@cache.internal:6379/0",
+        `redis://:${mask}@cache.internal:6379/0`,
+      ],
+      [
+        "mongodb+srv://app:s3cretPassw0rd@cluster0.example.mongodb.net/db",
+        `mongodb+srv://app:${mask}@cluster0.example.mongodb.net/db`,
+      ],
+      [
+        "HTTP_PROXY=http://proxyuser:pr0xyPass@proxy.corp:8080",
+        `HTTP_PROXY=http://proxyuser:${mask}@proxy.corp:8080`,
+      ],
+      ["http://admin:p@ss@[::1]:8080/", `http://admin:${mask}@[::1]:8080/`],
+      [
+        "git clone https://robin:hunter2hunter2@git.example.com/team/repo.git && cd repo",
+        `git clone https://robin:${mask}@git.example.com/team/repo.git && cd repo`,
+      ],
+      [
+        "https://oauth2:glpat-abcdefghij0123456789@gitlab.com/o/r.git",
+        `https://oauth2:${mask}@gitlab.com/o/r.git`,
+      ],
+    ] as const) {
+      expect(redactSecrets(line), line).toBe(masked);
+    }
+  });
+
+  it("a token already masked inside one keeps its own marker", () => {
+    expect(
+      redactSecrets(
+        "https://x-access-token:ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/o/r.git",
+      ),
+    ).toBe("https://x-access-token:[REDACTED:github_token]@github.com/o/r.git");
+  });
+
+  it("an @ in a path, a user with no password and a port are not one", () => {
+    for (const line of [
+      "ssh://git@github.com/owner/repo.git",
+      "ssh://git@github.com:22/owner/repo.git",
+      "git@github.com:owner/repo.git",
+      "https://user@example.com/path",
+      "mailto:someone@example.com",
+      "http://localhost:3000/login?next=/a@b",
+      "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+      "http://localhost:5173/@fs/C:/Users/dev/app/src/main.ts",
+      "https://registry.npmjs.org/@scope/pkg",
+      "see https://example.com:8443/a and mail me@example.com",
+      "http://[::1]:8080/@vite/client",
+      "docker://registry:5000/img@sha256:0123456789abcdef",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("a password a program fills in when it runs is left", () => {
+    for (const line of [
+      "postgres://$DB_USER:$DB_PASSWORD@db.internal/app",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a line of code, not a template
+      "postgres://${user}:${password}@${host}/${db}",
+      'f"postgres://{user}:{password}@{host}/{db}"',
+      "https://user:***@git.example.com/repo.git",
+      '"mysql://%s:%s@%s/%s" % (user, pw, host, db)',
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+});
+
+describe("Authorization: Basic (review 2026-11-10)", () => {
+  it("masks the credentials wherever the header is written", () => {
+    for (const [line, masked] of [
+      [
+        "Authorization: Basic dXNlcjpodW50ZXIyaHVudGVyMg==",
+        "Authorization: Basic [REDACTED:basic_auth]",
+      ],
+      [
+        "< Proxy-Authorization: Basic dXNlcjpodW50ZXIy",
+        "< Proxy-Authorization: Basic [REDACTED:basic_auth]",
+      ],
+      [
+        'curl -H "Authorization: Basic dXNlcjpodW50ZXIy" https://example.com',
+        'curl -H "Authorization: Basic [REDACTED:basic_auth]" https://example.com',
+      ],
+      [
+        '{"Authorization": "Basic dXNlcjpodW50ZXIy"}',
+        '{"Authorization": "Basic [REDACTED:basic_auth]"}',
+      ],
+      [
+        'headers.set("Authorization", "Basic dXNlcjpodW50ZXIy")',
+        'headers.set("Authorization", "Basic [REDACTED:basic_auth]")',
+      ],
+      [
+        "> authorization: basic dXNlcjpodW50ZXIy",
+        "> authorization: basic [REDACTED:basic_auth]",
+      ],
+    ] as const) {
+      expect(redactSecrets(line), line).toBe(masked);
+    }
+  });
+
+  it("leaves the documentation's word and what a program works out", () => {
+    for (const line of [
+      "Authorization: Basic <credentials>",
+      "Authorization: Basic credentials",
+      "Authorization: Basic Authentication",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a line of code, not a template
+      "Authorization: `Basic ${encoded}`",
+      '"Authorization": "Basic " + btoa(pair)',
+      "Authorization: Basic base64encode(user:pass)",
+      "Authorization: Basic $BASIC_CREDENTIALS",
+      "Basic functionality works as before",
+      '-H "Authorization: Basic $(echo -n user:pass | base64)"',
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+});
+
+describe("a key and its value under a colon (review 2026-11-10)", () => {
+  const mask = "[REDACTED:secret_value]";
+
+  it("masks an opaque value in YAML, a header and a log's line", () => {
+    for (const [line, masked] of [
+      ["password: hunter2hunter2", `password: ${mask}`],
+      ["  api_key: 9f8e7d6c5b4a39281706f5e4d3c2b1a0", `  api_key: ${mask}`],
+      [
+        "  client-secret: 0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        `  client-secret: ${mask}`,
+      ],
+      [
+        "  aws_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        `  aws_secret_access_key: ${mask}`,
+      ],
+      ["  password: Sup3rS3cret!", `  password: ${mask}`],
+      [
+        "  - password: hunter2hunter2  # dev only",
+        `  - password: ${mask}  # dev only`,
+      ],
+      [
+        "spring.datasource.password: Xk9mP2nQ7vR4tL8w",
+        `spring.datasource.password: ${mask}`,
+      ],
+      ["+  api_key: 9f8e7d6c5b4a39281706f5e4d3c2b1a0", `+  api_key: ${mask}`],
+      [
+        "config.yml:12:  password: hunter2hunter2",
+        `config.yml:12:  password: ${mask}`,
+      ],
+      ["    12\t  password: hunter2hunter2", `    12\t  password: ${mask}`],
+      [
+        "> X-Api-Key: 9f8e7d6c5b4a39281706f5e4d3c2b1a0\r",
+        `> X-Api-Key: ${mask}\r`,
+      ],
+      [
+        "< x-auth-token: 550e8400-e29b-41d4-a716-446655440000",
+        `< x-auth-token: ${mask}`,
+      ],
+      ["Generated password: Xk9mP2nQ7vR4", `Generated password: ${mask}`],
+      ['echo "token: abc123def456ghi"', `echo "token: ${mask}"`],
+      ["  password: aHVudGVyMmh1bnRlcjI=", `  password: ${mask}`],
+      ["authtoken: 2abcDEF3ghiJKL4mnoPQR5stu", `authtoken: ${mask}`],
+      [
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a compose file's line, not a template
+        "  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-abc123def456ghi}",
+        `  POSTGRES_PASSWORD: ${mask}`,
+      ],
+    ] as const) {
+      expect(redactSecrets(line), line).toBe(masked);
+    }
+  });
+
+  it("masks a string with a digit in it, in JSON and in code", () => {
+    for (const [line, masked] of [
+      ['"token": "abcDEF123456xyz"', `"token": "${mask}"`],
+      [
+        '{"access_token":"ya29.a0AfH6SMBx7abcdefghij","expires_in":3599}',
+        `{"access_token":"${mask}","expires_in":3599}`,
+      ],
+      [
+        '  "apiKey": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",',
+        `  "apiKey": "${mask}",`,
+      ],
+      ["'password': 'hunter2hunter2'", `'password': '${mask}'`],
+      ['  "password" : "hunter2",', `  "password" : "${mask}",`],
+      ['    password: "Sup3rS3cret!"', `    password: "${mask}"`],
+      [
+        '  { user: "admin", password: "p4ssw0rd" }',
+        `  { user: "admin", password: "${mask}" }`,
+      ],
+      ['  "client_secret": "a\\"b1c2d3e4f5",', `  "client_secret": "${mask}",`],
+      ['  "db_password": "pass-word-1",', `  "db_password": "${mask}",`],
+    ] as const) {
+      expect(redactSecrets(line), line).toBe(masked);
+    }
+  });
+
+  it("leaves a type, a property and a reference", () => {
+    for (const line of [
+      "  password: string;",
+      "  token: string | null;",
+      "    password: str",
+      "    token: Optional[str] = None",
+      "  secret: Uint8Array",
+      "def login(user: str, password: str) -> bool:",
+      "  apiKey: process.env.OPENAI_API_KEY,",
+      "  token: process.env.GITHUB_TOKEN_2024",
+      "  token: session.token,",
+      "  password: await hash(input.password2),",
+      "  token: getToken2024()",
+      "  password: params[:password]",
+      "  token: OAuth2AccessToken;",
+      "function f(token: OAuth2AccessToken, key: CryptoKey) {",
+      'token := os.Getenv("GITHUB_TOKEN_2")',
+      "let kind = token::Kind1234567890;",
+      "$token: 12px;",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("leaves a label, a message, a name, a count and a dependency", () => {
+    for (const line of [
+      '  "password": "Password",',
+      '  "token": "Bearer",',
+      '  "reset_password": "Reset your password",',
+      '  "password": "Must be at least 8 characters",',
+      '  "password": "",',
+      '  "password": "your-password-here",',
+      '  ACCESS_TOKEN: "access_token",',
+      '  token: "app.auth.token",',
+      '  "max_tokens": 4096,',
+      '  "total_tokens": 1234,',
+      '  "token": null,',
+      '  "token": token,',
+      '  "tokenizer": "cl100k_base",',
+      '  "token_type": "Bearer",',
+      '  "secretName": "tls-cert-2024",',
+      '  "password": {"type": "string", "minLength": 8},',
+      '  "bos_token": "<|begin_of_text|>",',
+      '  "pad_token": "<|reserved_special_token_0|>",',
+      '  "jsonwebtoken": "^9.0.2",',
+      '  "jsonwebtoken": "10.12.3",',
+      '  "rand-token": "~1.0.1",',
+      '  "csrf-token": "workspace:^2.1.0",',
+      "      jsonwebtoken: 9.0.2",
+      "      jsonwebtoken: ^9.0.2",
+      '  "private_key": "/etc/keys/dev2.pem",',
+      '  "token": "https://auth.example.com/oauth2/v2/token",',
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("leaves what is filled in when the file is used", () => {
+    for (const line of [
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a workflow's line, not a template
+      "  token: ${{ secrets.GITHUB_TOKEN }}",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a workflow's line, not a template
+      "  password: ${{secrets.DOCKER_PASSWORD_2}}",
+      "  password: {{ .Values.db.password }}",
+      "  password: {{.Values.db.password2}}",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a compose file's line, not a template
+      "  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a compose file's line, not a template
+      "  GITHUB_TOKEN: ${GITHUB_TOKEN_2024:-}",
+      '  "access_token": "{{access_token2}}",',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a config's line, not a template
+      '  "token": "${TOKEN_V2}",',
+      '  "password": "{password2}",',
+      'curl -H "X-Api-Key: $API_KEY_2" https://example.com',
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("leaves a sentence, a number, a path and YAML's own marks", () => {
+    for (const line of [
+      "SyntaxError: Unexpected token: punc (})",
+      "error: Unexpected token: identifier",
+      "  password: must contain 8 characters",
+      "  token: expired, retrying in 30s",
+      "Authorization: token is missing",
+      "  private_key: ./keys/dev2.pem",
+      "  private_key: /etc/ssl/private/server2024.key",
+      "  token: 1700000000000",
+      "  token: 2026-11-10T07:42:38Z",
+      "  password: *default_password_1",
+      "  password: !vault |",
+      "      key: password",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+  });
+
+  it("leaves a bare word: nothing tells it from a type's name", () => {
+    // The price of `API_KEY: str` staying readable. The `=` rule has no
+    // such doubt and masks `POSTGRES_PASSWORD=example`.
+    for (const line of [
+      "  POSTGRES_PASSWORD: example",
+      "  password: hunter2",
+      "    API_KEY: str",
+    ]) {
+      expect(redactSecrets(line), line).toBe(line);
+    }
+    expect(redactSecrets("POSTGRES_PASSWORD=example")).toBe(
+      "POSTGRES_PASSWORD=[REDACTED:env_secret]",
+    );
+  });
+
+  it("masks every one on a line, and the text between is left", () => {
+    expect(
+      redactSecrets(
+        '{"access_token":"ya29.a0AfH6SMBx7","token_type":"Bearer","refresh_token":"1//0gLxyz123abc"}',
+      ),
+    ).toBe(
+      `{"access_token":"${mask}","token_type":"Bearer","refresh_token":"${mask}"}`,
+    );
+  });
+});
+
+describe("the new shapes, read twice and read at length (review 2026-11-10)", () => {
+  it("a masked line is left as it is", () => {
+    for (const line of [
+      "password: hunter2hunter2",
+      '"token": "abcDEF123456xyz"',
+      "postgres://admin:s3cretPassw0rd@db.example.com/app",
+      "Authorization: Basic dXNlcjpodW50ZXIyaHVudGVyMg==",
+      "DATABASE_URL=postgres://admin:s3cretPassw0rd@db.example.com/app",
+      "TOKEN=abc123 password: hunter2hunter2",
+    ]) {
+      const once = redactSecrets(line);
+      expect(once, line).not.toBe(line);
+      expect(redactSecrets(once), line).toBe(once);
+    }
+  });
+
+  it("is read in linear time, whatever it repeats", () => {
+    const N = 300_000;
+    const rep = (unit: string): string =>
+      unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+    for (const text of [
+      rep(":"),
+      rep("token: "),
+      rep('"token": "'),
+      rep("'token': \""),
+      `token: 'x${rep("y ")}`,
+      rep(`token:${" ".repeat(500)}`),
+      `${rep("a-")}token: abc123def456ghi`,
+      `${rep("token")}: abc123def456ghi`,
+      `"${rep("token")}": "abc123def456"`,
+      `token: ${rep("${a:-")}`,
+      `token: ${rep("a1")}`,
+      rep("://"),
+      rep("x://u:p@"),
+      `${rep("a")}://u:p@h`,
+      `x://${rep("a:")}@h`,
+      rep("Authorization: Basic "),
+      `Authorization${rep(" ")}`,
+      `Authorization: Basic ${rep("a")}(`,
+      rep("github_pat_"),
+    ]) {
+      const started = performance.now();
+      redactSecrets(text);
+      expect(performance.now() - started, text.slice(0, 24)).toBeLessThan(
+        1_000,
+      );
+    }
+  });
+});

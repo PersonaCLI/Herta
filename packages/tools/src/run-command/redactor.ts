@@ -11,7 +11,12 @@ const PEM_BLOCK_RE =
 // so a `grep`/`cat` over an env file leaked them verbatim.
 const PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
   { kind: "aws_access_key", re: /\bAKIA[0-9A-Z]{16}\b/g },
-  { kind: "github_token", re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
+  // The classic tokens, and the fine-grained one (`github_pat_`), which is
+  // longer and has underscores inside it (review 2026-11-10).
+  {
+    kind: "github_token",
+    re: /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b/g,
+  },
   {
     kind: "jwt",
     re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
@@ -222,6 +227,269 @@ function redactJwts(text: string): string {
   return `${out}${text.slice(copied)}`;
 }
 
+// `Authorization: Basic <base64 of user:password>`: what `curl -v` prints of
+// a request, and what a script writes down (review 2026-11-10). `Basic` alone
+// says nothing (`Basic functionality`), so the header's name is part of the
+// shape, with whatever stands between a name and its value in a header, an
+// object or a call (`"Authorization", "Basic ..."`). One capitalised or
+// lower-case word is the documentation's (`Authorization: Basic
+// credentials`), and what a program works out has a character base64 has not
+// (`Basic ${encoded}`).
+const BASIC_AUTH_RE =
+  /(\bAuthorization\b["']?\s*[:=,]\s*["']?Basic\s+)([A-Za-z0-9+/_-]{8,}={0,2})(?![A-Za-z0-9+/_=-]|[({$<%])/gi;
+
+function redactBasicAuth(text: string): string {
+  return text.replace(
+    BASIC_AUTH_RE,
+    (whole: string, head: string, held: string) =>
+      /^[A-Za-z][a-z]+$/u.test(held) ? whole : `${head}[REDACTED:basic_auth]`,
+  );
+}
+
+// A password inside a URL: `scheme://user:password@host` (review 2026-11-10).
+// A git remote, a `DATABASE_URL`, a proxy setting and the command that used
+// any of them all print one. Only the password is masked: the line still
+// says which host and which user.
+//
+// Read from each `://` forward to where the authority ends: the path, the
+// query, or whatever closes the URL in its text. An `@` further on belongs
+// to a path (`https://unpkg.com/react@18.3.1/`, Vite's `/@fs/`) and is never
+// read. No two reads overlap, so the walk is linear.
+const URL_AUTHORITY_RE = /[^\s/?#"'`<>\\]*/y;
+const URL_SCHEME_RE = /[A-Za-z][A-Za-z0-9+.-]*$/;
+/** As long as a scheme gets (`mongodb+srv`), with room. */
+const SCHEME_LOOKBACK = 24;
+
+// A password a program fills in when it runs, or one already masked: a
+// shell's or a template's variable (`$TOKEN`, `${pw}`, `{password}`,
+// `{{.Values.pw}}`), a format's slot (`%s`), another tool's own mask
+// (`***`), a marker of this file's.
+const URL_PASSWORD_READ_RE =
+  /^(?:\$[A-Za-z_]\w*|\$?\{[^{}]*\}|\$?\{\{[^{}]*\}\}|%(?:\([^()]*\))?[sdv]|\*+|\[REDACTED:\w+\])$/;
+
+function redactUrlPasswords(text: string): string {
+  const authority = new RegExp(URL_AUTHORITY_RE.source, URL_AUTHORITY_RE.flags);
+  let out = "";
+  let copied = 0;
+  let at = text.indexOf("://");
+  while (at !== -1) {
+    const from = at + 3;
+    if (
+      !URL_SCHEME_RE.test(text.slice(Math.max(0, at - SCHEME_LOOKBACK), at))
+    ) {
+      at = text.indexOf("://", from);
+      continue;
+    }
+    authority.lastIndex = from;
+    const held = authority.exec(text)?.[0] ?? "";
+    const host = held.lastIndexOf("@");
+    const colon = held.indexOf(":");
+    if (colon !== -1 && colon < host) {
+      const password = held.slice(colon + 1, host);
+      if (password !== "" && !URL_PASSWORD_READ_RE.test(password)) {
+        out += `${text.slice(copied, from + colon + 1)}[REDACTED:url_password]`;
+        copied = from + host;
+      }
+    }
+    at = text.indexOf("://", from + held.length);
+  }
+  return `${out}${text.slice(copied)}`;
+}
+
+// The same keys under a colon: YAML, JSON, a header, a line of a log (review
+// 2026-11-10; before it only `KEY=value` was read).
+//
+// A colon is also how code writes a type (`password: string`), a property
+// (`token: session.token,`), a label (`"password": "Password"`), a
+// dependency (`"jsonwebtoken": "^9.0.2"`) and a parser's complaint
+// (`Unexpected token: punc`), and nothing on a line says which file it came
+// from. So the rule is narrower than the one for `=`, twice over. The key
+// must END in the stem: `max_tokens`, `tokenizer`, `token_type` and
+// `secretName` hold no secret. And the value must look like one, which
+// starts with having a digit in it: `POSTGRES_PASSWORD: example` is left,
+// as `API_KEY: str` has to be.
+const COLON_KEY_RE =
+  /(?:api[_-]?key|access[_-]?key|secret(?:[_-]?key)?|password|passwd|token|private[_-]?key)$/i;
+
+/** How far back from a colon its key is read. */
+const KEY_LOOKBACK = 64;
+
+/** The shortest string taken for a secret: under it are a lexer's `"eof"`
+ *  and a version's `"9.0.2"`. */
+const QUOTED_SECRET_MIN = 6;
+
+// A value that is filled in when the file is used: a variable of a shell, a
+// template or a format (`$DB_PASSWORD`, `${DB_PASSWORD}`, `${{secrets.X}}`,
+// `{{.Values.pw}}`, `{password}`, `%(pw)s`), a tokenizer's piece
+// (`<|reserved_special_token_0|>`), or a marker of this file's.
+// `${NAME:-default}` is not here: the default is written down, and it is
+// what gets read (`writtenDown`).
+const COLON_READ_RE =
+  /^(?:\$[A-Za-z_]\w*|\$\{[A-Za-z_][\w.]*\}|\$?\{\{[^{}]*\}\}|\{[^{}]*\}|<[^<>]*>|%(?:\([^()]*\))?[sdv]|\[REDACTED:\w+\])$/;
+
+/** A file or an address, which names where a secret is kept. */
+const PATH_OR_URL_RE =
+  /^(?:[~.]{0,2}[\\/]|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
+
+/** A version or a range of one: a manifest's `"jsonwebtoken": "^9.0.2"`. */
+const VERSION_RE =
+  /^(?:workspace:)?(?:[~^]|[<>]=?|=|v)?\d+(?:\.(?:\d+|[x*])){1,3}(?:[-+][0-9A-Za-z.+-]*)?$/;
+
+/** `${NAME:-default}`, one level of it. */
+const SHELL_DEFAULT_RE = /^\$\{[A-Za-z_]\w*:?[-=+](.*)\}$/;
+
+/** What of a value is written down: a shell default's default, or all of
+ *  it. The name in front says nothing (`${GITHUB_TOKEN_2024:-}`). */
+const writtenDown = (value: string): string =>
+  SHELL_DEFAULT_RE.exec(value)?.[1] ?? value;
+
+const isKeyChar = (c: string | undefined): boolean =>
+  c !== undefined && /[\w.-]/u.test(c);
+
+const isBlank = (c: string | undefined): boolean => c === " " || c === "\t";
+
+interface ColonKey {
+  readonly name: string;
+  readonly quoted: boolean;
+}
+
+/** The key a colon closes: quoted (`"token":`, with the spaces JSON allows
+ *  before the colon) or bare and touching it (`api-key:`,
+ *  `spring.datasource.password:`). Read back from the colon, to a bound, so a
+ *  key is looked for once per colon whatever the word behind it is made of. */
+function keyBefore(text: string, colon: number): ColonKey | null {
+  let end = colon;
+  while (end > 0 && colon - end < 4 && isBlank(text[end - 1])) end -= 1;
+  const quote = text[end - 1];
+  if (quote === '"' || quote === "'") {
+    let start = end - 1;
+    while (
+      start > 0 &&
+      end - 1 - start <= KEY_LOOKBACK &&
+      isKeyChar(text[start - 1])
+    ) {
+      start -= 1;
+    }
+    if (start === end - 1 || text[start - 1] !== quote) return null;
+    return { name: text.slice(start, end - 1), quoted: true };
+  }
+  if (end !== colon) return null;
+  let start = colon;
+  while (
+    start > 0 &&
+    colon - start <= KEY_LOOKBACK &&
+    isKeyChar(text[start - 1])
+  ) {
+    start -= 1;
+  }
+  if (start === colon) return null;
+  // Cut short by the bound, or a stylesheet's variable (`$token: 12px`).
+  const before = text[start - 1];
+  if (isKeyChar(before) || before === "$" || before === "@") return null;
+  return { name: text.slice(start, colon), quoted: false };
+}
+
+/** A string under such a key is a secret when it is one run of characters
+ *  with a digit in it. What that leaves: a label or a message (`"Password"`,
+ *  `"Must be at least 8 characters"`), a name (`"access_token"`), a
+ *  placeholder (`"your-password-here"`), an empty string. */
+function holdsQuotedSecret(quoted: string): boolean {
+  const value = writtenDown(quoted);
+  if (value.length < QUOTED_SECRET_MIN || /\s/u.test(value)) return false;
+  if (!/\d/u.test(value)) return false;
+  return !(
+    COLON_READ_RE.test(value) ||
+    VERSION_RE.test(value) ||
+    PATH_OR_URL_RE.test(value)
+  );
+}
+
+/** A bare value is a secret when it is opaque: a long word with a digit in
+ *  it, or a digit beside a character no name or type is written with. A
+ *  short word with a digit (`hunter2`) is left, as `Uint8Array` has to be. */
+function holdsBareSecret(bare: string): boolean {
+  const value = writtenDown(bare);
+  // A property or an argument in code, a call, an index.
+  if (/[,;)\]}]$/u.test(value) || /[([]/u.test(value)) return false;
+  // A number, a date; then YAML's own alias, anchor, tag and block marks.
+  if (!/[A-Za-z]/u.test(value) || /^[*&!|>]/u.test(value)) return false;
+  if (COLON_READ_RE.test(value) || PATH_OR_URL_RE.test(value)) return false;
+  // What reads the environment: `process.env.GITHUB_TOKEN_2024`.
+  if (/(?:^|\.)env\.[A-Za-z_]/u.test(value)) return false;
+  return (
+    hasOpaqueWord(value) ||
+    (/\d/u.test(value) && /[!@#%^&*+=~/\\]/u.test(value))
+  );
+}
+
+/** Where the secret under a key's colon stands, or null for none. */
+function colonSecret(
+  text: string,
+  colon: number,
+  key: ColonKey,
+): { start: number; end: number } | null {
+  let at = colon + 1;
+  while (isBlank(text[at])) at += 1;
+  const quote = text[at];
+  if (quote === '"' || quote === "'") {
+    let close = at + 1;
+    while (
+      close < text.length &&
+      text[close] !== quote &&
+      text[close] !== "\n"
+    ) {
+      close += text[close] === "\\" && text[close + 1] !== "\n" ? 2 : 1;
+    }
+    if (text[close] !== quote) return null;
+    return holdsQuotedSecret(text.slice(at + 1, close))
+      ? { start: at + 1, end: close }
+      : null;
+  }
+  // JSON's secret is a string: `"max_tokens": 4096` and `"token": token` are
+  // not one. And a bare key's colon has a blank after it: `token::Kind`,
+  // `token := x` and `a:b` are not a key and its value.
+  if (key.quoted || at === colon + 1) return null;
+  let end = at;
+  while (end < text.length && !/\s/u.test(text[end] as string)) end += 1;
+  // Alone to the end of its line, or to a comment: `token: string | null`,
+  // `token: expired, retrying` and `Authorization: token abc` are sentences.
+  let rest = end;
+  while (isBlank(text[rest])) rest += 1;
+  const next = text[rest];
+  if (
+    next !== undefined &&
+    next !== "\n" &&
+    next !== "\r" &&
+    !(next === "#" && rest > end)
+  ) {
+    return null;
+  }
+  // `echo "token: abc"` closes its quote after the value.
+  while (end > at && /["'`]/u.test(text[end - 1] as string)) end -= 1;
+  return holdsBareSecret(text.slice(at, end)) ? { start: at, end } : null;
+}
+
+function redactColonSecrets(text: string): string {
+  let out = "";
+  let copied = 0;
+  let colon = text.indexOf(":");
+  while (colon !== -1) {
+    const key = keyBefore(text, colon);
+    const held =
+      key !== null && COLON_KEY_RE.test(key.name)
+        ? colonSecret(text, colon, key)
+        : null;
+    if (held === null) {
+      colon = text.indexOf(":", colon + 1);
+      continue;
+    }
+    out += `${text.slice(copied, held.start)}[REDACTED:secret_value]`;
+    copied = held.end;
+    colon = text.indexOf(":", held.end);
+  }
+  return `${out}${text.slice(copied)}`;
+}
+
 /** Everything but `jwt`, which has its own walk. */
 const LINEAR_PATTERNS = PATTERNS.filter((p) => p.kind !== "jwt");
 
@@ -231,5 +499,6 @@ export function redactSecrets(text: string): string {
     out = out.replace(re, `[REDACTED:${kind}]`);
     if (kind === "github_token") out = redactJwts(out);
   }
-  return redactEnvSecrets(out);
+  out = redactUrlPasswords(redactBasicAuth(out));
+  return redactColonSecrets(redactEnvSecrets(out));
 }

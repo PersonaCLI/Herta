@@ -1,6 +1,6 @@
 import type { PromptFrame, ProviderAdapter, ProviderEvent } from "@herta/core";
 import { ProviderError } from "../errors.js";
-import { type ProviderUsage, reportProviderUsage } from "../usage.js";
+import { observedCall, type ProviderUsage } from "../usage.js";
 import type { ApiKey } from "./api-key.js";
 import { postChatCompletions } from "./http.js";
 import { parseSSE } from "./sse.js";
@@ -25,6 +25,9 @@ export interface OpenAICompatibleProviderOpts {
   /** SSE idle watchdog: max ms between body chunks before the stream is
    * treated as stalled. Default 90s; 0 disables. See `ParseSSEOpts`. */
   idleTimeoutMs?: number;
+  /** Which of the harness's roles this provider serves; rides its usage
+   *  lines (`ProviderUsage.site`). */
+  site?: string;
   /** Told each call's token usage as the API states it — in addition to the
    *  process-wide sink (`usage.ts`). */
   onUsage?: (usage: ProviderUsage) => void;
@@ -33,9 +36,26 @@ export interface OpenAICompatibleProviderOpts {
 export class OpenAICompatibleProvider implements ProviderAdapter {
   constructor(private readonly opts: OpenAICompatibleProviderOpts) {}
 
-  async *streamChat(
+  streamChat(
     frame: PromptFrame,
     signal: AbortSignal,
+  ): AsyncGenerator<ProviderEvent, void, void> {
+    return observedCall(
+      {
+        endpoint: "chat",
+        model: this.opts.model,
+        ...(this.opts.site !== undefined ? { site: this.opts.site } : {}),
+      },
+      (stated) => this.stream(frame, signal, stated),
+      this.opts.onUsage,
+      signal,
+    );
+  }
+
+  private async *stream(
+    frame: PromptFrame,
+    signal: AbortSignal,
+    stated: (usage: Omit<ProviderUsage, "endpoint" | "model">) => void,
   ): AsyncGenerator<ProviderEvent, void, void> {
     signal.throwIfAborted();
     const body = translate(frame, {
@@ -83,15 +103,7 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
           : {},
       ),
       signal,
-      (usage) => {
-        const stated: ProviderUsage = {
-          endpoint: "chat",
-          model: this.opts.model,
-          ...usage,
-        };
-        this.opts.onUsage?.(stated);
-        reportProviderUsage(stated);
-      },
+      stated,
     );
   }
 }

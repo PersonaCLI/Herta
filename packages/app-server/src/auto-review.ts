@@ -167,6 +167,7 @@ export function defaultReviewModel(
 ): ReviewModel {
   return reviewModelFrom(
     deepseekProvider({
+      site: "review",
       apiKey,
       model: "deepseek-flash",
       thinking: "low",

@@ -26,6 +26,9 @@ export interface DeepseekProviderOpts {
    *  its own policy, and two layers stacked (2026-09-03). */
   maxRetries?: number;
   fetchImpl?: typeof fetch;
+  /** Which of the harness's roles this provider serves; rides its usage
+   *  lines. */
+  site?: string;
 }
 
 export function deepseekProvider(opts: DeepseekProviderOpts): ProviderAdapter {
@@ -46,6 +49,7 @@ export function deepseekProvider(opts: DeepseekProviderOpts): ProviderAdapter {
     temperature: opts.temperature,
     maxTokens: opts.maxTokens,
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    ...(opts.site !== undefined ? { site: opts.site } : {}),
     extraBody,
     fetchImpl: opts.fetchImpl,
   });

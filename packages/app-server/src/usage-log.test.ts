@@ -8,7 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reportUsageNote } from "@herta/core";
-import { reportProviderUsage } from "@herta/providers";
+import { reportProviderFailure, reportProviderUsage } from "@herta/providers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installUsageLog } from "./usage-log.js";
 
@@ -137,5 +137,59 @@ describe("installUsageLog", () => {
     const uninstall = installUsageLog(join(blocker, "usage.jsonl"));
     expect(() => reportProviderUsage(call(1))).not.toThrow();
     await expect(uninstall()).resolves.toBeUndefined();
+  });
+});
+
+describe("installUsageLog — whose call, how long, and the calls with no usage (review 2026-11-10)", () => {
+  it("a usage line carries the site and the wall time when the provider said them", async () => {
+    const file = join(dir, "usage.jsonl");
+    const uninstall = installUsageLog(file);
+    reportProviderUsage({ ...call(1), site: "supervisor", ms: 11_502 });
+    reportProviderUsage(call(2));
+    await uninstall();
+    const rows = readFileSync(file, "utf8")
+      .trimEnd()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(rows[0]).toMatchObject({ site: "supervisor", ms: 11_502 });
+    // An unlabelled provider's line is the one it always was.
+    expect(rows[1]).not.toHaveProperty("site");
+    expect(rows[1]).not.toHaveProperty("ms");
+  });
+
+  it("a call that stated no usage leaves a `call` note with what ended it", async () => {
+    const file = join(dir, "usage.jsonl");
+    const uninstall = installUsageLog(file);
+    reportProviderFailure({
+      endpoint: "chat",
+      model: "deepseek-flash",
+      site: "supervisor",
+      outcome: "aborted",
+      ms: 60_002,
+    });
+    await uninstall();
+    reportProviderFailure({
+      endpoint: "chat",
+      model: "deepseek-flash",
+      outcome: "network",
+      ms: 5,
+    }); // after uninstall: nobody is listening
+    const rows = readFileSync(file, "utf8")
+      .trimEnd()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      note: "call",
+      outcome: "aborted",
+      endpoint: "chat",
+      model: "deepseek-flash",
+      site: "supervisor",
+      ms: 60_002,
+    });
+    // Numbers and names only, as every line of this file.
+    expect(Object.keys(rows[0]).sort()).toEqual(
+      ["at", "endpoint", "model", "ms", "note", "outcome", "site"].sort(),
+    );
   });
 });

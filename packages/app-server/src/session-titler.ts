@@ -101,6 +101,7 @@ export function createTitleProvider(
   baseUrl: { baseUrl?: string } = {},
 ): ProviderAdapter {
   return deepseekProvider({
+    site: "title",
     apiKey,
     model: "deepseek-flash",
     thinking: "low",

@@ -23,6 +23,9 @@ export interface DeepseekCompletionProviderOpts {
   fetchImpl?: typeof fetch;
   maxRetries?: number;
   retryBaseMs?: number;
+  /** Which of the harness's roles this provider serves; rides its usage
+   *  lines. */
+  site?: string;
 }
 
 export function deepseekCompletionProvider(
@@ -37,5 +40,6 @@ export function deepseekCompletionProvider(
     ...(opts.retryBaseMs !== undefined
       ? { retryBaseMs: opts.retryBaseMs }
       : {}),
+    ...(opts.site !== undefined ? { site: opts.site } : {}),
   });
 }

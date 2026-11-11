@@ -1,5 +1,5 @@
 import { ProviderError } from "../errors.js";
-import { parseUsageChunk, reportProviderUsage } from "../usage.js";
+import { observedRequest, parseUsageChunk } from "../usage.js";
 import type { HttpOpts } from "./http.js";
 import { postChatCompletions } from "./http.js";
 
@@ -59,7 +59,21 @@ interface CaptionResponse {
 }
 
 export function visionCaptioner(opts: VisionCaptionerOpts): VisionCaptioner {
-  return async (req, signal) => {
+  return (req, signal) =>
+    observedRequest(
+      { endpoint: "chat", model: opts.model, site: "vision" },
+      (stated) => caption(opts, req, signal, stated),
+      signal,
+    );
+}
+
+async function caption(
+  opts: VisionCaptionerOpts,
+  req: VisionCaptionRequest,
+  signal: AbortSignal,
+  stated: Parameters<Parameters<typeof observedRequest>[1]>[0],
+): Promise<string> {
+  {
     const res = await postChatCompletions(
       opts,
       {
@@ -95,9 +109,10 @@ export function visionCaptioner(opts: VisionCaptionerOpts): VisionCaptioner {
     }
 
     // The one non-streamed call: its usage sits on the body (`usage.ts`).
+    // A caption that fails after this (empty, truncated) was still paid for,
+    // and its usage is the line it leaves.
     const usage = parseUsageChunk(json);
-    if (usage !== null)
-      reportProviderUsage({ endpoint: "chat", model: opts.model, ...usage });
+    if (usage !== null) stated(usage);
 
     const choice = json.choices?.[0];
     const content = choice?.message?.content;
@@ -127,5 +142,5 @@ export function visionCaptioner(opts: VisionCaptionerOpts): VisionCaptioner {
       });
     }
     return content.trim();
-  };
+  }
 }

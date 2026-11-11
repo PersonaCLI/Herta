@@ -173,6 +173,7 @@ export function createBackendProvider(opts: {
   readonly fetchImpl?: typeof fetch;
 }): ProviderAdapter {
   return deepseekProvider({
+    site: "backend",
     apiKey: opts.apiKey,
     model: opts.model,
     thinking:
@@ -259,6 +260,7 @@ export function makeDigestProvider(
   baseUrl: { baseUrl?: string } = {},
 ): ProviderAdapter {
   return deepseekProvider({
+    site: "digest",
     apiKey,
     model: "deepseek-flash",
     thinking: false,
@@ -277,6 +279,7 @@ export function flowSideModel(
 ): DigestModel {
   return digestModelFrom(
     deepseekProvider({
+      site: "flow",
       apiKey,
       model: "deepseek-flash",
       thinking: false,
@@ -295,6 +298,7 @@ export function flowJudgeProvider(
   baseUrl: { baseUrl?: string } = {},
 ): ProviderAdapter {
   return deepseekProvider({
+    site: "flow-judge",
     apiKey,
     model: "deepseek-flash",
     thinking: "high",
@@ -313,6 +317,7 @@ export function flowWordFrom(opts: {
 }): FlowWord {
   const baseUrl = opts.baseUrl !== undefined ? { baseUrl: opts.baseUrl } : {};
   const provider = deepseekCompletionProvider({
+    site: "flow-word",
     apiKey: opts.apiKey,
     ...baseUrl,
   });
@@ -919,10 +924,15 @@ export async function createActorStack(
   // recap summarizer rides this adapter for the same reason.
   const actorProvider =
     overrides.actorProvider ??
-    deepseekCompletionProvider({ apiKey: opts.apiKey, ...baseUrl });
+    deepseekCompletionProvider({
+      apiKey: opts.apiKey,
+      site: "actor",
+      ...baseUrl,
+    });
   const routerProvider =
     overrides.routerProvider ??
     deepseekProvider({
+      site: "router",
       apiKey: opts.apiKey,
       model: "deepseek-flash",
       thinking: false,
@@ -935,6 +945,7 @@ export async function createActorStack(
     overrides.supervisorProvider ??
     overrides.routerProvider ??
     deepseekProvider({
+      site: "supervisor",
       apiKey: opts.apiKey,
       model: "deepseek-flash",
       thinking: "high",

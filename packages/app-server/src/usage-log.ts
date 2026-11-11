@@ -1,7 +1,12 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setUsageNoteSink, type UsageNote } from "@herta/core";
-import { type ProviderUsage, setProviderUsageSink } from "@herta/providers";
+import {
+  type ProviderCallFailure,
+  type ProviderUsage,
+  setProviderFailureSink,
+  setProviderUsageSink,
+} from "@herta/providers";
 
 /** One line per model call. Past this the file moves aside (one generation
  *  kept) — at ~130 bytes a line that is some thirty thousand calls. */
@@ -46,6 +51,12 @@ const ROTATE_AT_BYTES = 4 * 1024 * 1024;
  *   {"at":"…","note":"supervisor","verdict":"block","ms":9870}
  *   {"at":"…","note":"supervisor","verdict":"ok","why":"timeout","ms":60003}
  *
+ * And one line per model call that stated no usage, with what ended it
+ * (review 2026-11-10): before, such a call left nothing. A usage line now
+ * also says whose call it was (`site`) and how long it took (`ms`):
+ *
+ *   {"at":"…","note":"call","outcome":"aborted","endpoint":"chat","model":"deepseek-flash","site":"supervisor","ms":60002}
+ *
  * Installs the providers' and core's process-wide sinks, so one call covers
  * every provider and run the host builds. Writes are queued and
  * asynchronous — a model call never waits on the disk — and a failed write
@@ -80,6 +91,20 @@ export function installUsageLog(filePath: string): () => Promise<void> {
       completion: u.completionTokens,
       // The idle dream pass says so: it spends while the user is away.
       ...(u.source !== undefined ? { source: u.source } : {}),
+      // Whose call it was and how long it took (review 2026-11-10).
+      ...(u.site !== undefined ? { site: u.site } : {}),
+      ...(u.ms !== undefined ? { ms: u.ms } : {}),
+    });
+  };
+  // A call that stated no usage still leaves its line: what ended it.
+  const failureSink = (f: ProviderCallFailure): void => {
+    write({
+      note: "call",
+      outcome: f.outcome,
+      endpoint: f.endpoint,
+      model: f.model,
+      ...(f.site !== undefined ? { site: f.site } : {}),
+      ms: f.ms,
     });
   };
   const noteSink = (n: UsageNote): void => {
@@ -87,9 +112,11 @@ export function installUsageLog(filePath: string): () => Promise<void> {
     write({ note: kind, ...numbers });
   };
   setProviderUsageSink(sink);
+  setProviderFailureSink(failureSink);
   setUsageNoteSink(noteSink);
   return async () => {
     setProviderUsageSink(undefined);
+    setProviderFailureSink(undefined);
     setUsageNoteSink(undefined);
     await queue;
   };

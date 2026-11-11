@@ -22,6 +22,43 @@ export interface ParseSSEOpts {
 
 export const DEFAULT_SSE_IDLE_TIMEOUT_MS = 90_000;
 
+/**
+ * A 200 whose body is not an event stream (review 2026-11-10): a captive
+ * portal's sign-in page, a proxy's HTML error, a JSON error sent with the
+ * wrong status. None of it has a `data:` line, so the parser yielded nothing
+ * and returned, the caller read that as an empty answer, and the turn ended
+ * with no words and no error. It is told from a stream by what it holds: a
+ * line that is neither a comment nor a field, in a body that never yields an
+ * event. A stream that only kept alive (comments, then the end) is still an
+ * empty one, and a stray line among real events is still ignored.
+ */
+const SSE_FIELD_RE = /^(?:data|event|id|retry)(?::|$)/;
+
+/** How much of a body is read before its first event; an event is far
+ *  smaller, and a page with no blank line in it would be held whole. */
+const NOT_A_STREAM_CHARS = 65_536;
+
+/** The first line of `raw` an event stream does not have, or undefined. */
+function foreignLine(raw: string): string | undefined {
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0 || line.startsWith(":")) continue;
+    if (!SSE_FIELD_RE.test(line)) return line;
+  }
+  return undefined;
+}
+
+/** Retryable: nothing of the answer was read, so nothing is half done. */
+function notAStream(line: string): ProviderError {
+  return new ProviderError({
+    code: "sse",
+    retryable: true,
+    message: `the server answered with something that is not an event stream: ${line
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80)}`,
+  });
+}
+
 /** One `reader.read()` guarded by the idle watchdog. On timeout: cancel the
  *  reader (closes the connection; also settles the losing read — a cancelled
  *  read resolves `{done:true}`, so it can never become an unhandled
@@ -75,6 +112,9 @@ export async function* parseSSE(
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let sourceEnded = false;
+  // Until the first event: whether the body is a stream at all.
+  let yielded = 0;
+  let foreign: string | undefined;
 
   try {
     while (true) {
@@ -104,12 +144,21 @@ export async function* parseSSE(
       const { value, done } = read;
       if (done) {
         sourceEnded = true;
+        let finished = false;
         if (buffer.length > 0) {
+          if (yielded === 0) foreign ??= foreignLine(buffer);
           const event = takeEvent(buffer);
           if (event !== undefined) {
             const parsed = tryParse(event);
-            if (parsed !== DONE) yield parsed;
+            if (parsed === DONE) finished = true;
+            else {
+              yielded += 1;
+              yield parsed;
+            }
           }
+        }
+        if (yielded === 0 && !finished && foreign !== undefined) {
+          throw notAStream(foreign);
         }
         return;
       }
@@ -120,13 +169,18 @@ export async function* parseSSE(
       while (boundary !== -1) {
         const raw = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
+        if (yielded === 0) foreign ??= foreignLine(raw);
         const event = takeEvent(raw);
         if (event !== undefined) {
           const parsed = tryParse(event);
           if (parsed === DONE) return;
+          yielded += 1;
           yield parsed;
         }
         boundary = buffer.indexOf("\n\n");
+      }
+      if (yielded === 0 && buffer.length > NOT_A_STREAM_CHARS) {
+        throw notAStream(foreign ?? foreignLine(buffer) ?? buffer);
       }
     }
   } finally {

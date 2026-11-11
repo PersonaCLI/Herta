@@ -39,6 +39,11 @@ export const FLOW_IMAGE_EXT: Readonly<Record<string, string>> = {
 /** Seven days are kept (§1): today and the six before it. */
 export const FLOW_KEEP_DAYS = 7;
 
+/** Between a prune finding something expired and a prune deleting it (see
+ *  `prune`). Under a day, so an app opened at the same hour each morning
+ *  finds yesterday's mark due. */
+export const FLOW_PRUNE_CONFIRM_MS = 20 * 60 * 60 * 1000;
+
 /** The cadence and the unread mark (§10). */
 export interface FlowStateFile {
   /** When the last issue run started, ms epoch. */
@@ -58,6 +63,9 @@ export interface FlowStateFile {
   readonly unread: string | null;
   /** The next issue's episode number (§3). */
   readonly nextNumber: number;
+  /** What a prune last found expired, and when by the clock: everything
+   *  dated before `from`. Absent until a prune has marked (see `prune`). */
+  readonly pruneMark?: { readonly from: string; readonly at: number };
 }
 
 export const EMPTY_FLOW_STATE: FlowStateFile = {
@@ -167,6 +175,7 @@ function readStateValue(raw: unknown): FlowStateFile {
     typeof v === "number" && Number.isFinite(v) ? v : d;
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
   const f = o.lastFailure as Record<string, unknown> | null | undefined;
+  const p = o.pruneMark as Record<string, unknown> | null | undefined;
   return {
     lastAttemptAt: typeof o.lastAttemptAt === "number" ? o.lastAttemptAt : null,
     day: str(o.day),
@@ -181,6 +190,14 @@ function readStateValue(raw: unknown): FlowStateFile {
         : null,
     unread: str(o.unread),
     nextNumber: Math.max(1, Math.floor(num(o.nextNumber, 1))),
+    ...(p !== null &&
+    typeof p === "object" &&
+    typeof p.from === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(p.from) &&
+    typeof p.at === "number" &&
+    Number.isFinite(p.at)
+      ? { pruneMark: { from: p.from, at: p.at } }
+      : {}),
   };
 }
 
@@ -284,33 +301,66 @@ export class FlowStore {
   }
 
   /**
-   * Delete what has turned seven days old (§10): the issue with its pages
-   * and images. Leftovers of a crashed write or a failed run go the same
-   * way by their date. Returns the issue ids removed.
+   * Delete what has been seven days old for most of a day (§10): the issue
+   * with its pages and images. Leftovers of a crashed write or a failed run
+   * go the same way by their date. Returns the issue ids removed.
+   *
+   * Not at first sight (review 2026-11-10, second pass). "Seven days old" is
+   * the machine's clock, and a clock set a week ahead for one tick emptied
+   * the store for good. What a prune finds expired it marks in state.json,
+   * and a prune `FLOW_PRUNE_CONFIRM_MS` later deletes what that mark named
+   * and the clock still does. A mark from the future (the clock was set
+   * back) names nothing. The panel is as it was: `issues` shows seven days
+   * by the clock, so an expired issue leaves the list at once and the disk
+   * a day later. A clock that stays wrong for a day still deletes.
    */
   async prune(now: number): Promise<string[]> {
     const from = keepFrom(now);
-    const removed: string[] = [];
-    for (const name of await listDir(this.issuesDir)) {
-      const date = DATED.exec(name)?.[1];
-      if (date === undefined || date >= from) continue;
-      await rm(join(this.issuesDir, name), { force: true });
-      const m = ISSUE_FILE.exec(name);
-      if (m !== null) removed.push(name.slice(0, -".json".length));
+    const bases = [this.issuesDir, this.pagesDir, this.imagesDir];
+    const listed = await Promise.all(bases.map(listDir));
+    const datedBefore = (name: string, date: string): boolean => {
+      const d = DATED.exec(name)?.[1];
+      return d !== undefined && d < date;
+    };
+    if (!listed.some((names) => names.some((n) => datedBefore(n, from)))) {
+      return [];
     }
-    for (const base of [this.pagesDir, this.imagesDir]) {
-      for (const name of await listDir(base)) {
-        const date = DATED.exec(name)?.[1];
-        if (date === undefined || date >= from) continue;
+    const held = (await this.readState()).pruneMark;
+    const mark = held !== undefined && held.at <= now ? held : undefined;
+    // Due: what the mark named, as far as the clock still agrees.
+    const before =
+      mark !== undefined && now - mark.at >= FLOW_PRUNE_CONFIRM_MS
+        ? mark.from < from
+          ? mark.from
+          : from
+        : undefined;
+    const removed: string[] = [];
+    let waiting = false;
+    for (const [i, names] of listed.entries()) {
+      const base = bases[i] as string;
+      for (const name of names) {
+        if (!datedBefore(name, from)) continue;
+        if (before === undefined || !datedBefore(name, before)) {
+          waiting = true;
+          continue;
+        }
         await rm(join(base, name), { recursive: true, force: true });
+        if (base === this.issuesDir && ISSUE_FILE.test(name)) {
+          removed.push(name.slice(0, -".json".length));
+        }
       }
     }
-    if (removed.length > 0) {
-      await this.updateState((s) =>
-        s.unread !== null && removed.includes(s.unread)
-          ? { ...s, unread: null }
-          : s,
-      );
+    // What is still expired waits from now. A mark not yet due stands: it
+    // is consumed first, and the next one names the rest.
+    const remark = waiting && (mark === undefined || before !== undefined);
+    if (removed.length > 0 || remark) {
+      await this.updateState((st) => ({
+        ...st,
+        ...(st.unread !== null && removed.includes(st.unread)
+          ? { unread: null }
+          : {}),
+        ...(remark ? { pruneMark: { from, at: now } } : {}),
+      }));
     }
     return removed;
   }

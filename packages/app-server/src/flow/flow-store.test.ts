@@ -6,6 +6,7 @@ import { removeTmpDir } from "../testing/tmp-workspace.js";
 import {
   addLocalDays,
   EMPTY_FLOW_STATE,
+  FLOW_PRUNE_CONFIRM_MS,
   FlowStore,
   localDateOf,
   seenOf,
@@ -123,7 +124,7 @@ describe("FlowStore issues", () => {
 });
 
 describe("FlowStore prune", () => {
-  it("deletes an issue seven days old with its pages and images, and keeps six", async () => {
+  it("deletes an issue seven days old with its pages and images, a day after finding it, and keeps six", async () => {
     const s = await store();
     await s.writeIssue(issue("2026-10-23-1"));
     await s.writeIssue(issue("2026-10-24-1"));
@@ -136,7 +137,15 @@ describe("FlowStore prune", () => {
     await writeFile(join(s.issuesDir, "2026-10-20-1.json.tmp"), "x");
     await s.updateState((st) => ({ ...st, unread: "2026-10-23-1" }));
 
-    const removed = await s.prune(at(30));
+    // Found and marked, not deleted: the date is only the clock's word.
+    expect(await s.prune(at(30))).toEqual([]);
+    expect(await s.prune(at(30, 23))).toEqual([]);
+    expect(await readdir(s.issuesDir)).toContain("2026-10-23-1.json");
+    expect((await s.readState()).unread).toBe("2026-10-23-1");
+    // The list already leaves it out.
+    expect((await s.issues(at(30))).map((i) => i.id)).toEqual(["2026-10-24-1"]);
+
+    const removed = await s.prune(at(31));
     expect(removed).toEqual(["2026-10-23-1"]);
     expect(await readdir(s.issuesDir)).toEqual(["2026-10-24-1.json"]);
     expect(await readdir(s.pagesDir)).toEqual(["2026-10-24-1"]);
@@ -145,6 +154,43 @@ describe("FlowStore prune", () => {
     expect((await s.readState()).unread).toBeNull();
     // Reads agree with the prune before it runs, too.
     expect((await s.issues(at(31))).map((i) => i.id)).toEqual([]);
+  });
+
+  // Review 2026-11-10, second pass: one tick on a clock a week ahead
+  // emptied the store, whether or not Flow was on.
+  it("a clock set a month ahead and back deletes nothing", async () => {
+    const s = await store();
+    const all = ["2026-10-24-1.json", "2026-10-27-1.json", "2026-10-30-1.json"];
+    for (const name of all) await s.writeIssue(issue(name.slice(0, -5)));
+    await mkdir(join(s.pagesDir, "2026-10-30-1"), { recursive: true });
+    const ahead = new Date(2026, 10, 30, 12).getTime();
+    expect(await s.prune(ahead)).toEqual([]);
+    expect(await s.prune(ahead + 10 * 60_000)).toEqual([]);
+    // Set right again: the mark is from the future and names nothing.
+    expect(await s.prune(at(30, 13))).toEqual([]);
+    expect(await s.prune(at(31, 13))).toEqual([]);
+    expect((await readdir(s.issuesDir)).sort()).toEqual(all);
+    expect(await readdir(s.pagesDir)).toEqual(["2026-10-30-1"]);
+    expect((await s.issues(at(30))).map((i) => i.id)).toHaveLength(3);
+    // And the real week still ends: the 24th goes a day after it expired.
+    expect(await s.prune(at(31, 13) + FLOW_PRUNE_CONFIRM_MS)).toEqual([
+      "2026-10-24-1",
+    ]);
+  });
+
+  it("keeps its mark through a state file written by an older build", async () => {
+    const s = await store();
+    await s.writeIssue(issue("2026-10-23-1"));
+    await s.prune(at(30));
+    expect((await s.readState()).pruneMark).toEqual({
+      from: "2026-10-24",
+      at: at(30),
+    });
+    // Another update keeps it, and a malformed one reads as none.
+    await s.updateState((st) => ({ ...st, nextNumber: 9 }));
+    expect((await s.readState()).pruneMark?.from).toBe("2026-10-24");
+    await writeFile(s.stateFile, '{"pruneMark":{"from":"soon","at":"x"}}');
+    expect((await s.readState()).pruneMark).toBeUndefined();
   });
 
   it("removes a failed run's pages by its id", async () => {

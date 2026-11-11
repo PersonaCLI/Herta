@@ -109,9 +109,10 @@ export class FlowService {
   }
 
   /**
-   * Delete what has turned seven days old — whether or not Flow is on, so
-   * nothing outlives its week (§10) — then let the trigger decide whether
-   * today's issue starts. Never waits for the run.
+   * Prune what has turned seven days old — whether or not Flow is on, so
+   * nothing outlives its week by more than the day `prune` waits (§10) —
+   * then let the trigger decide whether today's issue starts. Never waits
+   * for the run.
    */
   async tick(): Promise<FlowTickResult> {
     if (this.disposed) return "off";

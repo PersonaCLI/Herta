@@ -226,6 +226,13 @@ describe("FlowService", () => {
     settings.now = { ...ON, enabled: false };
     clock.t = at(30, 9) + 7 * 24 * 60 * 60 * 1000;
     expect(await service.tick()).toBe("off");
+    // Found expired and marked; it goes at a tick a day later.
+    expect(await readdir(join(flowDir, "issues"))).toEqual([
+      "2026-10-30-1.json",
+    ]);
+    expect(await service.issues()).toEqual([]);
+    clock.t += 24 * 60 * 60 * 1000;
+    expect(await service.tick()).toBe("off");
     expect(await readdir(join(flowDir, "issues"))).toEqual([]);
     expect(await readdir(join(flowDir, "pages"))).toEqual([]);
     const last = events.at(-1);

@@ -1,6 +1,6 @@
 import { errorMessage } from "@herta/core";
 import { ProviderError } from "../errors.js";
-import { isAbortError } from "./abort.js";
+import { abortError, isAbortError, throwIfAborted } from "./abort.js";
 
 const DONE = Symbol("SSE_DONE");
 type ParsedEvent = unknown | typeof DONE;
@@ -118,7 +118,7 @@ export async function* parseSSE(
 
   try {
     while (true) {
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       let read: ReadableStreamReadResult<Uint8Array>;
       try {
         read =
@@ -134,6 +134,12 @@ export async function* parseSSE(
         // Not retryable: partial output was already consumed downstream
         // (same contract as the mid-stream stall above).
         if (cause instanceof ProviderError || isAbortError(cause)) throw cause;
+        // The call's own signal cut the read. The transport fails the body
+        // with the signal's reason, and a reason that is not an AbortError
+        // (a deadline's plain Error, a TimeoutError) was wrapped below and
+        // surfaced as a network failure (review 2026-11-10, second pass).
+        // As the retry loop does before the headers: an abort, by name.
+        if (signal.aborted) throw abortError();
         throw new ProviderError({
           code: "network",
           retryable: false,

@@ -1,6 +1,7 @@
 import type { CompletionEvent } from "@herta/core";
 import { ProviderError } from "../errors.js";
 import { parseUsageChunk } from "../usage.js";
+import { throwIfAborted } from "./abort.js";
 import type { StreamUsage } from "./stream.js";
 
 interface CompletionDeltaChunk {
@@ -21,7 +22,7 @@ export async function* mapCompletionStream(
   let sawText = false;
 
   for await (const ev of events) {
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     if (onUsage !== undefined) {
       const usage = parseUsageChunk(ev);
       if (usage !== null) onUsage(usage);

@@ -2,6 +2,7 @@ import type { ProviderEvent, ToolCallRequest } from "@herta/core";
 import { errorMessage } from "@herta/core";
 import { ProviderError } from "../errors.js";
 import { type ProviderUsage, parseUsageChunk } from "../usage.js";
+import { throwIfAborted } from "./abort.js";
 
 export type StreamUsage = Omit<ProviderUsage, "endpoint" | "model">;
 
@@ -44,7 +45,7 @@ export async function* mapStream(
   let sawText = false;
 
   for await (const ev of events) {
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     if (onUsage !== undefined) {
       const usage = parseUsageChunk(ev);
       if (usage !== null) onUsage(usage);

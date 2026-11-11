@@ -148,6 +148,35 @@ describe("parseSSE", () => {
     expect(seen).toEqual([{ a: 1 }]);
   });
 
+  // Review 2026-11-10, second pass: a deadline's reason is a plain Error.
+  it("a read cut by the call's own signal is an abort, whatever reason it was given", async () => {
+    for (const reason of [
+      new Error("review timed out"),
+      Object.assign(new Error("timed out"), { name: "TimeoutError" }),
+    ]) {
+      const enc = new TextEncoder();
+      const ctl = new AbortController();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(enc.encode(`data: {"a":1}\n\n`));
+          // As the transport does: the body fails with the signal's reason.
+          ctl.signal.addEventListener("abort", () =>
+            controller.error(ctl.signal.reason),
+          );
+        },
+      });
+      const seen: unknown[] = [];
+      const reading = (async () => {
+        for await (const v of parseSSE(stream, ctl.signal)) {
+          seen.push(v);
+          ctl.abort(reason);
+        }
+      })();
+      await expect(reading).rejects.toMatchObject({ name: "AbortError" });
+      expect(seen).toEqual([{ a: 1 }]);
+    }
+  });
+
   it("lets an AbortError read rejection through unwrapped (user interrupt)", async () => {
     const abortErr = new Error("This operation was aborted");
     abortErr.name = "AbortError";

@@ -5,6 +5,7 @@ import type {
 } from "@herta/core";
 import { ProviderError } from "../errors.js";
 import { observedCall, type ProviderUsage } from "../usage.js";
+import { throwIfAborted } from "./abort.js";
 import type { ApiKey } from "./api-key.js";
 import { postCompletions } from "./completion-http.js";
 import { mapCompletionStream } from "./completion-stream.js";
@@ -60,7 +61,7 @@ export class OpenAICompatibleCompletionProvider
     signal: AbortSignal,
     stated: (usage: Omit<ProviderUsage, "endpoint" | "model">) => void,
   ): AsyncGenerator<CompletionEvent, void, void> {
-    signal.throwIfAborted();
+    throwIfAborted(signal);
 
     const httpOpts: Parameters<typeof postCompletions>[0] = {
       baseUrl: this.opts.baseUrl,

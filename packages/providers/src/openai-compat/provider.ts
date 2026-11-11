@@ -1,6 +1,7 @@
 import type { PromptFrame, ProviderAdapter, ProviderEvent } from "@herta/core";
 import { ProviderError } from "../errors.js";
 import { observedCall, type ProviderUsage } from "../usage.js";
+import { throwIfAborted } from "./abort.js";
 import type { ApiKey } from "./api-key.js";
 import { postChatCompletions } from "./http.js";
 import { parseSSE } from "./sse.js";
@@ -57,7 +58,7 @@ export class OpenAICompatibleProvider implements ProviderAdapter {
     signal: AbortSignal,
     stated: (usage: Omit<ProviderUsage, "endpoint" | "model">) => void,
   ): AsyncGenerator<ProviderEvent, void, void> {
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     const body = translate(frame, {
       model: this.opts.model,
       temperature: this.opts.temperature,

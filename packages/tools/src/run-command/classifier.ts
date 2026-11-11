@@ -610,7 +610,9 @@ function recursiveContentRead(argv: readonly string[]): Verdict | null {
     kind: "ask",
     risk: "workspace_read",
     code: "command_ask_recursive_read",
-    reason: `${a0} recursive/unfiltered content read bypasses the credential denylist — prefer search_text`,
+    // The advice names what both contracts have. It said "prefer search_text",
+    // a tool the default contract does not mount (review 2026-11-10).
+    reason: `${a0} recursive/unfiltered content read bypasses the credential denylist — prefer git grep, which reads tracked files only, or name the files (search_text does this where the session has it)`,
   };
 }
 
@@ -1370,6 +1372,165 @@ function gitSubcommandIndex(argv: readonly string[]): number | null {
     i += GIT_GLOBAL_VALUE_FLAGS.has(a) ? 2 : 1;
   }
   return null;
+}
+
+/**
+ * A job of the shell that runs the line: `%1`, `%%`, `%+`, `%-`, `%name`,
+ * `%?text` (ADR 0045 amendment 2026-11-11 (2)).
+ *
+ * `kill %1` asked exactly as `kill 1234` does. A pid can be any process on
+ * the machine. A job number can only be one this shell started in the
+ * background, which under the persistent bash means one 板砖 started in
+ * this session: the server a brief told it to run and then stop. Under
+ * `run_command` there is no shell and no job, and the line fails.
+ */
+const JOB_SPEC_RE = /^%(?:\d+|[%+-]|\??[\w./-]+)$/;
+
+/** `kill` whose every target is a job of its own shell. A signal may be
+ *  named (`-9`, `-TERM`, `-s KILL`); a pid among the targets, no target at
+ *  all, and the forms that do not kill (`-l`) are not this. */
+function killsOnlyOwnJobs(argv: readonly string[]): boolean {
+  let targets = 0;
+  let rest = false;
+  for (let i = 1; i < argv.length; i += 1) {
+    const a = argv[i] as string;
+    if (!rest && a === "--") {
+      rest = true;
+      continue;
+    }
+    if (!rest && (a === "-s" || a === "-n")) {
+      i += 1;
+      continue;
+    }
+    if (!rest && a.startsWith("-")) {
+      if (a.startsWith("--") || a === "-l" || a === "-L") return false;
+      if (!/^-[A-Za-z0-9]+$/.test(a)) return false;
+      continue;
+    }
+    if (!JOB_SPEC_RE.test(a)) return false;
+    targets += 1;
+  }
+  return targets > 0;
+}
+
+/**
+ * A mode that only ADDS read, write or execute: `+x`, `u+x`, `a+rx`. Nothing
+ * is taken away, so nothing is lost; a mode that removes, sets outright
+ * (`755`) or marks setuid is not this (ADR 0045 amendment 2026-11-11 (2)).
+ */
+const CHMOD_ADDS_RE = /^[ugoa]*\+[rwxX]+(?:,[ugoa]*\+[rwxX]+)*$/;
+
+/**
+ * Subcommands that only read the repository, whatever their options (ADR
+ * 0045 amendment 2026-11-11 (2)). Before it the allow tier named ten
+ * subcommands, and every other one asked as "git X changes the repository":
+ * `git cat-file -p`, `git ls-tree`, `git describe`, `git rev-list --count`.
+ * The card was wrong about what the line does, and it was a card.
+ *
+ * None of these writes a ref, the index or the working tree, and none
+ * reaches a remote. What one of them prints is what `git show` and `git log`
+ * already print: the repository's own content. The options that make any
+ * git command run or write something else (`--output`, `--ext-diff`,
+ * `--textconv`, `--filters`, `-c`) are judged before this, for every
+ * subcommand alike (`ESCAPE_HATCH_FLAGS`).
+ */
+const GIT_READ_ONLY: ReadonlySet<string> = new Set([
+  "cat-file",
+  "ls-tree",
+  "rev-list",
+  "describe",
+  "shortlog",
+  "merge-base",
+  "show-ref",
+  "for-each-ref",
+  "check-ignore",
+  "check-attr",
+  "diff-tree",
+  "diff-index",
+  "diff-files",
+  "count-objects",
+  "name-rev",
+  "whatchanged",
+  "version",
+]);
+
+/** `git tag` that lists: no name to create, and no option but a listing's.
+ *  A name is a pattern only where an option says this is a listing. */
+function gitTagLists(args: readonly string[]): boolean {
+  let lists = false;
+  let positional = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (a === "--") {
+      positional ||= i + 1 < args.length;
+      break;
+    }
+    if (!a.startsWith("-")) {
+      positional = true;
+      continue;
+    }
+    if (a === "-l" || a === "--list" || /^-n\d*$/.test(a)) {
+      lists = true;
+      continue;
+    }
+    if (/^--(contains|no-contains|merged|no-merged|points-at)(=.*)?$/.test(a)) {
+      lists = true;
+      // The commit it asks about, when it is the next word.
+      if (!a.includes("=") && args[i + 1]?.startsWith("-") === false) i += 1;
+      continue;
+    }
+    if (
+      /^(-i|--ignore-case|--column(=.*)?|--no-column|--color(=.*)?|--no-color|--sort=.*|--format=.*)$/.test(
+        a,
+      )
+    ) {
+      continue;
+    }
+    // Anything else creates, deletes, moves, signs or verifies a tag.
+    return false;
+  }
+  return !positional || lists;
+}
+
+/** `git remote` that lists: bare, `-v`, or `get-url <name>`. Every other
+ *  verb changes the remotes or asks one over the network. */
+function gitRemoteLists(args: readonly string[]): boolean {
+  const verbose = (a: string): boolean => a === "-v" || a === "--verbose";
+  const at = args.findIndex((a) => !a.startsWith("-"));
+  if (at === -1) return args.every(verbose);
+  if (args[at] !== "get-url" || !args.slice(0, at).every(verbose)) return false;
+  const rest = args.slice(at + 1);
+  return (
+    rest.filter((a) => !a.startsWith("-")).length === 1 &&
+    rest
+      .filter((a) => a.startsWith("-"))
+      .every((a) => a === "--push" || a === "--all")
+  );
+}
+
+/** A subcommand that reads in the form given and writes in another. */
+function gitOnlyReads(sub: string, args: readonly string[]): boolean {
+  if (GIT_READ_ONLY.has(sub)) return true;
+  const verb = args.find((a) => !a.startsWith("-"));
+  switch (sub) {
+    case "tag":
+      return gitTagLists(args);
+    case "remote":
+      return gitRemoteLists(args);
+    case "reflog":
+      // Bare, `show`, or a ref: the log. `expire`, `delete` and `drop` cut it.
+      return verb === undefined || !["expire", "delete", "drop"].includes(verb);
+    case "symbolic-ref":
+      // One name reads what it points at; a second name, `-d` or `-m` write.
+      return (
+        !args.some((a) => /^(-d|--delete|-m)$/.test(a)) &&
+        args.filter((a) => !a.startsWith("-")).length === 1
+      );
+    case "worktree":
+      return verb === "list";
+    default:
+      return false;
+  }
 }
 
 /**
@@ -2251,6 +2412,8 @@ const ESCAPE_HATCH_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
       "--ext-diff",
       "--textconv",
       "--no-textconv",
+      // git cat-file: runs the smudge filter repo config names for the path.
+      "--filters",
     ]),
   ],
   ["rg", new Set(["--pre", "--hostname-bin"])],
@@ -3336,6 +3499,27 @@ function classifyCommandTiers(
     }
   }
   if (id === "chmod") {
+    // `chmod +x bin/run.sh` was carded as destructive (「破坏性命令」): the
+    // step every "write a script and run it" brief takes, and it destroys
+    // nothing. Adding permissions to files inside the workspace is a
+    // file-system change like `mkdir` or `touch`, and asks as one. Never
+    // undoable (`writesUndoable` knows printers and `mkdir -p` only), so it
+    // is still a card or a review. Every other chmod stays where it was.
+    const [mode, ...paths] = argv.slice(1);
+    if (
+      mode !== undefined &&
+      CHMOD_ADDS_RE.test(mode) &&
+      paths.length > 0 &&
+      paths.every((p) => !p.startsWith("-")) &&
+      outsideOperand(argv, live) === null
+    ) {
+      return {
+        kind: "ask",
+        risk: "workspace_write",
+        code: "command_ask_fs",
+        reason: `chmod adds permissions: ${argv.slice(1).join(" ")}`,
+      };
+    }
     return {
       kind: "ask",
       risk: "workspace_destructive",
@@ -3639,9 +3823,12 @@ function classifyCommandTiers(
     const config = gitConfigVerdict(gitSubArgs, live);
     if (config !== null) return config;
   }
+  // The subcommand stands right after `git`. The allow tier is not taught
+  // about global options, on purpose (2026-08-25): behind `-C dir` or
+  // `--no-pager` a read still asks.
+  const gitPlain = a0 === "git" && gitSub === 1 && gitSubName !== null;
   if (
-    a0 === "git" &&
-    typeof argv[1] === "string" &&
+    gitPlain &&
     [
       "status",
       "diff",
@@ -3653,7 +3840,7 @@ function classifyCommandTiers(
       "grep",
       "blame",
       "stash", // only `git stash list` / `show` — see below
-    ].includes(argv[1])
+    ].includes(gitSubName)
   ) {
     // `git diff --no-index <p1> <p2>` is git's arbitrary-filesystem compare —
     // it works outside any repo and, against /dev/null, prints a whole file
@@ -3661,7 +3848,7 @@ function classifyCommandTiers(
     // repo) the reader guard cannot see (git is not a reader). ASK: the
     // displayed paths are visible, so the user can knowingly approve/deny
     // (audit T3.4 review). Regular git diff/show stay repo-confined → allow.
-    if (argv[1] === "diff" && argv.includes("--no-index")) {
+    if (gitSubName === "diff" && gitSubArgs.includes("--no-index")) {
       return {
         kind: "ask",
         risk: "workspace_read",
@@ -3676,8 +3863,8 @@ function classifyCommandTiers(
     // ignored .env). Its escape hatches ask: `--no-index` (whole tree),
     // `--untracked` / `--no-exclude-standard` (ignored files back in).
     if (
-      argv[1] === "grep" &&
-      argv.some(
+      gitSubName === "grep" &&
+      gitSubArgs.some(
         (a) =>
           a === "--no-index" ||
           a === "--untracked" ||
@@ -3693,18 +3880,21 @@ function classifyCommandTiers(
       };
     }
     // `git stash` mutates unless it is `list` / `show`.
-    if (argv[1] === "stash" && !(argv[2] === "list" || argv[2] === "show")) {
+    if (
+      gitSubName === "stash" &&
+      !(gitSubArgs[0] === "list" || gitSubArgs[0] === "show")
+    ) {
       return {
         kind: "ask",
         risk: "workspace_write",
         code: "command_ask_vcs",
-        reason: `git ${argv.slice(1, 3).join(" ")} changes the working tree`,
+        reason: `git ${["stash", ...gitSubArgs.slice(0, 1)].join(" ")} changes the working tree`,
       };
     }
     // `git branch` LISTS (no operand, or the query flags); a name operand
     // creates, and -d/-D/-m/-M/-c/-C/-u… mutate.
-    if (argv[1] === "branch") {
-      const rest = argv.slice(2);
+    if (gitSubName === "branch") {
+      const rest = gitSubArgs;
       const mutatingFlag = rest.some((a) =>
         /^-[dDmMcCu]$|^--(delete|move|copy|force|set-upstream-to|unset-upstream|edit-description|track)(=|$)/.test(
           a,
@@ -3725,6 +3915,11 @@ function classifyCommandTiers(
         };
       }
     }
+    return { kind: "allow" };
+  }
+  // The subcommands that only read, and the listing forms of three that also
+  // write (ADR 0045 amendment 2026-11-11 (2)).
+  if (gitPlain && gitOnlyReads(gitSubName, gitSubArgs)) {
     return { kind: "allow" };
   }
   // Every other git subcommand changes the repository or the working tree
@@ -3899,6 +4094,8 @@ function classifyCommandTiers(
       reason: `${id} deletes: ${argv.slice(1).join(" ")}`,
     };
   }
+  // A job of this shell, by its number: see JOB_SPEC_RE.
+  if (id === "kill" && killsOnlyOwnJobs(argv)) return { kind: "allow" };
   if (["kill", "pkill", "killall", "taskkill"].includes(id)) {
     return {
       kind: "ask",

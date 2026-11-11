@@ -149,7 +149,6 @@ describe("a kill of anything else asks as before (2026-11-04)", () => {
       ["kill", "574"],
       ["kill", "-9", "574", "575"],
       ["kill", "-n", "9", "574"],
-      ["kill", "%1"],
       ["kill", "0"],
       ["taskkill", "/PID", "9999", "/F"],
       ["taskkill", "/F", "/IM", "python.exe"],
@@ -169,6 +168,10 @@ describe("a kill of anything else asks as before (2026-11-04)", () => {
       const v = verdict(argv);
       expect(v.kind, argv.join(" ")).toBe("ask");
     }
+    // A job of the same shell asked here too until ADR 0045's amendment
+    // 2026-11-11 (2): a job number can only name what this shell started,
+    // never the app, so it is neither blocked nor asked.
+    expect(verdict(["kill", "%1"]).kind).toBe("allow");
   });
 
   it("lines that end nothing are not judged as kills", () => {

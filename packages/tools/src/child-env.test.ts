@@ -61,3 +61,48 @@ describe("childProcessEnv (platform review 2026-09-23)", () => {
     expect(childProcessEnv(appdirOnly)).toBe(appdirOnly);
   });
 });
+
+describe("childProcessEnv — the harness's own key (review 2026-11-10)", () => {
+  it("never reaches a child, under either name the harness reads it by", () => {
+    const base: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      DEEPSEEK_API_KEY: "sk-0123456789abcdef0123",
+      HERTA_DEEPSEEK_API_KEY: "sk-fedcba9876543210fedc",
+    };
+    const env = childProcessEnv(base);
+    expect(env.DEEPSEEK_API_KEY).toBeUndefined();
+    expect(env.HERTA_DEEPSEEK_API_KEY).toBeUndefined();
+    expect(JSON.stringify(env)).not.toContain("sk-");
+    expect(env.PATH).toBe("/usr/bin");
+    // The harness's own environment still has it: the next turn reads it.
+    expect(base.DEEPSEEK_API_KEY).toBe("sk-0123456789abcdef0123");
+  });
+
+  it("is told by its name whatever the case, as Windows reads one", () => {
+    const env = childProcessEnv({
+      Path: "C:\\Windows",
+      Deepseek_Api_Key: "sk-0123456789abcdef0123",
+    });
+    expect(Object.keys(env)).toEqual(["Path"]);
+  });
+
+  it("leaves every other key a project may need", () => {
+    const base: NodeJS.ProcessEnv = {
+      OPENAI_API_KEY: "sk-openai",
+      GITHUB_TOKEN: "ghp_x",
+      MY_DEEPSEEK_API_KEY_BACKUP: "sk-other",
+      DEEPSEEK_API_BASE: "https://api.deepseek.com",
+    };
+    expect(childProcessEnv(base)).toBe(base);
+  });
+
+  it("goes with the AppImage's entries too", () => {
+    const env = childProcessEnv({
+      ...appImageEnv,
+      DEEPSEEK_API_KEY: "sk-0123456789abcdef0123",
+    });
+    expect(env.DEEPSEEK_API_KEY).toBeUndefined();
+    expect(env.APPIMAGE).toBeUndefined();
+    expect(env.HOME).toBe("/home/u");
+  });
+});

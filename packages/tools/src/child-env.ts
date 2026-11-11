@@ -14,8 +14,26 @@
  * would otherwise take itself for Herta's AppImage.
  *
  * Outside an AppImage — Windows, macOS, a distro package — this is
- * `process.env` itself, byte for byte.
+ * `process.env` itself, byte for byte, unless it holds the harness's own key.
+ *
+ * The harness's own key never goes to a child (review 2026-11-10). Started
+ * with `DEEPSEEK_API_KEY` in its environment — the CLI's usual way, and a
+ * desktop launched from such a shell — Herta ran every shell, test run, git
+ * call and dev server of 板砖's with the key it bills on. A test script in a
+ * cloned repository could read it from its own environment under `npm test`,
+ * which asks nothing. The desktop's stored key was never in the environment
+ * and is not affected. What it costs: a project of the user's that reads
+ * `DEEPSEEK_API_KEY` itself no longer finds it under 板砖, and needs it from
+ * its own `.env`.
  */
+
+/** The names the harness reads its key under: providers'
+ *  `resolveDeepSeekKeyOrNull`, and knowledge's `DEEPSEEK_KEY_ENV`, which the
+ *  lab scripts use too. */
+const OWN_KEYS = new Set(["DEEPSEEK_API_KEY", "HERTA_DEEPSEEK_API_KEY"]);
+
+/** Windows reads a variable's name whatever its case. */
+const isOwnKey = (name: string): boolean => OWN_KEYS.has(name.toUpperCase());
 
 const APPIMAGE_LISTS = [
   "PATH",
@@ -30,7 +48,8 @@ export function childProcessEnv(
 ): NodeJS.ProcessEnv {
   const appdir = base.APPDIR;
   if (base.APPIMAGE === undefined || appdir === undefined || appdir === "") {
-    return base;
+    if (!Object.keys(base).some(isOwnKey)) return base;
+    return withoutOwnKeys({ ...base });
   }
   const root = appdir.replace(/\/+$/, "");
   const ours = (entry: string): boolean =>
@@ -47,5 +66,13 @@ export function childProcessEnv(
     else delete out[key];
   }
   for (const key of APPIMAGE_BOOKKEEPING) delete out[key];
-  return out;
+  return withoutOwnKeys(out);
+}
+
+/** `env`, which the caller owns, with the harness's key taken out. */
+function withoutOwnKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  for (const name of Object.keys(env)) {
+    if (isOwnKey(name)) delete env[name];
+  }
+  return env;
 }

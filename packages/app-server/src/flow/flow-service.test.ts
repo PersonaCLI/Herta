@@ -260,6 +260,27 @@ describe("FlowService", () => {
     await service.dispose();
   });
 
+  // Review 2026-11-10, second pass: a picture's abort was read as "none".
+  it("stopRun while the pictures load publishes nothing", async () => {
+    const waiting = { now: false };
+    const { service, flowDir } = await setup({
+      picture: (_url, signal) =>
+        new Promise((_r, reject) => {
+          waiting.now = true;
+          signal.addEventListener("abort", () => reject(abortError()));
+        }),
+    });
+    await service.tick();
+    while (!waiting.now) await new Promise((r) => setTimeout(r, 5));
+    await service.stopRun();
+    expect(await service.issues()).toEqual([]);
+    const st = await service.state();
+    expect(st.unread).toBeNull();
+    expect(st.lastFailure).toBeNull();
+    expect(await readdir(join(flowDir, "pages"))).toEqual([]);
+    await service.dispose();
+  });
+
   it("dispose aborts the run in flight without a failure or an event", async () => {
     // Her word waits until the run is aborted: the run is mid-flight.
     const waiting = { now: false };

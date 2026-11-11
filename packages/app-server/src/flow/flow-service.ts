@@ -247,6 +247,10 @@ export class FlowService {
           return picture === null ? card : { ...card, picture };
         }),
       );
+      // Stopped while the pictures loaded: each abort above read as "no
+      // picture", and the issue went out unread after Flow was turned off
+      // (review 2026-11-10, second pass).
+      ac.signal.throwIfAborted();
       const number = (await this.store.readState()).nextNumber;
       const issue: FlowIssue = {
         id,

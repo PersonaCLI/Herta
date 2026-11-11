@@ -505,3 +505,9 @@ export function createMvpTools(
 // knowledge DB they query. If canon search ever becomes a real feature,
 // restore them from git history as a power-user, bring-your-own-DB tool
 // set — the DB stays non-redistributable either way.
+export {
+  ConsoleDecoder,
+  consoleLegacyEncoding,
+  decodeConsoleOutput,
+  primeConsoleEncoding,
+} from "./console-decode.js";

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import type { BackgroundProcess } from "@herta/core";
 import { childProcessEnv } from "../child-env.js";
+import { ConsoleDecoder } from "../console-decode.js";
 import { workspaceSpelling } from "../path-safety.js";
 import { groupAlive } from "../run-command/runner.js";
 import {
@@ -65,6 +66,9 @@ export interface PersistentShellOpts {
   env?: Record<string, string>;
   /** Capture cap on merged output per command (default 1 MiB). */
   maxOutputBytes?: number;
+  /** The code page a line is read in when it is not UTF-8
+   *  (console-decode.ts). Left out: the machine's own, once it is known. */
+  legacyEncoding?: string | null;
   /** Each bash this shell starts (a restart after a timeout starts another),
    *  and each one's end — the run's journal records them, so a relaunch
    *  after a crash ends a shell still running (ADR 0071 §1.6). */
@@ -222,10 +226,15 @@ export class PersistentShell implements BackgroundProcess {
   private currentCwd: string;
   private spawnCount = 0;
   private readonly opts: Required<
-    Omit<PersistentShellOpts, "env" | "onSpawn" | "onExit" | "onShellPid">
+    Omit<
+      PersistentShellOpts,
+      "env" | "onSpawn" | "onExit" | "onShellPid" | "legacyEncoding"
+    >
   > & {
     env: Record<string, string>;
   };
+  /** undefined: the machine's own, read when a shell starts. */
+  private readonly legacyEncoding: string | null | undefined;
   private readonly onSpawn: ((pid: number) => void) | undefined;
   private readonly onExit: ((pid: number) => void) | undefined;
   private readonly onShellPid:
@@ -239,6 +248,7 @@ export class PersistentShell implements BackgroundProcess {
       env: opts.env ?? {},
       maxOutputBytes: opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT,
     };
+    this.legacyEncoding = opts.legacyEncoding;
     this.onSpawn = opts.onSpawn;
     this.onExit = opts.onExit;
     this.onShellPid = opts.onShellPid;
@@ -386,8 +396,6 @@ export class PersistentShell implements BackgroundProcess {
       this.onSpawn?.(spawnedPid);
       child.once("exit", () => this.onExit?.(spawnedPid));
     }
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
     const onData = (chunk: string): void => {
       const text = chunk.replace(/\r\n/g, "\n");
       // The newest window — this chunk plus the few characters before it a
@@ -399,8 +407,21 @@ export class PersistentShell implements BackgroundProcess {
       if (this.waiter?.child === child) this.feedLive(this.waiter, text);
       this.onOutput(window);
     };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
+    // Each stream is read on its own (console-decode.ts): a chunk can end
+    // inside a character, and a line a native Windows program wrote in the
+    // machine's code page is read as that, not as broken UTF-8.
+    for (const stream of [child.stdout, child.stderr]) {
+      if (stream === null) continue;
+      const decoder = new ConsoleDecoder(this.legacyEncoding);
+      stream.on("data", (chunk: Buffer) => {
+        const text = decoder.write(chunk);
+        if (text.length > 0) onData(text);
+      });
+      stream.on("end", () => {
+        const text = decoder.end();
+        if (text.length > 0) onData(text);
+      });
+    }
     // Only THIS child's death fails a waiter that belongs to it — after a
     // timeout the old process may exit late, while a fresh shell is already
     // serving the next command.

@@ -449,3 +449,38 @@ describe.skipIf(process.platform !== "win32")(
     });
   },
 );
+
+d("PersistentShell — a native program's code page (review 2026-11-10)", () => {
+  it("a line that is not UTF-8 is read in the machine's code page, and a UTF-8 line as UTF-8", async () => {
+    const own = new PersistentShell({
+      bashPath: BASH as string,
+      workspaceRoot: ws,
+      legacyEncoding: "gb18030",
+    });
+    try {
+      // 「中文」 as code page 936 writes it, then a UTF-8 line, then text
+      // with no line break before the call ends.
+      const r = await own.run(
+        "printf '\\xd6\\xd0\\xce\\xc4\\n'; printf '你好\\n'; printf 'tail'",
+        { timeoutMs: 10_000 },
+      );
+      expect(r.timedOut).toBe(false);
+      expect(r.exitCode).toBe(0);
+      expect(r.output).toBe("中文\n你好\ntail");
+      // The shell is the same one, and its next call ends as usual.
+      const again = await own.run("echo again", { timeoutMs: 10_000 });
+      expect(again.output).toBe("again\n");
+      expect(again.freshShell).toBe(false);
+    } finally {
+      await own.kill();
+    }
+  });
+
+  it("with no code page known the same bytes read as they did", async () => {
+    const r = await shell.run("printf '\\xd6\\xd0\\xce\\xc4\\n'", {
+      timeoutMs: 10_000,
+    });
+    expect(r.timedOut).toBe(false);
+    expect(r.output).toContain("�");
+  });
+});

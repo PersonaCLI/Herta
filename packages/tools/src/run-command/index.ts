@@ -1,4 +1,3 @@
-import { StringDecoder } from "node:string_decoder";
 import type {
   HertaTool,
   OutputFn,
@@ -10,6 +9,7 @@ import type {
   ToolSchema,
 } from "@herta/core";
 import { childProcessEnv } from "../child-env.js";
+import { ConsoleDecoder, decodeConsoleOutput } from "../console-decode.js";
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
 import { resolveSafePath } from "../path-safety.js";
@@ -227,11 +227,11 @@ export function runCommandTool(): HertaTool {
         output !== undefined
           ? {
               stdout: {
-                decoder: new StringDecoder("utf8"),
+                decoder: new ConsoleDecoder(),
                 lines: new LiveOutput(output),
               },
               stderr: {
-                decoder: new StringDecoder("utf8"),
+                decoder: new ConsoleDecoder(),
                 lines: new LiveOutput(output),
               },
             }
@@ -301,8 +301,8 @@ export function runCommandTool(): HertaTool {
         // prompt) — and persist the run log like any other run. Previously
         // both were discarded, contradicting the bounded-failure-excerpt +
         // persist-full-output policy exactly when diagnostics mattered most.
-        const stdoutPartial = redactSecrets(raw.stdout.toString("utf-8"));
-        const stderrPartial = redactSecrets(raw.stderr.toString("utf-8"));
+        const stdoutPartial = redactSecrets(decodeConsoleOutput(raw.stdout));
+        const stderrPartial = redactSecrets(decodeConsoleOutput(raw.stderr));
         const stdoutP = truncateForReturn(stdoutPartial);
         const stderrP = truncateForReturn(stderrPartial);
         const redactedArgvPartial = argv.map((a) => redactSecrets(a));
@@ -357,8 +357,8 @@ export function runCommandTool(): HertaTool {
         throw err;
       }
 
-      const stdoutText = redactSecrets(raw.stdout.toString("utf-8"));
-      const stderrText = redactSecrets(raw.stderr.toString("utf-8"));
+      const stdoutText = redactSecrets(decodeConsoleOutput(raw.stdout));
+      const stderrText = redactSecrets(decodeConsoleOutput(raw.stderr));
       const stdoutT = truncateForReturn(stdoutText);
       const stderrT = truncateForReturn(stderrText);
       const redactedArgv = argv.map((a) => redactSecrets(a));

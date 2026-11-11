@@ -103,6 +103,7 @@ import {
   gitDiffTool,
   gitStatusTool,
   PersistentShell,
+  primeConsoleEncoding,
   primeShellPaths,
   probeRepoState,
   registerBrowserRules,
@@ -434,11 +435,19 @@ export function hasGitDir(workspace: string): boolean {
  * the main thread — a host awaits this first and the build finds the answer
  * cached. Optional: a host that skips it gets the same stack, just slower.
  * Never rejects.
+ *
+ * And which code page this machine's native programs write in (Windows
+ * only, one registry read): a child's output is read in it where it is not
+ * UTF-8 (`console-decode.ts`, review 2026-11-10). A host that skips this
+ * reads everything as UTF-8, as before.
  */
 export function prepareBackendStack(opts: {
   readonly wantMinimal: boolean;
 }): Promise<void> {
-  return opts.wantMinimal ? primeShellPaths(findBash()) : Promise.resolve();
+  return Promise.all([
+    opts.wantMinimal ? primeShellPaths(findBash()) : Promise.resolve(),
+    primeConsoleEncoding(),
+  ]).then(() => undefined);
 }
 
 /** Which host note a session's backend frame carries (ADR 0044, amended

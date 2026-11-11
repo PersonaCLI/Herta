@@ -57,9 +57,13 @@ jobs:
     # what actually caps a stall; this just has to be larger than it.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v5
-      - uses: actions/setup-node@v7
+      # Pinned by commit, not by tag (review 2026-11-10): this is the workflow
+      # that holds the signing secrets, and a tag can be moved to other code.
+      # To move to a newer release, look its commit up and change both the
+      # hash and the comment: gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           cache: pnpm
@@ -565,7 +569,7 @@ jobs:
 
       - name: upload screenshots + boot log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mac-first-look
           path: /tmp/shots
@@ -578,7 +582,7 @@ jobs:
       # assets; this one only has to outlive the build-to-release gap.
       - name: upload the installer
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: mac-dist
           path: |

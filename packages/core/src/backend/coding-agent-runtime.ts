@@ -13,6 +13,7 @@ import { CALL_ERROR_DENY_CODES } from "../permission-deny-codes.js";
 import type { PermissionEngine, RiskLevel } from "../permission-engine.js";
 import { ReadLedger } from "../read-ledger.js";
 import { countDiffLines } from "../text/diff-lines.js";
+import { COMMAND_TOOLS, WRITING_TOOLS } from "../tool-kinds.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import { TranscriptStore } from "../transcript-store.js";
 import type { AgentEvent } from "../types/events.js";
@@ -56,15 +57,6 @@ const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   // only, see below); the editor counts only for its writing commands —
   // a `view` is a read and proves nothing (the result data says which).
   "bash",
-  "str_replace_editor",
-]);
-
-/** The two shell-shaped tools whose result data is RunCommandData. */
-const COMMAND_TOOLS: ReadonlySet<string> = new Set(["run_command", "bash"]);
-/** The three file-writing tools whose result data carries relPath + diff. */
-const WRITING_TOOLS: ReadonlySet<string> = new Set([
-  "edit_file",
-  "write_new_file",
   "str_replace_editor",
 ]);
 

@@ -7,6 +7,7 @@ import {
   RUNS_ITS_ARGUMENTS,
   SCRIPT_INTERPRETERS,
 } from "./program-identity.js";
+import { WRITING_TOOLS } from "./tool-kinds.js";
 import type { AgentEvent, PermissionRequest } from "./types/events.js";
 
 /**
@@ -40,11 +41,7 @@ const SCOPED_CACHEABLE_TOOLS: ReadonlySet<string> = new Set([
  *  follow-up edits to it (pre-unification the two tools re-prompted separately
  *  on the same path); the minimal contract's editor is the same act. */
 function normalizeTool(tool: string): string {
-  return tool === "edit_file" ||
-    tool === "write_new_file" ||
-    tool === "str_replace_editor"
-    ? "file_write"
-    : tool;
+  return WRITING_TOOLS.has(tool) ? "file_write" : tool;
 }
 
 /**
@@ -186,11 +183,7 @@ export function permissionCacheScope(
     }
     return first;
   }
-  if (
-    tool === "edit_file" ||
-    tool === "write_new_file" ||
-    tool === "str_replace_editor"
-  ) {
+  if (WRITING_TOOLS.has(tool)) {
     const first = request.files?.[0];
     return typeof first === "string" && first.length > 0 ? "task" : undefined;
   }

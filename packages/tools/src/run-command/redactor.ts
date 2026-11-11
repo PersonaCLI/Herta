@@ -124,10 +124,115 @@ function isKeywordArgument(before: string, value: string): boolean {
 function writtenInCode(before: string, value: string): boolean {
   if (/(?:^|\.)env\.[A-Za-z_]/u.test(value)) return true;
   if (value.endsWith(";") || before.endsWith(".")) return true;
-  if (/(?:^|\s)(?:const|let|var|val|final|static|auto)\s+$/u.test(before)) {
-    return true;
-  }
-  return INDENTED_RE.test(before);
+  return declares(before) || INDENTED_RE.test(before);
+}
+
+/** The key is a variable being declared, or an object's own field: `const
+ *  token =`, `let apiKey =`, `this.token =`, `self.password =`. No config
+ *  file opens a line this way. A dot alone does not say it: `db.password =`
+ *  is a properties file's key. */
+function declares(before: string): boolean {
+  return (
+    /(?:^|\s)(?:const|let|var|val|final|static|auto)\s+$/u.test(before) ||
+    /(?:^|[^\w$.])(?:this|self)\.$/u.test(before)
+  );
+}
+
+// What a value is when it holds nothing (review 2026-11-10, narrowed
+// 2026-11-11). Until then the rule masked `self.token = None`,
+// `max_tokens=4096`, `const tokens = [` and `password = ""`: on the default
+// contract a file is read with `cat`, and 板砖 saw the marker in the place of
+// each.
+
+/** The punctuation of the statement or the call a value stands in:
+ *  `None):`, `4096,`, `0;`, `{}`. */
+const withoutClosers = (value: string): string =>
+  value.replace(/[;,)\]}:]+$/u, "");
+
+/** No value: a keyword every language spells nearly alike. */
+const NO_VALUE_RE = /^(?:null|none|nil|undefined|true|false)$/iu;
+
+/** A list or a block that opens here and is written on the lines after, or
+ *  after the quote the value stopped at (`TOKENS = ["a", "b"]`). Masking the
+ *  bracket hid nothing. */
+const OPENER_RE = /^[[{]$/u;
+
+/** A count, a limit, a duration: decimal, and no longer than one is. A hex
+ *  number can be a key, and is not here. */
+const COUNT_RE = /^-?\d[\d_]{0,12}(?:\.\d+)?$/u;
+
+/** A number, a version or an environment's name after the secret's word
+ *  leaves the key a secret's: `PASSWORD_1`, `API_KEY_V2`, `TOKEN_PROD`. */
+const KEY_TAIL_RE =
+  /(?:[_-]?(?:v?\d+|prod(?:uction)?|dev(?:elopment)?|stag(?:e|ing)|test|live|local|old|new|backup|bak))+$/iu;
+
+/** How much of a key's end is read for what it names. */
+const KEY_END = 48;
+
+/** Whether the key names a secret itself, where `max_tokens`,
+ *  `TOKEN_TTL_MS` and `inputTokens` name a quantity. */
+function namesASecret(key: string): boolean {
+  const end = key.slice(-KEY_END);
+  return (
+    COLON_KEY_RE.test(end) || COLON_KEY_RE.test(end.replace(KEY_TAIL_RE, ""))
+  );
+}
+
+/** What a variable starts at: `let token = 0;`, `this.retries = -1`. */
+const START_RE = /^-?\d{1,3}$/u;
+
+/** A word that starts an expression and is not one by itself:
+ *  `await getToken()`, `new Map()`. */
+const OPERATOR_WORD_RE =
+  /^(?:await|new|typeof|void|yield|not|delete|async|function|lambda)$/u;
+
+/** One name, as a variable is written. */
+const NAME_RE = /^[A-Za-z_$][\w$]*$/u;
+
+/** A JSX attribute whose value is a reference: `apiKey={state.apiKey}`. */
+const JSX_REFERENCE_RE =
+  /^\{[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*\}[/>]*$/u;
+
+/**
+ * A value with no secret in it, whatever the file: nothing at all (`""`), a
+ * keyword for nothing (`None`, `null`, `false`), a bracket that opens what
+ * follows, or a number.
+ *
+ * The number is the one that turns on the key. Under a key that names a
+ * quantity (`max_tokens`, `TOKEN_TTL_MS`, `inputTokens`: the stem is not
+ * where the key ends) it is a count. Under a key that names a secret
+ * (`PASSWORD=12345678`, `password = 123456`) it is one, unless the line
+ * declares a variable and starts it small (`let token = 0;`):
+ * `const password = 123456;` is a secret in code.
+ */
+function holdsNothing(key: string, value: string, before: string): boolean {
+  if (value === '""' || value === "''") return true;
+  const bare = withoutClosers(value);
+  if (NO_VALUE_RE.test(bare) || OPENER_RE.test(bare)) return true;
+  if (!COUNT_RE.test(bare)) return false;
+  if (!namesASecret(key)) return true;
+  return START_RE.test(bare) && declares(before);
+}
+
+/** A JSX attribute, which is written tight like a `.env` line. Told from
+ *  one by where it stands: on a tag's line or indented under it, and by a
+ *  name with no digit in it (`PASSWORD={hunter2}` is a password). */
+function isJsxReference(before: string, value: string): boolean {
+  if (!JSX_REFERENCE_RE.test(value) || /\d/u.test(value)) return false;
+  return INDENTED_RE.test(before) || /<[A-Za-z][\w.-]*\s[^<>]*$/u.test(before);
+}
+
+/** A bare word that is a variable and not a password. After a declaration
+ *  any name is one (`const apiKey = key`, `this.token = token`). Elsewhere
+ *  it must plainly be a secret's NAME (`password = new_password`), with no
+ *  digit in it, on a line that reads as code: `password = hunter` and
+ *  `db.password = hunter2` are a config file's. */
+function namesAVariable(value: string, before: string): boolean {
+  const bare = withoutClosers(value);
+  if (!NAME_RE.test(bare)) return false;
+  if (declares(before)) return true;
+  if (!SECRET_NAME_RE.test(bare) || /\d/u.test(bare)) return false;
+  return value.endsWith(";") || INDENTED_RE.test(before);
 }
 
 // The `.env` shape — a bare `=`, no space on either side — is a value
@@ -137,14 +242,34 @@ function writtenInCode(before: string, value: string): boolean {
 // below. Every line the lab met was spaced; a minified line is masked. Two
 // things are not that shape and read one all the same: what a shell works out
 // when it runs, and a keyword argument (review 2026-11-05, G8).
-function readsASecret(sep: string, value: string, before: string): boolean {
+function readsASecret(
+  key: string,
+  sep: string,
+  value: string,
+  before: string,
+  after: string,
+): boolean {
   if (SHELL_READ_RE.test(value)) return true;
-  if (sep === "=") return isKeywordArgument(before, value);
+  if (holdsNothing(key, value, before)) return true;
+  if (sep === "=") {
+    return isKeywordArgument(before, value) || isJsxReference(before, value);
+  }
   if (/^[=>(]/u.test(value)) return true;
-  if (!CODE_REFERENCE_RE.test(value)) return false;
+  // `await getToken()`: the word, and what it works on after it.
+  if (
+    OPERATOR_WORD_RE.test(withoutClosers(value)) &&
+    /^[ \t]+\S/u.test(after)
+  ) {
+    return true;
+  }
+  if (!CODE_REFERENCE_RE.test(value)) return namesAVariable(value, before);
   if (/[()[\];]/.test(value)) return true;
   const accesses = value.match(/\??\.[A-Za-z_$]/g)?.length ?? 0;
-  return accesses >= 2 && writtenInCode(before, value);
+  if (accesses >= 2) return writtenInCode(before, value);
+  // One access (`options.token`) reads like a password with a dot in it
+  // (`p.ssw0rd`, `first.last`): code only after a declaration or under
+  // indentation, and never with a digit.
+  return !/\d/u.test(value) && (declares(before) || INDENTED_RE.test(before));
 }
 
 /** How far back a key's line is read: a bound, because a minified line can
@@ -169,7 +294,15 @@ function redactEnvSecrets(text: string): string {
     if (found === null) continue;
     keys.lastIndex = value.lastIndex;
     const sep = found[1] ?? "";
-    if (readsASecret(sep, found[2] ?? "", lineBefore(text, key.index))) {
+    if (
+      readsASecret(
+        key[0],
+        sep,
+        found[2] ?? "",
+        lineBefore(text, key.index),
+        text.slice(value.lastIndex, value.lastIndex + 8),
+      )
+    ) {
       continue;
     }
     out += `${text.slice(copied, key.index)}${key[0]}${sep}[REDACTED:env_secret]`;

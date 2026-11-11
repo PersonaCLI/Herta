@@ -746,3 +746,192 @@ describe("the new shapes, read twice and read at length (review 2026-11-10)", ()
     }
   });
 });
+
+describe("the `=` rule leaves a value that holds no secret (owner 2026-11-11)", () => {
+  const mask = "[REDACTED:env_secret]";
+  const left = (lines: readonly string[]): void => {
+    for (const line of lines) expect(redactSecrets(line), line).toBe(line);
+  };
+  /** Each line with the part of it that must not be read. */
+  const hidden = (pairs: ReadonlyArray<readonly [string, string]>): void => {
+    for (const [line, secret] of pairs) {
+      const out = redactSecrets(line);
+      expect(out, line).toContain(mask);
+      expect(out, line).not.toContain(secret);
+    }
+  };
+
+  it("a count, under a key that names a quantity", () => {
+    left([
+      "max_tokens=4096",
+      "client.chat(model=m, max_tokens=4096)",
+      "const DEFAULT_MAX_TOKENS = 4096",
+      "  let inputTokens = 0",
+      "const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000",
+      "MAX_TOKENS=4096",
+      "  TOKEN_CACHE_MAX = 100,",
+      "https://example.com/jobs?secretary=1",
+      "temperature=0.7, max_new_tokens=1_000",
+      "  prompt_tokens = -1",
+      "TOKEN_V2_TTL_MS=5000",
+      "  inputTokensOld = 0",
+    ]);
+  });
+
+  it("a number under a secret's name is a secret", () => {
+    hidden([
+      ["PASSWORD=12345678", "12345678"],
+      ["password = 123456", "123456"],
+      ["DB_PASSWORD=0000", "0000"],
+      ["    token = 123456", "123456"],
+      ["API_KEY=1234567890", "1234567890"],
+      ["SECRET_KEY=20241110", "20241110"],
+      ["  client_secret = 987654321", "987654321"],
+      ["connect(password=123456)", "123456"],
+      ["const password = 123456;", "123456"],
+      // A number or an environment after the word changes nothing.
+      ["PASSWORD_1=123456", "123456"],
+      ["API_KEY_V2=12345678", "12345678"],
+      ["TOKEN_PROD=482913", "482913"],
+      ["db_password_staging = 123456", "123456"],
+    ]);
+  });
+
+  it("unless a variable is declared and starts small", () => {
+    left(["let token = 0;", "  this.token = 0", "    self.password = -1"]);
+  });
+
+  it("a number that is not a count is not one", () => {
+    hidden([
+      ["PRIVATE_KEY_HEX=0xdeadbeefcafebabe0123456789abcdef", "deadbeef"],
+      ["SESSION_TOKEN_ID=12345678901234567890", "1234567890"],
+      ["max_tokens=4096abc", "4096abc"],
+    ]);
+  });
+
+  it("a keyword for no value, and an empty string", () => {
+    left([
+      "self.token = None",
+      "token = null;",
+      "def login(user, password=None):",
+      "connect(password=None)",
+      "  let password = false",
+      "USE_API_KEY=false",
+      "  tokenData.clientSecret = undefined",
+      "PASSWORD=null",
+      "  private_key = nil",
+      "add_special_tokens=True",
+      'password = ""',
+      'process.env.DEEPSEEK_API_KEY = "";',
+      "PASSWORD=''",
+      "  let secret = '';",
+    ]);
+    hidden([
+      ["PASSWORD=nullable1", "nullable1"],
+      ["TOKEN=truevalue", "truevalue"],
+      ["password = None1", "None1"],
+      ['PASSWORD="null"', "null"],
+    ]);
+  });
+
+  it("a word that starts an expression, with what it works on", () => {
+    left([
+      "const token = await getToken();",
+      "  apiKey = await resolveDeepSeekKey({",
+      "const tokens = new Map<string, string>()",
+      "  const kind = typeof token",
+      '  is_token = not line.startswith("#")',
+      "const readToken = async () => {",
+      'get_token = lambda: os.environ["TOKEN"]',
+    ]);
+    // Alone it is a word like any other.
+    expect(redactSecrets("password = new")).toBe(`password = ${mask}`);
+    expect(redactSecrets("password = await")).toBe(`password = ${mask}`);
+  });
+
+  it("a bracket that opens what follows", () => {
+    left([
+      "const tokens = [",
+      "export type WorkSecret = {",
+      'const ALLOW_TOKENS = ["a", "b"];',
+      "  updated.customApiKeyResponses = {}",
+      "  const tokens = [];",
+    ]);
+    hidden([
+      ["PASSWORD=[abc]", "abc"],
+      ["PASSWORD={x9$kL}", "x9$kL"],
+      ["TOKEN=[a1b2c3]", "a1b2c3"],
+    ]);
+  });
+
+  it("a JSX attribute's reference", () => {
+    left([
+      "  return <ApiKeyStep existingApiKey={state.existingApiKey} onApiKeyChange={handleChange} />",
+      "        secretName={secretName}",
+      "        apiKeyOrOAuthToken={props.apiKey}",
+    ]);
+    hidden([
+      ["PASSWORD={hunter2}", "hunter2"],
+      ["  password={hunter2}", "hunter2"],
+      ["PASSWORD={hunter}", "hunter"],
+    ]);
+  });
+
+  it("a variable: any name after a declaration, a secret's name on a line of code", () => {
+    left([
+      "  this.apiKey = apiKey;",
+      "    self.token = token",
+      "const password = input",
+      "  const apiKey = key;",
+      "    password = new_password",
+      "  opts.token = token;",
+      "    api_key = api_key or default_key",
+    ]);
+  });
+
+  it("a bare word in a config file is still its secret", () => {
+    hidden([
+      ["password = hunter", "hunter"],
+      ["db.password = hunter2", "hunter2"],
+      ["    password = hunter", "hunter"],
+      ["spring.datasource.password = Passw0rd", "Passw0rd"],
+      ["TOKEN = abc123", "abc123"],
+      ["export TOKEN = abc123", "abc123"],
+      ["@token = abc123def", "abc123def"],
+      ["    password = password2", "password2"],
+    ]);
+    // A dictionary word is masked too where nothing reads as code.
+    expect(redactSecrets("password = secret")).toBe(`password = ${mask}`);
+    expect(redactSecrets("db.password = password")).toBe(
+      `db.password = ${mask}`,
+    );
+  });
+
+  it("a reference with one access, after a declaration or under indentation", () => {
+    left([
+      "const token = options.token",
+      "  this.token = options.token",
+      "    total_tokens = usage.prompt_tokens + usage.completion_tokens",
+      "    password = var.db_password",
+      "  let secret = config.secret",
+    ]);
+    hidden([
+      ["password = pass.word", "pass.word"],
+      ["    password = p.ssw0rd", "p.ssw0rd"],
+      ["PASSWORD=p.ssw0rd", "p.ssw0rd"],
+      ["db.password = first.last", "first.last"],
+      ["password = options.token", "options.token"],
+    ]);
+  });
+
+  it("what was masked for a reason still is", () => {
+    hidden([
+      ["password=hunter2", "hunter2"],
+      ["API_KEY=sk_test_abc", "sk_test_abc"],
+      ['const password = "hunter2";', "hunter2"],
+      ['process.env.DEEPSEEK_API_KEY = "test-key";', "test-key"],
+      ['jsonwebtoken = "9"', '"9"'],
+      ["tokenizer=gpt2", "gpt2"],
+    ]);
+  });
+});

@@ -1239,6 +1239,10 @@ export class SessionStore {
         // backendActive / overlay would break a LIVE turn.
         ...TURN_FAILURE_CLEARED,
         topics,
+        // The suggestion was for the exchange a rewind withdrew: it used to
+        // stay, and showed once the restored draft was cleared (review
+        // 2026-11-10, second pass). A resync does not shrink the record.
+        ...(shrank ? { prediction: null } : {}),
       });
       return;
     }

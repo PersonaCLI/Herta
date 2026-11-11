@@ -1580,6 +1580,11 @@ export class SessionImpl implements Session {
     if (this.currentTurn !== null || this.undoing) {
       return { ok: false, reason: "turn_in_progress" };
     }
+    // The composer's suggestion is for the exchange this withdraws. One in
+    // flight is stopped here, before the first await: a rewind is allowed
+    // exactly while it runs, and it used to land after the cut (review
+    // 2026-11-10, second pass). The renderer drops one already shown.
+    this.abortPrediction();
     // The turn's edits, read before the cut moves the turn's start (ADR
     // 0074 §4): they leave the record with it, and stay undoable from the
     // rewind notice until the next send.

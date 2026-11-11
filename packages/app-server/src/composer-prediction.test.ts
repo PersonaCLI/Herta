@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { V2RecordPersister } from "@herta/core";
+import {
+  abortError,
+  type CompletionProviderAdapter,
+  V2RecordPersister,
+} from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionImpl } from "./session.js";
 import {
@@ -60,6 +64,7 @@ const blank = {
 async function mkSession(
   predictions: boolean | undefined,
   scripts: readonly string[],
+  actor?: CompletionProviderAdapter,
 ): Promise<SessionImpl> {
   const cfg = mkConfig();
   const sessionId = randomUUID();
@@ -81,9 +86,11 @@ async function mkSession(
     deps: {
       providerOverrides: {
         // The turn's speech, then (when asked) the prediction.
-        actor: stubCompletionProvider(
-          scripts.map((s) => ({ deltas: [s], stopReason: "stop" as const })),
-        ),
+        actor:
+          actor ??
+          stubCompletionProvider(
+            scripts.map((s) => ({ deltas: [s], stopReason: "stop" as const })),
+          ),
         router: stubChatProvider([
           {
             events: [
@@ -169,5 +176,52 @@ describe("Session — composer predictions (owner 2026-10-10)", () => {
       await new Promise((r) => setTimeout(r, 50));
       expect(events.map((e) => e.kind)).toEqual(["started", "finished"]);
     }
+  });
+
+  // Review 2026-11-10, second pass: a rewind is allowed exactly while the
+  // prediction runs, and nothing stopped it.
+  it("a rewind stops the prediction in flight: its exchange is withdrawn", async () => {
+    const held = { started: false, aborted: false };
+    const turn = stubCompletionProvider([
+      { deltas: ["写好了。（/我 说）"], stopReason: "stop" as const },
+    ]);
+    const actor: CompletionProviderAdapter = {
+      streamCompletion(request, signal) {
+        // The prediction is the one prompt that ends on the Trailblazer's turn.
+        if (!request.prompt.endsWith("（开拓者 说）\n")) {
+          return turn.streamCompletion(request, signal);
+        }
+        return (async function* () {
+          held.started = true;
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              held.aborted = true;
+              reject(abortError());
+            });
+          });
+          yield { type: "finish", reason: "stop" } as const;
+        })();
+      },
+    };
+    const session = await mkSession(true, [], actor);
+    // As the first test: a line that calls on 板砖 is one worth predicting after.
+    await turnEvents(
+      session,
+      "@板砖 帮我写个五子棋",
+      (e) => e.kind === "finished",
+    );
+    for (let i = 0; i < 200 && !held.started; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(held.started).toBe(true);
+
+    const after: TurnLifecycleEvent[] = [];
+    void (async () => {
+      for await (const e of session.subscribeTurnLifecycle()) after.push(e);
+    })();
+    expect((await session.rewindLastTurn()).ok).toBe(true);
+    expect(held.aborted).toBe(true);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(after.some((e) => e.kind === "predicted")).toBe(false);
   });
 });

@@ -1896,6 +1896,46 @@ describe("SessionStore — composer predictions (owner 2026-10-10)", () => {
     mock.emitTurn({ kind: "started", turnId: "t2" });
     expect(store.getSnapshot().prediction).toBeNull();
   });
+
+  // Review 2026-11-10, second pass.
+  it("a rewind takes the suggestion with the exchange it was for; a resync keeps it", () => {
+    const mock = createMockHertaBridge();
+    const store = new SessionStore();
+    store.connect(mock.bridge);
+    mock.emitReset({
+      sessionId: "s-1",
+      workspaceRoot: "/r",
+      record: [{ kind: "user", text: "older question" }],
+      overlay: null,
+      backendWorkspace: "/r",
+      backendWorkspaceIsDefault: true,
+    });
+    mock.emitRecord({
+      kind: "block",
+      blockId: "hi",
+      block: { kind: "user", text: "hi" },
+    });
+    mock.emitTurn({ kind: "predicted", turnId: "t1", text: "再跑一遍测试" });
+    expect(store.getSnapshot().prediction).toBe("再跑一遍测试");
+    // A drop-heal resync re-emits the same record: nothing was withdrawn.
+    mock.emitRecord({
+      kind: "reset",
+      record: [
+        { kind: "user", text: "older question" },
+        { kind: "user", text: "hi" },
+      ],
+      start: 0,
+    });
+    expect(store.getSnapshot().prediction).toBe("再跑一遍测试");
+    // The rewind truncates back to before "hi".
+    mock.emitRecord({
+      kind: "reset",
+      record: [{ kind: "user", text: "older question" }],
+      start: 0,
+    });
+    expect(store.getSnapshot().prediction).toBeNull();
+    store.dispose();
+  });
 });
 
 describe("SessionStore — a quote for the next session (ADR 0084 §9)", () => {

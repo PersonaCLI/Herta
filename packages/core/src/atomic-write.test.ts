@@ -10,7 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { writeFileAtomic, writeFileAtomicSync } from "./atomic-write.js";
+import {
+  renameWithRetry,
+  writeFileAtomic,
+  writeFileAtomicSync,
+} from "./atomic-write.js";
 
 const dirs: string[] = [];
 function mk(): string {
@@ -77,5 +81,70 @@ describe("writeFileAtomic (sync and async)", () => {
     writeFileAtomicSync(target, "second");
     expect(readFileSync(target, "utf8")).toBe("second");
     expect(readdirSync(d)).toEqual(["same.txt"]);
+  });
+});
+
+describe("renameWithRetry (review 2026-11-10)", () => {
+  const refusal = (code: string): NodeJS.ErrnoException =>
+    Object.assign(new Error(`${code}: operation not permitted`), { code });
+
+  it("on Windows a rename another process held for a moment goes through on a later try", async () => {
+    let calls = 0;
+    await renameWithRetry("a.tmp", "a", {
+      platform: "win32",
+      delaysMs: [1, 1, 1],
+      rename: async () => {
+        calls += 1;
+        if (calls < 3) throw refusal(calls === 1 ? "EPERM" : "EBUSY");
+      },
+    });
+    expect(calls).toBe(3);
+  });
+
+  it("gives up after its tries and throws the last refusal", async () => {
+    let calls = 0;
+    await expect(
+      renameWithRetry("a.tmp", "a", {
+        platform: "win32",
+        delaysMs: [1, 1],
+        rename: async () => {
+          calls += 1;
+          throw refusal("EACCES");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EACCES" });
+    // One more try than waits.
+    expect(calls).toBe(3);
+  });
+
+  it("an error that is not a held file is thrown at once", async () => {
+    let calls = 0;
+    await expect(
+      renameWithRetry("a.tmp", "a", {
+        platform: "win32",
+        delaysMs: [1, 1],
+        rename: async () => {
+          calls += 1;
+          throw refusal("ENOENT");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(calls).toBe(1);
+  });
+
+  it("off Windows the same codes mean what they say: no second try", async () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      let calls = 0;
+      await expect(
+        renameWithRetry("a.tmp", "a", {
+          platform,
+          rename: async () => {
+            calls += 1;
+            throw refusal("EPERM");
+          },
+        }),
+      ).rejects.toMatchObject({ code: "EPERM" });
+      expect(calls, platform).toBe(1);
+    }
   });
 });

@@ -6,6 +6,7 @@ import {
   type MemoryQuery,
   type MemoryReplaceOutcome,
   normalizeMemoryHandle,
+  renameWithRetry,
 } from "@herta/core";
 
 const ITEM_CAP = 200;
@@ -209,7 +210,9 @@ export class FileMemoryManager implements MemoryManager {
     tmpCounter += 1;
     const tmp = `${this.path}.${process.pid}-${tmpCounter}.tmp`;
     await this.fs.writeFile(tmp, serialized);
-    await this.fs.rename(tmp, this.path);
+    // Tried again where Windows holds the target for a moment (an antivirus,
+    // OneDrive): one refusal lost the fact 板砖 had just been told to keep.
+    await renameWithRetry(tmp, this.path, { rename: this.fs.rename });
   }
 
   currentItems(): readonly MemoryItem[] {

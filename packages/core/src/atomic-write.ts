@@ -32,6 +32,58 @@ export interface AtomicWriteOptions {
   readonly fsync?: boolean;
 }
 
+/**
+ * The rename, tried again where Windows refuses it for a moment (review
+ * 2026-11-10).
+ *
+ * On Windows a rename over an existing file fails with EPERM, EACCES or
+ * EBUSY while another process holds the target open: an antivirus scanning
+ * what was just written, OneDrive syncing the folder, the search indexer.
+ * The hold lasts milliseconds. One refusal lost the write: a saved project
+ * fact, a recap, a session's sidecar. The rename is tried again on those
+ * three codes, six times in about 0.4 s, and then the last error is thrown
+ * as before. Elsewhere those codes mean what they say, and nothing waits.
+ */
+const RENAME_RETRY_DELAYS_MS: readonly number[] = [10, 25, 50, 100, 200];
+const HELD_BY_ANOTHER = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+export interface RenameRetryOptions {
+  /** The rename to call (a test's, or a caller's own `fs`). */
+  readonly rename?: (from: string, to: string) => Promise<void>;
+  readonly platform?: NodeJS.Platform;
+  /** The waits between tries; one more try than waits. */
+  readonly delaysMs?: readonly number[];
+}
+
+export async function renameWithRetry(
+  from: string,
+  to: string,
+  opts: RenameRetryOptions = {},
+): Promise<void> {
+  const doRename = opts.rename ?? rename;
+  const delays =
+    (opts.platform ?? process.platform) === "win32"
+      ? (opts.delaysMs ?? RENAME_RETRY_DELAYS_MS)
+      : [];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await doRename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      const wait = delays[attempt];
+      if (
+        wait === undefined ||
+        code === undefined ||
+        !HELD_BY_ANOTHER.has(code)
+      ) {
+        throw err;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, wait));
+    }
+  }
+}
+
 let seq = 0;
 
 /** A unique temp path beside `target`: hidden, pid + counter + random, so
@@ -97,7 +149,7 @@ export async function writeFileAtomic(
         // fsync unsupported or refused — rename-only atomicity remains.
       }
     }
-    await rename(tmp, target);
+    await renameWithRetry(tmp, target);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => undefined);
     throw err;

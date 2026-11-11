@@ -6,6 +6,7 @@ export {
 } from "./approval-policy.js";
 export {
   type AtomicWriteOptions,
+  renameWithRetry,
   writeFileAtomic,
   writeFileAtomicSync,
 } from "./atomic-write.js";

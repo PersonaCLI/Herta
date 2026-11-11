@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolResult } from "../types/tool.js";
 import {
+  PERSIST_PAGE_LINES,
   PERSIST_PREVIEW_CHARS,
   PERSIST_RESULT_THRESHOLD_CHARS,
+  pageable,
   persistOversizedResult,
 } from "./tool-result-persistence.js";
 
@@ -53,10 +55,10 @@ describe("persistOversizedResult", () => {
       taskId: "task-abc",
       callId: "call_01",
     });
-    expect(out.persistedPath).toBe(".herta/tool-results/task-abc/call_01.json");
+    expect(out.persistedPath).toBe(".herta/tool-results/task-abc/call_01.txt");
     // File holds the FULL serialized payload.
     const onDisk = readFileSync(
-      join(root, ".herta", "tool-results", "task-abc", "call_01.json"),
+      join(root, ".herta", "tool-results", "task-abc", "call_01.txt"),
       "utf8",
     );
     expect(onDisk).toContain(big);
@@ -74,6 +76,76 @@ describe("persistOversizedResult", () => {
     expect(data.path).toBe(out.persistedPath);
     expect(data.preview.length).toBe(PERSIST_PREVIEW_CHARS);
     expect(data.note).toContain("read_file");
+  });
+
+  // Review 2026-11-10, second pass: the file was one line of JSON, so the
+  // note's "offset/limit" could not page it.
+  it("writes a file's content as the lines it is, so the pointer can be paged", () => {
+    const root = mkWs();
+    const source = Array.from(
+      { length: 2_000 },
+      (_, i) => `${i + 1}\tconst v${i} = "q${i}"; // line ${i + 1}`,
+    );
+    const result: ToolResult = {
+      ok: true,
+      summary: "read big.ts",
+      data: {
+        path: "src/big.ts",
+        totalLines: 2_000,
+        content: source.join("\n"),
+      },
+    };
+    const out = persistOversizedResult({
+      result,
+      workspaceRoot: root,
+      taskId: "t",
+      callId: "c",
+    });
+    const onDisk = readFileSync(
+      join(root, ".herta", "tool-results", "t", "c.txt"),
+      "utf8",
+    ).split("\n");
+    // Every source line is a line of the file, unescaped.
+    const from = onDisk.indexOf("== data.content ==");
+    expect(from).toBeGreaterThan(0);
+    expect(onDisk.slice(from + 1, from + 1 + 2_000)).toEqual(source);
+    // The head is still the payload, with the content pointed at.
+    const head = JSON.parse(onDisk.slice(0, from - 1).join("\n"));
+    expect(head.data.path).toBe("src/big.ts");
+    expect(head.data.content).toBe(
+      '(2000 lines, below under "== data.content ==")',
+    );
+    const data = out.transcriptResult.data as { lines: number; note: string };
+    expect(data.lines).toBe(onDisk.length - 1);
+    expect(data.note).toContain(`${data.lines} lines`);
+    expect(data.note).toContain(`limit of ${PERSIST_PAGE_LINES} lines`);
+    // A page of that size is not itself oversized.
+    const page = onDisk
+      .slice(from + 1, from + 1 + PERSIST_PAGE_LINES)
+      .join("\n");
+    expect(JSON.stringify({ data: { content: page } }).length).toBeLessThan(
+      PERSIST_RESULT_THRESHOLD_CHARS,
+    );
+  });
+
+  it("pageable lifts only strings with lines to page, wherever they sit", () => {
+    const diff = `--- a\n+++ b\n${"+x\n".repeat(100)}`;
+    const text = pageable({
+      data: {
+        files: [
+          { path: "a.ts", diff },
+          { path: "b.ts", diff: "short\none" },
+        ],
+        blob: "z".repeat(5_000),
+      },
+      error: { code: "boom" },
+    });
+    expect(text).toContain("\n== data.files[0].diff ==\n--- a\n+++ b\n+x\n");
+    // A short string and a string of one long line stay in the JSON.
+    expect(text).toContain('"diff": "short\\none"');
+    expect(text).toContain(`"blob": "${"z".repeat(5_000)}"`);
+    expect(text).toContain('"code": "boom"');
+    expect(text.endsWith("\n")).toBe(true);
   });
 
   it("keeps error + suggestion on an oversized failure result", () => {
@@ -112,11 +184,11 @@ describe("persistOversizedResult", () => {
     // All-dot stems neutralize to "call"; separators collapse to
     // underscores — everything stays inside .herta/tool-results/.
     expect(out.persistedPath).toBe(
-      ".herta/tool-results/call/.._.._etc_passwd.json",
+      ".herta/tool-results/call/.._.._etc_passwd.txt",
     );
     expect(
       readFileSync(
-        join(root, ".herta", "tool-results", "call", ".._.._etc_passwd.json"),
+        join(root, ".herta", "tool-results", "call", ".._.._etc_passwd.txt"),
         "utf8",
       ).length,
     ).toBeGreaterThan(PERSIST_RESULT_THRESHOLD_CHARS);

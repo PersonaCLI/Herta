@@ -14,13 +14,20 @@ import type { ToolResult } from "../types/tool.js";
  *  result its `error` and `suggestion` — as JSON, or "" when there is
  *  none. The persister thresholds on this. */
 export function toolResultPayloadJson(result: ToolResult): string {
+  const payload = toolResultPayload(result);
+  return Object.keys(payload).length > 0 ? JSON.stringify(payload) : "";
+}
+
+/** The same payload before it is serialized: the persister writes it as a
+ *  file that can be read a page at a time. */
+export function toolResultPayload(result: ToolResult): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (result.data !== undefined) payload.data = result.data;
   if (!result.ok) {
     if (result.error !== undefined) payload.error = result.error;
     if (result.suggestion !== undefined) payload.suggestion = result.suggestion;
   }
-  return Object.keys(payload).length > 0 ? JSON.stringify(payload) : "";
+  return payload;
 }
 
 /** The exact text the model sees as the tool message. A tool that authored

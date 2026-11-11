@@ -2,13 +2,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ensureHertaGitignore } from "../herta-dir-gitignore.js";
 import type { ToolResult } from "../types/tool.js";
-import { toolResultPayloadJson } from "./tool-message-content.js";
+import {
+  toolResultPayload,
+  toolResultPayloadJson,
+} from "./tool-message-content.js";
 
 /**
  * Oversized tool-result persistence (ADR 0025 slice 2, CC pattern
  * re-derived): when one tool result's model-visible serialization exceeds
  * the threshold, the FULL payload is written to
- * `<workspace>/.herta/tool-results/<taskId>/<callId>.json` and the
+ * `<workspace>/.herta/tool-results/<taskId>/<callId>.txt` and the
  * transcript stores a preview + the path instead. The
  * `tool.call.finished` EVENT always carries the full result — the report
  * absorber, renderer projection, and evidence surfaces are untouched;
@@ -20,9 +23,54 @@ import { toolResultPayloadJson } from "./tool-message-content.js";
  * catches the real offenders — git_diff can return up to 4 MiB, a
  * read_file of a big file up to ~10 MiB serialized — while normal edit
  * diffs and command tails pass through untouched. Preview 2K chars.
+ *
+ * The file is written to be read a page at a time (review 2026-11-10,
+ * second pass). It used to be the payload's JSON, which is one line however
+ * long: `read_file` with an offset and a limit, as the note says to, got
+ * the whole line back, that was oversized and persisted again, and the
+ * model was left with the same preview. A file read whole past about 500
+ * lines showed its first 40. See `pageable`.
  */
 export const PERSIST_RESULT_THRESHOLD_CHARS = 24_000;
 export const PERSIST_PREVIEW_CHARS = 2_000;
+/** The page the note asks for: 200 lines of code stay under the threshold,
+ *  so the page that follows the pointer is not itself persisted. */
+export const PERSIST_PAGE_LINES = 200;
+
+/** A string worth lifting out of the JSON: it has lines to page. */
+const LIFT_MIN_CHARS = 200;
+
+/**
+ * The payload as lines: its JSON with one member a line, and every string
+ * that holds line breaks (a file's content, a diff, a command's output)
+ * lifted out below it under a `== data.content ==` heading, written as the
+ * lines it is. A string of one long line stays where it was: no page can
+ * split it.
+ */
+export function pageable(payload: Record<string, unknown>): string {
+  const lifted: string[] = [];
+  const walk = (value: unknown, at: string): unknown => {
+    if (typeof value === "string") {
+      if (value.length < LIFT_MIN_CHARS || !value.includes("\n")) return value;
+      const lines = value.split("\n").length;
+      lifted.push(`\n== ${at} ==\n${value}`);
+      return `(${lines} lines, below under "== ${at} ==")`;
+    }
+    if (Array.isArray(value))
+      return value.map((v, i) => walk(v, `${at}[${i}]`));
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [
+          k,
+          walk(v, at === "" ? k : `${at}.${k}`),
+        ]),
+      );
+    }
+    return value;
+  };
+  const head = JSON.stringify(walk(payload, ""), null, 2);
+  return `${[head, ...lifted].join("\n")}\n`;
+}
 
 export interface PersistOutcome {
   /** What the transcript (and thus every later prompt) stores. */
@@ -55,7 +103,9 @@ export function persistOversizedResult(opts: {
   }
 
   const relDir = `.herta/tool-results/${safeFileStem(opts.taskId)}`;
-  const relPath = `${relDir}/${safeFileStem(opts.callId)}.json`;
+  const relPath = `${relDir}/${safeFileStem(opts.callId)}.txt`;
+  const text = pageable(toolResultPayload(opts.result));
+  const lines = text.split("\n").length - 1;
   try {
     const absDir = join(opts.workspaceRoot, ...relDir.split("/"));
     mkdirSync(absDir, { recursive: true });
@@ -64,7 +114,7 @@ export function persistOversizedResult(opts: {
     ensureHertaGitignore(opts.workspaceRoot);
     writeFileSync(
       join(opts.workspaceRoot, ...relPath.split("/")),
-      serialized,
+      text,
       "utf8",
     );
   } catch {
@@ -81,8 +131,9 @@ export function persistOversizedResult(opts: {
       persisted: true,
       path: relPath,
       originalChars: serialized.length,
-      preview: serialized.slice(0, PERSIST_PREVIEW_CHARS),
-      note: `full result too large for context — persisted to ${relPath}; read_file that path (offset/limit as needed) if the preview is not enough`,
+      lines,
+      preview: text.slice(0, PERSIST_PREVIEW_CHARS),
+      note: `full result too large for context — persisted to ${relPath} (${lines} lines); if the preview is not enough, read_file that path with an offset and a limit of ${PERSIST_PAGE_LINES} lines or fewer (a larger page is persisted again)`,
     },
     ...(opts.result.error !== undefined ? { error: opts.result.error } : {}),
     ...(opts.result.suggestion !== undefined

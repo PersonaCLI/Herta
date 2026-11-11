@@ -731,10 +731,10 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
         preview?: string;
       };
       expect(data.persisted).toBe(true);
-      expect(data.path).toBe(".herta/tool-results/t-1/b1.json");
+      expect(data.path).toBe(".herta/tool-results/t-1/b1.txt");
       expect(
         readFileSync(
-          join(wsRoot, ".herta", "tool-results", "t-1", "b1.json"),
+          join(wsRoot, ".herta", "tool-results", "t-1", "b1.txt"),
           "utf8",
         ),
       ).toContain("xxxx");

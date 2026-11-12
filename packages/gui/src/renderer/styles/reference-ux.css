@@ -953,6 +953,11 @@ button,
     background var(--dur-micro) ease,
     color var(--dur-micro) ease;
 }
+/* Its mirror at the BOTTOM of a window that stands away from the live end
+   (a far jump): the room goes above it instead. */
+.load-earlier.load-later {
+  margin: 18px auto 2px;
+}
 .load-earlier:hover {
   background: var(--pill-bg);
   color: var(--ink);

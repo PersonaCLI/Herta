@@ -1,8 +1,7 @@
 import type { AgentEvent } from "@herta/app-server";
-import { RECORD_WINDOW_WEIGHT } from "@herta/core/record-window";
 import { describe, expect, it } from "vitest";
 import { createMockHertaBridge } from "../ipc/mock-bridge.js";
-import { SessionStore } from "./session-store.js";
+import { SessionStore, shownWindow } from "./session-store.js";
 
 function deltaEvent(text: string): AgentEvent {
   // assistant.delta carries streamed text; field name confirmed as `text` in events.ts.
@@ -1611,28 +1610,308 @@ describe("SessionStore — long-session record windowing", () => {
     store.dispose();
   });
 
-  it("loadBackTo asks for the block a jump must reach", async () => {
-    const mock = createMockHertaBridge({
-      recordSliceResult: {
-        start: 3,
-        blocks: [
-          { kind: "user", text: "old-3" },
-          { kind: "user", text: "old-4" },
-        ],
-      },
+  describe("a jump, and a window of history beside the trailing one (owner 2026-11-12)", () => {
+    // A chat of plain messages: each weighs ten and opens a turn, so a
+    // window's weight is 200 of them.
+    const chat = (n: number, from = 0) =>
+      Array.from({ length: n }, (_, i) => ({
+        kind: "user" as const,
+        text: `m${from + i}`,
+      }));
+    /** A session of `n` messages, opened as the app opens it: on its tail. */
+    function open(n: number) {
+      const full = chat(n);
+      const mock = createMockHertaBridge({ fullRecord: full });
+      const store = new SessionStore();
+      store.connect(mock.bridge);
+      const start = Math.max(0, n - 200);
+      mock.emitReset({
+        ...SNAPSHOT_BASE,
+        sessionId: "s",
+        record: full.slice(start),
+        recordStart: start,
+      });
+      /** Main writes `count` more blocks, and their events arrive. */
+      const grow = (count: number): void => {
+        const more = chat(count, full.length);
+        full.push(...more);
+        mock.setFullRecord(full);
+        for (const block of more)
+          mock.emitRecord({ kind: "block", blockId: block.text, block });
+      };
+      const span = (w: { record: readonly unknown[]; start: number } | null) =>
+        w === null ? null : [w.start, w.start + w.record.length];
+      return {
+        mock,
+        store,
+        full,
+        grow,
+        /** The trailing window's span. */
+        tail: () => {
+          const s = store.getSnapshot();
+          return [s.recordStart, s.recordStart + s.record.length];
+        },
+        /** The window of history, or null. */
+        away: () => span(store.getSnapshot().away),
+        /** What the chat shows. */
+        shown: () => span(shownWindow(store.getSnapshot())),
+        texts: (): string[] =>
+          store
+            .getSnapshot()
+            .record.map((b) => (b.kind === "user" ? b.text : "")),
+      };
+    }
+
+    it("near the trailing window, the blocks between join it: one window, still following the live end", async () => {
+      const { mock, store, grow, tail, away } = open(1000);
+      expect(await store.jumpTo(700)).toBe("joined");
+      expect(mock.calls.recordWindow).toEqual([
+        ["s", { kind: "jump", start: 800, end: 1000, to: 700 }],
+      ]);
+      expect(tail()).toEqual([700, 1000]);
+      expect(away()).toBeNull();
+      grow(1);
+      expect(tail()).toEqual([700, 1001]);
+      store.dispose();
     });
-    const store = new SessionStore();
-    store.connect(mock.bridge);
-    mock.emitReset({
-      ...SNAPSHOT_BASE,
-      sessionId: "s",
-      record: [{ kind: "user", text: "tail-5" }],
-      recordStart: 5,
+
+    it("far from it, the chat shows a window around the target, 190 messages and not the 760 between, and the trailing window is kept", async () => {
+      const { store, tail, away, shown } = open(1000);
+      const kept = store.getSnapshot().record;
+      expect(await store.jumpTo(40)).toBe("replaced");
+      // A quarter of the window before the target (all there is, here), the
+      // rest after it.
+      expect(away()).toEqual([0, 190]);
+      expect(shown()).toEqual([0, 190]);
+      expect(tail()).toEqual([800, 1000]);
+      expect(store.getSnapshot().record).toBe(kept);
+      store.dispose();
     });
-    await store.loadBackTo(4);
-    expect(mock.calls.recordSlice).toEqual([["s", 5, RECORD_WINDOW_WEIGHT, 4]]);
-    expect(store.getSnapshot().recordStart).toBe(3);
-    store.dispose();
+
+    it("a block the chat already shows asks main for nothing", async () => {
+      const { mock, store } = open(1000);
+      expect(await store.jumpTo(900)).toBe("held");
+      expect(mock.calls.recordWindow).toEqual([]);
+      store.dispose();
+    });
+
+    it("no such block, or no answer: nothing changes and the jump says so", async () => {
+      const { store, tail, away } = open(1000);
+      expect(await store.jumpTo(5000)).toBeNull();
+      expect(tail()).toEqual([800, 1000]);
+      expect(away()).toBeNull();
+      // A bridge that cannot answer (a fake, the website demo).
+      const mock = createMockHertaBridge();
+      const bare = new SessionStore();
+      bare.connect(mock.bridge);
+      mock.emitReset({
+        ...SNAPSHOT_BASE,
+        sessionId: "s",
+        record: chat(10, 900),
+        recordStart: 900,
+      });
+      expect(await bare.jumpTo(40)).toBeNull();
+      expect(bare.getSnapshot().recordStart).toBe(900);
+      expect(bare.getSnapshot().away).toBeNull();
+      store.dispose();
+      bare.dispose();
+    });
+
+    it("while history is shown the trailing window goes on following the live end, and the history does not move", async () => {
+      const { store, grow, tail, away, texts } = open(1000);
+      await store.jumpTo(40);
+      const history = store.getSnapshot().away;
+      grow(3);
+      expect(tail()).toEqual([800, 1003]);
+      expect(texts().slice(-3)).toEqual(["m1000", "m1001", "m1002"]);
+      expect(store.getSnapshot().away).toBe(history);
+      expect(away()).toEqual([0, 190]);
+      store.dispose();
+    });
+
+    it("back to the latest asks main for nothing: the trailing window is there, with what was written meanwhile", async () => {
+      const { mock, store, grow, tail, away, shown } = open(1000);
+      await store.jumpTo(40);
+      grow(3);
+      const asked = mock.calls.recordWindow.length;
+      store.returnToLatest();
+      expect(away()).toBeNull();
+      expect(shown()).toEqual([800, 1003]);
+      expect(store.getSnapshot().latestLandings).toBe(1);
+      expect(mock.calls.recordWindow).toHaveLength(asked);
+      grow(1);
+      expect(tail()).toEqual([800, 1004]);
+      // Already there: a second call is not another landing.
+      store.returnToLatest();
+      expect(store.getSnapshot().latestLandings).toBe(1);
+      store.dispose();
+    });
+
+    it("load later reads on from the history, and a page that reaches the trailing window joins the two", async () => {
+      const { mock, store, grow, tail, away, texts } = open(1000);
+      await store.jumpTo(400);
+      expect(away()).toEqual([350, 550]);
+      await store.loadLaterBlocks();
+      expect(away()).toEqual([350, 750]);
+      expect(tail()).toEqual([800, 1000]);
+      // The next page runs to block 950, past where the trailing window
+      // starts: one window now, and every block in it once.
+      await store.loadLaterBlocks();
+      expect(away()).toBeNull();
+      expect(tail()).toEqual([350, 1000]);
+      expect(new Set(texts()).size).toBe(650);
+      expect(texts()[0]).toBe("m350");
+      expect(texts().at(-1)).toBe("m999");
+      // Reading there is not a return: the reader keeps their place.
+      expect(store.getSnapshot().latestLandings).toBe(0);
+      grow(1);
+      expect(tail()).toEqual([350, 1001]);
+      // No history on screen: nothing later to ask for.
+      const asked = mock.calls.recordWindow.length;
+      await store.loadLaterBlocks();
+      expect(mock.calls.recordWindow).toHaveLength(asked);
+      store.dispose();
+    });
+
+    it("a second jump from the history: near joins it, far takes its place, and a block of the trailing window needs no call", async () => {
+      const { mock, store, away, shown } = open(1000);
+      await store.jumpTo(400);
+      expect(await store.jumpTo(600)).toBe("joined");
+      expect(away()).toEqual([350, 750]);
+      expect(await store.jumpTo(300)).toBe("joined");
+      expect(away()).toEqual([300, 750]);
+      expect(await store.jumpTo(20)).toBe("replaced");
+      expect(away()).toEqual([0, 170]);
+      const asked = mock.calls.recordWindow.length;
+      expect(await store.jumpTo(900)).toBe("replaced");
+      expect(away()).toBeNull();
+      expect(shown()).toEqual([800, 1000]);
+      expect(mock.calls.recordWindow).toHaveLength(asked);
+      // That was a jump, not the chip: the jump scrolls to its row.
+      expect(store.getSnapshot().latestLandings).toBe(0);
+      store.dispose();
+    });
+
+    it("a jump from the history to a block just before the trailing window joins the two", async () => {
+      const { store, tail, away } = open(1000);
+      await store.jumpTo(40);
+      expect(await store.jumpTo(790)).toBe("replaced");
+      expect(away()).toBeNull();
+      expect(tail()).toEqual([740, 1000]);
+      store.dispose();
+    });
+
+    it("a message sent from the history takes the reader back with it, in the commit that shows its echo", async () => {
+      const { store, away } = open(1000);
+      await store.jumpTo(40);
+      const seen: Array<[string | null, boolean]> = [];
+      store.subscribe(() => {
+        const s = store.getSnapshot();
+        seen.push([s.pendingUser, s.away === null]);
+      });
+      store.markPendingUser("hello");
+      expect(seen).toEqual([["hello", true]]);
+      expect(away()).toBeNull();
+      expect(store.getSnapshot().latestLandings).toBe(1);
+      // Talk behind an echo goes back the same way.
+      await store.jumpTo(40);
+      store.markPendingTalk("and this");
+      expect(away()).toBeNull();
+      expect(store.getSnapshot().pendingTalk.map((p) => p.text)).toEqual([
+        "and this",
+      ]);
+      expect(store.getSnapshot().latestLandings).toBe(2);
+      store.dispose();
+    });
+
+    it("load earlier and the chat's trim act on the window the chat shows", async () => {
+      const { mock, store, tail, away } = open(1000);
+      await store.jumpTo(400);
+      await store.loadOlderBlocks();
+      expect(mock.calls.recordSlice).toEqual([["s", 350, 2000]]);
+      expect(away()).toEqual([150, 550]);
+      store.trimRecordWindow(100);
+      expect(away()).toEqual([450, 550]);
+      expect(tail()).toEqual([800, 1000]);
+      // And on the trailing window when that is what the chat shows.
+      store.returnToLatest();
+      await store.loadOlderBlocks();
+      expect(tail()).toEqual([600, 1000]);
+      store.trimRecordWindow(100);
+      expect(tail()).toEqual([900, 1000]);
+      store.dispose();
+    });
+
+    it("the trailing window is bounded while nothing looks at it: back to a window's weight, at a turn", async () => {
+      const hidden = open(1000);
+      await hidden.store.jumpTo(40);
+      hidden.grow(100);
+      const [start, end] = hidden.tail() as [number, number];
+      expect(end).toBe(1100);
+      // 200 messages is a window; the trim line is 260.
+      expect(end - start).toBeGreaterThanOrEqual(200);
+      expect(end - start).toBeLessThanOrEqual(260);
+      // On screen, the chat's own trims decide, as before: the store leaves it.
+      const onScreen = open(1000);
+      onScreen.grow(100);
+      expect(onScreen.tail()).toEqual([800, 1100]);
+      hidden.store.dispose();
+      onScreen.store.dispose();
+    });
+
+    it("a reset is the trailing window's: the history stays on screen, and an answer that crossed it is dropped", async () => {
+      const { mock, store, full, tail, away } = open(1000);
+      await store.jumpTo(40);
+      // A rewind: the record lost its last two blocks.
+      mock.emitRecord({
+        kind: "reset",
+        record: full.slice(798, 998),
+        start: 798,
+      });
+      expect(tail()).toEqual([798, 998]);
+      expect(away()).toEqual([0, 190]);
+      expect(store.getSnapshot().latestLandings).toBe(0);
+      const jump = store.jumpTo(400);
+      mock.emitRecord({
+        kind: "reset",
+        record: full.slice(798, 998),
+        start: 798,
+      });
+      expect(await jump).toBeNull();
+      expect(away()).toEqual([0, 190]);
+      store.dispose();
+    });
+
+    it("a reset that reaches back to the history joins the two", async () => {
+      const { mock, store, full, tail, away } = open(1000);
+      await store.jumpTo(40);
+      mock.emitRecord({
+        kind: "reset",
+        record: full.slice(150, 400),
+        start: 150,
+      });
+      expect(away()).toBeNull();
+      expect(tail()).toEqual([0, 400]);
+      store.dispose();
+    });
+
+    it("a session that opens after one that showed history opens on its trailing window", async () => {
+      const { mock, store } = open(1000);
+      await store.jumpTo(40);
+      mock.emitReset({
+        ...SNAPSHOT_BASE,
+        sessionId: "s2",
+        record: chat(3),
+      });
+      expect(store.getSnapshot().away).toBeNull();
+      mock.emitRecord({
+        kind: "block",
+        blockId: "x",
+        block: { kind: "user", text: "x" },
+      });
+      expect(store.getSnapshot().record).toHaveLength(4);
+      store.dispose();
+    });
   });
 
   it("loadOlderBlocks drops a slice that no longer aligns with the window", async () => {

@@ -84,8 +84,24 @@ export function RunRecordView(props: { readonly path: string }): JSX.Element {
 }
 
 function RunRecord(props: { readonly path: string }): JSX.Element {
-  const record = useSessionSelector((s) => s.record);
-  const recordStart = useSessionSelector((s) => s.recordStart);
+  // The run whose first block the tab was opened on — found by that block,
+  // so a window that later loaded earlier rows (moving the run's start)
+  // still answers for it.
+  const ref = useMemo(() => parseRunTabPath(props.path), [props.path]);
+  // The store holds the trailing window and, after a far jump, a window of
+  // history beside it (owner 2026-11-12). A run opened from a row of that
+  // history is read there; every other run from the trailing window, as
+  // before.
+  const tail = useSessionSelector((s) => s.record);
+  const tailStart = useSessionSelector((s) => s.recordStart);
+  const away = useSessionSelector((s) => s.away);
+  const inHistory =
+    ref !== null &&
+    away !== null &&
+    ref.index >= away.start &&
+    ref.index < away.start + away.record.length;
+  const record = inHistory ? away.record : tail;
+  const recordStart = inHistory ? away.start : tailStart;
   const lang = useSessionSelector((s) => s.lang);
   const status = useSessionSelector((s) => s.status);
   const backendActive = useSessionSelector((s) => s.backendActive);
@@ -103,10 +119,6 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
     [record],
   );
   const lastTurn = useMemo(() => lastTurnIndex(record), [record]);
-  // The run whose first block the tab was opened on — found by that block,
-  // so a window that later loaded earlier rows (moving the run's start)
-  // still answers for it.
-  const ref = useMemo(() => parseRunTabPath(props.path), [props.path]);
   const target = ref === null ? undefined : record[ref.index - recordStart];
   const found = useMemo((): { item: RunItem; idx: number } | null => {
     if (ref === null || target === undefined || target.kind !== "system")
@@ -187,11 +199,16 @@ function RunRecord(props: { readonly path: string }): JSX.Element {
     );
   }
 
+  // A run in a window of history is over, and its turn is not the latest:
+  // neither the live state nor the 撤销 offer is its.
   const live =
+    !inHistory &&
     found.idx === openRun(items, lastTurn) &&
     status !== "idle" &&
     (backendActive || backendStartedAt !== null);
-  const undo = undoTarget(items, lastTurn);
+  const undo = inHistory
+    ? { card: -1, undone: false }
+    : undoTarget(items, lastTurn);
   const isUndoRun = undo.card === found.idx;
   const markerBlock = run.blocks.find(
     (b) => b.role === "done-marker" || b.role === "noop-marker",

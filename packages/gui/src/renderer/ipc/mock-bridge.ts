@@ -27,6 +27,7 @@ import type {
   VoiceCueEvent,
   WorkspaceEvent,
 } from "@herta/app-server";
+import { jumpRange, pageEnd, pageStart } from "@herta/core/record-window";
 import type {
   AttachProgressEvent,
   AttentionSettings,
@@ -41,6 +42,7 @@ import type {
   ModelConfig,
   NavBlockedEvent,
   RealtimeVoiceState,
+  RecordWindowRequest,
   SessionError,
   SessionNoSession,
   SessionOpenFailure,
@@ -74,6 +76,11 @@ export interface MockHertaBridgeOpts {
     readonly start: number;
     readonly blocks: TerminalRecord;
   };
+  /** The whole record behind recordWindow (a jump, a later page) and, when
+   *  no `recordSliceResult` is seeded, behind recordSlice: the mock answers
+   *  by the app's own window rules, as main does. Without it recordWindow
+   *  answers nothing. */
+  readonly fullRecord?: TerminalRecord;
   readonly openSessionResult?: SessionSnapshot | SessionOpenFailure;
   readonly createSessionResult?: SessionSnapshot;
   readonly resolveApprovalResult?: ApprovalResult;
@@ -238,9 +245,8 @@ export interface MockHertaBridge {
     openWebPage: Array<[string, string]>;
     listSessions: number;
     searchSessions: string[];
-    recordSlice: Array<
-      [string, number, number] | [string, number, number, number]
-    >;
+    recordSlice: Array<[string, number, number]>;
+    recordWindow: Array<[string, RecordWindowRequest]>;
     pickWorkspace: number;
     setWorkspace: Array<[string, string]>;
     resetWorkspace: string[];
@@ -303,6 +309,8 @@ export interface MockHertaBridge {
   /** The menu's Close (Ctrl/⌘+W, ADR 0082). */
   emitCloseRequested(): void;
   emitRecord(e: RecordEvent): void;
+  /** Replace the record recordWindow answers from (main's copy moved on). */
+  setFullRecord(record: TerminalRecord): void;
   emitOverlay(e: OverlayEvent): void;
   emitSpeech(e: SpeechControlEvent): void;
   emitAgent(e: SessionAgentEvent): void;
@@ -346,6 +354,7 @@ export function createMockHertaBridge(
   opts: MockHertaBridgeOpts = {},
 ): MockHertaBridge {
   const recordCbs = new Set<(e: RecordEvent) => void>();
+  let fullRecord = opts.fullRecord;
   const overlayCbs = new Set<(e: OverlayEvent) => void>();
   const speechCbs = new Set<(e: SpeechControlEvent) => void>();
   const agentCbs = new Set<(e: SessionAgentEvent) => void>();
@@ -391,6 +400,7 @@ export function createMockHertaBridge(
     listSessions: 0,
     searchSessions: [],
     recordSlice: [],
+    recordWindow: [],
     pickWorkspace: 0,
     getDreamConfig: 0,
     setDreamConfig: [],
@@ -636,13 +646,26 @@ export function createMockHertaBridge(
       calls.searchSessions.push(query);
       return opts.searchSessionsResult ?? [];
     },
-    recordSlice: async (sessionId, before, count, to) => {
-      calls.recordSlice.push(
-        to === undefined
-          ? [sessionId, before, count]
-          : [sessionId, before, count, to],
-      );
-      return opts.recordSliceResult ?? { start: 0, blocks: [] };
+    recordSlice: async (sessionId, before, count) => {
+      calls.recordSlice.push([sessionId, before, count]);
+      if (opts.recordSliceResult !== undefined) return opts.recordSliceResult;
+      if (fullRecord === undefined) return { start: 0, blocks: [] };
+      const end = Math.min(before, fullRecord.length);
+      const start = pageStart(fullRecord, count, end);
+      return { start, blocks: fullRecord.slice(start, end) };
+    },
+    recordWindow: async (sessionId, req) => {
+      calls.recordWindow.push([sessionId, req]);
+      const full = fullRecord;
+      if (full === undefined) return { start: 0, blocks: [] };
+      if (req.kind === "later") {
+        if (req.after >= full.length) return { start: 0, blocks: [] };
+        const end = pageEnd(full, req.count, req.after);
+        return { start: req.after, blocks: full.slice(req.after, end) };
+      }
+      const range = jumpRange(full, { start: req.start, end: req.end }, req.to);
+      if (range === null) return { start: 0, blocks: [] };
+      return { start: range.start, blocks: full.slice(range.start, range.end) };
     },
     openSession: async (id) => {
       calls.openSession.push(id);
@@ -1062,6 +1085,9 @@ export function createMockHertaBridge(
     calls,
     emitRecord: (e) => {
       for (const cb of recordCbs) cb(e);
+    },
+    setFullRecord: (record) => {
+      fullRecord = record;
     },
     emitOverlay: (e) => {
       for (const cb of overlayCbs) cb(e);

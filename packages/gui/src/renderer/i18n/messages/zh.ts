@@ -456,6 +456,8 @@ export const zh = {
   "workspace.gammaStormLong": "干扰还没平息，消息仍在路上…",
   "workspace.jumpToLatest": "回到底部",
   "workspace.loadEarlier": "加载更早的记录",
+  "workspace.loadLater": "加载更晚的记录",
+  "workspace.backToLatest": "回到最新",
   "workspace.topicRailAria": "话题导览",
   "activity.verb.reading": "读取",
   "activity.verb.writing": "写入",

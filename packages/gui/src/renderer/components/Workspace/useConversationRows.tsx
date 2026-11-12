@@ -26,6 +26,8 @@ import { RunRow } from "./RunRow.js";
 import { imageViewsFromBlocks, UserBubble } from "./UserBubble.js";
 import type { RemoveAttachmentFactory } from "./useRemoveAttachment.js";
 
+const NO_UNDO_CARD = { card: -1, undone: false } as const;
+
 /** Per-row crash fallback (audit 2026-07-13 T2.2): the row renderers are
  *  fed model-shaped record blocks every turn, so a malformed one must cost
  *  one muted line — not unmount the whole conversation. */
@@ -106,6 +108,10 @@ export function useConversationRows(opts: {
   /** An undo is on its way. */
   readonly undoBusy: boolean;
   readonly handleUndo: () => Promise<void>;
+  /** The rows are the trailing window's. When they are a window of history
+   *  instead (a far jump), their last turn is not the session's last: no
+   *  rewind, no 撤销 and no live run belong to anything in them. */
+  readonly atLive: boolean;
 }) {
   const {
     record,
@@ -120,6 +126,7 @@ export function useConversationRows(opts: {
     undoable,
     undoBusy,
     handleUndo,
+    atLive,
   } = opts;
 
   // Memoized on record identity: the store mutates `record` only per BLOCK
@@ -146,8 +153,8 @@ export function useConversationRows(opts: {
   const lastUserIndex = useMemo(() => lastTurnIndex(record), [record]);
   // The 撤销 chip's run (ADR 0074 §4).
   const undoCard = useMemo(
-    () => undoTarget(items, lastUserIndex),
-    [items, lastUserIndex],
+    () => (atLive ? undoTarget(items, lastUserIndex) : NO_UNDO_CARD),
+    [items, lastUserIndex, atLive],
   );
   // The run still working: the latest turn's run with no marker yet, while
   // the turn runs and the backend has started. The backend's anchor is the
@@ -155,8 +162,8 @@ export function useConversationRows(opts: {
   // starts, and the turn-start handler clears it. The chat's 处理中
   // placeholder stands down for this run, wherever her beats have put it.
   const liveRun = useMemo(
-    () => openRun(items, lastUserIndex),
-    [items, lastUserIndex],
+    () => (atLive ? openRun(items, lastUserIndex) : -1),
+    [items, lastUserIndex, atLive],
   );
   const runLive =
     liveRun !== -1 &&
@@ -206,7 +213,7 @@ export function useConversationRows(opts: {
               // rewind is allowed right now is no longer part of the row's
               // render (see handleRewind's own idle check, and the
               // `.is-busy` rule that hides the control mid-turn).
-              item.index === lastUserIndex ? handleRewind : undefined,
+              atLive && item.index === lastUserIndex ? handleRewind : undefined,
               item.images,
               openWebPage,
             )}
@@ -216,7 +223,15 @@ export function useConversationRows(opts: {
     // The 30s clock is deliberately absent (perf 2026-08-25): timestamps
     // subscribe to the shared tick in their BubbleTime leaf, so a tick
     // invalidates label leafs, never these row elements.
-    [items, recordStart, lang, lastUserIndex, handleRewind, openWebPage],
+    [
+      items,
+      recordStart,
+      lang,
+      lastUserIndex,
+      handleRewind,
+      openWebPage,
+      atLive,
+    ],
   );
 
   // ── assembly ────────────────────────────────────────────────────────────
@@ -241,7 +256,9 @@ export function useConversationRows(opts: {
                 // Only the live turn's runs read the backend's start (see
                 // turnStartedAt below for why history must not).
                 backendStartedAt={
-                  item.startIndex > lastUserIndex ? backendStartedAt : null
+                  atLive && item.startIndex > lastUserIndex
+                    ? backendStartedAt
+                    : null
                 }
                 lang={lang}
                 {...(idx !== undoCard.card
@@ -301,6 +318,7 @@ export function useConversationRows(opts: {
       handleUndo,
       liveRun,
       runLive,
+      atLive,
     ],
   );
 

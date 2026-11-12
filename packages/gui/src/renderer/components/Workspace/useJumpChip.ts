@@ -17,8 +17,11 @@ export function useJumpChip(opts: {
   readonly record: TerminalRecord;
   readonly recordStart: number;
   readonly sessionId: string | null;
+  /** The chat shows a window of history (a far jump): the chip is the way
+   *  back to the latest, so it stays up wherever the reader scrolls. */
+  readonly away: boolean;
 }): { mounted: boolean; open: boolean } {
-  const { scroll, record, recordStart, sessionId } = opts;
+  const { scroll, record, recordStart, sessionId, away } = opts;
 
   // Appended blocks light the chip the same way (record identity changes per
   // block, not per delta). Windowing (2026-07-12): compare ABSOLUTE end
@@ -45,5 +48,5 @@ export function useJumpChip(opts: {
   // mount, and hiding (click, manual scroll-back, re-pin) plays the reverse
   // slide-fade before the unmount (user 2026-07-11 — it used to vanish with
   // no motion). 240ms exit ≥ the CSS's 200ms transition.
-  return usePresence(!scroll.pinnedState && scroll.newBelow, 240);
+  return usePresence(away || (!scroll.pinnedState && scroll.newBelow), 240);
 }

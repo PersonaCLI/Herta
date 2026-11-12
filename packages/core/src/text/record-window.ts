@@ -16,7 +16,8 @@ import type {
  *
  * A window starts at a message that opens a turn, or at the record's start,
  * and never inside a turn: a run cut in half has the wrong step count on its
- * row and half a 完整记录.
+ * row and half a 完整记录. It ends at the live end, or, after a far jump, at
+ * a turn of its own (`jumpRange`, owner 2026-11-12).
  */
 const ROW_WEIGHT = 10;
 const STEP_WEIGHT = 1;
@@ -80,20 +81,126 @@ export function turnStartAtOrBefore(
 }
 
 /**
- * Where a page of older blocks ending at `end` starts. `budget` of weight
- * back, capped at a window's; or, given `to`, the turn that holds that block,
- * however far back: a jump has to reach its row, and the renderer cannot
- * weigh blocks it does not hold. A `to` that is no index older than `end`
- * (it crossed an IPC boundary) is ignored.
+ * Where a page of older blocks ending at `end` starts: `budget` of weight
+ * back, capped at a window's.
  */
 export function pageStart(
   record: TerminalRecord,
   budget: number,
   end: number,
-  to?: number,
 ): number {
-  if (to !== undefined && Number.isInteger(to) && to >= 0 && to < end) {
-    return turnStartAtOrBefore(record, to);
-  }
   return windowStart(record, Math.min(budget, RECORD_WINDOW_WEIGHT), end);
+}
+
+/**
+ * Where a page of later blocks starting at `from` ends: the first message
+ * that opens a turn with at least `budget` of weight before it, or the
+ * record's end. Never inside a turn, like a window's start.
+ */
+export function pageEnd(
+  record: TerminalRecord,
+  budget: number,
+  from: number,
+): number {
+  let weight = 0;
+  for (let i = from; i < record.length; i++) {
+    const block = record[i] as TerminalRecordBlock;
+    if (i > from && weight >= budget && opensTurn(block)) return i;
+    weight += blockWeight(block);
+  }
+  return record.length;
+}
+
+/** Blocks `[start, end)` of the record: a window, a page, or what a jump
+ *  brings. */
+export interface RecordRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+function weightBetween(
+  record: TerminalRecord,
+  start: number,
+  end: number,
+): number {
+  let weight = 0;
+  for (let i = start; i < end; i++)
+    weight += blockWeight(record[i] as TerminalRecordBlock);
+  return weight;
+}
+
+/**
+ * A window around block `target`: the turn that holds it, a quarter of the
+ * budget before it and the rest from it on. The reader lands on the turn
+ * with some of what led to it above, and reads on from there.
+ */
+export function windowAround(
+  record: TerminalRecord,
+  target: number,
+  budget: number = RECORD_WINDOW_WEIGHT,
+): RecordRange {
+  const turn = turnStartAtOrBefore(record, target);
+  const back = Math.floor(budget / 4);
+  return {
+    start: windowStart(record, back, turn),
+    end: pageEnd(record, budget - back, turn),
+  };
+}
+
+/**
+ * What a jump to block `target` brings, given the window the chat holds
+ * (owner 2026-11-12, amends the 2026-11-05 "a jump in one slice").
+ *
+ * That amendment answered a jump with everything between the target's turn
+ * and the window, whatever it weighed, because the renderer cannot weigh
+ * blocks it does not hold. It is main that answers, and main can: at 6 400
+ * turns the slice to the first topic was 38 MB in one message and every row
+ * of it mounted (review 2026-11-10, second pass).
+ *
+ * Within a window's weight of what the chat holds, the answer is still the
+ * gap: it joins the window, and the reader scrolls between the two. Further
+ * than that, it is a window of its own around the target, which the chat
+ * shows in place of the one it had. The chat then stands away from the live
+ * end until the reader pages or jumps back to it.
+ *
+ * Null when the target is no block of the record or the window already
+ * holds it.
+ */
+export function jumpRange(
+  record: TerminalRecord,
+  have: RecordRange,
+  target: number,
+  budget: number = RECORD_WINDOW_WEIGHT,
+): RecordRange | null {
+  if (!Number.isInteger(target) || target < 0 || target >= record.length) {
+    return null;
+  }
+  const sane =
+    Number.isInteger(have.start) &&
+    Number.isInteger(have.end) &&
+    have.start >= 0 &&
+    have.start <= have.end &&
+    have.end <= record.length;
+  // A window that is no part of this record (it crossed an IPC boundary):
+  // answer as if the chat held nothing.
+  if (!sane) return windowAround(record, target, budget);
+  if (target >= have.start && target < have.end) return null;
+  const turn = turnStartAtOrBefore(record, target);
+  if (target < have.start) {
+    if (weightBetween(record, turn, have.start) <= budget) {
+      return { start: turn, end: have.start };
+    }
+    const around = windowAround(record, target, budget);
+    return { start: around.start, end: Math.min(around.end, have.start) };
+  }
+  // Past the end of a window that stands away from the live end.
+  const from = Math.max(turn, have.end);
+  if (weightBetween(record, have.end, from) <= budget) {
+    return {
+      start: have.end,
+      end: pageEnd(record, budget - Math.floor(budget / 4), from),
+    };
+  }
+  const around = windowAround(record, target, budget);
+  return { start: Math.max(around.start, have.end), end: around.end };
 }

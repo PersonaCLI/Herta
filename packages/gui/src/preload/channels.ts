@@ -10,6 +10,7 @@ export const CMD = {
   list: "session:list",
   search: "session:search",
   recordSlice: "session:recordSlice",
+  recordWindow: "session:recordWindow",
   open: "session:open",
   create: "session:create",
   deleteSession: "session:delete",

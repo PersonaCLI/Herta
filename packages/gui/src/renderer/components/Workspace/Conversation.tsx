@@ -5,6 +5,7 @@ import { useReducedMotion } from "../../hooks/useReducedMotion.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { ConversationPinProvider } from "./ConversationPin.js";
 import { GalaxyTravelRow } from "./GalaxyTravelRow.js";
+import { liveEndView } from "./live-end.js";
 import { MorphClone } from "./MorphClone.js";
 import { PendingActivity } from "./PendingActivity.js";
 import {
@@ -58,9 +59,17 @@ export { SUPERVISOR_HINT_DELAY_MS } from "./useSupervisorHold.js";
 // row tree for nothing. Store updates still flow via useActiveSession.
 export const Conversation = memo(function Conversation(): JSX.Element {
   const t = useT();
+  const session = useActiveSession();
+  // The window on screen: the trailing one, or after a far jump a window of
+  // history (the store's `away`), shown in its place while the trailing one
+  // goes on following the live end underneath. A window of history shows
+  // history only: the turn in flight is read as idle here until the reader
+  // is back at the latest (live-end.ts).
+  const recordLive = session.away === null;
+  const record = session.away?.record ?? session.record;
+  const recordStart = session.away?.start ?? session.recordStart;
+  const { latestLandings } = session;
   const {
-    record,
-    recordStart,
     status,
     streamingText,
     retryText,
@@ -84,7 +93,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     topics,
     lang,
     undoable,
-  } = useActiveSession();
+  } = liveEndView(session, recordLive);
   const { bridge, sessionStore } = useHertaBridge();
   const reduced = useReducedMotion();
   // No clock here: adaptive timestamps ("just now" → "N min ago") refresh via
@@ -166,7 +175,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     overlayRef,
   });
   const supervisor = useSupervisorHold({ supervisorChecking, scroll });
-  const jumpChip = useJumpChip({ scroll, record, recordStart, sessionId });
+  const jumpChip = useJumpChip({
+    scroll,
+    record,
+    recordStart,
+    sessionId,
+    away: !recordLive,
+  });
   const jumpToTopic = useTopicJump({
     scroll,
     sessionStore,
@@ -176,7 +191,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
   });
   // The attach in flight's placeholder rows (pending-attach.ts): the rows
   // render it, and the pinned follow treats its arrival like any new row.
-  const shownRecord = usePendingAttachRecord(sessionId, record, recordStart);
+  const withPendingAttach = usePendingAttachRecord(
+    sessionId,
+    record,
+    recordStart,
+  );
+  // Its real blocks will land at the live end, not under a window of history.
+  const shownRecord = recordLive ? withPendingAttach : record;
   useEffect(() => {
     if (bridge.onAttachProgress === undefined) return undefined;
     return bridge.onAttachProgress(reportAttachProgress);
@@ -210,12 +231,13 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     backendActive,
     recapCompacting,
   });
-  const { loadEarlier } = useRecordWindow({
+  const { loadEarlier, loadLater, backToLatest } = useRecordWindow({
     scroll,
     sessionStore,
     record,
     recordStart,
     sessionId,
+    latestLandings,
   });
   useSessionEntrance({ scroll, sessionId, reduced, sessionStore });
   const removeAttachmentFactory = useRemoveAttachment({
@@ -248,6 +270,7 @@ export const Conversation = memo(function Conversation(): JSX.Element {
     undoable,
     undoBusy,
     handleUndo,
+    atLive: recordLive,
   });
 
   // ── render ───────────────────────────────────────────────────────────────
@@ -312,6 +335,18 @@ export const Conversation = memo(function Conversation(): JSX.Element {
             row set per session; within one session, indices are stable
             (append-only record). */}
             <Fragment key={sessionId ?? "none"}>{rows}</Fragment>
+            {/* Load-later paging: after a far jump the window ends before the
+              live end, and the conversation goes on main-side. The mirror of
+              load-earlier; the chip below goes straight to the latest. */}
+            {!recordLive && (
+              <button
+                type="button"
+                className="load-earlier load-later"
+                onClick={loadLater}
+              >
+                {t("workspace.loadLater")}
+              </button>
+            )}
             {pendingUser !== null && (
               <UserBubble
                 text={pendingUser}
@@ -454,7 +489,9 @@ export const Conversation = memo(function Conversation(): JSX.Element {
         {/* Jump-to-latest chip: new content arrived below a reader who scrolled
           up (pinned autoscroll correctly stays off; this is the one-click way
           back). Floats over the bottom scroll.fog; hidden the moment the reader is
-          back at the bottom — by click or by scrolling there themselves. */}
+          back at the bottom — by click or by scrolling there themselves.
+          While the window stands away from the live end (a far jump) it is
+          up the whole time and says where it goes: back to the latest. */}
         {/* Topic guide rail: one tick per topic on the left edge; hover swells
           the neighborhood + raises the topic card, click jumps (paging older
           history in if the anchor is outside the loaded window). Keyed by
@@ -471,12 +508,14 @@ export const Conversation = memo(function Conversation(): JSX.Element {
           <button
             type="button"
             className={`jump-to-latest${jumpChip.open ? " is-open" : ""}`}
-            onClick={scroll.jumpToLatest}
+            onClick={recordLive ? scroll.jumpToLatest : backToLatest}
           >
             <span className="jump-to-latest__arrow" aria-hidden="true">
               ↓
             </span>
-            {t("workspace.jumpToLatest")}
+            {t(
+              recordLive ? "workspace.jumpToLatest" : "workspace.backToLatest",
+            )}
           </button>
         )}
       </div>

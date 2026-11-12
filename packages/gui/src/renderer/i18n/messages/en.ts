@@ -483,6 +483,8 @@ export const en = {
     "The storm has not passed — message still en route…",
   "workspace.jumpToLatest": "Back to bottom",
   "workspace.loadEarlier": "Load earlier entries",
+  "workspace.loadLater": "Load later entries",
+  "workspace.backToLatest": "Back to latest",
   "workspace.topicRailAria": "Topic guide",
   "activity.verb.reading": "Reading",
   "activity.verb.writing": "Writing",

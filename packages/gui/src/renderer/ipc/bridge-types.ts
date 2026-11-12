@@ -500,6 +500,21 @@ export type StageImagesReply =
  * `window.herta`. Commands round-trip through ipcRenderer.invoke;
  * `on*` register ipcRenderer.on listeners and return an unsubscribe.
  */
+/** What `recordWindow` is asked for. `jump`: the chat shows blocks
+ *  `[start, end)` and wants block `to` on screen; main decides between the
+ *  gap and a window of its own (`jumpRange` in `@herta/core/record-window`).
+ *  `later`: `count` of weight in blocks from `after` on, to where a turn
+ *  opens. Going back to the latest asks for nothing: the store kept the
+ *  trailing window. */
+export type RecordWindowRequest =
+  | {
+      readonly kind: "jump";
+      readonly start: number;
+      readonly end: number;
+      readonly to: number;
+    }
+  | { readonly kind: "later"; readonly after: number; readonly count: number };
+
 export interface HertaBridge {
   /** The OS platform (process.platform in the preload). The renderer gates
    *  the custom window controls on it — macOS keeps its native traffic
@@ -589,14 +604,23 @@ export interface HertaBridge {
    *  message that opens a turn (`@herta/core/record-window`) — the store's
    *  "load earlier" paging. Resolves `{ start, blocks }` where `start` is the
    *  absolute index of `blocks[0]`; an empty slice means nothing older / a
-   *  session mismatch. `to`, a jump's block: the slice reaches the turn that
-   *  holds it instead, whatever it weighs. OPTIONAL so bridge fakes keep
-   *  compiling — the load-earlier affordance hides without it. */
+   *  session mismatch. OPTIONAL so bridge fakes keep compiling — the
+   *  load-earlier affordance hides without it. */
   recordSlice?(
     sessionId: string,
     before: number,
     count: number,
-    to?: number,
+  ): Promise<{ readonly start: number; readonly blocks: TerminalRecord }>;
+  /** A window that is not a page of older blocks (owner 2026-11-12): what a
+   *  jump brings, or a page of later blocks for a chat that shows a window
+   *  of history. The answer is `{ start, blocks }` like a slice; the store
+   *  joins it to the window the chat shows when the two touch and shows it
+   *  instead when they do not. Empty when there is nothing to bring or the
+   *  session changed. OPTIONAL: without it a jump reaches only what is
+   *  already loaded. */
+  recordWindow?(
+    sessionId: string,
+    req: RecordWindowRequest,
   ): Promise<{ readonly start: number; readonly blocks: TerminalRecord }>;
   /** Both resolve `null` when main has no session host (bootstrap failed) or
    *  the open/create could not produce a session — the previous non-null

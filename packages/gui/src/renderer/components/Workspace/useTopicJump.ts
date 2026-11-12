@@ -1,12 +1,12 @@
 // Topic-rail jump / jump-to-index: land on a topic's anchoring user block
-// (paging older history in first when the anchor is outside the loaded
-// window), and the search-result landing that reuses it via the store's
-// pending jump. Extracted from Conversation.tsx on 2026-09-03 (owner's
+// (bringing it into the window first when it is outside: the blocks between
+// when it is near, a window of its own when it is far), and the
+// search-result landing that reuses it via the store's pending jump. Extracted from Conversation.tsx on 2026-09-03 (owner's
 // request: the file hosted five state machines). Effect: consume the pending
 // jump once the requested session is on screen.
 
 import { useCallback, useEffect } from "react";
-import type { SessionStore } from "../../store/session-store.js";
+import { type SessionStore, shownWindow } from "../../store/session-store.js";
 import type { ConversationScroll } from "./useConversationScroll.js";
 
 export function useTopicJump(opts: {
@@ -19,13 +19,15 @@ export function useTopicJump(opts: {
   const { scroll, sessionStore, reduced, pendingJump, sessionId } = opts;
 
   // ── Topic-rail jump (2026-07-12) ─────────────────────────────────────────
-  // Jump to a topic's anchoring user block. The anchor may be OLDER than the
-  // loaded window — bring history in first, in one slice back to the anchor's
-  // turn, however far: paged, a chat-heavy session took dozens of round trips
-  // and fell short past the loop's bound (review 2026-11-05). Bails if the
-  // slice does not arrive. Unpins up front so the prepend's append-follow
-  // effect can't yank the view to the bottom mid-jump; the jump chip is the
-  // way back down.
+  // Jump to a topic's anchoring user block. The anchor may be outside the
+  // loaded window: the store asks main for it in one call (`jumpTo`), and
+  // main answers the blocks between when that is within a window's weight,
+  // or a window around the anchor when it is not (owner 2026-11-12). Paged,
+  // a chat-heavy session took dozens of round trips (review 2026-11-05); in
+  // one slice however far, the first topic of a 6 400-turn session was a
+  // 38 MB message (review 2026-11-10, second pass). Bails if nothing
+  // arrives. Unpins up front so the append-follow effect can't yank the view
+  // to the bottom mid-jump; the chip is the way back.
   // The engine's intents and its scroll anchor are stable (useCallback with
   // fixed deps / a ref), so listing them keeps `jumpToTopic` as stable as
   // before while satisfying the exhaustive-deps rule.
@@ -42,10 +44,18 @@ export function useTopicJump(opts: {
         // the pattern handleRewind already uses.
         const jumpSessionId = sessionStore.getSnapshot().sessionId;
         releasePin();
-        if (sessionStore.getSnapshot().recordStart > anchorIndex) {
-          await sessionStore.loadBackTo(anchorIndex);
+        const shown = shownWindow(sessionStore.getSnapshot());
+        // A window shown in the old one's place has nothing to glide
+        // across: the row is simply where the reader now is.
+        let swapped = false;
+        if (
+          anchorIndex < shown.start ||
+          anchorIndex >= shown.start + shown.record.length
+        ) {
+          const how = await sessionStore.jumpTo(anchorIndex);
           if (sessionStore.getSnapshot().sessionId !== jumpSessionId) return;
-          if (sessionStore.getSnapshot().recordStart > anchorIndex) return;
+          if (how === null) return;
+          swapped = how === "replaced";
         }
         // Scroll once the anchor row exists: immediately when it is already
         // in the DOM (the common in-window case), else poll briefly for the
@@ -65,7 +75,7 @@ export function useTopicJump(opts: {
           if (el !== null && el !== undefined) {
             el.scrollIntoView({
               block: "start",
-              behavior: reduced ? "auto" : "smooth",
+              behavior: reduced || swapped ? "auto" : "smooth",
             });
             return;
           }

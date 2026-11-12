@@ -17,7 +17,12 @@ import type {
   WorkspaceEvent,
 } from "@herta/app-server";
 import { namePickedElements } from "@herta/core/page-element";
-import { RECORD_WINDOW_WEIGHT } from "@herta/core/record-window";
+import {
+  RECORD_WINDOW_TRIM_AT,
+  RECORD_WINDOW_WEIGHT,
+  recordWeight,
+  windowStart,
+} from "@herta/core/record-window";
 import { EMPTY_LIVE } from "../../shared/live-tool-feed.js";
 import type {
   HertaBridge,
@@ -35,6 +40,20 @@ import type { ComposerQuote } from "../lib/quote-format.js";
 
 export type SessionStatus = "idle" | "thinking" | "speaking";
 
+/** A window of the record: its blocks and the absolute index of the first. */
+export interface RecordView {
+  readonly record: TerminalRecord;
+  readonly start: number;
+}
+
+/** The window the chat shows: the one a far jump left on screen, else the
+ *  trailing one. */
+export function shownWindow(
+  s: Pick<SessionSnapshotView, "record" | "recordStart" | "away">,
+): RecordView {
+  return s.away ?? { record: s.record, start: s.recordStart };
+}
+
 export interface SessionSnapshotView {
   readonly sessionId: string | null;
   /** The active session's interaction language (its birth language). Drives the
@@ -43,12 +62,30 @@ export interface SessionSnapshotView {
   readonly lang: "zh" | "en";
   /** The loaded WINDOW of the session's record (long sessions, 2026-07-12):
    *  the trailing blocks, extendable backward via `loadOlderBlocks`. Live
-   *  block events append to it as before. */
+   *  block events append to it. It is the trailing window ALWAYS: what the
+   *  chat shows after a far jump is `away`, a second window beside it. */
   readonly record: TerminalRecord;
   /** Absolute index `record[0]` has in the full record — the count of OLDER
    *  blocks not loaded (0 = everything is loaded). Row keys and the record-
    *  reset merge align by `recordStart + i`. */
   readonly recordStart: number;
+  /**
+   * A window of HISTORY the chat shows in place of the trailing one, after a
+   * far jump (owner 2026-11-12); null while the chat shows the trailing
+   * window. It is a second window, not a move of the first: `record` /
+   * `recordStart` go on following the live end underneath, so everything
+   * that reads the turn in flight from them — the trace card, the device's
+   * state, an attach's place, an open 完整记录 tab — reads what it always
+   * did. Only the chat draws this one (`shownWindow`).
+   *
+   * It lies wholly before the trailing window. One that comes to touch it
+   * (a page of later blocks, a jump near the end) joins it and is gone.
+   */
+  readonly away: RecordView | null;
+  /** Counts the times the chat was taken back from `away` to the latest for
+   *  the reader (the chip, a send). The conversation lands at the bottom on
+   *  each. */
+  readonly latestLandings: number;
   /** Where the conversation should land once the named session is loaded, or
    *  null. Set by a search-result click (see `requestJump`); consumed and
    *  cleared by Conversation once `sessionId` matches. Carries the target
@@ -321,6 +358,8 @@ const INITIAL: SessionSnapshotView = {
   lang: "zh",
   record: [],
   recordStart: 0,
+  away: null,
+  latestLandings: 0,
   pendingJump: null,
   streamingText: null,
   prediction: null,
@@ -606,6 +645,9 @@ export class SessionStore {
   ): void {
     this.emit({
       ...this.snapshot,
+      // Sent from a window of history: the message lands at the latest, so
+      // the reader goes there with it, in the same commit as its echo.
+      ...this.backToLatest(),
       pendingUser: text,
       pendingUserImages:
         images !== undefined && images.length > 0 ? images : null,
@@ -628,6 +670,7 @@ export class SessionStore {
     }
     this.emit({
       ...this.snapshot,
+      ...this.backToLatest(),
       pendingTalk: [
         ...this.snapshot.pendingTalk,
         {
@@ -885,66 +928,194 @@ export class SessionStore {
     });
   }
 
-  /** Single-flight guard for loadOlderBlocks. */
-  private loadingOlder = false;
+  /** Single-flight guard for every window request. */
+  private windowBusy = false;
+  /** Counts record resets: a window answer that crossed one is stale. */
+  private resetSeq = 0;
 
   /**
-   * Extend the record window BACKWARD by `count` of weight (the "load
-   * earlier" affordance for long sessions, 2026-07-12; the weight is what the
-   * chat draws, `@herta/core/record-window`). Main answers the blocks ending
-   * at `recordStart`, back to a message that opens a turn, and they are
-   * prepended. Guards:
-   * single-flight; no-op when everything is loaded or the bridge lacks
-   * recordSlice (fakes); a response is dropped when the session switched or
-   * the window start moved (a rewind/heal reset re-anchored it) while the
-   * invoke was in flight — the absolute indices would no longer line up.
+   * Extend the window the chat shows BACKWARD by `count` of weight (the
+   * "load earlier" affordance for long sessions, 2026-07-12; the weight is
+   * what the chat draws, `@herta/core/record-window`). Main answers the
+   * blocks ending at the window's start, back to a message that opens a
+   * turn, and they are prepended. Guards: single-flight; no-op when
+   * everything is loaded or the bridge lacks recordSlice (fakes); a response
+   * is dropped when the session switched or the window moved (a rewind/heal
+   * reset re-anchored it) while the invoke was in flight — the absolute
+   * indices would no longer line up.
    */
   async loadOlderBlocks(count = RECORD_WINDOW_WEIGHT): Promise<void> {
-    await this.pageOlder(count);
+    const { sessionId } = this.snapshot;
+    const { start } = shownWindow(this.snapshot);
+    const slice = this.bridge?.recordSlice;
+    if (sessionId === null || start <= 0 || slice === undefined) return;
+    await this.windowRequest(() => slice(sessionId, start, count), "before");
   }
 
-  /** Extend the window back to block `index`, however far that is, in one
-   *  slice: a jump has to land on its row. Same guards as `loadOlderBlocks`,
-   *  so a call it drops leaves `recordStart` where it was. */
-  async loadBackTo(index: number): Promise<void> {
-    await this.pageOlder(RECORD_WINDOW_WEIGHT, index);
-  }
-
-  private async pageOlder(count: number, to?: number): Promise<void> {
-    const { sessionId, recordStart } = this.snapshot;
+  /**
+   * Bring block `index` on screen (a topic's anchor, a search hit). Main
+   * decides what that takes (`jumpRange`): near the window the chat shows,
+   * the blocks between, which join it; far from it, a window around the
+   * target, which the chat shows instead (`away`). Until 2026-11-12 the
+   * answer was always the blocks between, whatever they weighed: 38 MB at
+   * 6 400 turns.
+   *
+   * Answers how the row came to be on screen — "replaced" when the chat now
+   * shows a different window than it did — or null when it is not (no such
+   * block, a request in flight, the session or the window moved).
+   */
+  async jumpTo(index: number): Promise<"held" | "joined" | "replaced" | null> {
+    const snap = this.snapshot;
+    const view = shownWindow(snap);
+    const within = (w: RecordView): boolean =>
+      index >= w.start && index < w.start + w.record.length;
+    if (within(view)) return "held";
+    // A window of history is on screen and the block is in the trailing
+    // one, which was kept: show that again. Nothing to ask main for.
     if (
-      this.loadingOlder ||
-      sessionId === null ||
-      recordStart <= 0 ||
-      this.bridge?.recordSlice === undefined
+      snap.away !== null &&
+      within({ record: snap.record, start: snap.recordStart })
     ) {
-      return;
+      this.emit({ ...snap, away: null });
+      return "replaced";
     }
-    this.loadingOlder = true;
+    const ask = this.bridge?.recordWindow;
+    if (snap.sessionId === null || ask === undefined) return null;
+    const sessionId = snap.sessionId;
+    const how = await this.windowRequest(() =>
+      ask(sessionId, {
+        kind: "jump",
+        start: view.start,
+        end: view.start + view.record.length,
+        to: index,
+      }),
+    );
+    if (!within(shownWindow(this.snapshot))) return null;
+    return how ?? "held";
+  }
+
+  /** Extend a window of history FORWARD by `count` of weight: the mirror of
+   *  `loadOlderBlocks`. A page that reaches the trailing window joins the
+   *  two, and the chat shows the trailing window again with the reader
+   *  where they were. */
+  async loadLaterBlocks(count = RECORD_WINDOW_WEIGHT): Promise<void> {
+    const { sessionId, away } = this.snapshot;
+    const ask = this.bridge?.recordWindow;
+    if (sessionId === null || away === null || ask === undefined) return;
+    const after = away.start + away.record.length;
+    await this.windowRequest(
+      () => ask(sessionId, { kind: "later", after, count }),
+      "after",
+    );
+  }
+
+  /** Back to the latest: the chat shows the trailing window again, which was
+   *  kept and has followed the live end all along, so there is nothing to
+   *  fetch. Counts in `latestLandings`, which lands the conversation at the
+   *  bottom. */
+  returnToLatest(): void {
+    if (this.snapshot.away === null) return;
+    this.emit({ ...this.snapshot, ...this.backToLatest() });
+  }
+
+  /** The fields of a return to the latest, or none when the chat is there. */
+  private backToLatest(): Partial<SessionSnapshotView> {
+    if (this.snapshot.away === null) return {};
+    return { away: null, latestLandings: this.snapshot.latestLandings + 1 };
+  }
+
+  /**
+   * A window of history that has come to touch the trailing window joins
+   * it: the chat then shows one window that runs to the live end, with every
+   * row it showed still in it. Called wherever either window moves.
+   */
+  private joined(next: SessionSnapshotView): SessionSnapshotView {
+    const { away, record, recordStart } = next;
+    if (away === null) return next;
+    if (away.start + away.record.length < recordStart) return next;
+    // Nothing in it the trailing window lacks.
+    if (away.start >= recordStart) return { ...next, away: null };
+    return {
+      ...next,
+      away: null,
+      // Main's copy can run past what this mirror has been told of: the
+      // trailing window's own blocks are the ones kept where the two overlap.
+      record: [...away.record.slice(0, recordStart - away.start), ...record],
+      recordStart: away.start,
+    };
+  }
+
+  /**
+   * One window request at a time, against the window the chat shows. The
+   * answer joins that window where the two touch (a page of older blocks, a
+   * page of later ones, a near jump) and is shown in its place where they do
+   * not (a far jump). Dropped when the session switched, a reset replaced
+   * the record or the window moved while the invoke was in flight: its
+   * indices no longer line up. A page (`side`) is dropped unless it touches
+   * the window on its own side: only a jump may change which window is
+   * shown.
+   */
+  private async windowRequest(
+    ask: () => Promise<{
+      readonly start: number;
+      readonly blocks: TerminalRecord;
+    }>,
+    side: "before" | "after" | "any" = "any",
+  ): Promise<"joined" | "replaced" | null> {
+    if (this.windowBusy) return null;
+    const { sessionId, away } = this.snapshot;
+    const { start } = shownWindow(this.snapshot);
+    const resetSeq = this.resetSeq;
+    this.windowBusy = true;
     try {
-      const r = await this.bridge.recordSlice(
-        sessionId,
-        recordStart,
-        count,
-        to,
-      );
+      const r = await ask();
+      const now = this.snapshot;
+      const view = shownWindow(now);
       if (
-        this.snapshot.sessionId !== sessionId ||
-        this.snapshot.recordStart !== recordStart ||
-        r.blocks.length === 0 ||
-        r.start + r.blocks.length !== recordStart
+        now.sessionId !== sessionId ||
+        now.away !== away ||
+        view.start !== start ||
+        this.resetSeq !== resetSeq ||
+        r.blocks.length === 0
       ) {
-        return; // stale or empty — drop
+        return null; // stale or empty — drop
       }
-      this.emit({
-        ...this.snapshot,
-        record: [...r.blocks, ...this.snapshot.record],
-        recordStart: r.start,
-      });
+      const before = r.start + r.blocks.length === view.start;
+      const after =
+        now.away !== null && r.start === view.start + view.record.length;
+      if ((side === "before" && !before) || (side === "after" && !after)) {
+        return null;
+      }
+      if (now.away === null) {
+        if (before) {
+          this.emit({
+            ...now,
+            record: [...r.blocks, ...now.record],
+            recordStart: r.start,
+          });
+          return "joined";
+        }
+        // Not next to the trailing window: a window of its own.
+        this.emit(
+          this.joined({ ...now, away: { record: r.blocks, start: r.start } }),
+        );
+        return "replaced";
+      }
+      const next: RecordView = before
+        ? { record: [...r.blocks, ...now.away.record], start: r.start }
+        : after
+          ? {
+              record: [...now.away.record, ...r.blocks],
+              start: now.away.start,
+            }
+          : { record: r.blocks, start: r.start };
+      this.emit(this.joined({ ...now, away: next }));
+      return before || after ? "joined" : "replaced";
     } catch {
       // best-effort — the affordance simply stays available
+      return null;
     } finally {
-      this.loadingOlder = false;
+      this.windowBusy = false;
     }
   }
 
@@ -955,6 +1126,18 @@ export class SessionStore {
    *  slots. Nothing is lost: main keeps the full record, and "load earlier"
    *  pages the dropped rows back on demand. */
   trimRecordWindow(maxLen: number): void {
+    // The chat trims what it shows. While that is a window of history, the
+    // trailing window is bounded where its blocks arrive (`onRecord`).
+    const { away } = this.snapshot;
+    if (away !== null) {
+      const over = away.record.length - maxLen;
+      if (over <= 0) return;
+      this.emit({
+        ...this.snapshot,
+        away: { record: away.record.slice(over), start: away.start + over },
+      });
+      return;
+    }
     const excess = this.snapshot.record.length - maxLen;
     if (excess <= 0) return;
     this.emit({
@@ -1000,6 +1183,7 @@ export class SessionStore {
   }
 
   private onReset(e: SessionSnapshot | SessionError | SessionNoSession): void {
+    this.resetSeq += 1;
     if ("noSession" in e) {
       this.emit({ ...INITIAL, bootstrapped: true });
       return;
@@ -1015,6 +1199,9 @@ export class SessionStore {
       lang: e.lang ?? "zh",
       record: e.record,
       recordStart: e.recordStart ?? 0,
+      // A session opens on its trailing window.
+      away: null,
+      latestLandings: this.snapshot.latestLandings,
       // PRESERVED across the reset, deliberately (2026-07-27). A search click
       // requests the jump BEFORE calling openSession, so that the conversation
       // entrance — which fires on this very reset and otherwise re-pins and
@@ -1211,6 +1398,7 @@ export class SessionStore {
       // disturb a live turn's frozen preview. Gone from the record → null, and
       // the card falls back to the disk-backed `lastUserText`.
       const shrank = start + record.length < prevStart + prev.length;
+      this.resetSeq += 1;
       const frozen = this.snapshot.activationFirstUser;
       const activationFirstUser =
         shrank &&
@@ -1222,33 +1410,50 @@ export class SessionStore {
         )
           ? null
           : frozen;
-      this.emit({
-        ...this.snapshot,
-        record,
-        recordStart: start,
-        activationFirstUser,
-        ...STREAM_VIEW_CLEARED,
-        // The failure notice belongs to the turn it describes: a rewind that
-        // withdraws that turn must take the notice with it, or it sits under
-        // a now-shorter conversation reading as though the REWIND failed
-        // (audit 2026-07-24, L2). This branch already prunes topics for the
-        // same "the truncation invalidated it" reason.
-        //
-        // Deliberately NOT a blanket turn-transient clear: this branch also
-        // serves a mid-turn drop-heal resync, where clearing turnStartedAt /
-        // backendActive / overlay would break a LIVE turn.
-        ...TURN_FAILURE_CLEARED,
-        topics,
-        // The suggestion was for the exchange a rewind withdrew: it used to
-        // stay, and showed once the restored draft was cleared (review
-        // 2026-11-10, second pass). A resync does not shrink the record.
-        ...(shrank ? { prediction: null } : {}),
-      });
+      // A window of history on screen stays: the reset is the trailing
+      // window's, and only joins the two if it now reaches back that far.
+      this.emit(
+        this.joined({
+          ...this.snapshot,
+          record,
+          recordStart: start,
+          activationFirstUser,
+          ...STREAM_VIEW_CLEARED,
+          // The failure notice belongs to the turn it describes: a rewind that
+          // withdraws that turn must take the notice with it, or it sits under
+          // a now-shorter conversation reading as though the REWIND failed
+          // (audit 2026-07-24, L2). This branch already prunes topics for the
+          // same "the truncation invalidated it" reason.
+          //
+          // Deliberately NOT a blanket turn-transient clear: this branch also
+          // serves a mid-turn drop-heal resync, where clearing turnStartedAt /
+          // backendActive / overlay would break a LIVE turn.
+          ...TURN_FAILURE_CLEARED,
+          topics,
+          // The suggestion was for the exchange a rewind withdrew: it used to
+          // stay, and showed once the restored draft was cleared (review
+          // 2026-11-10, second pass). A resync does not shrink the record.
+          ...(shrank ? { prediction: null } : {}),
+        }),
+      );
       return;
     }
     const block = e.block;
     if (block.kind === "herta") this.hertaLandedThisTurn = true;
-    const record = [...this.snapshot.record, block];
+    let record = [...this.snapshot.record, block];
+    let recordStart = this.snapshot.recordStart;
+    // The chat bounds the window it shows (useRecordWindow's trims). While
+    // it shows a window of history, nothing looks at this one, so it is
+    // bounded here, by the same rule: past the trim line, back to a window's
+    // weight, at a turn.
+    if (
+      this.snapshot.away !== null &&
+      recordWeight(record) > RECORD_WINDOW_TRIM_AT
+    ) {
+      const cut = windowStart(record, RECORD_WINDOW_WEIGHT);
+      record = record.slice(cut);
+      recordStart += cut;
+    }
     // A finalized herta block supersedes the transient streaming bubble.
     const streamingText =
       block.kind === "herta" ? null : this.snapshot.streamingText;
@@ -1277,6 +1482,7 @@ export class SessionStore {
     this.emit({
       ...this.snapshot,
       record,
+      recordStart,
       streamingText,
       retracting,
       retryText,

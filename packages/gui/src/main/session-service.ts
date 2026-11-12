@@ -26,7 +26,12 @@ import {
   type PickedElement,
   type ServerHost,
 } from "@herta/core";
-import { pageStart } from "@herta/core/record-window";
+import {
+  jumpRange,
+  pageEnd,
+  pageStart,
+  RECORD_WINDOW_WEIGHT,
+} from "@herta/core/record-window";
 import {
   canonicalWorkspaceRoot,
   isGitReadTimeout,
@@ -203,6 +208,7 @@ const USER_ACTION_CHANNELS: ReadonlySet<string> = new Set([
   CMD.undoLastTurnEdits,
   CMD.search,
   CMD.recordSlice,
+  CMD.recordWindow,
   CMD.deleteSession,
   CMD.renameSession,
   CMD.saveSessionExport,
@@ -370,12 +376,60 @@ export function recordPage(
   s: Session,
   before: number,
   count: number,
-  to?: number,
 ): { readonly start: number; readonly blocks: Session["record"] } {
   const record = s.shownRecord ?? s.record;
   const end = Math.min(before, record.length);
-  const start = pageStart(record, count, end, to);
+  const start = pageStart(record, count, end);
   return { start, blocks: record.slice(start, end) };
+}
+
+/**
+ * A window of the record that is not a page of older blocks, for
+ * `session:recordWindow` (owner 2026-11-12): what a jump brings, or a page
+ * of later blocks for a chat that shows a window of history. From what the
+ * chat was sent, like `recordPage`. `req` crossed an IPC boundary: anything
+ * that is not one of the two requests, or names no block of this record, is
+ * answered with nothing. Exported for testing.
+ */
+export function recordWindowFor(
+  s: Session,
+  req: unknown,
+): { readonly start: number; readonly blocks: Session["record"] } {
+  const none = { start: 0, blocks: [] };
+  if (typeof req !== "object" || req === null) return none;
+  const r = req as Record<string, unknown>;
+  const record = s.shownRecord ?? s.record;
+  if (r.kind === "later") {
+    const after = r.after;
+    const count = r.count;
+    if (
+      typeof after !== "number" ||
+      typeof count !== "number" ||
+      !Number.isInteger(after) ||
+      !Number.isInteger(count) ||
+      after < 0 ||
+      after >= record.length ||
+      count <= 0
+    ) {
+      return none;
+    }
+    const end = pageEnd(record, Math.min(count, RECORD_WINDOW_WEIGHT), after);
+    return { start: after, blocks: record.slice(after, end) };
+  }
+  if (r.kind === "jump") {
+    const { start, end, to } = r;
+    if (
+      typeof start !== "number" ||
+      typeof end !== "number" ||
+      typeof to !== "number"
+    ) {
+      return none;
+    }
+    const range = jumpRange(record, { start, end }, to);
+    if (range === null) return none;
+    return { start: range.start, blocks: record.slice(range.start, range.end) };
+  }
+  return none;
 }
 
 /** The `session:reset` payload for a session. Exported for testing. */
@@ -983,14 +1037,13 @@ export function createSessionService(
     // window. `before` is the absolute index the renderer's window currently
     // starts at; `count` is a weight (`@herta/core/record-window`), and the
     // slice returns that much ending there, back to a message that opens a
-    // turn, with the absolute index it starts at. `to` is a jump's block: the
-    // slice then reaches the turn that holds it, whatever it weighs.
+    // turn, with the absolute index it starts at.
     // Session-bound like every stateful command; a mismatch (switch racing
     // the invoke) returns an empty slice the store drops by its own staleness
     // guard anyway.
     handle(
       CMD.recordSlice,
-      (_e, sessionId: string, before: number, count: number, to?: number) => {
+      (_e, sessionId: string, before: number, count: number) => {
         const active = host?.activeSession ?? null;
         if (
           active === null ||
@@ -1002,9 +1055,18 @@ export function createSessionService(
         ) {
           return { start: 0, blocks: [] };
         }
-        return recordPage(active, before, count, to);
+        return recordPage(active, before, count);
       },
     );
+    // A jump's window or a page of later blocks (owner 2026-11-12): see
+    // `recordWindowFor`. Session-bound the same way.
+    handle(CMD.recordWindow, (_e, sessionId: string, req: unknown) => {
+      const active = host?.activeSession ?? null;
+      if (active === null || active.sessionId !== sessionId) {
+        return { start: 0, blocks: [] };
+      }
+      return recordWindowFor(active, req);
+    });
     handle(CMD.open, async (_e, id: string) => {
       // Id shape gate BEFORE the transcript-path join in the host (audit
       // 2026-07-13 T1.2): a traversal id must never reach readSessionFile.

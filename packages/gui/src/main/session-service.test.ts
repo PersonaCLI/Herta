@@ -20,6 +20,7 @@ import {
   mainNavigationBlock,
   pickLatest,
   recordPage,
+  recordWindowFor,
   resolveWorkspaceRoot,
   sanitizeCreateOpts,
   sanitizeLogQuery,
@@ -39,6 +40,7 @@ describe("countsAsUserActivity — what tells a running dream pass the user is b
       CMD.readWorkspaceFile,
       CMD.readWorkspaceLog,
       CMD.recordSlice,
+      CMD.recordWindow,
       CMD.setDreamConfig,
       CMD.setLocale,
       // The session menu (ADR 0072 §3).
@@ -401,6 +403,7 @@ describe("buildConfig", () => {
     expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
       "minimal",
     );
+    // A settings file from a build that still had the choice.
     mkdirSync(join(cwd, ".herta"), { recursive: true });
     writeFileSync(
       join(cwd, ".herta", "settings.json"),
@@ -575,6 +578,94 @@ describe("recordPage — a page of older blocks (review 2026-11-05, N5)", () => 
       100,
     );
     expect(page.blocks).toEqual([{ kind: "user", text: "a" }]);
+  });
+});
+
+describe("recordWindowFor — a jump's window and a later page (owner 2026-11-12)", () => {
+  // 1 000 plain messages: each weighs ten and opens a turn.
+  const chat = Array.from({ length: 1000 }, (_, i) => ({
+    kind: "user" as const,
+    text: `m${i}`,
+  }));
+  const session = { ...fakeSession(), record: chat } as Session;
+  const range = (r: { start: number; blocks: readonly unknown[] }) => [
+    r.start,
+    r.start + r.blocks.length,
+  ];
+
+  it("a near jump is the blocks between; a far one is a window around the target", () => {
+    const tail = { kind: "jump", start: 800, end: 1000 };
+    expect(range(recordWindowFor(session, { ...tail, to: 700 }))).toEqual([
+      700, 800,
+    ]);
+    // 760 messages lie between block 40 and what the chat holds; the
+    // answer is 190.
+    expect(range(recordWindowFor(session, { ...tail, to: 40 }))).toEqual([
+      0, 190,
+    ]);
+    expect(range(recordWindowFor(session, { ...tail, to: 400 }))).toEqual([
+      350, 550,
+    ]);
+  });
+
+  it("a later page runs a window's weight on from where the chat ends", () => {
+    expect(
+      range(
+        recordWindowFor(session, { kind: "later", after: 550, count: 2000 }),
+      ),
+    ).toEqual([550, 750]);
+    // Never more than a window, whatever is asked for.
+    expect(
+      range(recordWindowFor(session, { kind: "later", after: 0, count: 1e9 })),
+    ).toEqual([0, 200]);
+    expect(
+      range(
+        recordWindowFor(session, { kind: "later", after: 950, count: 2000 }),
+      ),
+    ).toEqual([950, 1000]);
+  });
+
+  it("answers from what the chat was sent, when the session has it", () => {
+    const at = "2026-11-12T08:00:00.000Z";
+    const shown = chat.map((b) => ({ ...b, at }));
+    const r = recordWindowFor(
+      {
+        ...fakeSession(),
+        record: chat.slice(0, 5),
+        shownRecord: shown,
+      } as Session,
+      { kind: "later", after: 800, count: 2000 },
+    );
+    expect(r.start).toBe(800);
+    expect(r.blocks).toHaveLength(200);
+    expect(r.blocks[0]).toEqual({ kind: "user", text: "m800", at });
+  });
+
+  it("a request that is neither of the two, or names no block, is answered with nothing", () => {
+    const none = { start: 0, blocks: [] };
+    for (const req of [
+      null,
+      undefined,
+      "later",
+      { kind: "latest" },
+      7,
+      {},
+      { kind: "all" },
+      { kind: "jump", start: 800, end: 1000 },
+      { kind: "jump", start: 800, end: 1000, to: "40" },
+      { kind: "jump", start: "800", end: 1000, to: 40 },
+      { kind: "jump", start: 800, end: 1000, to: 5000 },
+      { kind: "jump", start: 800, end: 1000, to: -1 },
+      { kind: "jump", start: 800, end: 1000, to: 900 },
+      { kind: "later", after: 1000, count: 2000 },
+      { kind: "later", after: -1, count: 2000 },
+      { kind: "later", after: 1.5, count: 2000 },
+      { kind: "later", after: 10, count: 0 },
+      { kind: "later", after: "10", count: 2000 },
+      { kind: "later", after: 10 },
+    ]) {
+      expect(recordWindowFor(session, req), JSON.stringify(req)).toEqual(none);
+    }
   });
 });
 

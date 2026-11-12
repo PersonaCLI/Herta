@@ -291,4 +291,94 @@ describe("the 完整记录 tab (ADR 0085 §9, amendment 2026-11-04 later)", () =
       ),
     ).toBeTruthy();
   });
+
+  it("a run in a window of history opens from its row there, as an ended run that is not the latest turn's (owner 2026-11-12)", async () => {
+    if (!Element.prototype.scrollIntoView) {
+      Element.prototype.scrollIntoView = () => undefined;
+    }
+    // The run, then 500 plain messages. The session opens on its last 200,
+    // so a jump back to the run is a far one: the chat shows a window of
+    // history, and the store keeps the trailing window beside it.
+    const later: TerminalRecord = Array.from({ length: 500 }, (_, i) => ({
+      kind: "user" as const,
+      text: `later ${i}`,
+      at: at(100 + i),
+    }));
+    const full: TerminalRecord = [...RUN, ...later];
+    const tailStart = full.length - 200;
+    const mock = createMockHertaBridge({ fullRecord: full });
+    // The viewer opens tabs only on a bridge that can read files.
+    Object.assign(mock.bridge, {
+      readWorkspaceFile: vi.fn(async () => ({
+        ok: false as const,
+        reason: "not_found" as const,
+      })),
+    });
+    const { container } = renderWithSession(
+      <WorkspaceRefsProvider>
+        <FileViewerProvider>
+          <Conversation />
+          <FileViewerPanel />
+        </FileViewerProvider>
+      </WorkspaceRefsProvider>,
+      { mock, lang: "en", sessionId: "s1" },
+    );
+    act(() => {
+      mock.emitReset({
+        sessionId: "s1",
+        workspaceRoot: "/r",
+        record: full.slice(tailStart),
+        recordStart: tailStart,
+        overlay: null,
+        backendWorkspace: "/r",
+        backendWorkspaceIsDefault: true,
+        lang: "en",
+        // The session's latest turn has edits to take back. It is not this run.
+        undoable: true,
+        topics: [
+          {
+            title: "The login fix",
+            anchorIndex: 0,
+            anchorText: "修一下登录",
+            at: at(0),
+          },
+          {
+            title: "Later",
+            anchorIndex: tailStart + 10,
+            anchorText: "later",
+            at: at(400),
+          },
+        ],
+      });
+    });
+    expect(container.querySelectorAll(".run-row__record")).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("The login fix"));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() =>
+      expect(container.querySelectorAll(".run-row__record")).toHaveLength(1),
+    );
+    openRecord(container);
+    const body = tab();
+    // Read from the window of history: every row of the run is there…
+    expect(body.textContent).toContain("src/Login.jsx");
+    expect(body.textContent).toContain("npm test");
+    // …and it is neither the live run nor the one 撤销 belongs to.
+    expect(
+      within(body).queryByRole("button", { name: "Undo this turn's changes" }),
+    ).toBeNull();
+    expect(body.querySelector(".is-live, .activity-step--live")).toBeNull();
+    // Back at the latest the run is outside what the chat shows, and the
+    // tab says so, as it does for any run the loaded record no longer holds.
+    await act(async () => {
+      fireEvent.click(await screen.findByText("Back to latest"));
+    });
+    expect(screen.queryByTestId("run-record")).toBeNull();
+    expect(
+      screen.getByText(
+        "This run is no longer in the loaded record. Load earlier messages in the chat, then open it from its row.",
+      ),
+    ).toBeTruthy();
+  });
 });

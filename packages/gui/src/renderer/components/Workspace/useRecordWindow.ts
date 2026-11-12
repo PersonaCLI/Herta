@@ -20,7 +20,7 @@ import {
   windowStart,
 } from "@herta/core/record-window";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import type { SessionStore } from "../../store/session-store.js";
+import { type SessionStore, shownWindow } from "../../store/session-store.js";
 import type { ConversationScroll } from "./useConversationScroll.js";
 
 // Unpinned live-window trim (2026-08-25). Deliberately laxer than the pinned
@@ -42,8 +42,21 @@ export function useRecordWindow(opts: {
   readonly record: TerminalRecord;
   readonly recordStart: number;
   readonly sessionId: string | null;
-}): { readonly loadEarlier: () => void } {
-  const { scroll, sessionStore, record, recordStart, sessionId } = opts;
+  /** Counts returns to the latest (the store's `latestLandings`). */
+  readonly latestLandings: number;
+}): {
+  readonly loadEarlier: () => void;
+  readonly loadLater: () => void;
+  readonly backToLatest: () => void;
+} {
+  const {
+    scroll,
+    sessionStore,
+    record,
+    recordStart,
+    sessionId,
+    latestLandings,
+  } = opts;
 
   // ── Load-earlier paging (long sessions, 2026-07-12) ─────────────────────
   // The store holds only the trailing window; recordStart > 0 means older
@@ -84,6 +97,8 @@ export function useRecordWindow(opts: {
     hasHeadroom,
     armHeadroomRebase,
     releaseHeadroom,
+    rePin,
+    scrollToBottom,
   } = scroll;
   const loadEarlier = useCallback((): void => {
     const el = scrollRef.current;
@@ -91,7 +106,7 @@ export function useRecordWindow(opts: {
       el === null
         ? null
         : {
-            expectFrom: sessionStore.getSnapshot().recordStart,
+            expectFrom: shownWindow(sessionStore.getSnapshot()).start,
             scrollHeight: el.scrollHeight,
             scrollTop: el.scrollTop,
           };
@@ -109,6 +124,40 @@ export function useRecordWindow(opts: {
     if (el === null) return;
     el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
   }, [recordStart, scrollRef]);
+
+  // ── A window of history (owner 2026-11-12) ──────────────────────────────
+  // After a far jump the chat shows a window of history in place of the
+  // trailing one. Reading on from it pages LATER blocks in: they land below
+  // the fold, so nothing has to be anchored, but the pin is dropped first so
+  // the follow does not carry the reader to the end of the page they asked
+  // for.
+  const loadLater = useCallback((): void => {
+    releasePin();
+    void sessionStore.loadLaterBlocks();
+  }, [sessionStore, releasePin]);
+  // The chip's click while a window of history is on screen: the store
+  // shows the trailing window again, and the landing below takes the reader
+  // to its end.
+  const backToLatest = useCallback((): void => {
+    sessionStore.returnToLatest();
+  }, [sessionStore]);
+  // Each return lands pinned at the bottom, the way a session opens: the
+  // window that was on screen is gone, so there is no place to keep. Layout
+  // effect, so the swap and the landing are one paint. A session switch
+  // re-baselines without landing; the entrance owns that.
+  const landedRef = useRef<{ sid: string | null; n: number }>({
+    sid: sessionId,
+    n: latestLandings,
+  });
+  useLayoutEffect(() => {
+    const prev = landedRef.current;
+    landedRef.current = { sid: sessionId, n: latestLandings };
+    if (prev.sid !== sessionId || latestLandings <= prev.n) return;
+    prependAnchorRef.current = null;
+    trimAnchorRef.current = null;
+    rePin();
+    scrollToBottom();
+  }, [latestLandings, sessionId, rePin, scrollToBottom]);
 
   // Live-window trim (audit T3.5): live appends grow the windowed record
   // without bound — the tail bound applies only to reset/open payloads — so
@@ -291,5 +340,5 @@ export function useRecordWindow(opts: {
     trimAnchorRef.current = null;
   }, [sessionId]);
 
-  return { loadEarlier };
+  return { loadEarlier, loadLater, backToLatest };
 }

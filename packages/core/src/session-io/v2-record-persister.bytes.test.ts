@@ -148,20 +148,34 @@ function body(next: () => number): { text: string; blocks: number } {
   return { text: lines.map((l) => `${l}\n`).join(""), blocks };
 }
 
+/**
+ * The budget of a test that makes 400 files, each created, read, rewritten
+ * and read again. About two seconds alone on the machine it was written on,
+ * where a file never opened before costs some milliseconds to open; inside
+ * a full run in a fresh checkout it crossed the 5 s default twice
+ * (2026-11-12). The count is the point of the test, so the budget is what
+ * gives.
+ */
+const GENERATED_FILES_MS = 60_000;
+
 describe("truncateToBlockCount — by bytes", () => {
-  it("leaves what the line-by-line rewrite left, on 400 generated files", () => {
-    for (let seed = 1; seed <= 400; seed++) {
-      const next = rng(seed);
-      const made = body(next);
-      const keep = Math.floor(next() * (made.blocks + 2));
-      const p = fileWith(made.text);
-      const before = readFileSync(p.sessionFile, "utf8");
-      p.truncateToBlockCount(keep);
-      expect(readFileSync(p.sessionFile, "utf8"), `seed ${seed}`).toBe(
-        truncatedAsBefore(before, keep),
-      );
-    }
-  });
+  it(
+    "leaves what the line-by-line rewrite left, on 400 generated files",
+    () => {
+      for (let seed = 1; seed <= 400; seed++) {
+        const next = rng(seed);
+        const made = body(next);
+        const keep = Math.floor(next() * (made.blocks + 2));
+        const p = fileWith(made.text);
+        const before = readFileSync(p.sessionFile, "utf8");
+        p.truncateToBlockCount(keep);
+        expect(readFileSync(p.sessionFile, "utf8"), `seed ${seed}`).toBe(
+          truncatedAsBefore(before, keep),
+        );
+      }
+    },
+    GENERATED_FILES_MS,
+  );
 
   it("a block whose text spells the meta key is a block, not a meta line", () => {
     const p = fileWith("");
@@ -234,19 +248,23 @@ describe("replaceBlockAt — by bytes", () => {
     body: "附件已移除",
   };
 
-  it("leaves what the line-by-line rewrite left, on 400 generated files", () => {
-    for (let seed = 1; seed <= 400; seed++) {
-      const next = rng(seed + 10_000);
-      const made = body(next);
-      const index = Math.floor(next() * (made.blocks + 2));
-      const p = fileWith(made.text);
-      const before = readFileSync(p.sessionFile, "utf8");
-      p.replaceBlockAt(index, TOMBSTONE);
-      expect(readFileSync(p.sessionFile, "utf8"), `seed ${seed}`).toBe(
-        replacedAsBefore(before, index, TOMBSTONE),
-      );
-    }
-  });
+  it(
+    "leaves what the line-by-line rewrite left, on 400 generated files",
+    () => {
+      for (let seed = 1; seed <= 400; seed++) {
+        const next = rng(seed + 10_000);
+        const made = body(next);
+        const index = Math.floor(next() * (made.blocks + 2));
+        const p = fileWith(made.text);
+        const before = readFileSync(p.sessionFile, "utf8");
+        p.replaceBlockAt(index, TOMBSTONE);
+        expect(readFileSync(p.sessionFile, "utf8"), `seed ${seed}`).toBe(
+          replacedAsBefore(before, index, TOMBSTONE),
+        );
+      }
+    },
+    GENERATED_FILES_MS,
+  );
 
   it("every byte outside the replaced line is the file's own", () => {
     const p = fileWith("");

@@ -129,3 +129,69 @@ describe("walkDir", () => {
     expect(result.length).toBeLessThan(50);
   });
 });
+
+describe("walkDir — gitignore (review 2026-11-10, second pass)", () => {
+  const TREE = {
+    ".gitignore": "out/\n*.log\n",
+    "src/a.ts": "a",
+    "src/b.log": "b",
+    "src/.gitignore": "!b.log\nlocal.ts\n",
+    "src/local.ts": "l",
+    "out/big/1.js": "1",
+    "out/big/2.js": "2",
+    "top.log": "t",
+  };
+  const files = async (
+    root: string,
+    start: string,
+    gitignore: boolean,
+  ): Promise<string[]> =>
+    (await collect(walkDir(root, start, { recursive: true, gitignore })))
+      .filter((e) => e.type === "file")
+      .map((e) => e.path)
+      .sort();
+
+  it("leaves out what is ignored and never enters an ignored directory", async () => {
+    ws = await mkTmpWorkspace(TREE);
+    expect(await files(ws.root, ws.root, true)).toEqual([
+      ".gitignore",
+      "src/.gitignore",
+      "src/a.ts",
+      "src/b.log",
+    ]);
+    // The directory itself is not yielded either.
+    const all = await collect(
+      walkDir(ws.root, ws.root, { recursive: true, gitignore: true }),
+    );
+    expect(all.some((e) => e.path === "out" || e.path.startsWith("out/"))).toBe(
+      false,
+    );
+  });
+
+  it("is off unless asked for: a listing still shows an ignored file", async () => {
+    ws = await mkTmpWorkspace(TREE);
+    const all = await files(ws.root, ws.root, false);
+    expect(all).toContain("out/big/1.js");
+    expect(all).toContain("top.log");
+    expect(all).toContain("src/local.ts");
+  });
+
+  it("a walk that starts below the root obeys the files above it", async () => {
+    ws = await mkTmpWorkspace(TREE);
+    expect(await files(ws.root, join(ws.root, "src"), true)).toEqual([
+      "src/.gitignore",
+      "src/a.ts",
+      "src/b.log",
+    ]);
+  });
+
+  it("a walk started inside an ignored directory still reads it", async () => {
+    ws = await mkTmpWorkspace(TREE);
+    // `out/` names the directory, not what is in it: asked for by name, it
+    // is searched, as git and ripgrep do.
+    expect(await files(ws.root, join(ws.root, "out"), true)).toEqual([
+      "out/big/1.js",
+      "out/big/2.js",
+    ]);
+  });
+});

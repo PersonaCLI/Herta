@@ -8,10 +8,12 @@ import { SKIP_DIR_NAMES } from "../walker.js";
  * then re-verified by the existing JS pipeline (per-file resolveSafePath,
  * binary sniff, redact-BEFORE-match, JS-regex probe, context slicing), so
  * the security properties and the result shape are byte-compatible with
- * the JS scanner. Divergences, both deliberate:
+ * the JS scanner. Where the two differ:
  *
- *   - rg respects .gitignore (the scaling win on real repos: a JS walk
- *     over an un-skipped vendored tree is exactly what times out today);
+ *   - both leave out what .gitignore ignores (the JS walk since the review
+ *     of 2026-11-10, `gitignore.ts`); rg also reads the ignore files the
+ *     walk does not: one above the workspace root, `.git/info/exclude`,
+ *     the user's global excludes, `.ignore` and `.rgignore`;
  *   - rg's Rust regex rejects lookarounds/backreferences — such patterns
  *     (exit code 2 with no candidates), like a missing rg binary, fall
  *     back to the JS scanner silently.

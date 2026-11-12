@@ -7,7 +7,7 @@ import {
   NoopMemoryManager,
   ReadLedger,
 } from "@herta/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkTmpWorkspace, type TmpWorkspace } from "../testing/tmp-workspace.js";
 import {
   isAttachmentSearchRoot,
@@ -429,6 +429,71 @@ describe("searchTextTool", () => {
     const data = r.data as SearchTextData;
     expect(data.matches).toHaveLength(1);
     expect(data.matches[0]?.line).toBe(1);
+  });
+});
+
+describe("searchTextTool — the JS engine and .gitignore (review 2026-11-10, second pass)", () => {
+  const js = (root: string, input: Record<string, unknown>) =>
+    searchTextTool({ engine: "js" }).run(
+      { id: "1", tool: "search_text", input },
+      ctx(root),
+      noopProgress,
+    );
+  const paths = (r: { data?: unknown }): string[] =>
+    (r.data as SearchTextData).matches.map((m) => m.path);
+
+  it("does not search what .gitignore ignores, as ripgrep does not", async () => {
+    ws = await mkTmpWorkspace({
+      ".gitignore": "generated/\n*.min.js\n",
+      "src/a.ts": "needle\n",
+      "generated/bundle.ts": "needle\n",
+      "src/app.min.js": "needle\n",
+      "src/.gitignore": "!keep.min.js\n",
+      "src/keep.min.js": "needle\n",
+    });
+    const r = await js(ws.root, { pattern: "needle" });
+    expect(r.ok).toBe(true);
+    expect(paths(r)).toEqual(["src/a.ts", "src/keep.min.js"]);
+  });
+
+  it("still searches an ignored directory or file that `path` names", async () => {
+    ws = await mkTmpWorkspace({
+      ".gitignore": "generated/\n*.min.js\n",
+      "generated/bundle.ts": "needle\n",
+      "src/app.min.js": "needle\n",
+    });
+    expect(
+      paths(await js(ws.root, { pattern: "needle", path: "generated" })),
+    ).toEqual(["generated/bundle.ts"]);
+    expect(
+      paths(await js(ws.root, { pattern: "needle", path: "src/app.min.js" })),
+    ).toEqual(["src/app.min.js"]);
+  });
+
+  it("a search that ran out of time says so first, and not `found 0 matches`", async () => {
+    ws = await mkTmpWorkspace({
+      "a.ts": "nothing here\n",
+      "b.ts": "needle\n",
+    });
+    // The clock jumps past the scan budget after the search has started.
+    const real = Date.now();
+    let calls = 0;
+    const spy = vi
+      .spyOn(Date, "now")
+      .mockImplementation(() => (calls++ === 0 ? real : real + 60_000));
+    try {
+      const r = await js(ws.root, { pattern: "needle" });
+      expect(r.ok).toBe(true);
+      expect((r.data as SearchTextData).truncated).toBe(true);
+      expect(
+        r.summary.startsWith("search incomplete: stopped at the 10s"),
+      ).toBe(true);
+      expect(r.summary).toContain("after 0 files with 0 matches so far");
+      expect(r.summary).toContain("was not searched");
+      expect(r.summary).not.toMatch(/^found 0 matches/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

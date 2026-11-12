@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative as relativePath, sep } from "node:path";
+import { GITIGNORE_MAX_BYTES, IgnoreStack } from "./gitignore.js";
 
 export const SKIP_DIR_NAMES = new Set([
   ".git",
@@ -27,6 +28,22 @@ export interface WalkOptions {
    *  Callers must let the throw propagate — the turn loop classifies it as
    *  `interrupted` (not `tool_failed`). */
   signal?: AbortSignal;
+  /** Leave out what the workspace's `.gitignore` files ignore, and do not
+   *  enter an ignored directory (`gitignore.ts`). Off by default: a listing
+   *  by name still shows an ignored file. */
+  gitignore?: boolean;
+}
+
+/** A directory's own `.gitignore`, or null when it has none it can use. */
+async function readIgnoreFile(dir: string): Promise<string | null> {
+  const file = join(dir, ".gitignore");
+  try {
+    const info = await stat(file);
+    if (!info.isFile() || info.size > GITIGNORE_MAX_BYTES) return null;
+    return await readFile(file, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 export async function* walkDir(
@@ -39,12 +56,46 @@ export async function* walkDir(
   const reportSkipped = opts.onSkipped;
   const signal = opts.signal;
   const skippedSeen = new Set<string>();
+  const relOf = (abs: string): string =>
+    relativePath(workspaceRoot, abs).split(sep).join("/");
 
   let yielded = 0;
 
-  async function* visit(dir: string): AsyncGenerator<WalkEntry> {
+  // The `.gitignore` files above the start directory apply to it too: the
+  // workspace root's, then each directory's on the way down. The start
+  // directory's own is read when it is visited.
+  let outer = IgnoreStack.EMPTY;
+  const startRel = relOf(startDir);
+  if (
+    opts.gitignore === true &&
+    startRel !== "" &&
+    !startRel.startsWith("..")
+  ) {
+    let at = workspaceRoot;
+    let atRel = "";
+    for (const name of ["", ...startRel.split("/").slice(0, -1)]) {
+      if (name !== "") {
+        at = join(at, name);
+        atRel = atRel === "" ? name : `${atRel}/${name}`;
+      }
+      signal?.throwIfAborted();
+      const text = await readIgnoreFile(at);
+      if (text !== null) outer = outer.with(atRel, text);
+    }
+  }
+
+  async function* visit(
+    dir: string,
+    inherited: IgnoreStack,
+  ): AsyncGenerator<WalkEntry> {
     if (yielded >= max) return;
     signal?.throwIfAborted();
+
+    let ignore = inherited;
+    if (opts.gitignore === true) {
+      const text = await readIgnoreFile(dir);
+      if (text !== null) ignore = ignore.with(relOf(dir), text);
+    }
 
     let dirents: Dirent[];
     try {
@@ -86,16 +137,23 @@ export async function* walkDir(
         type = "file";
       }
 
-      const rel = relativePath(workspaceRoot, abs).split(sep).join("/");
+      const rel = relOf(abs);
+      // A symlink is a file to git, whatever it points at.
+      if (
+        opts.gitignore === true &&
+        ignore.ignores(rel, dirent.isDirectory())
+      ) {
+        continue;
+      }
       yield { path: rel, type };
       yielded++;
       if (yielded >= max) return;
 
       if (recursive && type === "dir" && !isSymlink) {
-        yield* visit(abs);
+        yield* visit(abs, ignore);
       }
     }
   }
 
-  yield* visit(startDir);
+  yield* visit(startDir, outer);
 }

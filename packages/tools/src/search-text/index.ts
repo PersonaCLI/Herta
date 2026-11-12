@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import type {
   HertaTool,
   SearchMatch,
@@ -19,6 +19,11 @@ import { searchTextInputSchema, searchTextJsonSchema } from "./schema.js";
 
 const MAX_FILE_BYTES = 1 * 1024 * 1024;
 const SNIFF_BYTES = 4096;
+/** How many files the walk has open ahead of the one being scanned. The
+ *  scan is one file at a time and in walk order, as before; only the
+ *  waiting on the disk overlaps. Read one at a time, 20 000 small files on
+ *  a cold cache ran out the 10 seconds (review 2026-11-10, second pass). */
+const READ_AHEAD = 8;
 
 /** The attachment subtree (ADR 0033). A search rooted here gets two special
  *  behaviors, both found in the 2026-08-10 review of the carve-out:
@@ -105,17 +110,25 @@ interface ScanOutcome {
   matches: SearchMatch[];
   truncated: boolean;
   timedOut: boolean;
+  /** Files the walk read before it ended, when the engine counts them: how
+   *  far a search that ran out of time got. */
+  scanned?: number;
 }
 
 /** Load + redact + split a file for line verification; null → skip file
  *  (unsafe path, unreadable, too large, or binary). One loader per run,
- *  caching per path, so rg-candidate verification reads each file once. */
+ *  caching per path, so rg-candidate verification reads each file once.
+ *  The walk passes `keep: false`: it reads each file exactly once, and the
+ *  cache held the split lines of every file of the tree until the search
+ *  ended (review 2026-11-10, second pass). */
 function makeFileLoader(
   ctx: ToolContext,
+  opts: { keep?: boolean } = {},
 ): (relPath: string) => Promise<string[] | null> {
+  const keep = opts.keep ?? true;
   const cache = new Map<string, string[] | null>();
   return async (relPath: string): Promise<string[] | null> => {
-    const hit = cache.get(relPath);
+    const hit = keep ? cache.get(relPath) : undefined;
     if (hit !== undefined) return hit;
     const out = await (async (): Promise<string[] | null> => {
       // Per-file gate (2026-07-10 audit, finding 1): realpaths the entry
@@ -142,14 +155,25 @@ function makeFileLoader(
         ? ATTACHMENT_SEARCH_MAX_BYTES
         : MAX_FILE_BYTES;
       if (fileInfo.size > cap) return null;
+      // The head first: a binary file is known by its first 4 KB, and the
+      // whole of it used to be read to find that out.
       let buf: Buffer;
       try {
-        buf = await readFile(safeEntry.resolved);
+        const handle = await open(safeEntry.resolved, "r");
+        try {
+          const head = Buffer.alloc(Math.min(SNIFF_BYTES, fileInfo.size));
+          const { bytesRead } = await handle.read(head, 0, head.length, null);
+          const sniff = head.subarray(0, bytesRead);
+          if (sniff.includes(0)) return null;
+          // From where the head ended to the end of the file.
+          const rest = await handle.readFile();
+          buf = rest.length === 0 ? sniff : Buffer.concat([sniff, rest]);
+        } finally {
+          await handle.close();
+        }
       } catch {
         return null;
       }
-      const sniff = buf.subarray(0, Math.min(SNIFF_BYTES, buf.length));
-      if (sniff.includes(0)) return null;
       let text = buf.toString("utf-8");
       if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
       // Redact BEFORE matching, not after: redacting only the returned
@@ -158,7 +182,7 @@ function makeFileLoader(
       // and context lines both come from the redacted text.
       return redactSecrets(text).split("\n");
     })();
-    cache.set(relPath, out);
+    if (keep) cache.set(relPath, out);
     return out;
   };
 }
@@ -297,8 +321,11 @@ async function searchSingleFile(opts: {
   return { matches, truncated, timedOut };
 }
 
-/** The original walk-everything JS scanner — the fallback engine and the
- *  behavior baseline the rg path must agree with. */
+/** The JS scanner — the fallback engine and the behavior baseline the rg
+ *  path must agree with. It leaves out what `.gitignore` ignores, as rg does
+ *  (`gitignore.ts`): it used to walk everything but the skipped names, ran
+ *  out its budget in a mid-size repo with no `rg` installed, and covered
+ *  files the other engine never reads. */
 async function searchWithJs(opts: {
   regex: RegExp;
   resolvedRoot: string;
@@ -308,7 +335,7 @@ async function searchWithJs(opts: {
   ctx: ToolContext;
 }): Promise<ScanOutcome> {
   const { regex, resolvedRoot, contextLines, maxMatches, deadline, ctx } = opts;
-  const load = makeFileLoader(ctx);
+  const load = makeFileLoader(ctx, { keep: false });
   const matches: SearchMatch[] = [];
   let truncated = false;
   let timedOut = false;
@@ -317,37 +344,71 @@ async function searchWithJs(opts: {
   // pre-fix this loop was unabortable — a Ctrl-C mid-search over a large
   // tree only bit at the NEXT provider call. The AbortError propagates to
   // the turn loop, which classifies it as `interrupted`.
-  for await (const entry of walkDir(ctx.workspaceRoot, resolvedRoot, {
+  const walk = walkDir(ctx.workspaceRoot, resolvedRoot, {
     recursive: true,
     signal: ctx.signal,
-  })) {
-    if (entry.type !== "file") continue;
-    if (truncated) break;
-    ctx.signal.throwIfAborted();
+    gitignore: true,
+  })[Symbol.asyncIterator]();
+  // Files being read ahead of the scan, in walk order.
+  const ahead: { path: string; lines: Promise<string[] | null> }[] = [];
+  let walked = false;
+  let scanned = 0;
+  const fill = async (): Promise<void> => {
+    while (!walked && ahead.length < READ_AHEAD) {
+      const next = await walk.next();
+      if (next.done === true) {
+        walked = true;
+        return;
+      }
+      if (next.value.type !== "file") continue;
+      const lines = load(next.value.path);
+      // One left unread when the scan stops early must not go unhandled.
+      lines.catch(() => undefined);
+      ahead.push({ path: next.value.path, lines });
+    }
+  };
 
-    const lines = await load(entry.path);
-    if (lines === null) continue;
-
-    for (let i = 0; i < lines.length; i++) {
-      // Per-LINE abort + budget (audit 2026-07-13 T2.3): the per-file
-      // check above left a many-line file scan uninterruptible, and a
-      // slow pattern could run unbounded across the tree.
+  try {
+    while (!truncated) {
       ctx.signal.throwIfAborted();
+      // Between files as well as between lines: a tree of many small files
+      // never reached the per-line check with the clock already out.
       if (Date.now() > deadline) {
         timedOut = true;
         truncated = true;
         break;
       }
-      if (probeLine(regex, lines[i] ?? "")) {
-        matches.push(buildMatch(entry.path, lines, i, contextLines));
-        if (matches.length >= maxMatches) {
+      await fill();
+      const entry = ahead.shift();
+      if (entry === undefined) break;
+      const lines = await entry.lines;
+      scanned += 1;
+      if (lines === null) continue;
+
+      for (let i = 0; i < lines.length; i++) {
+        // Per-LINE abort + budget (audit 2026-07-13 T2.3): the per-file
+        // check above left a many-line file scan uninterruptible, and a
+        // slow pattern could run unbounded across the tree.
+        ctx.signal.throwIfAborted();
+        if (Date.now() > deadline) {
+          timedOut = true;
           truncated = true;
           break;
         }
+        if (probeLine(regex, lines[i] ?? "")) {
+          matches.push(buildMatch(entry.path, lines, i, contextLines));
+          if (matches.length >= maxMatches) {
+            truncated = true;
+            break;
+          }
+        }
       }
     }
+  } finally {
+    // Stop the walk where it is; a directory listing in flight ends.
+    await walk.return?.(undefined);
   }
-  return { matches, truncated, timedOut };
+  return { matches, truncated, timedOut, scanned };
 }
 
 export function searchTextTool(opts: SearchTextToolOpts = {}): HertaTool {
@@ -358,7 +419,7 @@ export function searchTextTool(opts: SearchTextToolOpts = {}): HertaTool {
       return {
         name: "search_text",
         description:
-          "Search workspace files for a JS RegExp pattern. `path` may be a directory (searched recursively) or a single file (only that file). Returns matches sorted by path then line. Skips binary files (NUL byte sniff) and files >1MB. Uses ripgrep when available (respects .gitignore); falls back to a JS scanner.",
+          "Search workspace files for a JS RegExp pattern. `path` may be a directory (searched recursively) or a single file (only that file). Returns matches sorted by path then line. Skips binary files (NUL byte sniff), files >1MB and what .gitignore ignores. Uses ripgrep when available; falls back to a JS scanner.",
         inputSchema: searchTextJsonSchema,
       };
     },
@@ -539,7 +600,7 @@ export function searchTextTool(opts: SearchTextToolOpts = {}): HertaTool {
           ctx,
         });
       }
-      const { matches, truncated, timedOut } = outcome;
+      const { matches, truncated, timedOut, scanned } = outcome;
 
       matches.sort((a, b) => {
         if (a.path !== b.path) return a.path < b.path ? -1 : 1;
@@ -554,8 +615,11 @@ export function searchTextTool(opts: SearchTextToolOpts = {}): HertaTool {
       // Bounded — a few files, a few lines each — because it is a receipt,
       // not the result; the result rides the record row the bridge projects.
       const where = summarizeLocations(matches);
+      // A search that ran out of time says so first. It used to open
+      // "found 0 matches (stopped at …)", which reads as "no match" and was
+      // wrong: the match was in a file the scan never reached.
       const summary = timedOut
-        ? `found ${matches.length} matches (stopped at the ${SCAN_DEADLINE_MS / 1000}s scan budget; narrow scope or simplify the pattern) for /${pattern}/${flags}${where}`
+        ? `search incomplete: stopped at the ${SCAN_DEADLINE_MS / 1000}s scan budget${scanned === undefined ? "" : ` after ${scanned} files`} with ${matches.length} matches so far for /${pattern}/${flags}${where} — the rest of the tree was not searched; narrow \`path\` or simplify the pattern`
         : truncated
           ? `found ${matches.length} matches (truncated; narrow scope) for /${pattern}/${flags}${where}`
           : matches.length === 0

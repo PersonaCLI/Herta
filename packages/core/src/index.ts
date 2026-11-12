@@ -11,12 +11,10 @@ export {
   writeFileAtomicSync,
 } from "./atomic-write.js";
 export {
-  BACKEND_EXECUTION_CONTRACT,
-  BACKEND_EXECUTION_CONTRACT_EN,
+  BACKEND_CONTRACT,
   type BackendBuildInput,
   BackendContextBuilder,
   type BackendContextBuilderDeps,
-  type BackendContract,
   darwinBackendHostNote,
   minimalBackendContract,
   type RepoContextDirtyFile,
@@ -25,7 +23,6 @@ export {
   type RepoRecentCommit,
   renderRepoContext,
   serializeUserHistory,
-  windowsBackendHostNote,
 } from "./backend/backend-context-builder.js";
 export {
   type BackendTurnDeps,

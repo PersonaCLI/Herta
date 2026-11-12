@@ -43,12 +43,8 @@ export const CALL_ERROR_DENY_CODES: ReadonlySet<string> = new Set([
   // The target's state: create an existing file, edit a missing one.
   "not_found",
   "create_exists",
-  "file_exists",
-  "parent_invalid",
   // Read before edit (CLAUDE.md: stale edits are hard failures — of the
-  // call; read again and the same edit is allowed).
-  "read_required",
-  "stale_read",
+  // call; view again and the same edit is allowed).
   "view_required",
   "stale_view",
   // A page step off this machine (ADR 0083 §7): the page tools work on

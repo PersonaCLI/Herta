@@ -18,9 +18,7 @@ import { describe, expect, it } from "vitest";
 const SOURCES = [
   "src/str-replace-editor/rule.ts",
   "src/str-replace-editor/engine.ts",
-  "src/edit-file/rule.ts",
   "src/edit-file/engine.ts",
-  "src/write-new-file/rule.ts",
   "src/run-command/rule.ts",
   "src/bash/rule.ts",
   "src/path-safety.ts",
@@ -94,7 +92,7 @@ describe("every rule-deny code is decided (ADR 0047 amendment 2026-09-29)", () =
       "path_not_absolute",
       "edit_not_found",
       "hunk_ambiguous",
-      "stale_read",
+      "view_required",
       "path_outside_workspace",
       "path_denied",
       "command_blocked",

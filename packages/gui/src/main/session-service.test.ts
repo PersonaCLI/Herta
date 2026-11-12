@@ -397,12 +397,11 @@ describe("buildConfig", () => {
     expect(cfg.providers.backendModel).toBe("deepseek-flash");
   });
 
-  it("backendContract is always the bash one: a setting or a variable asking for the retired set is ignored (ADR 0086)", async () => {
+  it("the config carries no tool-set choice: a settings file or a variable naming the deleted set changes nothing (ADR 0086)", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "herta-bc-contract-"));
     const home = mkdtempSync(join(tmpdir(), "herta-bc-contracth-"));
-    expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
-      "minimal",
-    );
+    const plain = await buildConfig(cwd, home, "sk");
+    expect("backendContract" in plain).toBe(false);
     // A settings file from a build that still had the choice.
     mkdirSync(join(cwd, ".herta"), { recursive: true });
     writeFileSync(
@@ -410,15 +409,14 @@ describe("buildConfig", () => {
       JSON.stringify({ backend: { thinking: "high", contract: "standard" } }),
       "utf-8",
     );
-    expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
-      "minimal",
-    );
+    const withFile = await buildConfig(cwd, home, "sk");
+    expect("backendContract" in withFile).toBe(false);
     // And the knob that used to override it.
     vi.stubEnv("HERTA_BACKEND_CONTRACT", "standard");
-    expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
-      "minimal",
-    );
+    const withEnv = await buildConfig(cwd, home, "sk");
     vi.stubEnv("HERTA_BACKEND_CONTRACT", undefined);
+    expect("backendContract" in withEnv).toBe(false);
+    expect(JSON.stringify(withEnv)).toBe(JSON.stringify(withFile));
   });
 
   it("falls back to 'high' for an off-enum hand-edited thinking value", async () => {

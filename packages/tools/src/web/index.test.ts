@@ -8,7 +8,6 @@ import {
   type WebSearchHit,
 } from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { readFileTool } from "../read-file/index.js";
 import { reportFindingTool } from "../report-finding/index.js";
 import { showExcerptTool } from "../show-excerpt/index.js";
 import { mkTmpWorkspace, type TmpWorkspace } from "../testing/tmp-workspace.js";
@@ -259,12 +258,8 @@ describe("web_fetch", () => {
     );
     const rel = r.data?.path as string;
     const ctx = mkToolContext({ workspaceRoot: ws.root });
-    const read = await readFileTool().run(
-      { id: "r", tool: "read_file", input: { path: rel } },
-      ctx,
-      () => {},
-    );
-    expect(read.error).toBeUndefined();
+    // On disk where the result says, as plain lines a shell can page.
+    expect(await readFile(join(ws.root, rel), "utf8")).toContain("line two");
     const shown = await showExcerptTool().run(
       {
         id: "s",

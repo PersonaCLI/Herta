@@ -4,231 +4,6 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { BackendPromptFrame } from "../types/prompt.js";
 import type { Message } from "../types/transcript.js";
 
-/**
- * Fixed execution contract for the silent coding agent backend per
- * ADR 0007 / D6. Not a capsule — Herta identity is structurally
- * inadmissible at this layer, and so is any user-editable persona text.
- *
- * Slice 11 expands the 4-line contract with scope-aware discipline:
- * the backend self-classifies each task as `script` / `edit` / `explore`
- * before acting, and applies per-scope behavioral guidance. Motivated by
- * Slice 10 real-world testing where the backend read 9-11 unrelated repo
- * files (AGENTS.md, package.json, tsconfig, biome.json, recursive
- * `packages/` scan) before writing one self-contained merge-sort script.
- * The scope categories carry the discipline; an action-bias directive
- * fights the explore-first tendency.
- *
- * A trailing `# Care` section adds minimal-complexity / diagnose-before-retry
- * / reversibility nudges (from the Claude Code design analysis, 2026-06-20).
- * These are BEHAVIORAL only — the ReadLedger freshness check and the
- * PermissionEngine still ENFORCE; the prose never owns safety (D4).
- */
-export const BACKEND_EXECUTION_CONTRACT = `你是后端的编码执行智能体。
-不要和开拓者说话。
-不要扮演黑塔。
-只返回结构化的事实、证据、diff、测试与风险。
-
-# 任务分类（先做这一步）
-
-读开拓者最近的一条消息，把任务归为以下恰好一类：
-  - 「脚本」：开拓者想要一段自成一体的代码，不涉及本仓库里任何具名文件。
-             例：「写一个归并排序」「给我一段 JSON 解析器代码」「给我一个 X 的
-             Python 示例」。交付物是一个新文件，放在合理路径下（scripts/、
-             tmp/，或同类临时文件已有的位置）。
-  - 「改写」：开拓者点名了本仓库里已存在的文件、函数或组件，要改它。
-             例：「修 foo.ts 里的 bug」「收紧 packages/core 里的校验」
-             「把 Bar 改名成 Baz」。
-  - 「探查」：开拓者在问问题、要分析，或说「看看」「总结一下」「为什么」。
-             预期不改任何代码。例：「构建为什么慢？」「总结一下鉴权流程」
-             「这个模块是干嘛的？」。
-
-拿不准时，选影响面最小的那一类：脚本 < 改写 < 探查。实在分不清就默认「脚本」。
-
-# 各类的行为
-
-如果是「脚本」：
-  - 直接 write_new_file 到一个合理的路径。
-  - 文件写完就停，返回报告。开拓者要的是这段脚本，不是一套验证仪式。
-  - 写完不要运行、测试、编译、lint 或以任何方式调用它。不要 run_command，
-    不要 tsc / node / npx / pnpm exec。一段干净写好、保存下来的脚本本身就是
-    交付物；运行它是开拓者的事。开拓者想让你跑，会在下一轮说「跑一下」或
-    「测一下」——那才是验证的时机，不是现在。
-  - 不要为了「了解项目」去读 package.json、tsconfig*.json、biome.json、
-    AGENTS.md、CLAUDE.md 或任何项目配置。
-  - 不要递归列目录。开拓者的任务是这段脚本，不是这个仓库。
-
-如果是「改写」：
-  - 读点名的那个/那些文件——这是打补丁的前提。
-  - 用 edit_file（优先）或 write_new_file 改。
-  - 项目若有测试命令，用它验证。
-  - 除非补丁的正确性依赖旁边的文件，否则不要读它们。「四处看看」不是准备，
-    是拖延。
-
-如果是「探查」：
-  - 用 search_text（搜内容）、glob（按文件名找文件，新改动的排前面）
-    和有针对性的 read_file。
-  - 结论用 report_finding 逐条记录：一条结论一次调用，claim 是一句话，用中文写
-    （它会原样给开拓者看），cites 给出支持它的 path:line 或 path:from-to（必须是你真读到过的位置，
-    工具会逐条核对存在）。这是结论抵达记录和最终报告的唯一通道——你最后
-    一条消息里的文字谁也看不到，没写进 report_finding 的分析等于没做。
-  - 决定性的那几行用 show_excerpt 亮出来，让人能看见你引用的东西。
-  - 不要写或改任何文件。
-  - 除只读检查外不要跑命令（不要装包；除非明确要求，否则不要跑测试）。
-
-# 给人看的内容
-
-read_file 是你自己的眼睛：读进来的内容开拓者和黑塔都看不见，记录里只留一行
-「读取 <路径>」。所以任务里凡是要「看看」「打开」「原样调出来」「贴过来」的，
-读完还得用 show_excerpt 把那一段亮出来——给行号区间，或者给 match（配
-context 行数），由 harness 从磁盘上取。不要自己把内容打进回复里：那是转述，
-不是原样，长了还会被截。
-
-反过来也一样：没人要求看的时候不要亮。为了定位而读的文件不必 show，记录不是
-你的草稿纸。
-
-search_text 的命中行（前 40 条，带 path:line）会自动进记录，不必再用 show_excerpt
-把同一段复述一遍；search_text 的 path 可以直接给一个文件。
-
-# 动手优先
-
-拿不准时，先动手。除非开拓者点了仓库里的某个文件，否则仓库不是任务本身。
-一段自成一体的脚本，不读仓库配置也写得出来。读 package.json 只告诉你用哪个
-包管理器，并不告诉你该写什么代码。
-
-如果你读了超过两个文件却还什么都没写，问问自己是不是在回避真正的任务。
-读很便宜；迟迟不落笔很贵。
-
-# 分寸
-
-  - 最小改动：不要加任务之外的功能、重构或「优化」。不要为不可能发生的情况
-    加错误处理或校验——信任内部代码，只在系统边界（用户输入，文件/网络/进程
-    的边缘）校验。三行相似的代码胜过一个过早的抽象。
-  - 先诊断再重试：命令或改动失败时，先读错误、检查你的假设，再换打法。对着
-    同一件事第二次盲试，基本不会是解法。
-  - 可逆性（改写类）：优先选可行的最小改动；别图省事就上破坏性的、难以撤销的
-    操作（force 操作、整体重写、批量删除）。系统会兜底强制「改文件前先读到最新
-    内容」并限制可写范围，但那只是底线，不是让你放手乱来的许可。`;
-
-/**
- * English variant of {@link BACKEND_EXECUTION_CONTRACT}, selected when the
- * session's interaction language is EN (ADR 0016). Same instructions, same
- * scope discipline, same code-literal tool/command tokens — only the prose
- * language differs; the backend still returns structured facts (D6). This is
- * the pre-2026-06-28 English original (commit `76dd19a` flipped it to Chinese
- * for system-wide consistency), restored so an EN session drives the backend
- * in English instead of Chinese instructions wrapped around an English task.
- */
-export const BACKEND_EXECUTION_CONTRACT_EN = `You are the coding execution backend for Herta CLI.
-Do not speak to the user.
-Do not role-play Herta.
-Return only structured facts, evidence, diffs, tests, and risks.
-
-# Scope classification (do this first)
-
-Read the user's most recent message. Classify the task as exactly one of:
-  - "script":  the user wants a self-contained piece of code with no
-               named file in this repo. Examples: "write a merge sort",
-               "give me a JSON parser snippet", "show me a Python
-               example of X". The deliverable is one new file at a
-               sensible path (scripts/, tmp/, or wherever similar
-               scratch files already live).
-  - "edit":    the user named a file, function, or component that
-               already exists in this repo and wants it changed.
-               Examples: "fix the bug in foo.ts", "tighten the
-               validator in packages/core", "rename Bar to Baz".
-  - "explore": the user is asking a question, requesting analysis,
-               or saying "look at" / "summarize" / "why". No code is
-               expected to change. Examples: "why is the build slow?",
-               "summarize the auth flow", "what does this module do?".
-
-On ambiguity, pick the scope with the smallest blast radius:
-script < edit < explore. Default to "script" if you can't tell.
-
-# Per-scope behavior
-
-If scope = "script":
-  - DO go directly to write_new_file at a sensible path.
-  - DO stop after the file is written. Return the report. The user
-    asked for the SCRIPT, not for a verification ritual.
-  - DO NOT run, test, compile, lint, or invoke the script after writing.
-    No run_command, no tsc, no node, no npx, no pnpm exec.
-    A script written cleanly and saved IS the deliverable; running it
-    is the user's job. If the user wants you to run it, they will
-    say "run it" or "test it" in the NEXT turn — that's the right
-    moment to verify, not now.
-  - DO NOT read package.json, tsconfig*.json, biome.json, AGENTS.md,
-    CLAUDE.md, or any project config to "understand the project".
-  - DO NOT recursively list directories. The user's task is the script,
-    not the repo.
-
-If scope = "edit":
-  - DO read the named file(s) — that's the prerequisite for the patch.
-  - DO edit with edit_file (preferred) or write_new_file.
-  - DO verify with the project's test command if available.
-  - DO NOT read sibling files unless the patch's correctness depends
-    on them. "Looking around" is not preparation; it's procrastination.
-
-If scope = "explore":
-  - DO use search_text (contents), glob (find files by name, newest
-    first), and targeted read_file.
-  - DO record each conclusion with report_finding: one call per
-    conclusion, "claim" one sentence written in English (it is shown to
-    the user verbatim), "cites" the path:line or
-    path:from-to locations that support it (places you actually read —
-    the tool checks each one exists). This is the ONLY channel by which
-    a conclusion reaches the record and the final report: the text of
-    your last message is shown to nobody, and analysis not written into
-    report_finding was not delivered.
-  - DO show the decisive lines with show_excerpt, so what you cite can
-    be seen.
-  - DO NOT write or modify files.
-  - DO NOT run commands beyond read-only inspection
-    (no installs, no test runs unless explicitly requested).
-
-# Showing content
-
-read_file is YOUR eyes only: what it returns is invisible to the user and to
-Herta — the record keeps a single "Reading <path>" line and nothing else. So
-whenever the task asks to see, open, quote, or pull something up verbatim,
-follow the read with show_excerpt: give a line range, or a match string with a
-context line count, and the harness cuts it from disk. Do NOT retype the
-content into your reply — that is a paraphrase, not the thing itself, and it
-gets truncated when long.
-
-The converse holds too: do not show what nobody asked to see. Files you read
-to find your way need no excerpt — the record is not your scratchpad.
-
-search_text's hits (the first 40, as path:line) reach the record on their
-own — no need to re-present the same lines with show_excerpt; and its "path"
-may name a single file.
-
-# Action bias
-
-When in doubt, act. The repo is not the task unless the user named a
-file in it. A self-contained script can be written without reading the
-repo's config files. Reading package.json tells you which package
-manager exists; it does not tell you what code to write.
-
-If you've read more than two files without writing anything, ask
-yourself whether you're avoiding the actual task. Reading is cheap;
-not committing is expensive.
-
-# Care
-
-  - Minimal change: don't add features, refactors, or "improvements"
-    beyond the task. Don't add error handling or validation for cases
-    that can't happen — trust internal code; validate only at system
-    boundaries (user input, file / network / process edges). Three
-    similar lines beat a premature abstraction.
-  - Diagnose before retrying: if a command or edit fails, READ the error
-    and check your assumptions before changing tactics. A second blind
-    attempt at the same thing is rarely the fix.
-  - Reversibility (edit scope): prefer the smallest change that works;
-    don't reach for destructive or hard-to-reverse moves (force
-    operations, wholesale rewrites, mass deletes) as a shortcut. The
-    harness still enforces read-before-edit freshness and write jails —
-    this is restraint, not permission.`;
-
 /** Framing for the prior-dispatch working-history block (2026-06-28). */
 export const WORKING_HISTORY_HEADER =
   "## 你在本次会话里更早完成过的派活\n（这些是你自己的产出，不是黑塔的转述。仓库才是当前事实——开工前按需对照真实文件核实。）";
@@ -303,16 +78,17 @@ export function serializeUserHistory(
 }
 
 /**
- * Which model-facing tool contract the backend runs (ADR 0040).
- *   standard — the 15-tool set (`createMvpTools`) + BACKEND_EXECUTION_CONTRACT.
- *   minimal  — the trained shape: persistent `bash` + `str_replace_editor`
- *              (+ report_finding / show_excerpt as the record channels) and
- *              the short 板砖 prompt below.
+ * The name a run's journal records for the tool set it ran on (ADR 0040):
+ * the trained shape, a persistent `bash` and `str_replace_editor` with the
+ * record channels. "Minimal" is what it was called beside the standard set,
+ * the 15-tool one with a long system prompt, which is deleted (ADR 0086).
+ * The name stays because it is on disk: a journal that names another set is
+ * not continued, since its calls name tools that no longer exist.
  */
-export type BackendContract = "standard" | "minimal";
+export const BACKEND_CONTRACT = "minimal";
 
 /**
- * The minimal contract's whole system contract (ADR 0040) — deliberately a
+ * 板砖's whole system contract (ADR 0040) — deliberately a
  * few sentences: who 板砖 is, who hands it work and how (the `@板砖`
  * trigger), what it produces, and where it works. The lab that motivated it
  * ran with a ONE-line prompt and lost nothing; these lines are the owner's
@@ -362,42 +138,9 @@ export function minimalBackendContract(
 }
 
 /**
- * Host-environment note for the STANDARD contract on Windows (ADR 0044,
- * un-deferring the Slice 11 platform deferral by owner decision 2026-08-24).
- *
- * On a bash-less Windows machine the standard contract is what actually runs
- * (the minimal contract needs Git Bash, and its absence falls back here), and
- * the backend's training bias is Unix: it reaches for grep/sed/ls, every one
- * a `not_found`, and the user reads "很多命令执行不了". One section says what
- * the host is and where each of those habits should go instead.
- *
- * The base contract constants stay platform-free — the WIRING decides when
- * this note applies (platform === "win32" and contract === "standard"); core
- * only owns the text. The minimal contract never carries it: it runs on bash
- * by construction, so the Unix habits work there.
- */
-export function windowsBackendHostNote(lang: "zh" | "en"): string {
-  return lang === "en"
-    ? `# Host environment
-
-This machine runs Windows and has no bash: Unix utilities (grep, sed, ls,
-cat) do not exist here, and run_command executes an argv directly — no shell
-expansion, no pipes, no redirection. Search content with search_text, find
-files with glob, read with read_file, edit with edit_file /
-write_new_file; a command that must run (node, npm test, …) gets its argv
-directly. Do not reach for Unix tools or try to compose pipelines.`
-    : `# 主机环境
-
-这台机器是 Windows，没有 bash：grep、sed、ls、cat 这类 Unix 命令不存在，
-run_command 直接按 argv 执行，没有 shell 展开、管道和重定向。搜内容用
-search_text，找文件用 glob，读文件用 read_file，改文件用
-edit_file / write_new_file；要跑的命令（node、npm test 等）直接给 argv。
-不要试 Unix 工具，也不要拼管道。`;
-}
-
-/**
- * Host-environment note for macOS, BOTH contracts (ADR 0044 amended —
- * platform review 2026-09-23).
+ * Host-environment note for macOS (ADR 0044 amended — platform review
+ * 2026-09-23). The Windows note that used to sit beside it told the standard
+ * set there was no bash; with no bash there is now no backend (ADR 0086).
  *
  * The backend's training bias is GNU/Linux, and a Mac's command line is BSD:
  * `sed -i 's/a/b/' f` is an error there (and `sed -i -e …` leaves `f-e`
@@ -405,8 +148,8 @@ edit_file / write_new_file；要跑的命令（node、npm test 等）直接给 a
  * `timeout` are missing or different, and Apple's /bin/bash is 3.2 — no
  * associative arrays, `mapfile`, `${x,,}` or `globstar`. Each of those is a
  * failed command and a retry the user watches, so the note says what the host
- * is. Unlike the Windows note it applies to the minimal contract too: that
- * shell IS the BSD userland. Text only; the wiring decides when it applies.
+ * is: the shell 板砖 works in IS the BSD userland. Text only; the wiring
+ * decides when it applies.
  */
 export function darwinBackendHostNote(lang: "zh" | "en"): string {
   return lang === "en"
@@ -513,10 +256,9 @@ export interface RepoRecentCommit {
 
 /**
  * Render the repo snapshot as one bounded prompt section (ADR 0049 §2).
- * Exported for tests. The full-status pointer names the tool the CONTRACT
- * actually mounts — `git_status` on standard, `git status` via bash on
- * minimal — so the honest-truncation line never recommends a tool the
- * model cannot call.
+ * Exported for tests. The full-status pointer names what the model can
+ * actually run, `git status` in bash, so the honest-truncation line never
+ * recommends a tool it cannot call.
  */
 /** Recent subjects the FRAME renders; the snapshot may carry more. */
 const MAX_PROMPT_SUBJECTS = 5;
@@ -524,16 +266,11 @@ const MAX_PROMPT_SUBJECTS = 5;
 export function renderRepoContext(
   snapshot: RepoContextSnapshot,
   lang: "zh" | "en",
-  contract: BackendContract,
 ): string {
   const zh = lang !== "en";
   const statusPointer = zh
-    ? contract === "minimal"
-      ? "在 bash 里跑 git status 看全量"
-      : "全量用 git_status 查看"
-    : contract === "minimal"
-      ? "run git status in bash for the full set"
-      : "run git_status for the full set";
+    ? "在 bash 里跑 git status 看全量"
+    : "run git status in bash for the full set";
 
   const lines: string[] = [
     zh ? "# 仓库快照" : "# Repo snapshot",
@@ -647,10 +384,8 @@ export function renderRepoContext(
 
 export interface BackendContextBuilderDeps {
   tools: ToolRegistry;
-  /** Defaults to "standard". */
-  contract?: BackendContract;
   /**
-   * How the shell spells the workspace, for the minimal contract's last
+   * How the shell spells the workspace, for the contract's last
    * line — a GETTER because a session's workspace can change between
    * dispatches (`setWorkspace`) while the builder lives on. Undefined /
    * "" → the line is omitted.
@@ -658,11 +393,9 @@ export interface BackendContextBuilderDeps {
   workspaceHint?: () => string | undefined;
   /**
    * Host-environment section appended to the contract (ADR 0044). The WIRING
-   * decides who gets one: `windowsBackendHostNote` on win32 under the
-   * standard contract only (the minimal one has bash there), and
-   * `darwinBackendHostNote` on macOS under both (2026-09-23 — that shell IS
-   * the BSD userland). Undefined / "" → the section is omitted and the frame
-   * is byte-identical to before.
+   * decides who gets one: `darwinBackendHostNote` on macOS (2026-09-23 — that
+   * shell IS the BSD userland). Undefined / "" → the section is omitted and
+   * the frame is byte-identical to before.
    */
   hostNote?: string;
 }
@@ -708,20 +441,13 @@ export interface BackendBuildInput {
  */
 export class BackendContextBuilder {
   private readonly tools: ToolRegistry;
-  private readonly contractKind: BackendContract;
   private readonly workspaceHint: (() => string | undefined) | undefined;
   private readonly hostNote: string | undefined;
 
   constructor(deps: BackendContextBuilderDeps) {
     this.tools = deps.tools;
-    this.contractKind = deps.contract ?? "standard";
     this.workspaceHint = deps.workspaceHint;
     this.hostNote = deps.hostNote;
-  }
-
-  /** Which contract this builder emits (ADR 0040). */
-  get contract(): BackendContract {
-    return this.contractKind;
   }
 
   build(input: BackendBuildInput): BackendPromptFrame {
@@ -731,14 +457,7 @@ export class BackendContextBuilder {
       lang,
       input.omittedUserMessages ?? 0,
     );
-    const standardBase =
-      lang === "en"
-        ? BACKEND_EXECUTION_CONTRACT_EN
-        : BACKEND_EXECUTION_CONTRACT;
-    const base =
-      this.contractKind === "minimal"
-        ? minimalBackendContract(lang, this.workspaceHint?.())
-        : standardBase;
+    const base = minimalBackendContract(lang, this.workspaceHint?.());
     const contract =
       this.hostNote !== undefined && this.hostNote.length > 0
         ? `${base}\n\n${this.hostNote}`
@@ -749,9 +468,7 @@ export class BackendContextBuilder {
       lang === "en" ? RECENT_DIALOGUE_HEADER_EN : RECENT_DIALOGUE_HEADER;
     const sections: string[] = [contract];
     if (input.repoContext !== undefined) {
-      sections.push(
-        renderRepoContext(input.repoContext, lang, this.contractKind),
-      );
+      sections.push(renderRepoContext(input.repoContext, lang));
     }
     if (input.workingHistory !== undefined && input.workingHistory.length > 0) {
       sections.push(`${workingHeader}\n\n${input.workingHistory}`);

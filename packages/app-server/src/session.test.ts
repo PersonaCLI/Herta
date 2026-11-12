@@ -1844,24 +1844,21 @@ describe("Session — the toolset follows the environment (ADR 0067)", () => {
     return { ...made, cfg, stack, names };
   }
 
-  it("git_status / git_diff follow the workspace: mounted on a move into a repository, unmounted on a move out", async () => {
+  it("a workspace move mounts no git tools, into a repository or out of one: bash runs git itself", async () => {
     const { session, stack, names, cleanup } = await mkGateSession();
-    expect(stack.contract).toBe("standard");
+    expect(stack.contract).toBe("minimal");
     const plain = mkdtempSync(join(tmpdir(), "herta-gate-plain-"));
     const repo = mkdtempSync(join(tmpdir(), "herta-gate-repo-"));
     mkdirSync(join(repo, ".git"));
+    const before = names();
 
     expect((await session.setWorkspace(repo)).ok).toBe(true);
-    expect(names()).toContain("git_status");
-    expect(names()).toContain("git_diff");
-
-    expect((await session.setWorkspace(plain)).ok).toBe(true);
     expect(names()).not.toContain("git_status");
     expect(names()).not.toContain("git_diff");
-    // The rest of the standard set is untouched by the move.
-    expect(names()).toContain("read_file");
-    expect(names()).toContain("glob");
-    expect(names()).not.toContain("list_files");
+    expect((await session.setWorkspace(plain)).ok).toBe(true);
+    // The set is the same before, in and after: it follows the environment
+    // per session (ADR 0067), and a repository no longer changes it.
+    expect(names()).toEqual(before);
     await cleanup();
   });
 
@@ -2583,9 +2580,9 @@ describe("the no-bash record note (ADR 0044, ADR 0086)", () => {
       (b) => b.kind === "system" && b.body.includes("HERTA_BASH"),
     );
   }
-  /** minimal configured + deterministic no-bash (findBash override miss). */
+  /** A machine with no bash, deterministically (findBash override miss). */
   function minimalCfg(): AppServerConfig {
-    const cfg = { ...mkConfig(), backendContract: "minimal" as const };
+    const cfg = mkConfig();
     process.env.HERTA_BASH = join(cfg.workspaceRoot, "no-such-bash.exe");
     return cfg;
   }
@@ -2682,21 +2679,14 @@ describe("the no-bash record note (ADR 0044, ADR 0086)", () => {
     await cleanup();
   }, 15_000);
 
-  it("no note when the retired standard set is what a test asked for, or when bash exists", async () => {
-    const cfgStd = { ...mkConfig(), backendContract: "standard" as const };
-    process.env.HERTA_BASH = join(cfgStd.workspaceRoot, "no-such-bash.exe");
-    const std = await mkStubSession(cfgStd);
-    await std.session.playOpening();
-    expect(noteBlocks(std.session.record)).toHaveLength(0);
-    await std.cleanup();
-
+  it("no note when bash exists", async () => {
     // "bash exists": any existing path satisfies findBash's override check.
-    const cfgMin = { ...mkConfig(), backendContract: "minimal" as const };
-    process.env.HERTA_BASH = cfgMin.workspaceRoot;
-    const min = await mkStubSession(cfgMin);
-    await min.session.playOpening();
-    expect(noteBlocks(min.session.record)).toHaveLength(0);
-    await min.cleanup();
+    const cfg = mkConfig();
+    process.env.HERTA_BASH = cfg.workspaceRoot;
+    const { session, cleanup } = await mkStubSession(cfg);
+    await session.playOpening();
+    expect(noteBlocks(session.record)).toHaveLength(0);
+    await cleanup();
   });
 });
 
@@ -2757,10 +2747,14 @@ describe("Session — talkText, a message to Herta while 板砖 works (ADR 0085 
             await gate;
             yield {
               type: "tool-call-request",
+              // A read of a file that is not there: it fails, with no shell.
               call: {
                 id: "c1",
-                tool: "read_file",
-                input: { path: "nope.txt" },
+                tool: "str_replace_editor",
+                input: {
+                  command: "view",
+                  path: join(cfg.workspaceRoot, "nope.txt"),
+                },
               },
             } as Ev;
             yield { type: "finish", reason: "tool_calls" } as Ev;
@@ -2894,10 +2888,14 @@ describe("Session — steerText, a message while 板砖 works (ADR 0063)", () =>
             await gate;
             yield {
               type: "tool-call-request",
+              // A read of a file that is not there: it fails, with no shell.
               call: {
                 id: "c1",
-                tool: "read_file",
-                input: { path: "nope.txt" },
+                tool: "str_replace_editor",
+                input: {
+                  command: "view",
+                  path: join(cfg.workspaceRoot, "nope.txt"),
+                },
               },
             } as Ev;
             yield { type: "finish", reason: "tool_calls" } as Ev;

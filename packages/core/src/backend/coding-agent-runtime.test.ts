@@ -1371,7 +1371,7 @@ describe("CodingAgentRuntime.runBrief", () => {
     "edit_not_found",
     "hunk_not_found",
     "create_exists",
-    "stale_read",
+    "stale_view",
     "view_required",
   ])("a call-error rule-deny (%s) does not cap the status — the call was wrong, nothing was refused (ADR 0047 amendment 2026-09-29)", async (code) => {
     expect(await statusAfterDeny(code)).toBe("completed");

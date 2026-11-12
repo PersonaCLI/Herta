@@ -243,7 +243,7 @@ describe("runBackendTurnLoop", () => {
       expect("backendSystem" in capturedFrame).toBe(true);
       if ("backendSystem" in capturedFrame) {
         expect(capturedFrame.backendSystem).toContain(
-          "你是后端的编码执行智能体",
+          "你是板砖，黑塔的差分协处理器",
         );
         // Post-May-2026: the user's actual words are threaded via
         // BackendTurnHandle.userMessages and rendered into backendSystem

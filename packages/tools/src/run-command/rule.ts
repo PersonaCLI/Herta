@@ -1,7 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import type {
   PermissionRule,
-  RulePermissionEngine,
   RuleVerdict,
   ToolCallRequest,
   ToolContext,
@@ -132,8 +131,4 @@ export function makeRunCommandRule(): PermissionRule {
       cwd: safe.resolved,
     };
   };
-}
-
-export function registerRunCommandRule(engine: RulePermissionEngine): void {
-  engine.registerRule("run_command", makeRunCommandRule());
 }

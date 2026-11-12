@@ -12,7 +12,12 @@ import {
 import { FakeAskResolver } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkTmpWorkspace, type TmpWorkspace } from "../testing/tmp-workspace.js";
-import { registerRunCommandRule } from "./rule.js";
+import { makeRunCommandRule } from "./rule.js";
+
+/** The rule behind an engine. The app asks it directly, for a dev server's
+ *  argv (ADR 0083 §5); these tests ask it as a tool's rule was asked. */
+const registerRunCommandRule = (engine: RulePermissionEngine): void =>
+  engine.registerRule("run_command", makeRunCommandRule());
 
 let ws: TmpWorkspace;
 afterEach(async () => {

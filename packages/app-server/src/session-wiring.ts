@@ -22,14 +22,14 @@
  * callbacks are the front-end's own).
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type AgentEvent,
   type AskResolver,
+  BACKEND_CONTRACT,
   BackendContextBuilder,
-  type BackendContract,
   type BrowserHost,
   CodingAgentRuntime,
   type CompletionProviderAdapter,
@@ -49,7 +49,6 @@ import {
   type TerminalRecordBlock,
   type WebClient,
   WorkspacePermissions,
-  windowsBackendHostNote,
   wireTaskScopedApprovalCache,
 } from "@herta/core";
 import {
@@ -95,25 +94,19 @@ import {
   browserReadTool,
   browserScreenshotTool,
   createMinimalTools,
-  createMvpTools,
   type DigestModel,
   describeRepoContext,
   diffCommittedRange,
   digestToolFor,
   findBash,
-  gitDiffTool,
-  gitStatusTool,
   PersistentShell,
   primeConsoleEncoding,
   primeShellPaths,
   probeRepoState,
   registerBrowserRules,
   registerDevServer,
-  registerEditFileRule,
   registerMinimalRules,
-  registerRunCommandRule,
   registerWebRules,
-  registerWriteNewFileRule,
   shellWorkspaceHint,
   viewImageToolFor,
 } from "@herta/tools";
@@ -344,12 +337,6 @@ export interface BackendStackOpts {
   /** Record-store anchor (project memory lives under it). */
   readonly workspaceRoot: string;
   readonly lang: PromptLang;
-  /** True on both hosts: 板砖 runs on the persistent bash and nothing else
-   *  (ADR 0086). Without a bash on this machine the stack has no backend and
-   *  says so through `unavailable`; the standard set is not fallen back to.
-   *  `false` builds the retired standard set, which only its own tests still
-   *  ask for until it is deleted. */
-  readonly wantMinimal: boolean;
   /** 板砖's provider, or a getter for the live one (ADR 0081): resolved when
    *  each dispatch builds its runtime, so a run in flight keeps its own. */
   readonly backendProvider: ProviderAdapter | (() => ProviderAdapter);
@@ -363,8 +350,8 @@ export interface BackendStackOpts {
   /** The digest tool's side model (ADR 0043); null mounts the tool as
    *  `unavailable` (no key, tests). */
   readonly digestModel: DigestModel | null;
-  /** The web seam (ADR 0080): mounts `web_search` / `web_fetch` on either
-   *  contract. A host passes one whenever the session has a DeepSeek key
+  /** The web seam (ADR 0080): mounts `web_search` / `web_fetch`. A host
+   *  passes one whenever the session has a DeepSeek key
    *  (§4 — the environment decides, never a preference); absent or null
    *  leaves the tools out (tests, labs). */
   readonly webClient?: WebClient | null;
@@ -374,10 +361,8 @@ export interface BackendStackOpts {
   /** The session's dev servers (ADR 0083 §5): the desktop's main hands a
    *  launcher; the CLI none, and then there is no dev_server. */
   readonly servers?: ServerHost | null;
-  /** Test seam for the host-note decision (ADR 0044); defaults to
-   *  `process.platform`. On "win32" the STANDARD contract carries
-   *  `windowsBackendHostNote` — the minimal contract never does (it runs on
-   *  bash by construction). */
+  /** Test seam for the host-note decision (ADR 0044) and the no-bash
+   *  message's wording; defaults to `process.platform`. */
   readonly platform?: NodeJS.Platform;
   /** Builds the front-end's ask resolver once the cache and the
    *  workspace's permission choices it consults exist. The returned
@@ -404,7 +389,7 @@ export interface BackendStackOpts {
 
 /**
  * No bash on this machine, so 板砖 cannot run (ADR 0086, owner 2026-11-12).
- * The standard tool set used to step in here without a word; it is retired,
+ * The standard tool set used to step in here without a word; it is deleted,
  * and a session in this state says so instead: a note when it starts, and
  * this error when Herta dispatches, which the bridge shows as the run's
  * failure with the remedy in it.
@@ -434,9 +419,10 @@ export function backendUnavailableMessage(
 }
 
 export interface BackendStack {
-  readonly contract: BackendContract;
-  /** The bash 板砖 runs on; null when none was found (see `unavailable`) or
-   *  the retired standard set was asked for. */
+  /** The tool set's name, as a run's journal records it (`BACKEND_CONTRACT`):
+   *  a journal that names another is not offered for continuing. */
+  readonly contract: typeof BACKEND_CONTRACT;
+  /** The bash 板砖 runs on; null when none was found (see `unavailable`). */
   readonly bashPath: string | null;
   /** Why this stack has no backend, or null when it has one. */
   readonly unavailable: "no_bash" | null;
@@ -455,18 +441,6 @@ export interface BackendStack {
    *  when the first document is attached; the builder lists tools per
    *  brief, so the next dispatch sees it. */
   readonly mountDigestTool: () => void;
-  /** Re-decide the git tools from the CURRENT workspace (ADR 0067): mounted
-   *  inside a git repository, unmounted outside. Standard contract only —
-   *  the minimal contract's bash runs git itself. The session calls it after
-   *  a workspace move; a no-op when nothing changes. */
-  readonly refreshGitTools: () => void;
-}
-
-/** A workspace is "inside a git repository" when it carries a `.git` entry
- *  (a directory, or the file a worktree keeps). Cheap and synchronous: the
- *  decision is made at build and at a workspace move, never per call. */
-export function hasGitDir(workspace: string): boolean {
-  return existsSync(join(workspace, ".git"));
 }
 
 /**
@@ -482,25 +456,22 @@ export function hasGitDir(workspace: string): boolean {
  * UTF-8 (`console-decode.ts`, review 2026-11-10). A host that skips this
  * reads everything as UTF-8, as before.
  */
-export function prepareBackendStack(opts: {
-  readonly wantMinimal: boolean;
-}): Promise<void> {
+export function prepareBackendStack(): Promise<void> {
   return Promise.all([
-    opts.wantMinimal ? primeShellPaths(findBash()) : Promise.resolve(),
+    primeShellPaths(findBash()),
     primeConsoleEncoding(),
   ]).then(() => undefined);
 }
 
 /** Which host note a session's backend frame carries (ADR 0044, amended
- *  2026-09-23), as a spreadable deps fragment. Exported for its tests. */
+ *  2026-09-23), as a spreadable deps fragment: macOS's, because the Mac's
+ *  shell is a BSD userland. Windows had one for the standard set, which told
+ *  it there was no bash; with no bash there is no backend now (ADR 0086).
+ *  Exported for its tests. */
 export function hostNoteFor(
   platform: NodeJS.Platform,
-  contract: BackendContract,
   lang: "zh" | "en",
 ): { hostNote?: string } {
-  if (platform === "win32" && contract === "standard") {
-    return { hostNote: windowsBackendHostNote(lang) };
-  }
   if (platform === "darwin") return { hostNote: darwinBackendHostNote(lang) };
   return {};
 }
@@ -530,12 +501,12 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // each backend brief ends, so a remembered allow never outlives the task.
   wireTaskScopedApprovalCache(bus, approvalCache);
 
-  // Tool registry — the trained two-tool shape (+ the two record channels)
-  // on the machine's bash (ADR 0040). With no bash there is no backend
-  // (ADR 0086): the standard set used to be fallen back to here, silently.
-  const bashPath = opts.wantMinimal ? findBash() : null;
-  const contract: BackendContract = opts.wantMinimal ? "minimal" : "standard";
-  const unavailable = opts.wantMinimal && bashPath === null ? "no_bash" : null;
+  // Tool registry — the trained two-tool shape (+ the record channels) on
+  // the machine's bash (ADR 0040), and nothing else: the standard set that
+  // used to be fallen back to here, silently, is deleted (ADR 0086). With no
+  // bash there is no backend.
+  const bashPath = findBash();
+  const unavailable = bashPath === null ? "no_bash" : null;
   const backendTools = new InMemoryToolRegistry();
   // The shell's own spelling of the workspace, read fresh per schema /
   // prompt build so a mid-session workspace change is reflected.
@@ -545,7 +516,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       : new PersistentShell({ bashPath, workspaceRoot: wsHolder.current })
           .workspaceShellPath;
   // Whether the backend MODEL can read a picture (ADR 0048 §5). Mounts
-  // `view_image` on either contract; false everywhere else, so a model
+  // `view_image`; false everywhere else, so a model
   // without vision is never told it can look.
   const backendModelNow = (): string =>
     typeof opts.backendModel === "function"
@@ -557,34 +528,22 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
       : opts.backendProvider;
   const vision = isVisionModel(backendModelNow());
   // The toolset follows the environment, per session (ADR 0067): the
-  // digest tool waits for a document, the git tools for a repository. Both
-  // decisions are made here and at the two events that change them —
-  // never per turn, since the tools array heads the cached prefix.
-  if (contract === "minimal") {
-    // No bash, no tools: nothing is mounted for a backend that cannot run.
-    for (const t of bashPath === null
-      ? []
-      : createMinimalTools({
-          bashPath,
-          workspaceShellPath,
-          digestModel: opts.digestModel,
-          lang,
-          vision,
-          digest: false,
-          webClient: opts.webClient ?? null,
-        }))
-      backendTools.register(t);
-  } else {
-    for (const t of createMvpTools({
-      digestModel: opts.digestModel,
-      lang,
-      vision,
-      digest: false,
-      gitTools: hasGitDir(wsHolder.current),
-      webClient: opts.webClient ?? null,
-    }))
-      backendTools.register(t);
-  }
+  // digest tool waits for a document. The decision is made here and at the
+  // event that changes it — never per turn, since the tools array heads the
+  // cached prefix.
+  // No bash, no tools: nothing is mounted for a backend that cannot run.
+  for (const t of bashPath === null
+    ? []
+    : createMinimalTools({
+        bashPath,
+        workspaceShellPath,
+        digestModel: opts.digestModel,
+        lang,
+        vision,
+        digest: false,
+        webClient: opts.webClient ?? null,
+      }))
+    backendTools.register(t);
   const mountDigestTool = (): void => {
     if (backendTools.get("digest_document") !== undefined) return;
     backendTools.register(
@@ -592,45 +551,22 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     );
   };
   if (opts.attachmentsPresent === true) mountDigestTool();
-  const refreshGitTools = (): void => {
-    if (contract !== "standard") return;
-    const want = hasGitDir(wsHolder.current);
-    const have = backendTools.get("git_status") !== undefined;
-    if (want && !have) {
-      backendTools.register(gitStatusTool());
-      backendTools.register(gitDiffTool());
-    } else if (!want && have) {
-      backendTools.unregister("git_status");
-      backendTools.unregister("git_diff");
-    }
-  };
 
   const backendBuilder = new BackendContextBuilder({
     tools: backendTools,
-    contract,
     workspaceHint: () =>
-      contract === "minimal" && bashPath !== null
+      bashPath !== null
         ? shellWorkspaceHint(bashPath, wsHolder.current, lang)
         : undefined,
-    // ADR 0044: the standard contract on Windows says what the host is —
-    // without it the backend's Unix habits (grep/sed/ls) are a not_found
-    // each, which is what a bash-less machine's user reads as "很多命令
-    // 执行不了". win32 standard only. macOS (amended 2026-09-23): BOTH
-    // contracts, because the GNU habits (`sed -i`, `grep -P`, bash-4 syntax)
-    // fail in the Mac's BSD shell as much as through run_command. Per
-    // SESSION, like the toolset (ADR 0067) — never a per-turn prompt change.
-    // The note texts live in core.
-    ...hostNoteFor(opts.platform ?? process.platform, contract, lang),
+    // ADR 0044 (amended 2026-09-23): on macOS the frame says what the host
+    // is, because the GNU habits (`sed -i`, `grep -P`, bash-4 syntax) fail
+    // in the Mac's BSD shell. Per SESSION, like the toolset (ADR 0067) —
+    // never a per-turn prompt change. The note's text lives in core.
+    ...hostNoteFor(opts.platform ?? process.platform, lang),
   });
 
   // Permission rules attach to the shared engine.
-  if (contract === "minimal") {
-    if (bashPath !== null) registerMinimalRules(permissions, { bus, bashPath });
-  } else {
-    registerEditFileRule(permissions, { bus });
-    registerWriteNewFileRule(permissions, { bus });
-    registerRunCommandRule(permissions);
-  }
+  if (bashPath !== null) registerMinimalRules(permissions, { bus, bashPath });
   // Neither web tool asks (ADR 0080 §3); the rule says so explicitly.
   if (opts.webClient != null) registerWebRules(permissions);
   // The page steps (ADR 0083 §6–§7): loopback only, judged before each step.
@@ -719,12 +655,12 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
         : {}),
       // The undo store (ADR 0074): what the editors replace, per segment.
       ...(opts.undoDir !== undefined ? { undoDir: opts.undoDir } : {}),
-      contract,
+      contract: BACKEND_CONTRACT,
     });
   };
 
   return {
-    contract,
+    contract: BACKEND_CONTRACT,
     bashPath,
     unavailable,
     bus,
@@ -736,7 +672,6 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     memory,
     runtimeFactory,
     mountDigestTool,
-    refreshGitTools,
   };
 }
 

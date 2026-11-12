@@ -362,11 +362,6 @@ export async function buildConfig(
     // off-enum value in a hand-edited settings.json falls back to it. Live
     // since ADR 0081: a change also reaches the running host (settings-ipc).
     thinking: live.thinking,
-    // 板砖's tool contract (ADR 0040): the bash one, always. The standard
-    // set, its Settings row and its HERTA_BACKEND_CONTRACT knob are
-    // retired (ADR 0086); without a bash the session has no backend and
-    // says so.
-    backendContract: "minimal",
   };
 }
 

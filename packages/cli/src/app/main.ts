@@ -296,11 +296,10 @@ export async function main(
   // @herta/app-server's session-wiring.ts): tools for the contract asked
   // for, permission engine + rules, context builder, per-dispatch runtime
   // factory, the shared bus. 板砖 runs on the trained two-tool shape (+ the
-  // two record channels) over this machine's bash (ADR 0040), and on nothing
-  // else: the standard set and its HERTA_BACKEND_CONTRACT knob are retired
+  // record channels) over this machine's bash (ADR 0040), and on nothing
+  // else: the standard set and its HERTA_BACKEND_CONTRACT knob are gone
   // (ADR 0086). Without a bash there is no backend, said below.
-  const wantMinimal = true;
-  await prepareBackendStack({ wantMinimal });
+  await prepareBackendStack();
   // ADR 0075: the automatic reviewer, as the desktop mounts it — it answers
   // only where automatic review is on (`/permissions auto-review on`, or [r]
   // on a prompt; off by default in the CLI, which has no managed sandbox). It reads
@@ -313,7 +312,6 @@ export async function main(
     wsHolder,
     workspaceRoot,
     lang,
-    wantMinimal,
     backendProvider,
     // ADR 0048 §5: the stack mounts `view_image` only when this model can
     // actually see — one rule for both hosts (isVisionModel in the wiring);

@@ -82,16 +82,6 @@ export interface AppServerConfig {
    *  block disabled. Settings → Coprocessor persists this (GUI,
    *  restart-to-apply); default "high". */
   readonly thinking?: "low" | "high" | "max" | "off";
-  /**
-   * 板砖's model-facing tool contract (ADR 0040). Both hosts pass `minimal`:
-   * persistent `bash` + `str_replace_editor` (+ report_finding /
-   * show_excerpt) with the short 板砖 prompt. It needs a bash on the machine
-   * (`findBash()`); when none is found the session has no backend and says
-   * so (ADR 0086). `standard`, and an absent value, build the retired
-   * 15-tool set: no host asks for it, and only its own tests do until it is
-   * deleted.
-   */
-  readonly backendContract?: "standard" | "minimal";
   /** Supervisor quality gate. Default ENABLED — since M-prompts-1
    *  (2026-07-05) this config flag replaces the old
    *  `.herta/narrative/supervisor_reference.txt` existence-toggle. */

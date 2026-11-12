@@ -172,7 +172,7 @@ async function stoppedSession(
 
 describe("the 继续 offer (ADR 0071 §1.4)", () => {
   it("stands after a Stop, as after a crash", async () => {
-    const session = await stoppedSession(mkConfig(), { contract: "standard" });
+    const session = await stoppedSession(mkConfig(), { contract: "minimal" });
     try {
       expect(session.resumable).toBe(true);
     } finally {
@@ -182,11 +182,13 @@ describe("the 继续 offer (ADR 0071 §1.4)", () => {
 
   it("is not made for a session with no journal (older than ADR 0071), nor for a run under another contract or in another workspace", async () => {
     const old = await stoppedSession(mkConfig(), null);
-    const other = await stoppedSession(mkConfig(), { contract: "minimal" });
+    // A run on the standard tool set, from a build that still had it (ADR
+    // 0086): its calls name tools that no longer exist.
+    const other = await stoppedSession(mkConfig(), { contract: "standard" });
     // The run's workspace was changed since (review 2026-09-30): continuing
     // it here would run the old run's paths in the new place.
     const moved = await stoppedSession(mkConfig(), {
-      contract: "standard",
+      contract: "minimal",
       workspaceRoot: join(mkConfig().workspaceRoot, "elsewhere"),
     });
     try {
@@ -235,7 +237,7 @@ describe("继续 (ADR 0071 §1.4–§1.5)", () => {
           v: 1,
           taskId: "task-resume",
           at: "2026-09-28T10:00:00.000Z",
-          contract: "standard",
+          contract: "minimal",
           recordLength: 2,
           workspaceRoot: cfg.workspaceRoot,
           brief: { taskId: "task-resume" },
@@ -257,7 +259,7 @@ describe("继续 (ADR 0071 §1.4–§1.5)", () => {
             toolCalls: [
               {
                 id: "c1",
-                tool: "run_command",
+                tool: "bash",
                 input: { command: "npm test" },
               },
             ],

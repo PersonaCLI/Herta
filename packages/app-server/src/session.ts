@@ -2356,9 +2356,7 @@ export class SessionImpl implements Session {
     const steer = new SteerChannel();
     // The one thing the synchronous build would block on (a bash start, on
     // the desktop app's main thread) is found out here, awaited.
-    await prepareBackendStack({
-      wantMinimal: config.backendContract === "minimal",
-    });
+    await prepareBackendStack();
     const backend = createBackendStack({
       wsHolder,
       workspaceRoot,
@@ -2372,7 +2370,6 @@ export class SessionImpl implements Session {
       // one the session has no backend: Settings says so (`bashFound`), a NEW
       // session carries one `→ 系统` note naming the remedy, and a dispatch
       // fails with the same words (`backendUnavailableMessage`).
-      wantMinimal: config.backendContract === "minimal",
       // ADR 0067: a reopened record that already carries a document mounts
       // `digest_document` from the start; a fresh session waits for one.
       attachmentsPresent: initialRecord.some(
@@ -2705,12 +2702,11 @@ export class SessionImpl implements Session {
     const session = new SessionImpl({
       steer,
       bus,
-      // ADR 0067: the git tools follow the workspace, the digest tool waits
-      // for a document — both decided by the backend stack.
+      // ADR 0067: the digest tool waits for a document, decided by the
+      // backend stack.
       // The session's dev servers stop when its workspace moves (ADR 0083
       // §5): they serve the folder that was.
       onWorkspaceChanged: () => {
-        backend.refreshGitTools();
         void opts.servers?.stopAll();
       },
       onDocumentAttached: () => backend.mountDigestTool(),

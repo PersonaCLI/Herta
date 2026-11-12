@@ -3,12 +3,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { ToolCallJournal, ToolCallUndo, ToolContext } from "@herta/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { editFileTool } from "./edit-file/index.js";
 import { runCommand } from "./run-command/runner.js";
 import { strReplaceEditorTool } from "./str-replace-editor/index.js";
 import { mkTmpWorkspace, type TmpWorkspace } from "./testing/tmp-workspace.js";
 import { mkToolContext } from "./testing/tool-context.js";
-import { writeNewFileTool } from "./write-new-file/index.js";
 
 /** A journal that remembers what the file held when each write was
  *  recorded — the entry must come BEFORE the write lands. */
@@ -54,23 +52,40 @@ function ctxWith(journal: FakeJournal): ToolContext {
   return { ...mkToolContext({ workspaceRoot: ws.root }), journal };
 }
 
+/** The one editor (ADR 0086). `bashPath: null`: native paths, no shell. */
+const editor = () =>
+  strReplaceEditorTool({ bashPath: null, workspaceShellPath: () => ws.root });
+/** A `str_replace` call on a workspace file. */
+const replace = (
+  file: string,
+  old_str: string,
+  new_str: string,
+  id = "c1",
+) => ({
+  id,
+  tool: "str_replace_editor",
+  input: {
+    command: "str_replace",
+    path: join(ws.root, file),
+    old_str,
+    new_str,
+  },
+});
+/** A `create` call. */
+const create = (file: string, file_text: string, id = "c1") => ({
+  id,
+  tool: "str_replace_editor",
+  input: { command: "create", path: join(ws.root, file), file_text },
+});
+
 describe("every writer records the write in the run's journal first (ADR 0071)", () => {
-  it("edit_file: the hash before and the hash after, recorded while the file still holds the old text", async () => {
+  it("an edit: the hash before and the hash after, recorded while the file still holds the old text", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\nbeta\n" });
     const abs = join(ws.root, "a.txt");
     const journal = new FakeJournal();
-    const ctx = ctxWith(journal);
-    ctx.reads.record(abs, sha("alpha\nbeta\n"));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
+    const r = await editor().run(
+      replace("a.txt", "alpha", "ALPHA"),
+      ctxWith(journal),
       noop,
     );
     expect(r.ok).toBe(true);
@@ -85,37 +100,11 @@ describe("every writer records the write in the run's journal first (ADR 0071)",
     expect(sha(readFileSync(abs))).toBe(journal.writes[0]?.after);
   });
 
-  it("edit_file: a write the journal cannot record is not performed", async () => {
-    ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
-    const abs = join(ws.root, "a.txt");
-    const ctx = ctxWith(new FakeJournal(true));
-    ctx.reads.record(abs, sha("alpha\n"));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
-      noop,
-    );
-    expect(r.ok).toBe(false);
-    expect(r.error?.code).toBe("journal_unavailable");
-    expect(readFileSync(abs, "utf8")).toBe("alpha\n");
-  });
-
-  it("write_new_file: a new file has no hash before; refused, nothing is created", async () => {
+  it("a new file has no hash before; a create the journal cannot record creates nothing", async () => {
     ws = await mkTmpWorkspace({});
     const journal = new FakeJournal();
-    const ok = await writeNewFileTool().run(
-      {
-        id: "c1",
-        tool: "write_new_file",
-        input: { path: "n.txt", content: "hi" },
-      },
+    const ok = await editor().run(
+      create("n.txt", "hi"),
       ctxWith(journal),
       noop,
     );
@@ -128,12 +117,8 @@ describe("every writer records the write in the run's journal first (ADR 0071)",
         onDiskThen: null,
       },
     ]);
-    const refused = await writeNewFileTool().run(
-      {
-        id: "c2",
-        tool: "write_new_file",
-        input: { path: "m.txt", content: "x" },
-      },
+    const refused = await editor().run(
+      create("m.txt", "x", "c2"),
       ctxWith(new FakeJournal(true)),
       noop,
     );
@@ -250,26 +235,14 @@ class LoggingJournal extends FakeJournal {
 }
 
 describe("every writer leaves what it replaces with the undo store (ADR 0074 §1)", () => {
-  it("edit_file: the file's exact bytes, BOM and all, after the journal entry and before the write", async () => {
+  it("an edit: the file's exact bytes, BOM and all, after the journal entry and before the write", async () => {
     const original = "﻿alpha\nbeta\n";
     ws = await mkTmpWorkspace({ "a.txt": original });
     const abs = join(ws.root, "a.txt");
     const log: string[] = [];
     const undo = new FakeUndo(log);
     const ctx = { ...ctxWith(new LoggingJournal(log)), undo };
-    ctx.reads.record(abs, sha(Buffer.from(original, "utf8")));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
-      noop,
-    );
+    const r = await editor().run(replace("a.txt", "alpha", "ALPHA"), ctx, noop);
     expect(r.ok).toBe(true);
     expect(log).toEqual(["journal", "undo"]);
     expect(undo.captures).toHaveLength(1);
@@ -280,51 +253,12 @@ describe("every writer leaves what it replaces with the undo store (ADR 0074 §1
     expect(c?.after).toBe(sha(readFileSync(abs)));
   });
 
-  it("write_new_file and str_replace_editor's create hand over nothing before; its edits hand over the bytes they read", async () => {
+  it("a create hands over nothing before; an edit hands over the bytes it read", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "foo\nbar\n" });
     const undo = new FakeUndo();
     const ctx = { ...ctxWith(new FakeJournal()), undo };
-    const fresh = await writeNewFileTool().run(
-      {
-        id: "c1",
-        tool: "write_new_file",
-        input: { path: "n.txt", content: "hello\n" },
-      },
-      ctx,
-      noop,
-    );
-    expect(fresh.ok).toBe(true);
-    const tool = strReplaceEditorTool({
-      bashPath: null,
-      workspaceShellPath: () => ws.root,
-    });
-    await tool.run(
-      {
-        id: "c2",
-        tool: "str_replace_editor",
-        input: {
-          command: "create",
-          path: join(ws.root, "b.txt"),
-          file_text: "new",
-        },
-      },
-      ctx,
-      noop,
-    );
-    await tool.run(
-      {
-        id: "c3",
-        tool: "str_replace_editor",
-        input: {
-          command: "str_replace",
-          path: join(ws.root, "a.txt"),
-          old_str: "bar",
-          new_str: "BAR",
-        },
-      },
-      ctx,
-      noop,
-    );
+    await editor().run(create("b.txt", "new"), ctx, noop);
+    await editor().run(replace("a.txt", "bar", "BAR", "c2"), ctx, noop);
     expect(
       undo.captures.map((c) => [
         relative(ws.root, c.path).replaceAll("\\", "/"),
@@ -332,7 +266,6 @@ describe("every writer leaves what it replaces with the undo store (ADR 0074 §1
         c.after,
       ]),
     ).toEqual([
-      ["n.txt", null, sha("hello\n")],
       ["b.txt", null, sha("new")],
       ["a.txt", "foo\nbar\n", sha("foo\nBAR\n")],
     ]);
@@ -340,68 +273,30 @@ describe("every writer leaves what it replaces with the undo store (ADR 0074 §1
 
   it("a write the journal refuses leaves nothing with the undo store", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
-    const abs = join(ws.root, "a.txt");
     const undo = new FakeUndo();
     const ctx = { ...ctxWith(new FakeJournal(true)), undo };
-    ctx.reads.record(abs, sha("alpha\n"));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
-      noop,
-    );
+    const r = await editor().run(replace("a.txt", "alpha", "ALPHA"), ctx, noop);
     expect(r.error?.code).toBe("journal_unavailable");
     expect(undo.captures).toEqual([]);
+    expect(readFileSync(join(ws.root, "a.txt"), "utf8")).toBe("alpha\n");
   });
 
   it("an undo store that fails never stops the write", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
-    const abs = join(ws.root, "a.txt");
     const ctx = {
       ...ctxWith(new FakeJournal()),
       undo: new FakeUndo([], true),
     };
-    ctx.reads.record(abs, sha("alpha\n"));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
-      noop,
-    );
+    const r = await editor().run(replace("a.txt", "alpha", "ALPHA"), ctx, noop);
     expect(r.ok).toBe(true);
-    expect(readFileSync(abs, "utf8")).toBe("ALPHA\n");
+    expect(readFileSync(join(ws.root, "a.txt"), "utf8")).toBe("ALPHA\n");
   });
 
   it("with no journal (the CLI), the undo store still gets the capture", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "alpha\n" });
-    const abs = join(ws.root, "a.txt");
     const undo = new FakeUndo();
     const ctx = { ...mkToolContext({ workspaceRoot: ws.root }), undo };
-    ctx.reads.record(abs, sha("alpha\n"));
-    const r = await editFileTool().run(
-      {
-        id: "c1",
-        tool: "edit_file",
-        input: {
-          path: "a.txt",
-          hunks: [{ search: "alpha", replace: "ALPHA" }],
-        },
-      },
-      ctx,
-      noop,
-    );
+    const r = await editor().run(replace("a.txt", "alpha", "ALPHA"), ctx, noop);
     expect(r.ok).toBe(true);
     expect(undo.captures.map((c) => c.before?.toString("utf8"))).toEqual([
       "alpha\n",

@@ -14,8 +14,6 @@ import type {
   ToolResult,
 } from "@herta/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { globTool } from "../glob/index.js";
-import { searchTextTool } from "../search-text/index.js";
 import {
   MAX_EXCERPT_CHARS,
   MAX_EXCERPT_LINES,
@@ -225,79 +223,11 @@ describe("show_excerpt", () => {
     expect(r.data?.excerpt).toContain("4.21e-22");
   });
 
-  it("the log dir is LISTABLE and SEARCHABLE, so a receipt can be found before it is read", async () => {
-    // ADR 0036 opened .herta/logs to reads BY FULL PATH, which is enough only
-    // if you already know the filename — they are `<uuid>-call_NN_<op>.log`.
-    // Both persona re-test arcs watched the backend guess and fail, and one
-    // filled the gap by reciting the line from memory. The listing is a glob
-    // rooted at the log dir since list_files left (2026-09-18, ADR 0067).
-    mkdirSync(join(root, ".herta", "logs"), { recursive: true });
-    writeFileSync(
-      join(root, ".herta", "logs", "abc-call_00_xyz.log"),
-      "exit 0\np = 4.21e-22\n",
-    );
-    const listed = (await globTool().run(
-      {
-        id: "l1",
-        tool: "glob",
-        input: { pattern: "*.log", path: ".herta/logs" },
-      } as ToolCallRequest,
-      ctx(),
-      noopProgress,
-    )) as ToolResult<{ files: Array<{ path: string }> }>;
-    expect(listed.ok).toBe(true);
-    if (!listed.ok) return;
-    expect(listed.data?.files.some((e) => e.path.includes("call_00"))).toBe(
-      true,
-    );
-
-    const found = (await searchTextTool().run(
-      {
-        id: "s1",
-        tool: "search_text",
-        input: { pattern: "4\\.21e-22", path: ".herta/logs" },
-      } as ToolCallRequest,
-      ctx(),
-      noopProgress,
-    )) as ToolResult<{ matches: Array<{ path: string }> }>;
-    expect(found.ok).toBe(true);
-    if (!found.ok) return;
-    expect(found.data?.matches.length).toBeGreaterThan(0);
-  });
-
-  it("discovery stops at the log dir — .herta itself and tool-results stay denied", async () => {
-    mkdirSync(join(root, ".herta", "tool-results"), { recursive: true });
-    writeFileSync(join(root, ".herta", "tool-results", "c.json"), "{}\n");
-    const listRoot = (await globTool().run(
-      {
-        id: "l2",
-        tool: "glob",
-        input: { pattern: "**/*", path: ".herta" },
-      } as ToolCallRequest,
-      ctx(),
-      noopProgress,
-    )) as ToolResult<unknown>;
-    expect(listRoot.ok).toBe(false);
-    if (listRoot.ok) return;
-    expect(listRoot.error?.code).toBe("path_denied");
-
-    const listResults = (await globTool().run(
-      {
-        id: "l3",
-        tool: "glob",
-        input: { pattern: "**/*", path: ".herta/tool-results" },
-      } as ToolCallRequest,
-      ctx(),
-      noopProgress,
-    )) as ToolResult<unknown>;
-    expect(listResults.ok).toBe(false);
-  });
-
   it("still does NOT present tool-results — the unredacted subtree (ADR 0027 §5 residue)", async () => {
     // The asymmetry IS the redaction boundary: run_command logs are
     // secret-redacted at capture; tool-results is written verbatim, so
     // excerpting it would turn unredacted bytes into user-facing text.
-    // read_file keeps its navigation carve-out there; this tool does not.
+    // The shell reads there to page a saved result; this tool does not.
     mkdirSync(join(root, ".herta", "tool-results"), { recursive: true });
     writeFileSync(
       join(root, ".herta", "tool-results", "call-1.json"),

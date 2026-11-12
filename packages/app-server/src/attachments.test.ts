@@ -754,17 +754,6 @@ describe("attachmentDirFor", () => {
   });
 });
 
-describe("cross-package lockstep (review 2026-08-10)", () => {
-  it("the search cap equals the storage ceiling", async () => {
-    // Two packages, one promise: every file the ingest stores must be
-    // searchable, so search_text's attachment cap and the ingest's storage
-    // ceiling are the same number by contract, not coincidence. tools cannot
-    // import app-server (dependency direction), so this test is the coupling.
-    const { ATTACHMENT_SEARCH_MAX_BYTES } = await import("@herta/tools");
-    expect(ATTACHMENT_SEARCH_MAX_BYTES).toBe(MAX_ATTACHMENT_STORE_BYTES);
-  });
-});
-
 describe("ingest into a nested workspace dir", () => {
   it("creates the session directory on demand", async () => {
     const nested = join(ws, "deep");

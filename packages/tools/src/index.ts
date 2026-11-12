@@ -10,19 +10,8 @@ import {
   type DigestModel,
   digestDocumentTool,
 } from "./digest-document/index.js";
-import { editFileTool } from "./edit-file/index.js";
-import { gitDiffTool } from "./git-diff/index.js";
-import { gitStatusTool } from "./git-status/index.js";
-import { globTool } from "./glob/index.js";
 import { memorySaveTool } from "./memory-save/index.js";
-import { readFileTool } from "./read-file/index.js";
 import { reportFindingTool } from "./report-finding/index.js";
-import {
-  commandOutputTool,
-  commandStopTool,
-  runCommandTool,
-} from "./run-command/index.js";
-import { searchTextTool } from "./search-text/index.js";
 import { showExcerptTool } from "./show-excerpt/index.js";
 import {
   registerStrReplaceEditorRule,
@@ -30,8 +19,9 @@ import {
 } from "./str-replace-editor/index.js";
 import { viewImageTool } from "./view-image/index.js";
 import { webTools } from "./web/index.js";
-import { writeNewFileTool } from "./write-new-file/index.js";
 
+// A command's result as the record and the report read it. `bash` returns it.
+export type { RunCommandData } from "@herta/core";
 export {
   BASH_DESCRIPTION,
   BASH_TIMEOUT_MS,
@@ -97,13 +87,6 @@ export {
   isDigestSidecar,
   MAX_DIGEST_CHUNKS,
 } from "./digest-document/index.js";
-export type { EditFileData, EditFileRuleDeps } from "./edit-file/index.js";
-export {
-  editFileTool,
-  makeEditFileRule,
-  registerEditFileRule,
-} from "./edit-file/index.js";
-export type { EditFileInput } from "./edit-file/schema.js";
 export type { ToolErrorCode } from "./errors.js";
 export { TOOL_ERROR_CODES } from "./errors.js";
 export type {
@@ -154,16 +137,6 @@ export {
   describeWorkingDiff,
   MAX_WORKING_DIFF_BYTES,
 } from "./git/working-diff.js";
-export type { GitDiffData, GitDiffFile } from "./git-diff/index.js";
-export { gitDiffTool } from "./git-diff/index.js";
-export type { GitDiffInput } from "./git-diff/schema.js";
-export type { GitStatusData, GitStatusFile } from "./git-status/index.js";
-export { gitStatusTool } from "./git-status/index.js";
-export type { GitStatusInput } from "./git-status/schema.js";
-export { globToRegExp } from "./glob/glob-to-regex.js";
-export type { GlobData, GlobFileEntry } from "./glob/index.js";
-export { globTool } from "./glob/index.js";
-export type { GlobInput } from "./glob/schema.js";
 // The launcher (ADR 0083 §5): herta.launch.json, the session's dev servers,
 // and dev_server.
 export {
@@ -206,9 +179,6 @@ export {
   SAME_PROCESS_WINDOW_MS,
   sameProcessStart,
 } from "./process-reap.js";
-export type { ReadFileData } from "./read-file/index.js";
-export { readFileTool } from "./read-file/index.js";
-export type { ReadFileInput } from "./read-file/schema.js";
 export {
   findingClaimLanguageLine,
   MAX_FINDING_CITES,
@@ -218,18 +188,10 @@ export {
   type ReportFindingToolOpts,
   reportFindingTool,
 } from "./report-finding/index.js";
-export type { RunCommandData } from "./run-command/index.js";
-export {
-  commandOutputTool,
-  commandStopTool,
-  makeRunCommandRule,
-  registerRunCommandRule,
-  runCommandTool,
-} from "./run-command/index.js";
-// Exported for the attachment ingest (ADR 0033, 2026-08-10): run_command
-// output and search_text results already redact, and an uploaded document is
-// the same class of untrusted text reaching the record and a provider — one
-// definition of "secret-shaped", or none.
+// Exported for the attachment ingest (ADR 0033, 2026-08-10): a command's
+// output already redacts, and an uploaded document is the same class of
+// untrusted text reaching the record and a provider — one definition of
+// "secret-shaped", or none.
 export { redactSecrets } from "./run-command/redactor.js";
 // ADR 0075's reviewer: the risk a command carries whatever the model says.
 export {
@@ -239,18 +201,13 @@ export {
   type ReviewRisk,
   reviewRiskFloor,
 } from "./run-command/review-floor.js";
+// The argv rule (ADR 0086): the `run_command` tool is gone, and its rule is
+// what classifies a dev server's argv before it starts (ADR 0083 §5).
+export { makeRunCommandRule } from "./run-command/rule.js";
 export type { RunCommandInput } from "./run-command/schema.js";
 // A kill aimed at the app itself is blocked (2026-11-04); the desktop's main
 // hands over Electron's other processes.
 export { registerHostHelperPids } from "./run-command/self-kill.js";
-export type { SearchMatch, SearchTextData } from "./search-text/index.js";
-export {
-  ATTACHMENT_SEARCH_MAX_BYTES,
-  isAttachmentSearchRoot,
-  isHertaCarveOutSearchRoot,
-  searchTextTool,
-} from "./search-text/index.js";
-export type { SearchTextInput } from "./search-text/schema.js";
 export {
   MAX_EXCERPT_CHARS,
   MAX_EXCERPT_LINES,
@@ -301,19 +258,9 @@ export {
   previewImageUrl,
   publicAddress,
 } from "./web/preview-image.js";
-export type {
-  WriteNewFileData,
-  WriteNewFileRuleDeps,
-} from "./write-new-file/index.js";
-export {
-  makeWriteNewFileRule,
-  registerWriteNewFileRule,
-  writeNewFileTool,
-} from "./write-new-file/index.js";
-export type { WriteNewFileInput } from "./write-new-file/schema.js";
 
-/** The document-digest seam both contracts share (ADR 0043): the side model
- *  and the summary language. `model: null` mounts the tool in its
+/** The document-digest seam (ADR 0043): the side model and the summary
+ *  language. `model: null` mounts the tool in its
  *  `unavailable` state (no key / tests) rather than leaving it out, so the
  *  model learns the refusal instead of inventing a workaround. */
 export interface DigestToolsOpts {
@@ -338,15 +285,8 @@ export interface DigestToolsOpts {
    */
   readonly digest?: boolean;
   /**
-   * Mount `git_status` / `git_diff` (the standard contract only; the
-   * minimal contract's bash runs git itself). Default true. The wiring
-   * passes whether the workspace is inside a git repository and refreshes
-   * it when the workspace moves (ADR 0067).
-   */
-  readonly gitTools?: boolean;
-  /**
-   * The web seam (ADR 0080). Mounts `web_search` and `web_fetch` on either
-   * contract when given; absent or null leaves them out. The wiring passes
+   * The web seam (ADR 0080). Mounts `web_search` and `web_fetch` when
+   * given; absent or null leaves them out. The wiring passes
    * one whenever the session has a DeepSeek key (§4).
    */
   readonly webClient?: WebClient | null;
@@ -354,8 +294,8 @@ export interface DigestToolsOpts {
 
 /**
  * The digest tool as a stack mounts it later (ADR 0067): the same path
- * mapping the contract's other record channels use — the shell's spelling
- * on the minimal contract, identity on the standard one.
+ * mapping the other record channels use, the shell's spelling. With no bash
+ * (a test that builds the tool alone) paths are taken as they are.
  */
 export function digestToolFor(
   opts: DigestToolsOpts & { readonly bashPath: string | null },
@@ -386,7 +326,7 @@ export function viewImageToolFor(opts: {
 }
 
 export interface MinimalToolsOpts extends DigestToolsOpts {
-  /** From `findBash()`; the minimal contract cannot run without one. */
+  /** From `findBash()`; the set cannot run without one (ADR 0086). */
   bashPath: string;
   /** How the shell spells the workspace (schema example paths). Getter —
    *  the workspace can change between dispatches. */
@@ -394,11 +334,13 @@ export interface MinimalToolsOpts extends DigestToolsOpts {
 }
 
 /**
- * The minimal contract's tool set (ADR 0040): the trained shape's two tools
+ * 板砖's tool set, the only one (ADR 0040, ADR 0086; "minimal" is the name it
+ * had beside the standard set, and the name a run's journal still records):
+ * the trained shape's two tools
  * plus the record channels a shell cannot replace — `report_finding`
  * (conclusions reach the record and the report; the model's final prose
  * reaches nobody, D6), `show_excerpt` (lines the user asked to SEE; a
- * `view` is silent to the record like read_file is), and `digest_document`
+ * `view` is silent to the record), and `digest_document`
  * (ADR 0043: a whole attached document's content in one call — a shell can
  * only read it end to end).
  *
@@ -426,8 +368,8 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
       ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
     }),
     showExcerptTool({ mapPath }),
-    // Project memory on the default contract too (ADR 0077): ADR 0060's
-    // recall had nothing to read on a default install.
+    // Project memory (ADR 0077): ADR 0060's recall had nothing to read on
+    // a default install until this was mounted here.
     memorySaveTool(),
     ...(opts.digest !== false
       ? [
@@ -447,8 +389,7 @@ export function createMinimalTools(opts: MinimalToolsOpts): HertaTool[] {
   ];
 }
 
-/** Permission rules for `createMinimalTools` (edit/write rules for the
- *  standard tools stay registered by the caller if it also mounts them). */
+/** Permission rules for `createMinimalTools`. */
 export function registerMinimalRules(
   engine: RulePermissionEngine,
   deps: { bus?: EventBus<AgentEvent>; bashPath: string | null },
@@ -457,54 +398,18 @@ export function registerMinimalRules(
   registerStrReplaceEditorRule(engine, deps);
 }
 
-export function createMvpTools(
-  opts: DigestToolsOpts = { digestModel: null },
-): HertaTool[] {
-  return [
-    readFileTool(),
-    // Presentation, not navigation: read_file is silent to the user and to
-    // Herta, so "show me what's in that file" needs its own tool (ADR 0027).
-    showExcerptTool(),
-    // list_files left the set on 2026-09-18 (ADR 0067): glob finds files by
-    // name and run_command's `ls`/`dir` lists a directory, the way Claude
-    // Code retired its LS tool. ~160 schema tokens per call, every call.
-    searchTextTool(),
-    globTool(),
-    editFileTool(),
-    runCommandTool(),
-    commandOutputTool(),
-    commandStopTool(),
-    writeNewFileTool(),
-    // Structured git reads — inside a git repository only (ADR 0067): the
-    // wiring decides from the workspace and refreshes on a move.
-    ...(opts.gitTools !== false ? [gitStatusTool(), gitDiffTool()] : []),
-    memorySaveTool(),
-    // The backend's channel for CONCLUSIONS (ADR 0039): its final prose has
-    // none by design, so an analysis brief needs this or it delivers nothing.
-    reportFindingTool(opts.lang !== undefined ? { lang: opts.lang } : {}),
-    // A whole attached document's content in one call (ADR 0043) — see
-    // DigestToolsOpts.digest for when the wiring mounts it instead.
-    ...(opts.digest !== false
-      ? [
-          digestDocumentTool({
-            model: opts.digestModel,
-            ...(opts.lang !== undefined ? { lang: opts.lang } : {}),
-          }),
-        ]
-      : []),
-    // Vision-capable models only (ADR 0048 §5) — see createMinimalTools.
-    ...(opts.vision === true ? [viewImageTool()] : []),
-    // The web (ADR 0080) — see createMinimalTools.
-    ...(opts.webClient != null ? webTools(opts.webClient) : []),
-  ];
-}
-
 // The lore tools (lore_search / lore_open / lore_neighbors) were removed
-// 2026-07-06: no runtime ever registered them (both bootstraps use only
-// createMvpTools), and the packaged app deliberately ships without the
-// knowledge DB they query. If canon search ever becomes a real feature,
-// restore them from git history as a power-user, bring-your-own-DB tool
-// set — the DB stays non-redistributable either way.
+// 2026-07-06: no runtime ever registered them, and the packaged app
+// deliberately ships without the knowledge DB they query. If canon search
+// ever becomes a real feature, restore them from git history as a
+// power-user, bring-your-own-DB tool set — the DB stays non-redistributable
+// either way.
+//
+// The standard tool set (read_file, search_text, glob, edit_file,
+// write_new_file, run_command with its background pair, git_status,
+// git_diff, and `createMvpTools`) was deleted in ADR 0086. What the bash set
+// stands on stayed: `edit-file/engine.ts`, and from `run-command/` the
+// classifier, the argv rule, the redactor, the runner and the guards.
 export {
   ConsoleDecoder,
   consoleLegacyEncoding,

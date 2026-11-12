@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -20,21 +19,18 @@ import { FakeAskResolver, FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createMinimalTools,
-  createMvpTools,
-  editFileTool,
-  readFileTool,
-  registerEditFileRule,
-  registerRunCommandRule,
-  registerWriteNewFileRule,
+  registerStrReplaceEditorRule,
   reportFindingTool,
-  runCommandTool,
-  writeNewFileTool,
+  showExcerptTool,
+  strReplaceEditorTool,
 } from "./index.js";
 import { mkTmpWorkspace, type TmpWorkspace } from "./testing/tmp-workspace.js";
 
 /**
- * MVP tools end-to-end. Drives `CodingAgentRuntime.runBrief` directly with
- * a synthesized brief. The earlier version of this file ran turns through
+ * The tool set end-to-end. These ran the standard set until it was deleted
+ * (ADR 0086); they now run the tools 板砖 has, minus `bash` itself, which
+ * needs a real shell and has its own suite. Drives
+ * `CodingAgentRuntime.runBrief` directly with a synthesized brief. The earlier version of this file ran turns through
  * the deterministic V1 actor wrapper; with V1 deleted, the actor added no
  * signal here — the assertions are about the tool/turn-loop integration,
  * not actor framing — so we drive the backend runtime directly.
@@ -89,8 +85,27 @@ afterEach(async () => {
   if (ws) await ws.cleanup();
 });
 
-describe("MVP tools end-to-end with CodingAgentRuntime", () => {
-  it("model can call read_file and the result flows through the turn loop", async () => {
+/** The set as the app builds it, on a bash that is never started here. */
+const toolSet = (opts: { vision?: boolean } = {}): HertaTool[] =>
+  createMinimalTools({
+    bashPath: "/nonexistent/bash",
+    workspaceShellPath: () => "/ws",
+    digestModel: null,
+    ...opts,
+  });
+
+/** The editor alone, on native paths, with its rule behind an engine. */
+function editorOn(permissions: RulePermissionEngine, bus: unknown) {
+  registerStrReplaceEditorRule(permissions, {
+    bus: bus as InMemoryEventBus<AgentEvent>,
+    bashPath: null,
+  });
+}
+const editor = (root: () => string): HertaTool =>
+  strReplaceEditorTool({ bashPath: null, workspaceShellPath: root });
+
+describe("the tool set end-to-end with CodingAgentRuntime", () => {
+  it("the model can call a tool and the result flows through the turn loop", async () => {
     ws = await mkTmpWorkspace({
       "src/hello.ts": "export const hello = 'world';\n",
     });
@@ -98,13 +113,13 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     const provider = new FakeProvider({
       turns: [
         [
-          { type: "text-delta", text: "let me read the file" },
+          { type: "text-delta", text: "let me show the file" },
           {
             type: "tool-call-request",
             call: {
               id: "tc1",
-              tool: "read_file",
-              input: { path: "src/hello.ts" },
+              tool: "show_excerpt",
+              input: { path: "src/hello.ts", fromLine: 1, toLine: 1 },
             },
           },
           { type: "finish", reason: "tool_calls" },
@@ -117,7 +132,7 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     });
 
     const tools = new InMemoryToolRegistry();
-    for (const t of createMvpTools()) tools.register(t);
+    tools.register(showExcerptTool());
     const { runtime, bus } = mkRuntime({
       provider,
       tools,
@@ -147,38 +162,33 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     if (finished?.type === "tool.call.finished") {
       expect(finished.id).toBe("tc1");
       expect(finished.result.ok).toBe(true);
-      const data = finished.result.data as { content: string };
-      expect(data.content).toContain("hello");
+      expect(JSON.stringify(finished.result.data)).toContain("hello");
     }
   });
 
   it("marks exactly the pure-read tools readOnly (parallel-batch safety, ADR 0025 slice 5)", () => {
     const flags = new Map(
-      createMvpTools().map((t) => [t.name, t.readOnly === true]),
+      toolSet({ vision: true }).map((t) => [t.name, t.readOnly === true]),
     );
     const readOnly = [...flags.entries()]
       .filter(([, v]) => v)
       .map(([k]) => k)
       .sort();
     expect(readOnly).toEqual([
-      "command_output",
       // digest_document reads an attachment and writes only its own sidecar
       // under .herta (ADR 0043) — nothing another read could observe change.
       "digest_document",
-      "git_diff",
-      "git_status",
-      "glob",
-      "read_file",
-      "search_text",
       // show_excerpt reads and presents; it mutates nothing (ADR 0027).
       "show_excerpt",
+      // view_image looks; it is path-guarded like show_excerpt.
+      "view_image",
     ]);
     // Mutators must never opt in — the flag is the batch-safety contract.
+    // `bash` decides per call, from the line it was given, never by a flag
+    // on the tool; the editor writes.
     for (const mutator of [
-      "edit_file",
-      "write_new_file",
-      "run_command",
-      "command_stop",
+      "bash",
+      "str_replace_editor",
       "memory_save",
       // Appends to the per-brief findings ledger (ADR 0039) — harness state;
       // serial keeps finding indices in order.
@@ -188,44 +198,13 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     }
   });
 
-  it("registers all fourteen MVP tools via createMvpTools (list_files left on 2026-09-18, ADR 0067; todo_write on 2026-09-30, ADR 0073)", () => {
-    const tools = createMvpTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([
-      "command_output",
-      "command_stop",
-      "digest_document",
-      "edit_file",
-      "git_diff",
-      "git_status",
-      "glob",
-      "memory_save",
-      "read_file",
-      "report_finding",
-      "run_command",
-      "search_text",
-      "show_excerpt",
-      "write_new_file",
-    ]);
-  });
-
   it("view_image mounts ONLY on a vision-capable model (ADR 0048 §5)", () => {
     // A model without vision answers 400 to an image part, and a tool the
     // model is told it has but cannot use is worse than no tool: it invites a
     // call that fails, and invites the model to believe it looked.
-    expect(createMvpTools().map((t) => t.name)).not.toContain("view_image");
-    expect(
-      createMvpTools({ digestModel: null, vision: true }).map((t) => t.name),
-    ).toContain("view_image");
-
-    const minimal = (vision: boolean) =>
-      createMinimalTools({
-        bashPath: "/nonexistent/bash",
-        workspaceShellPath: () => "/ws",
-        digestModel: null,
-        vision,
-      }).map((t) => t.name);
-    expect(minimal(false)).not.toContain("view_image");
-    expect(minimal(true)).toContain("view_image");
+    const names = (vision: boolean) => toolSet({ vision }).map((t) => t.name);
+    expect(names(false)).not.toContain("view_image");
+    expect(names(true)).toContain("view_image");
   });
 
   it("createMinimalTools (ADR 0040): the trained pair plus the record channels (digest ADR 0043), and the record channels accept the shell's path spelling", async () => {
@@ -297,29 +276,26 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     expect((r.data as { cites: string[] }).cites).toEqual(["src/a.ts:1-3"]);
   });
 
-  it("e2e: read_file then edit_file with ask-allow flow", async () => {
+  it("e2e: an edit with the ask-allow flow: the preview, then the question, then the write", async () => {
     ws = await mkTmpWorkspace({ "x.txt": "alpha\nbeta\n" });
     const abs = join(ws.root, "x.txt");
     const ask = new FakeAskResolver();
     const permissions = new RulePermissionEngine({ ask });
     const tools = new InMemoryToolRegistry();
-    tools.register(readFileTool());
-    tools.register(editFileTool());
+    tools.register(editor(() => ws.root));
     const provider = new FakeProvider({
       turns: [
         [
           {
             type: "tool-call-request",
-            call: { id: "r1", tool: "read_file", input: { path: "x.txt" } },
-          },
-          {
-            type: "tool-call-request",
             call: {
               id: "p1",
-              tool: "edit_file",
+              tool: "str_replace_editor",
               input: {
-                path: "x.txt",
-                hunks: [{ search: "alpha", replace: "ALPHA" }],
+                command: "str_replace",
+                path: abs,
+                old_str: "alpha",
+                new_str: "ALPHA",
               },
             },
           },
@@ -338,7 +314,7 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
       ask,
       workspaceRoot: ws.root,
     });
-    registerEditFileRule(permissions, { bus });
+    editorOn(permissions, bus);
 
     const events: AgentEvent[] = [];
     bus.onAny((e) => events.push(e));
@@ -361,7 +337,7 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     const reqEvt = events.find(
       (e) =>
         e.type === "permission.requested" &&
-        e.request.call.tool === "edit_file",
+        e.request.call.tool === "str_replace_editor",
     );
     expect(reqEvt).toBeDefined();
     if (reqEvt?.type !== "permission.requested") throw new Error();
@@ -374,88 +350,76 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     expect(fin?.type).toBe("tool.call.finished");
     if (fin?.type !== "tool.call.finished") throw new Error();
     expect(fin.result.ok).toBe(true);
-
-    const onDisk = await readFile(abs, "utf-8");
-    expect(onDisk).toBe("ALPHA\nbeta\n");
-    const expectedSha = createHash("sha256")
-      .update(Buffer.from(onDisk))
-      .digest("hex");
-    const data = fin.result.data as { newSha256: string };
-    expect(data.newSha256).toBe(expectedSha);
+    expect(await readFile(abs, "utf-8")).toBe("ALPHA\nbeta\n");
   });
 
-  it.skipIf(process.platform === "win32")(
-    "e2e: run_command (allow-list) executes and persists log",
-    async () => {
-      ws = await mkTmpWorkspace({});
-      const ask = new FakeAskResolver();
-      const permissions = new RulePermissionEngine({ ask });
-      const tools = new InMemoryToolRegistry();
-      tools.register(runCommandTool());
-      const provider = new FakeProvider({
-        turns: [
-          [
-            {
-              type: "tool-call-request",
-              call: {
-                id: "rc1",
-                tool: "run_command",
-                input: { argv: ["echo", "hi"] },
-              },
-            },
-            { type: "finish", reason: "tool_calls" },
-          ],
-          [
-            { type: "text-delta", text: "done" },
-            { type: "finish", reason: "stop" },
-          ],
-        ],
-      });
-      const { runtime, bus } = mkRuntime({
-        provider,
-        tools,
-        permissions,
-        ask,
-        workspaceRoot: ws.root,
-      });
-      registerRunCommandRule(permissions);
-
-      const events: AgentEvent[] = [];
-      bus.onAny((e) => events.push(e));
-
-      await runtime.runBrief(brief("echo"), {
-        userMessages: userMessages("echo"),
-      });
-
-      expect(
-        events.find((e) => e.type === "permission.requested"),
-      ).toBeUndefined();
-
-      const fin = events.find(
-        (e) => e.type === "tool.call.finished" && e.id === "rc1",
-      );
-      expect(fin?.type).toBe("tool.call.finished");
-      if (fin?.type !== "tool.call.finished") throw new Error();
-      expect(fin.result.ok).toBe(true);
-      const data = fin.result.data as {
-        stdout: string;
-        logPath: string;
-        exitCode: number | null;
-      };
-      expect(data.stdout).toBe("hi\n");
-      expect(data.exitCode).toBe(0);
-      const log = await readFile(`${ws.root}/${data.logPath}`, "utf-8");
-      expect(log).toContain("=== herta run_command log ===");
-    },
-  );
-
-  it("e2e: write_new_file with ask-allow flow, then edit_file works without separate read_file", async () => {
-    ws = await mkTmpWorkspace({});
+  it("e2e: a denied edit writes nothing and the run goes on", async () => {
+    ws = await mkTmpWorkspace({ "x.txt": "alpha\n" });
+    const abs = join(ws.root, "x.txt");
     const ask = new FakeAskResolver();
     const permissions = new RulePermissionEngine({ ask });
     const tools = new InMemoryToolRegistry();
-    tools.register(writeNewFileTool());
-    tools.register(editFileTool());
+    tools.register(editor(() => ws.root));
+    const provider = new FakeProvider({
+      turns: [
+        [
+          {
+            type: "tool-call-request",
+            call: {
+              id: "p1",
+              tool: "str_replace_editor",
+              input: {
+                command: "str_replace",
+                path: abs,
+                old_str: "alpha",
+                new_str: "ALPHA",
+              },
+            },
+          },
+          { type: "finish", reason: "tool_calls" },
+        ],
+        [
+          { type: "text-delta", text: "understood" },
+          { type: "finish", reason: "stop" },
+        ],
+      ],
+    });
+    const { runtime, bus } = mkRuntime({
+      provider,
+      tools,
+      permissions,
+      ask,
+      workspaceRoot: ws.root,
+    });
+    editorOn(permissions, bus);
+    const events: AgentEvent[] = [];
+    bus.onAny((e) => events.push(e));
+    bus.onAny((e) => {
+      if (e.type === "permission.requested") ask.deny();
+    });
+
+    await runtime.runBrief(brief("patch alpha"), {
+      userMessages: userMessages("patch alpha"),
+    });
+
+    const fin = events.find(
+      (e) => e.type === "tool.call.finished" && e.id === "p1",
+    );
+    if (fin?.type !== "tool.call.finished") throw new Error("no result");
+    expect(fin.result.ok).toBe(false);
+    expect(fin.result.error?.code).toBe("permission_denied");
+    expect(fin.result.error?.retryable).toBe(false);
+    expect(await readFile(abs, "utf-8")).toBe("alpha\n");
+    expect(events.at(-1)?.type).toBe("turn.finished");
+  });
+
+  it("e2e: a create with the ask-allow flow, then an edit of the new file in the same batch", async () => {
+    ws = await mkTmpWorkspace({});
+    const abs = join(ws.root, "src", "created.ts");
+    const ask = new FakeAskResolver();
+    const permissions = new RulePermissionEngine({ ask });
+    const tools = new InMemoryToolRegistry();
+    tools.register(editor(() => ws.root));
     const provider = new FakeProvider({
       turns: [
         [
@@ -463,10 +427,11 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
             type: "tool-call-request",
             call: {
               id: "w1",
-              tool: "write_new_file",
+              tool: "str_replace_editor",
               input: {
-                path: "src/created.ts",
-                content: "export const value = 1;\n",
+                command: "create",
+                path: abs,
+                file_text: "export const value = 1;\n",
               },
             },
           },
@@ -474,10 +439,12 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
             type: "tool-call-request",
             call: {
               id: "p1",
-              tool: "edit_file",
+              tool: "str_replace_editor",
               input: {
-                path: "src/created.ts",
-                hunks: [{ search: "value = 1", replace: "value = 2" }],
+                command: "str_replace",
+                path: abs,
+                old_str: "value = 1",
+                new_str: "value = 2",
               },
             },
           },
@@ -496,8 +463,7 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
       ask,
       workspaceRoot: ws.root,
     });
-    registerWriteNewFileRule(permissions, { bus });
-    registerEditFileRule(permissions, { bus });
+    editorOn(permissions, bus);
 
     const events: AgentEvent[] = [];
     bus.onAny((e) => events.push(e));
@@ -518,22 +484,14 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     );
     expect(writePreview).toBeDefined();
 
-    const writeFin = events.find(
-      (e) => e.type === "tool.call.finished" && e.id === "w1",
-    );
-    expect(writeFin?.type).toBe("tool.call.finished");
-    if (writeFin?.type !== "tool.call.finished") throw new Error();
-    expect(writeFin.result.ok).toBe(true);
-
-    const patchFin = events.find(
-      (e) => e.type === "tool.call.finished" && e.id === "p1",
-    );
-    expect(patchFin?.type).toBe("tool.call.finished");
-    if (patchFin?.type !== "tool.call.finished") throw new Error();
-    expect(patchFin.result.ok).toBe(true);
-
-    const final = await readFile(`${ws.root}/src/created.ts`, "utf-8");
-    expect(final).toBe("export const value = 2;\n");
+    for (const id of ["w1", "p1"]) {
+      const fin = events.find(
+        (e) => e.type === "tool.call.finished" && e.id === id,
+      );
+      if (fin?.type !== "tool.call.finished") throw new Error(`no ${id}`);
+      expect(fin.result.ok, id).toBe(true);
+    }
+    expect(await readFile(abs, "utf-8")).toBe("export const value = 2;\n");
   });
 
   it("e2e: a run that records its finding and stops reports completed at that stop — no end-of-run check, no todo carry-over (ADR 0073)", async () => {
@@ -572,62 +530,5 @@ describe("MVP tools end-to-end with CodingAgentRuntime", () => {
     });
     expect(report.status).toBe("completed");
     expect("nextActions" in report).toBe(false);
-  });
-
-  it("e2e: a background command left running is reaped when the brief ends (ADR 0025 slice 4)", async () => {
-    ws = await mkTmpWorkspace({});
-    const tools = new InMemoryToolRegistry();
-    for (const t of createMvpTools()) tools.register(t);
-    const provider = new FakeProvider({
-      turns: [
-        [
-          {
-            type: "tool-call-request",
-            call: {
-              id: "bg1",
-              tool: "run_command",
-              input: {
-                argv: [process.execPath, "-e", "setInterval(()=>{}, 1000);"],
-                runInBackground: true,
-              },
-            },
-          },
-          { type: "finish", reason: "tool_calls" },
-        ],
-        // The model "forgets" to stop it — the runtime must reap it anyway.
-        [
-          { type: "text-delta", text: "started the server" },
-          { type: "finish", reason: "stop" },
-        ],
-      ],
-    });
-    const { runtime, bus } = mkRuntime({
-      provider,
-      tools,
-      workspaceRoot: ws.root,
-    });
-    const events: AgentEvent[] = [];
-    bus.onAny((e) => events.push(e));
-
-    const report = await runtime.runBrief(brief("start the dev server"), {
-      userMessages: userMessages("start the dev server"),
-    });
-
-    // The start succeeded and returned a backgroundId…
-    const started = events.find(
-      (e) => e.type === "tool.call.finished" && e.id === "bg1",
-    );
-    expect(started?.type).toBe("tool.call.finished");
-    if (started?.type === "tool.call.finished") {
-      expect(started.result.ok).toBe(true);
-      expect(
-        (started.result.data as { backgroundId?: string }).backgroundId,
-      ).toBeDefined();
-    }
-    // …and the leftover process is noted as stopped in residualRisks (the
-    // runtime's finally-block reaping — no unmanaged backgrounding).
-    expect(
-      report.residualRisks.some((r) => /background command.*stopped/.test(r)),
-    ).toBe(true);
   });
 });

@@ -10,7 +10,7 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { isPathInside } from "@herta/core";
+import { harnessHomeDir, isPathInside, workspacesBaseDir } from "@herta/core";
 import {
   foldName,
   hasCredentialSequence,
@@ -436,9 +436,11 @@ export function gitInternalsWrite(
  * Denial message when a COMMAND would write into the harness's own state —
  * `.herta` anywhere beneath the workspace — else null (2026-09-30).
  *
- * `.herta/permissions.json` holds the workspace's automatic-review choice
- * (once also ADR 0030's command rules and ADR 0064's trust); beside it sit memory, logs
- * and attachments. The editors could never write there (the structural
+ * `.herta` holds the session records, the run journal, what undo keeps,
+ * memory, logs and attachments; until 2026-11-12 `.herta/permissions.json`
+ * held the workspace's automatic-review choice too (once also ADR 0030's
+ * command rules and ADR 0064's trust), which now lives in the harness's
+ * home ({@link harnessHomeWriteDenial}). The editors could never write there (the structural
  * denial in {@link resolveSafePath}), but a shell could: a redirect, `tee`,
  * `cp`, `rm` were classes the trust tier answered with no card, so one line in
  * a trusted workspace — every managed one, by default — planted rules or trust
@@ -470,9 +472,107 @@ export function hertaStateWriteDenial(
     relativeTouchesHerta(workspaceRoot, resolved) ||
     relativeTouchesHerta(rootResolved, resolved)
   ) {
-    return `writes into .herta — the harness's own state (its automatic-review choice, memory, logs); no command may change it`;
+    return `writes into .herta — the harness's own state (its records, memory, logs); no command may change it`;
   }
   return null;
+}
+
+const HARNESS_HOME_DENIAL =
+  "writes into the harness's home folder (~/.herta) — its own state (the automatic-review choices, user memory); no command may change it";
+
+/**
+ * Denial message when a COMMAND would write into the harness's HOME —
+ * `<home>/.herta`, less the managed workspaces under it — else null
+ * (2026-11-12, ADR 0064 amendment).
+ *
+ * The owner's automatic-review choices live there, for every workspace
+ * (`WorkspacePermissions`). {@link hertaStateWriteDenial} is relative to the
+ * workspace and says nothing of a path outside it: such a write asked as
+ * leaving the workspace, a class a review model may answer, so with review
+ * on an approved `cp x <home>/.herta/review-choices.json` would have set any
+ * workspace's choice. This is the same rule for the other place: a harness
+ * that obeys a file the agent can write has handed the agent its own
+ * permissions.
+ *
+ * Judged as spelled and through links (the deepest existing ancestor
+ * realpath-ed), like its twin. `<home>/.herta/workspaces/**` is not this
+ * guard's: a session's managed workspace lives there, its ordinary files
+ * must stay writable, and its own `.herta` is the twin's. The folder itself
+ * counts, so `rm -rf` or `mv` of it is refused.
+ */
+export function harnessHomeWriteDenial(
+  absolute: string,
+  home: string = homedir(),
+): string | null {
+  const state = harnessHomeDir(home);
+  const managed = workspacesBaseDir(home);
+  const spelled = resolve(absolute);
+  if (isPathInside(state, spelled) && !isPathInside(managed, spelled))
+    return HARNESS_HOME_DENIAL;
+  const resolved = realpathSyncViaExistingAncestor(spelled);
+  const stateResolved = realpathSyncViaExistingAncestor(state);
+  const managedResolved = realpathSyncViaExistingAncestor(managed);
+  if (
+    isPathInside(stateResolved, resolved) &&
+    !isPathInside(managedResolved, resolved)
+  )
+    return HARNESS_HOME_DENIAL;
+  return null;
+}
+
+/** `dir` is the harness's home or a directory above it — as written or
+ *  canonically: a walk started there reaches it (`find ~ -delete`). */
+export function holdsHarnessHome(
+  dir: string,
+  home: string = homedir(),
+): boolean {
+  const state = harnessHomeDir(home);
+  if (isPathInside(dir, state)) return true;
+  return isPathInside(
+    realpathSyncViaExistingAncestor(resolve(dir)),
+    realpathSyncViaExistingAncestor(state),
+  );
+}
+
+/**
+ * True when an absolute path PATTERN could expand to a path inside the
+ * harness's home: segment by segment it is the home's own spelling or a
+ * live `*`, `?`, `[…]` that matches it ({@link globSegmentMatches}: a
+ * leading `.` must be spelled, so `*` cannot reach `.herta` while `.h*`
+ * can). The literal spelling is {@link harnessHomeWriteDenial}'s; this is
+ * for what bash would expand, and a pattern that could also be a managed
+ * workspace (`<home>/.herta/<any>/x`) counts: only the literal `workspaces`
+ * segment is left to the other rules. Read against the home as spelled and
+ * as the disk names it.
+ */
+export function patternReachesHarnessHome(
+  absolutePattern: string,
+  home: string = homedir(),
+): boolean {
+  const segmentsOf = (p: string): string[] =>
+    resolve(p)
+      .split(/[\\/]/)
+      .filter((seg) => seg.length > 0);
+  // Both sides as Win32 opens them: the drive segment is `C:` on each, and
+  // canonicalizing one alone made it `C` against `C:`.
+  const sameSegment = (a: string, b: string): boolean =>
+    caseNormalize(winCanonicalizeSegment(a)) ===
+    caseNormalize(winCanonicalizeSegment(b));
+  const pattern = segmentsOf(absolutePattern);
+  const reaches = (state: string): boolean => {
+    const target = segmentsOf(state);
+    if (pattern.length < target.length) return false;
+    for (let i = 0; i < target.length; i += 1) {
+      const seg = pattern[i] as string;
+      const name = target[i] as string;
+      if (!sameSegment(seg, name) && !globSegmentMatches(seg, name))
+        return false;
+    }
+    const next = pattern[target.length];
+    return next === undefined || !sameSegment(next, "workspaces");
+  };
+  const state = harnessHomeDir(home);
+  return reaches(state) || reaches(realpathSyncViaExistingAncestor(state));
 }
 
 /**

@@ -2359,6 +2359,9 @@ export class SessionImpl implements Session {
     await prepareBackendStack();
     const backend = createBackendStack({
       wsHolder,
+      ...(config.reviewChoicesFile !== undefined
+        ? { reviewChoicesFile: config.reviewChoicesFile }
+        : {}),
       workspaceRoot,
       lang,
       pendingUserInput: () => steer.drain(),

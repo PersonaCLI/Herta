@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -866,5 +867,119 @@ describe("wrapSessionForDreamActivity", () => {
     await p;
     await Promise.resolve();
     expect(stamps).toEqual(["note", "turn-start", "turn-end", "note", "tick"]);
+  });
+});
+
+// ADR 0064 amendment 2026-11-12. The choice lived in the workspace
+// (`.herta/permissions.json`) and was read as found, so a folder that arrived
+// with the file had automatic review on with no choice by the owner.
+describe("the automatic-review choice is kept outside the workspace", () => {
+  /** A folder the session works in, removed with the rest. */
+  function folder(prefix: string): string {
+    const d = mkdtempSync(join(tmpdir(), prefix));
+    tmpDirs.push(d);
+    return d;
+  }
+  /** A folder that arrives holding the OLD per-workspace file. */
+  function folderWithOldFile(autoReview: boolean): string {
+    const d = folder("herta-review-old-");
+    mkdirSync(join(d, ".herta"), { recursive: true });
+    writeFileSync(
+      join(d, ".herta", "permissions.json"),
+      JSON.stringify({ version: 1, autoReview }),
+    );
+    return d;
+  }
+  const withStore = (cfg: AppServerConfig): AppServerConfig => ({
+    ...cfg,
+    reviewChoicesFile: join(
+      folder("herta-review-home-"),
+      ".herta",
+      "review-choices.json",
+    ),
+  });
+
+  it("a choice is written to the one file and nothing into the workspace, and the next launch reads it back", async () => {
+    const cfg = withStore(mkConfig());
+    const ws = folder("herta-review-ws-");
+    const host = createSessionHost(cfg);
+    const session = await host.createSession({ backendWorkspace: ws });
+    expect((await session.getAutoReview?.())?.explicit).toBeNull();
+    expect((await session.setAutoReview?.(true))?.explicit).toBe(true);
+    expect(existsSync(join(ws, ".herta", "permissions.json"))).toBe(false);
+    expect(existsSync(cfg.reviewChoicesFile as string)).toBe(true);
+    const sessionId = session.sessionId;
+    await host.closeActiveSession();
+
+    const again = createSessionHost(cfg);
+    const reopened = await again.openSession({ sessionId });
+    const state = await reopened.getAutoReview?.();
+    expect(state?.explicit).toBe(true);
+    expect(state?.on).toBe(true);
+    await again.closeActiveSession();
+  });
+
+  it("a folder that arrives with the old file in it has no choice: review is off there until the owner says", async () => {
+    const cfg = withStore(mkConfig());
+    const cloned = folderWithOldFile(true);
+    const host = createSessionHost(cfg);
+    const session = await host.createSession({ backendWorkspace: cloned });
+    const state = await session.getAutoReview?.();
+    expect(state?.explicit).toBeNull();
+    expect(state?.on).toBe(false);
+    await host.closeActiveSession();
+  });
+
+  it("the old files of the workspaces this host's own records name are carried over once, before the first session reads the store", async () => {
+    // An earlier build: no store, the session's record names its workspace.
+    const earlier = mkConfig();
+    const known = folderWithOldFile(true);
+    const before = createSessionHost(earlier);
+    const sessionId = (await before.createSession({ backendWorkspace: known }))
+      .sessionId;
+    await before.closeActiveSession();
+
+    // This build's first launch.
+    const cfg = withStore(earlier);
+    const host = createSessionHost(cfg);
+    const reopened = await host.openSession({ sessionId });
+    expect((await reopened.getAutoReview?.())?.explicit).toBe(true);
+    // The old file is left where it was, and is never read again.
+    expect(existsSync(join(known, ".herta", "permissions.json"))).toBe(true);
+
+    // A folder that turns up afterwards gets nothing from its own file.
+    const later = folderWithOldFile(true);
+    const next = await host.createSession({ backendWorkspace: later });
+    expect((await next.getAutoReview?.())?.explicit).toBeNull();
+    await host.closeActiveSession();
+
+    // Nor on the launch after that, when a record does name it.
+    const third = createSessionHost(cfg);
+    const again = await third.openSession({ sessionId: next.sessionId });
+    expect((await again.getAutoReview?.())?.explicit).toBeNull();
+    await third.closeActiveSession();
+  });
+
+  it("deleting a session drops the choice made for its managed workspace: the folder goes, and the choice is no longer inside it", async () => {
+    const cfg = withStore(mkConfig());
+    const host = createSessionHost(cfg);
+    // No workspace named: the session gets its own managed one.
+    const session = await host.createSession({});
+    const state = await session.setAutoReview?.(false);
+    expect(state?.isDefaultWorkspace).toBe(true);
+    const stored = (): Record<string, unknown> =>
+      JSON.parse(readFileSync(cfg.reviewChoicesFile as string, "utf8"))
+        .workspaces;
+    expect(Object.keys(stored())).toHaveLength(1);
+    // A picked folder's choice is not the session's to take with it.
+    const picked = folder("herta-review-kept-");
+    await session.setWorkspace(picked);
+    await session.setAutoReview?.(true);
+    expect(Object.keys(stored())).toHaveLength(2);
+
+    await host.deleteSession(session.sessionId);
+    const left = stored();
+    expect(Object.keys(left)).toHaveLength(1);
+    expect(Object.values(left)).toEqual([{ autoReview: true }]);
   });
 });

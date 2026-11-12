@@ -10,6 +10,7 @@ import {
   dispatchJournalPath,
   dreamDirFor,
   ensureHertaGitignore,
+  importLegacyReviewChoices,
   readSessionFile,
   readSessionFileAsync,
   listSessionHeaders as readSessionHeaders,
@@ -21,6 +22,7 @@ import {
   type TerminalRecord,
   type TerminalRecordBlock,
   V2RecordPersister,
+  WorkspacePermissions,
   workspacesBaseDir,
   writeSessionTitle,
 } from "@herta/core";
@@ -492,7 +494,39 @@ class SessionHostImpl implements SessionHost {
     return this.serializeLifecycle(() => this.createSessionInner(opts));
   }
 
+  /** The one-time carry-over of the old per-workspace review choices, run
+   *  before the first session's stack reads the store. */
+  private legacyReviewChoices: Promise<number> | null = null;
+  private importLegacyReviewChoicesOnce(): Promise<number> {
+    const file = this.config.reviewChoicesFile;
+    if (file === undefined) return Promise.resolve(0);
+    this.legacyReviewChoices ??= importLegacyReviewChoices({
+      file,
+      surface: "app-server",
+      transcriptDir: this.config.transcriptDir,
+    });
+    return this.legacyReviewChoices;
+  }
+
+  /** Drop the automatic-review choice recorded for a session's managed
+   *  workspace. Never throws: a file that cannot be written keeps a line
+   *  nothing reads. */
+  private forgetManagedWorkspaceChoice(sessionId: string): void {
+    const file = this.config.reviewChoicesFile;
+    if (file === undefined) return;
+    try {
+      const choice = new WorkspacePermissions(
+        () => defaultWorkspaceFor(homedir(), sessionId),
+        file,
+      );
+      if (choice.autoReview() !== null) choice.setAutoReview(null);
+    } catch {
+      // best effort
+    }
+  }
+
   private async createSessionInner(opts: CreateSessionOpts): Promise<Session> {
+    await this.importLegacyReviewChoicesOnce();
     // Opening/creating a session is user activity — reset the dream idle
     // clock (audit finding 21: only submitText did, so a pass could fire
     // right as the user navigated in).
@@ -545,6 +579,7 @@ class SessionHostImpl implements SessionHost {
   }
 
   private async openSessionInner(opts: OpenSessionOpts): Promise<Session> {
+    await this.importLegacyReviewChoicesOnce();
     this.dreamTrigger.noteActivity();
     const sessionFile = join(
       this.config.transcriptDir,
@@ -734,6 +769,11 @@ class SessionHostImpl implements SessionHost {
     // main thread), and this whole method runs inside the lifecycle
     // serializer, so nothing reopens the session until it is gone.
     if (wasActive) await this.closeActiveInner();
+    // The session's managed workspace goes with it, and so does the choice
+    // made for that folder: it is kept outside the folder now, and would
+    // otherwise stay in the file for good. While the folder is still there,
+    // so that its key is the one the choice was stored under.
+    this.forgetManagedWorkspaceChoice(sessionId);
     try {
       await deleteSessionFiles(
         this.config.transcriptDir,

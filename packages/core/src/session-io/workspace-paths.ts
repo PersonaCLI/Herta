@@ -1,11 +1,25 @@
 import { join } from "node:path";
 import type { SessionMeta } from "./read-session-file.js";
 
+/** The harness's own home folder, `<home>/.herta`: what it keeps for the
+ *  user and not for one workspace — the automatic-review choices, the user
+ *  memory, the managed workspaces below. No command may write it, the
+ *  managed workspaces excepted (`harnessHomeWriteDenial` in @herta/tools). */
+export function harnessHomeDir(home: string): string {
+  return join(home, ".herta");
+}
+
+/** Where the owner's automatic-review choices are kept, for every workspace
+ *  (`WorkspacePermissions`, ADR 0064 amendment 2026-11-12). */
+export function reviewChoicesFileFor(home: string): string {
+  return join(harnessHomeDir(home), "review-choices.json");
+}
+
 /** The managed root that holds per-session backend scratch dirs:
  *  `<home>/.herta/workspaces`. `home` is passed in (os.homedir()) so this is
  *  pure and testable. */
 export function workspacesBaseDir(home: string): string {
-  return join(home, ".herta", "workspaces");
+  return join(harnessHomeDir(home), "workspaces");
 }
 
 /** The managed default backend workspace for a session:

@@ -297,7 +297,8 @@ function renderPermissions(ctx: SlashContext, args: readonly string[]): void {
 /**
  * `/permissions auto-review [on|off]` (ADR 0075): automatic review for THIS
  * workspace — writes undo can take back run, a review model answers the
- * rest — stored in `.herta/permissions.json`, which no command may write.
+ * rest — stored outside the workspace, in the harness's home
+ * (`~/.herta/review-choices.json`), which no command may write.
  * It replaced workspace trust (ADR 0064 amendment 2026-10-10). Bare, it says
  * the state. Its decisions stay silent, as on the desktop.
  */

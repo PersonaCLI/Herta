@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { reviewChoicesFileFor } from "@herta/core";
 
 export interface DefaultDirsOpts {
   readonly workspaceRoot: string;
@@ -9,6 +10,9 @@ export interface DefaultDirs {
   readonly transcriptDir: string;
   readonly projectMemoryDir: string;
   readonly userMemoryDir: string;
+  /** Where the owner's automatic-review choices are kept, for every
+   *  workspace: `<home>/.herta/review-choices.json`. */
+  readonly reviewChoicesFile: string;
   readonly narrativeDir: string;
   /** Dev-default voice root; a packaged GUI overrides this with its bundled
    *  resources copy (see AppServerConfig.voiceAssetsDir). */
@@ -27,6 +31,7 @@ export function defaultDirsFor(opts: DefaultDirsOpts): DefaultDirs {
     transcriptDir: join(opts.workspaceRoot, ".herta", "transcript", "v2"),
     projectMemoryDir: join(opts.workspaceRoot, ".herta", "memory"),
     userMemoryDir: join(opts.homedir, ".herta", "memory"),
+    reviewChoicesFile: reviewChoicesFileFor(opts.homedir),
     narrativeDir: join(opts.workspaceRoot, ".herta", "narrative"),
     voiceAssetsDir: join(opts.workspaceRoot, "data", "voice"),
   };

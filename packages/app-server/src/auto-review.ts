@@ -40,6 +40,7 @@ import {
 import { type ApiKey, deepseekProvider } from "@herta/providers";
 import {
   bodyUnreadable,
+  harnessHomeWriteDenial,
   hertaStateWriteDenial,
   maxReviewRisk,
   namesHertaState,
@@ -504,7 +505,10 @@ function runsInHertaState(
   if (cwd === undefined) return false;
   return (
     namesHertaState(cwd, workspace) ||
-    (workspace !== "" && hertaStateWriteDenial(workspace, cwd) !== null)
+    (workspace !== "" && hertaStateWriteDenial(workspace, cwd) !== null) ||
+    // The harness's home, by a spelling that names no `.herta` (a link, an
+    // 8.3 name): the automatic-review choices are kept there.
+    harnessHomeWriteDenial(cwd) !== null
   );
 }
 

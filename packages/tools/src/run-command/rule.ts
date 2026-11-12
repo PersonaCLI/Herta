@@ -9,7 +9,9 @@ import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
 import { formatInputIssues } from "../input-issues.js";
 import {
   gitInternalsWrite,
+  harnessHomeWriteDenial,
   hertaStateWriteDenial,
+  holdsHarnessHome,
   holdsWorkspace,
   namesHertaState,
   resolveSafePath,
@@ -36,8 +38,13 @@ export function runCommandWriteGuard(
   const at = (operand: string): string =>
     isAbsolute(operand) ? resolve(operand) : resolve(cwd, operand);
   return {
+    // The workspace's own `.herta`, and the harness's home wherever the
+    // workspace is (the automatic-review choices, 2026-11-12).
     path: (operand) =>
-      operand === "" ? null : hertaStateWriteDenial(workspaceRoot, at(operand)),
+      operand === ""
+        ? null
+        : (hertaStateWriteDenial(workspaceRoot, at(operand)) ??
+          harnessHomeWriteDenial(at(operand))),
     // The workspace's own root does not count: a managed sandbox lives
     // under `~/.herta/workspaces`, and `cmd /c "cd <workspace> && …"` named
     // `.herta` and was refused (release review 2026-10-13).
@@ -49,7 +56,9 @@ export function runCommandWriteGuard(
     // case of the root reaches `.herta` all the same (Mac findings
     // 2026-10-24, item 3).
     holds: (operand) =>
-      operand !== "" && holdsWorkspace(at(operand), resolve(workspaceRoot)),
+      operand !== "" &&
+      (holdsWorkspace(at(operand), resolve(workspaceRoot)) ||
+        holdsHarnessHome(at(operand))),
     patch: (file) => (file === "" ? null : readPatchTargets(at(file))),
     gitInternal: (operand) =>
       operand !== "" && gitInternalsWrite(workspaceRoot, at(operand)),

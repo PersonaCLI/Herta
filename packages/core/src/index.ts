@@ -235,6 +235,7 @@ export {
   sweepEvidence,
   sweepEvidenceSoon,
 } from "./session-io/evidence-retention.js";
+export { importLegacyReviewChoices } from "./session-io/import-review-choices.js";
 export {
   type ListSessionsOpts,
   listSessionHeaders,
@@ -265,9 +266,11 @@ export {
 export {
   defaultWorkspaceFor,
   dreamDirFor,
+  harnessHomeDir,
   narrativeDirFor,
   narrativeDirName,
   resolveEffectiveWorkspace,
+  reviewChoicesFileFor,
   trailblazerNotesFileName,
   workspacesBaseDir,
 } from "./session-io/workspace-paths.js";
@@ -350,4 +353,10 @@ export {
   type WebPage,
   type WebSearchHit,
 } from "./web-client.js";
-export { WorkspacePermissions } from "./workspace-permissions.js";
+export {
+  importLegacyChoices,
+  legacyChoicesImported,
+  readLegacyChoice,
+  WorkspacePermissions,
+  workspaceKey,
+} from "./workspace-permissions.js";

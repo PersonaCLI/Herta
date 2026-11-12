@@ -16,10 +16,12 @@ import {
   ensureHertaGitignore,
   errorMessage,
   InMemoryToolRegistry,
+  importLegacyReviewChoices,
   listSessions,
   type ProviderAdapter,
   readSessionFile,
   resolveEffectiveWorkspace,
+  reviewChoicesFileFor,
   SessionFileError,
   type TerminalRecord,
 } from "@herta/core";
@@ -308,8 +310,19 @@ export async function main(
   const autoReviewer = new AutoReviewer(defaultReviewModel(apiKey, baseUrl));
   const turnInput: { text: string | null } = { text: null };
   let reviewDriver: { getRecord(): TerminalRecord } | null = null;
+  // The automatic-review choices live outside every workspace (ADR 0064
+  // amendment 2026-11-12). Once, the choices of the old per-workspace files
+  // are carried over — for the workspaces THIS folder's own session records
+  // name, never for a folder because it is the one the CLI was started in.
+  const reviewChoicesFile = reviewChoicesFileFor(deps?.homedir ?? homedir());
+  await importLegacyReviewChoices({
+    file: reviewChoicesFile,
+    surface: "cli",
+    transcriptDir,
+  });
   const backend = createBackendStack({
     wsHolder,
+    reviewChoicesFile,
     workspaceRoot,
     lang,
     backendProvider,

@@ -1,4 +1,5 @@
-import { relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { EXEC_WRAPPER_PROGRAMS, type RiskLevel } from "@herta/core";
 import { isCredentialPath } from "../credential-denylist.js";
 import { detectInProgressState, resolveGitDir } from "../git/repo-probe.js";
@@ -6,9 +7,12 @@ import {
   gitDirShapeWriteDenial,
   gitInternalsWrite,
   globReachesHertaState,
+  harnessHomeWriteDenial,
   hertaStateWriteDenial,
+  holdsHarnessHome,
   holdsWorkspace,
   namesHertaState,
+  patternReachesHarnessHome,
   workspaceSpelling,
 } from "../path-safety.js";
 import {
@@ -79,6 +83,10 @@ export interface ShellClassifyOpts {
   /** The processes that are this app: a kill aimed at one is blocked
    *  (2026-11-04). Absent → no such check. */
   host?: HostIdentity;
+  /** The user's home folder, where the harness keeps its own state
+   *  (`<home>/.herta`: the automatic-review choices). Absent → the machine's;
+   *  a test names its own. */
+  home?: string;
 }
 
 const RISK_RANK: Record<RiskLevel, number> = {
@@ -1207,7 +1215,9 @@ function classifySegment(
       }
     }
     const target = words[ti];
-    // Into the workspace's `.herta` through a pattern. `cd .h* && echo x >
+    // Into the harness's own state by a spelling the checks below do not
+    // place: the home's `.herta` (`cd ~/.herta`, an absolute path, a
+    // pattern), or the workspace's through a pattern. `cd .h* && echo x >
     // permissions.json` asked as an ordinary write, which automatic review
     // answers or lets run: the pattern was a directory name to the tracker
     // and the write after it named no `.herta` (2026-11-12).
@@ -1465,15 +1475,24 @@ function classifySegment(
       body: (body) =>
         namesHertaState(body, opts.workspaceRoot)
           ? "hands another shell a command that names .herta — the harness's own state; no command may change it"
-          : hertaStateWriteDenial(
+          : (hertaStateWriteDenial(
               opts.workspaceRoot,
               opts.cwd ?? opts.workspaceRoot,
-            ),
+            ) ??
+            harnessHomeWriteDenial(
+              opts.cwd ?? opts.workspaceRoot,
+              opts.home ?? homedir(),
+            )),
       // The root or any directory above it: `find .. -delete` from the root
-      // reaches `.herta` as surely as `find .` does.
+      // reaches `.herta` as surely as `find .` does. And the harness's home
+      // or anything above it, wherever the workspace is.
       holds: (operand) => {
-        const native = nativeOf(spelled(operand), opts);
-        return native !== null && holdsWorkspace(native, opts.workspaceRoot);
+        const native = homeNativeOf(spelled(operand), opts);
+        return (
+          native !== null &&
+          (holdsWorkspace(native, opts.workspaceRoot) ||
+            holdsHarnessHome(native, opts.home ?? homedir()))
+        );
       },
       // A patch may sit outside the workspace (`/tmp/p.patch`): resolved like
       // any token, read wherever it is; a token no path resolves stays null.
@@ -1842,25 +1861,44 @@ function gitInternalTarget(token: string, opts: ShellClassifyOpts): boolean {
   return at !== null && gitInternalsWrite(opts.workspaceRoot, at.native);
 }
 
-/** A `cd` target that lands in the workspace's `.herta` by a pattern, which
- *  the cwd tracker does not follow. The literal `cd .herta` is the
- *  tracker's. */
+/** The native path a token names, `~` and `~/…` included: the user's home
+ *  is a place the harness can name, and its `.herta` is the harness's own.
+ *  Null as `nativeOf` for a variable, a substitution, `~user`. */
+function homeNativeOf(token: string, opts: ShellClassifyOpts): string | null {
+  const t = token.replace(/^["']|["']$/g, "");
+  if (t === "~" || t.startsWith("~/"))
+    return join(opts.home ?? homedir(), t.slice(1));
+  return nativeOf(token, opts);
+}
+
+/** A `cd` target that lands in the harness's own state by a spelling the
+ *  cwd tracker does not follow: the home's `.herta` (literal, through `~`,
+ *  through a link, or by a pattern that could match it), or the workspace's
+ *  `.herta` by a pattern. The literal `cd .herta` is the tracker's. */
 function cdReachesHarnessState(
   target: string,
   glob: boolean,
   opts: ShellClassifyOpts,
 ): boolean {
+  const home = opts.home ?? homedir();
+  const native = homeNativeOf(target, opts);
+  if (native !== null) {
+    if (harnessHomeWriteDenial(native, home) !== null) return true;
+    if (glob && patternReachesHarnessHome(native, home)) return true;
+  }
   if (!glob) return false;
   const at = resolveWorkspacePath(target, opts);
   return at !== null && globReachesHertaState(at.relative);
 }
 
 /** Denial when writing the path a shell token names would change the
- *  harness's own state (`hertaStateWriteDenial`), else null. Resolved like a
- *  redirect target — shell or native spelling, relative to the shell cwd.
- *  Unknowable tokens (variables, `~`) and paths outside the workspace stay
- *  null: they already ask as leaving it. A token bash will expand (`glob`) is
- *  also judged by what its pattern could match (`globReachesHertaState`). */
+ *  harness's own state, else null: the workspace's `.herta`
+ *  (`hertaStateWriteDenial`) or the harness's home, wherever the workspace
+ *  is (`harnessHomeWriteDenial`). Resolved like a redirect target — shell or
+ *  native spelling, relative to the shell cwd, `~` as the home. A token no
+ *  path resolves (a variable, a substitution) stays null unless it names
+ *  `.herta`: it already asks as leaving. A token bash will expand (`glob`)
+ *  is also judged by what its pattern could match. */
 function hertaTargetDenial(
   token: string,
   opts: ShellClassifyOpts,
@@ -1877,14 +1915,24 @@ function hertaTargetDenial(
     (bare.startsWith("~") || /[$`]/.test(bare)) &&
     namesHertaState(bare, opts.workspaceRoot)
   ) {
-    return "names .herta through a variable — the harness's own state (its automatic-review choice, memory, logs); no command may change it. Write to a path inside the workspace that names no .herta";
+    return "names .herta through a variable — the harness's own state (its records, memory, logs, the automatic-review choices); no command may change it. Write to a path inside the workspace that names no .herta";
+  }
+  // The harness's home, wherever the workspace is (2026-11-12): outside the
+  // workspace such a write asked as leaving it, a class a review may answer.
+  const home = opts.home ?? homedir();
+  const anywhere = homeNativeOf(token, opts);
+  if (anywhere !== null) {
+    const homeDenial = harnessHomeWriteDenial(anywhere, home);
+    if (homeDenial !== null) return homeDenial;
+    if (glob && patternReachesHarnessHome(anywhere, home))
+      return "names the harness's home folder (~/.herta) by a pattern — its own state (the automatic-review choices, user memory); no command may change it";
   }
   const at = resolveWorkspacePath(token, opts);
   if (at === null) return null;
   const literal = hertaStateWriteDenial(opts.workspaceRoot, at.native);
   if (literal !== null) return literal;
   return glob && globReachesHertaState(at.relative)
-    ? "names .herta by a pattern — the harness's own state (its automatic-review choice, memory, logs); no command may change it"
+    ? "names .herta by a pattern — the harness's own state (its records, memory, logs); no command may change it"
     : null;
 }
 

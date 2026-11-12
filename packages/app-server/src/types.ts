@@ -46,6 +46,13 @@ export interface AppServerConfig {
   readonly projectMemoryDir: string;
   /** Absolute. User-scoped memory dir. Typically `~/.herta/memory`. */
   readonly userMemoryDir: string;
+  /** Absolute. Where the owner's automatic-review choices are kept, for
+   *  every workspace: `<home>/.herta/review-choices.json`
+   *  (`reviewChoicesFileFor`, ADR 0064 amendment 2026-11-12) — outside every
+   *  workspace, so a folder cannot carry a choice in. Optional: without it a
+   *  choice holds for the session only and nothing on the machine is
+   *  touched, which is what a manually built test config wants. */
+  readonly reviewChoicesFile?: string;
   /** Absolute. 废案 narrative corpus root. Typically
    *  `<workspaceRoot>/.herta/narrative`. */
   readonly narrativeDir: string;

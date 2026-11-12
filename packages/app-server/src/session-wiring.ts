@@ -334,6 +334,9 @@ export interface BackendStackOpts {
    *  caller (setWorkspace / `/workspace set` mutate `.current`); every
    *  per-dispatch reader below reads it fresh. Never reassign the holder. */
   readonly wsHolder: { current: string };
+  /** Where the owner's automatic-review choices are kept
+   *  (`reviewChoicesFileFor(home)`). Absent → in memory, for this stack. */
+  readonly reviewChoicesFile?: string | null;
   /** Record-store anchor (project memory lives under it). */
   readonly workspaceRoot: string;
   readonly lang: PromptLang;
@@ -487,10 +490,14 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // Approval cache + the workspace's permission choices first: the ask
   // resolver consults them.
   const approvalCache = new SessionApprovalCache();
-  // Whether automatic review is on (ADR 0075) — persisted under the
-  // EFFECTIVE workspace's .herta/permissions.json. Reads the holder so a
-  // mid-session workspace change re-anchors the choice with the workspace.
-  const workspacePermissions = new WorkspacePermissions(() => wsHolder.current);
+  // Whether automatic review is on (ADR 0075) — the owner's choice for the
+  // EFFECTIVE workspace, kept outside every workspace (ADR 0064 amendment
+  // 2026-11-12). Reads the holder so a mid-session workspace change
+  // re-anchors the choice with the workspace.
+  const workspacePermissions = new WorkspacePermissions(
+    () => wsHolder.current,
+    opts.reviewChoicesFile ?? null,
+  );
   const ask = opts.makeAsk({ cache: approvalCache, workspacePermissions });
   const permissions = new RulePermissionEngine({ ask });
 

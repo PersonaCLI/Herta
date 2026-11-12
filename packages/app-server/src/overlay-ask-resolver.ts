@@ -56,7 +56,8 @@ export interface OverlayAskResolverDeps {
    */
   readonly cache: SessionApprovalCache;
   /**
-   * The workspace's permission choices (`.herta/permissions.json`): whether
+   * The owner's permission choices for the workspace (kept in the harness's
+   * home, `~/.herta/review-choices.json`, not in the workspace): whether
    * automatic review is on. Written when a request resolves with
    * persistence "auto_review". Optional: a hand-built test resolver without
    * one has only the host's default.

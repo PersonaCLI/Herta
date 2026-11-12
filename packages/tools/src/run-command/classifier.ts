@@ -3726,6 +3726,19 @@ function classifyCommandTiers(
   ) {
     return { kind: "allow" };
   }
+  // The same two scripts, spelled the short way (owner 2026-11-12): `npm t`
+  // is npm's own alias for `npm test`, and `pnpm lint` is `pnpm run lint`.
+  // Both asked as an unrecognized command. Only these two: `pnpm t`,
+  // `npm tst`, `yarn test` and any other script by its bare name still ask.
+  // One difference from `pnpm run lint`: where the package has no `lint`
+  // script, pnpm runs a `lint` program from `node_modules/.bin` instead of
+  // failing. That is the project's own code either way, as a script is.
+  if (
+    (a0 === "npm" && argv[1] === "t") ||
+    (a0 === "pnpm" && argv[1] === "lint")
+  ) {
+    return { kind: "allow" };
+  }
   // The node test runner and version queries (permission lab 2026-08-17):
   // `node --test test/` was 12 of 65 asks in 15 briefs — the 极简 model runs
   // tests through node directly, not `npm test`, and each run prompted as

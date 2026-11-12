@@ -2711,3 +2711,57 @@ describe("kill by job number, and a chmod that only adds (ADR 0045 amendment 202
     }
   });
 });
+
+describe("the test and lint scripts, spelled the short way (owner 2026-11-12)", () => {
+  const verdict = (line: string): string => {
+    const r = classifyCommand(line.split(" "));
+    return r.kind === "ask" ? r.code : r.kind;
+  };
+
+  it("`npm t` and `pnpm lint` allow, as `npm test` and `pnpm run lint` do", () => {
+    for (const line of [
+      "npm t",
+      "npm t -- --watch=false",
+      "pnpm lint",
+      "pnpm lint --fix",
+      // What they are short for.
+      "npm test",
+      "pnpm test",
+      "npm run lint",
+      "pnpm run lint",
+    ]) {
+      expect(verdict(line), line).toBe("allow");
+    }
+  });
+
+  it("only those two: the other short spellings and bare script names still ask", () => {
+    for (const line of [
+      "pnpm t",
+      "npm tst",
+      "npm lint",
+      "yarn test",
+      "yarn lint",
+      "pnpm build",
+      "pnpm typecheck",
+      "pnpm exec lint",
+      "bun lint",
+      "npm T",
+    ]) {
+      expect(verdict(line), line).not.toBe("allow");
+    }
+    expect(verdict("npm run build")).toBe("command_ask_script");
+    expect(verdict("pnpm dlx lint")).toBe("command_ask_download_exec");
+  });
+
+  it("an option that points them at another directory still asks first", () => {
+    for (const line of [
+      "npm t --prefix ../other",
+      "npm --prefix ../other t",
+      "pnpm lint --dir ../other",
+      "pnpm --dir ../other lint",
+      "pnpm -C ../other lint",
+    ]) {
+      expect(verdict(line), line).toBe("command_ask_opaque");
+    }
+  });
+});

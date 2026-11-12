@@ -83,18 +83,12 @@ export function resolveAttachmentPath(
   return target;
 }
 
-/**
- * Declare the scheme privileged. MUST run BEFORE `app.whenReady` (Electron
- * requires privileged schemes registered at that point).
- */
-export function registerAttachmentScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: ATTACHMENT_SCHEME,
-      privileges: { standard: true, secure: true, supportFetchAPI: true },
-    },
-  ]);
-}
+/** The scheme's privileges, declared with every other scheme's in one call
+ *  (`schemes.ts`). */
+export const ATTACHMENT_SCHEME_ENTRY: Electron.CustomScheme = {
+  scheme: ATTACHMENT_SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true },
+};
 
 /**
  * Register the request handler. Call once, AFTER app ready. `workspaceRoot`

@@ -104,30 +104,26 @@ export function resolveDeviceSceneRoot(
 }
 
 /**
- * Declare the scheme privileged. MUST run BEFORE `app.whenReady` (Electron
- * requires privileged schemes registered at that point). `supportFetchAPI`
- * is what lets three's loaders reach it; `standard` + `secure` keep it a
- * well-behaved app scheme; `corsEnabled` is load-bearing — the renderer is
- * a `file://` document, so every fetch to this scheme is CROSS-origin, and
- * without it Chromium refuses the request before the handler runs
- * ("Cross origin requests are only supported for protocol schemes: …";
- * found live 2026-09-06 in the built app, invisible in dev). The handler
- * answers with `access-control-allow-origin: *` to match: the scheme is
- * read-only bundle content, so any origin may read it.
+ * The scheme's privileges, declared with every other scheme's in one call
+ * (`schemes.ts`). `supportFetchAPI` is what lets three's loaders reach it;
+ * `standard` + `secure` keep it a well-behaved app scheme; `corsEnabled` is
+ * load-bearing — the interface is another origin (`herta-app://app`, a
+ * `file://` page before 2026-11-12), so every fetch to this scheme is
+ * CROSS-origin, and without it Chromium refuses the request before the
+ * handler runs ("Cross origin requests are only supported for protocol
+ * schemes: …"; found live 2026-09-06 in the built app, invisible in dev).
+ * The handler answers with `access-control-allow-origin: *` to match: the
+ * scheme is read-only bundle content, so any origin may read it.
  */
-export function registerAssetScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: DEVICE_SCENE_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-      },
-    },
-  ]);
-}
+export const ASSET_SCHEME_ENTRY: Electron.CustomScheme = {
+  scheme: DEVICE_SCENE_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+  },
+};
 
 /**
  * Register the request handler. Call once, AFTER app ready. `root` is fixed
@@ -153,8 +149,8 @@ export function registerAssetProtocol(root: string | null): void {
         headers: {
           "content-type": contentType,
           "content-length": String(bytes.byteLength),
-          // The file:// renderer is a foreign origin to this scheme (see
-          // registerAssetScheme).
+          // The interface is a foreign origin to this scheme (see
+          // registerAssetScheme): `herta-app://app`, or the dev server.
           "access-control-allow-origin": "*",
           // Immutable bundle content: let Chromium cache it for the session.
           "cache-control": "private, max-age=86400",

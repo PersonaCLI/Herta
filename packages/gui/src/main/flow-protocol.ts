@@ -57,15 +57,12 @@ export function resolveFlowImage(
   return { file: join(flowDir, "images", issueId, name), type };
 }
 
-/** Declare the scheme privileged. MUST run before `app.whenReady`. */
-export function registerFlowScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: FLOW_SCHEME,
-      privileges: { standard: true, secure: true },
-    },
-  ]);
-}
+/** The scheme's privileges, declared with every other scheme's in one call
+ *  (`schemes.ts`). */
+export const FLOW_SCHEME_ENTRY: Electron.CustomScheme = {
+  scheme: FLOW_SCHEME,
+  privileges: { standard: true, secure: true },
+};
 
 /** Register the request handler. Call once, after app ready. */
 export function registerFlowProtocol(flowDir: string): void {

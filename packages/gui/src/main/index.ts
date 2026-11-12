@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { isatty } from "node:tty";
-import { pathToFileURL } from "node:url";
 import {
   setDocumentExtractor,
   workerDocumentExtractor,
@@ -30,14 +29,15 @@ import {
 } from "./app-global-settings.js";
 import { appMenuTemplate } from "./app-menu.js";
 import {
+  APP_INDEX_URL,
+  isAppDocumentUrl,
+  registerAppProtocol,
+} from "./app-protocol.js";
+import {
   registerAssetProtocol,
-  registerAssetScheme,
   resolveDeviceSceneRoot,
 } from "./asset-protocol.js";
-import {
-  registerAttachmentProtocol,
-  registerAttachmentScheme,
-} from "./attachment-protocol.js";
+import { registerAttachmentProtocol } from "./attachment-protocol.js";
 import {
   chromiumSandboxOff,
   PageHost,
@@ -48,7 +48,7 @@ import { ServerRegistry } from "./browser/server-registry.js";
 import { buildCsp } from "./csp.js";
 import createDocumentWorker from "./document-worker?nodeWorker";
 import { flowDirFor } from "./flow-host.js";
-import { registerFlowProtocol, registerFlowScheme } from "./flow-protocol.js";
+import { registerFlowProtocol } from "./flow-protocol.js";
 import { hideToTray } from "./hide-to-tray.js";
 import { installMode } from "./install-mode.js";
 import { applyLoginPath, launchLocaleEnv } from "./login-path.js";
@@ -59,8 +59,10 @@ import {
   quitDisposals,
   quitsWhenAllWindowsClosed,
 } from "./quit-policy.js";
+import { moveRendererStorage } from "./renderer-origin-move.js";
 import { rendererPermissionAllowed } from "./renderer-permissions.js";
 import { shouldReloadAfterCrash } from "./renderer-recovery.js";
+import { registerPrivilegedSchemes } from "./schemes.js";
 import {
   appWorkspaceRoot,
   createSessionService,
@@ -73,21 +75,16 @@ import {
   type UpdateService,
 } from "./update-service.js";
 import { resolveVoiceRoot } from "./voice-path.js";
-import {
-  registerVoiceProtocol,
-  registerVoiceScheme,
-} from "./voice-protocol.js";
+import { registerVoiceProtocol } from "./voice-protocol.js";
 import { applyWindowsPath } from "./win-path.js";
 import { captureWindowState, restoreWindowBounds } from "./window-state.js";
 
 // Privileged-scheme registration MUST happen before app ready (Electron
-// requirement), so the `herta-voice` audio scheme, the `herta-attachment`
-// image scheme (ADR 0048), the `herta-asset` scene-asset scheme (ADR
-// 0057) and Flow's picture scheme (ADR 0084 §8) are declared at module load.
-registerVoiceScheme();
-registerAttachmentScheme();
-registerAssetScheme();
-registerFlowScheme();
+// requirement), and in ONE call (`schemes.ts`): the interface's own scheme,
+// the `herta-voice` audio scheme, the `herta-attachment` image scheme (ADR
+// 0048), the `herta-asset` scene-asset scheme (ADR 0057) and Flow's picture
+// scheme (ADR 0084 §8).
+registerPrivilegedSchemes();
 
 // Documents are read on a thread of their own (owner 2026-10-16): pdfjs
 // decoded a page's every picture in one stretch of the main process — 3.1 s
@@ -135,12 +132,6 @@ function isDevRendererUrl(url: string): boolean {
   }
 }
 
-/** The packaged renderer's own file:// URL — the ONLY file navigation the
- *  main window may perform (will-navigate pin, audit 2026-07-10 §6). */
-const appFileUrlExact = pathToFileURL(
-  join(__dirname, "../renderer/index.html"),
-).href;
-
 // Global navigation posture (audit T3.7): the same guards are attached to
 // the main window at creation, but per-window wiring means any FUTURE
 // webContents — a second window, a webview, anything a later feature adds —
@@ -158,8 +149,7 @@ app.on("web-contents-created", (_event, contents) => {
     // re-reading process.env here would leave navigation attacker-controlled
     // even with the LOAD gated (audit S2), and `startsWith` would accept
     // `http://localhost:5173.evil.com` (audit BL21).
-    const allowed =
-      isDevRendererUrl(url) || url.split(/[?#]/, 1)[0] === appFileUrlExact;
+    const allowed = isDevRendererUrl(url) || isAppDocumentUrl(url);
     if (!allowed) event.preventDefault();
   });
 });
@@ -392,19 +382,21 @@ function createWindow(): BrowserWindow {
   // spawn an unconfigured child window (no preload, inherited privileges).
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event, url) => {
-    // Pinned to the app's OWN index.html, not any file:// URL (audit
-    // 2026-07-10 §6): the broad scheme match would have let a crafted
-    // anchor navigate this privileged window to an arbitrary local file.
+    // Pinned to the app's OWN document (audit 2026-07-10 §6): a broad
+    // scheme match would have let a crafted anchor navigate this privileged
+    // window somewhere else. Since 2026-11-12 that document is on the app's
+    // scheme (`app-protocol.ts`), not a file:// URL.
     // Unexploitable today (bubbles render no anchors) — defense-in-depth.
-    const allowed =
-      isDevRendererUrl(url) || url.split(/[?#]/, 1)[0] === appFileUrlExact;
+    const allowed = isDevRendererUrl(url) || isAppDocumentUrl(url);
     if (!allowed) event.preventDefault();
   });
 
   if (devRendererUrl !== undefined) {
     void win.loadURL(devRendererUrl);
   } else {
-    void win.loadFile(join(__dirname, "../renderer/index.html"));
+    // The built interface, from its own scheme (owner 2026-11-12): on a
+    // file:// page the content policy's 'self' meant every file on the disk.
+    void win.loadURL(APP_INDEX_URL);
   }
 
   // Own the SessionHost for this window's renderer. start() on
@@ -708,10 +700,17 @@ void app
     // send a transcript.
     {
       const csp = buildCsp({
-        isPackaged: installMode().installed,
+        // The strict policy wherever the BUILT interface is what loads, an
+        // unpackaged run of the build included: only the dev server needs
+        // the relaxed one (2026-11-12). A run of the build used to get the
+        // dev policy, so nothing short of an installer exercised the strict.
+        isPackaged: installMode().installed || devRendererUrl === undefined,
         indexHtmlPath: join(__dirname, "../renderer/index.html"),
         ...(devRendererUrl !== undefined ? { devOrigin: devRendererUrl } : {}),
       });
+      // The interface's own scheme, with the policy on every document it
+      // serves (`app-protocol.ts`).
+      registerAppProtocol(join(__dirname, "../renderer"), csp);
       session.defaultSession.webRequest.onHeadersReceived((details, done) => {
         // Documents only. Every request on this session passes through here,
         // including the DeepSeek calls that installChromiumFetch() below routes
@@ -817,7 +816,16 @@ void app
         }),
       ),
     );
+    // What the interface kept under its old file:// origin, carried to the
+    // new one before the first frame reads it (once; a few ms afterwards).
+    // Its hidden window is closed only once the real one exists: before
+    // that it is the last window, and closing the last window quits.
+    const closeStorageMove =
+      devRendererUrl === undefined
+        ? await moveRendererStorage(app.getPath("userData"))
+        : (): void => undefined;
     const firstWindow = createWindow();
+    closeStorageMove();
     // The auto-updater and the tray wait for the renderer's first load
     // (cold-start trace, 2026-09-24): run right after createWindow they held
     // this thread ~100 ms — the electron-updater chunk's compile and require

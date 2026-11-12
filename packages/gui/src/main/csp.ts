@@ -84,8 +84,10 @@ export function buildCsp(opts: CspOptions): string {
       // needs an outbound origin — this is the directive that would stop an
       // injected script exfiltrating a transcript. The ONE opening is the
       // read-only asset scheme the 3D device card loads its meshes and
-      // atlases over (ADR 0057 §3). Scheme-scoped on purpose: 'self' on this
-      // file:// document would match every file: URL, i.e. any local file.
+      // atlases over (ADR 0057 §3). Scheme-scoped on purpose: when this was
+      // written the document was a file:// page, where 'self' matched every
+      // file: URL. It is on the app's own scheme now (`app-protocol.ts`),
+      // and still asks for nothing of its own over fetch.
       ["herta-asset:"]
     : ["'self'", opts.devOrigin ?? "", "ws:", "wss:", "herta-asset:"];
 

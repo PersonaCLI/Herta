@@ -23,24 +23,19 @@ function clipContentType(filePath: string): string | null {
 }
 
 /**
- * Declare the `herta-voice` scheme privileged. MUST run BEFORE `app.whenReady`
- * (Electron requires privileged schemes registered at that point). `stream` +
- * `supportFetchAPI` let `<audio>` load and seek; `secure`/`standard` keep it a
- * well-behaved app scheme.
+ * The `herta-voice` scheme's privileges, declared with every other scheme's
+ * in one call (`schemes.ts`). `stream` + `supportFetchAPI` let `<audio>` load
+ * and seek; `secure`/`standard` keep it a well-behaved app scheme.
  */
-export function registerVoiceScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: VOICE_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        stream: true,
-        supportFetchAPI: true,
-      },
-    },
-  ]);
-}
+export const VOICE_SCHEME_ENTRY: Electron.CustomScheme = {
+  scheme: VOICE_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    stream: true,
+    supportFetchAPI: true,
+  },
+};
 
 /**
  * Register the `herta-voice` request handler. Call once, AFTER app ready.

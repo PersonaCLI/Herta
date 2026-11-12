@@ -15,6 +15,7 @@ import { LiveOutput } from "../run-command/live-output.js";
 import { writeRunLog } from "../run-command/logger.js";
 import { redactSecrets } from "../run-command/redactor.js";
 import { detectTestRun, isTestCommand } from "../run-command/test-detector.js";
+import { type Pipeline, pipelinesOf } from "./last-pipeline.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
 import {
   readRedirectTargets,
@@ -131,6 +132,85 @@ function testSegment(command: string): string[] | null {
     if (words.length > 0 && isTestCommand(words)) return words;
   }
   return null;
+}
+
+/** The exit status that speaks for a line's test run, when one does. */
+export type RunnerExit =
+  | { readonly read: true; readonly exit: number | null }
+  | { readonly read: false };
+
+const UNREAD: RunnerExit = { read: false };
+
+/**
+ * Whose exit status speaks for a line's test run — and whether any does.
+ *
+ * It was the line's own, always. But a line's exit code is its last
+ * command's: `npm test 2>&1 | tee log` ends in `tee`, and `npm test; echo
+ * done` in `echo`. Two of three tests failed and the record said `tests:
+ * passed (exit 0)` (real run 2026-11-12). The rule now (ADR 0040 amendment
+ * 2026-11-12): a test run is evidence only when the status in hand is
+ * provably the runner's own, and is otherwise left out of the evidence. "A
+ * missed test is recoverable; a fabricated one is not" (`test-detector.ts`).
+ *
+ * Read, for a line `pipelinesOf` reads:
+ * - the runner is the LAST stage of the line's last pipeline: the line's
+ *   exit code is its own;
+ * - the runner is an earlier stage of the last pipeline: the status the
+ *   shell reported for that stage, if it reported exactly as many statuses
+ *   as the pipeline has stages;
+ * - only `&&` joins follow the runner's pipeline, and the runner is that
+ *   pipeline's last stage: the line's exit code. Zero proves the run passed.
+ *   Non-zero is the run's or a later command's, and reads as a failure as
+ *   it always did: it claims no pass.
+ *
+ * Not read: anything else after the runner (`;`, a new line, `||`), a pipe
+ * after the runner with more commands behind it, and a `||` before the
+ * runner (it may not have run at all).
+ *
+ * A line `pipelinesOf` does not read (a subshell, a heredoc, a comment, a
+ * keyword…) is read only when the test run is its last segment.
+ *
+ * A line with no exit code (a timeout, a dead shell) is the runner's
+ * failure, as before.
+ */
+export function testRunnerExit(
+  command: string,
+  lineExit: number | null,
+  pipeStatus: readonly number[] | undefined,
+): RunnerExit {
+  if (lineExit === null) return { read: true, exit: null };
+  const line = pipelinesOf(command);
+  if (line === null) {
+    const segments = splitShellSegments(command);
+    const at = segments.findIndex((seg) => testSegment(seg) !== null);
+    return at !== -1 && at === segments.length - 1
+      ? { read: true, exit: lineExit }
+      : UNREAD;
+  }
+  let at = -1;
+  let stage = -1;
+  for (let k = 0; k < line.length && at === -1; k += 1) {
+    const i = (line[k] as Pipeline).stages.findIndex(
+      (text) => testSegment(text) !== null,
+    );
+    if (i !== -1) {
+      at = k;
+      stage = i;
+    }
+  }
+  if (at === -1) return UNREAD;
+  const mine = line[at] as Pipeline;
+  // A `||` in front: the runner ran only if what stands before it failed.
+  if (line.slice(0, at).some((p) => p.join === "||")) return UNREAD;
+  const lastStage = stage === mine.stages.length - 1;
+  if (at === line.length - 1) {
+    if (lastStage) return { read: true, exit: lineExit };
+    return pipeStatus !== undefined && pipeStatus.length === mine.stages.length
+      ? { read: true, exit: pipeStatus[stage] ?? lineExit }
+      : UNREAD;
+  }
+  const onlyAnds = line.slice(at, -1).every((p) => p.join === "&&");
+  return lastStage && onlyAnds ? { read: true, exit: lineExit } : UNREAD;
 }
 
 export function bashTool(opts: BashToolOpts): HertaTool {
@@ -305,6 +385,26 @@ export function bashTool(opts: BashToolOpts): HertaTool {
       } else if (r.exitCode !== 0 && r.exitCode !== null) {
         notes.push(`[exit code: ${r.exitCode}]`);
       }
+      const testWords = testSegment(command);
+      const runner =
+        testWords === null
+          ? null
+          : testRunnerExit(command, r.exitCode, r.pipeStatus);
+      if (runner !== null && !r.timedOut && !r.shellExited) {
+        if (!runner.read) {
+          // The model is told, so that it can run the tests where their
+          // result is read; the record just has no test row for this line.
+          notes.push(
+            "[test result not recorded: the line's exit code is not the test run's own — a command follows it, or it may not have run. To have a result recorded, run the tests as the last command of the line (a pipe after them is fine).]",
+          );
+        } else if (runner.exit !== null && runner.exit !== r.exitCode) {
+          // A runner that failed upstream of a pipe: the line exited 0, so
+          // nothing above says so, and the model reads a red run as green.
+          notes.push(
+            `[the test runner exited ${runner.exit}; the line's exit code ${r.exitCode} is the last command of its pipe]`,
+          );
+        }
+      }
       const modelBody = clipForModel(redacted);
       const modelText = [modelBody.out, ...notes]
         .filter((s) => s.length > 0)
@@ -370,12 +470,13 @@ export function bashTool(opts: BashToolOpts): HertaTool {
           : {}),
       };
       // Test evidence: the first segment that IS a test runner names the run
-      // (`cd x && npm test` → npm test); the shell's exit is the pipeline's.
-      const testWords = testSegment(command);
-      if (testWords !== null) {
+      // (`cd x && npm test` → npm test), and its verdict is the runner's own
+      // exit status. A run whose own status is not in hand is no evidence:
+      // the line keeps its ordinary exit row (`testRunnerExit`).
+      if (testWords !== null && runner?.read === true) {
         const testRun = detectTestRun({
           argv: testWords,
-          exitCode: r.exitCode,
+          exitCode: runner.exit,
           durationMs: r.durationMs,
           timedOut: r.timedOut,
         });

@@ -48,6 +48,12 @@ export interface ShellRunResult {
   capped: boolean;
   /** null on timeout or shell death. */
   exitCode: number | null;
+  /** The exit status of each stage of the LAST pipeline the command ran
+   *  (`PIPESTATUS`), left to right; one entry when that was a single
+   *  command. `exitCode` is the last stage's, so a failure upstream of a
+   *  pipe (`npm test | tee log`) shows only here. Absent on timeout, abort
+   *  and shell death. */
+  pipeStatus?: readonly number[];
   timedOut: boolean;
   shellExited: boolean;
   durationMs: number;
@@ -99,9 +105,10 @@ const TASKKILL_TIMEOUT_MS = 15_000;
 
 interface Waiter {
   marker: string;
-  /** The marker's own line — `<marker>:<exit code>:<0|1>:<$PWD>` — which is
-   *  what ends the command. An echo of the wrapper has the marker in it and
-   *  not this shape. */
+  /** The marker's own line —
+   *  `<marker>:<exit code>:<0|1>:<stage statuses, each followed by a comma>:<$PWD>`
+   *  — which is what ends the command. An echo of the wrapper has the marker
+   *  in it and not this shape. */
   markerLine: RegExp;
   resolve: (r: Omit<ShellRunResult, "durationMs" | "freshShell">) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -655,7 +662,11 @@ export class PersistentShell implements BackgroundProcess {
       output = `[earlier output dropped — ${outputBytes} bytes total, showing the last ${Math.min(keptBytes, this.opts.maxOutputBytes)}]\n${output}`;
     }
     const cwdReset = m[2] === "1";
-    const pwdShell = m[3] as string;
+    const pipeStatus = (m[3] as string)
+      .split(",")
+      .filter((x) => x.length > 0)
+      .map(Number);
+    const pwdShell = m[4] as string;
     const native = this.paths.toNative(pwdShell);
     // Spelled from the root: after `cd …/VERIFY/WS/.herta` the shell IS in
     // `.herta`, and falling back to the root judged what ran next from the
@@ -670,6 +681,7 @@ export class PersistentShell implements BackgroundProcess {
       outputBytes,
       capped,
       exitCode: Number(m[1]),
+      ...(pipeStatus.length > 0 ? { pipeStatus } : {}),
       timedOut: false,
       shellExited: false,
       cwd: this.currentCwd,
@@ -724,7 +736,9 @@ export class PersistentShell implements BackgroundProcess {
       const w: Waiter = {
         marker,
         // The marker is letters, digits and underscores: itself as a pattern.
-        markerLine: new RegExp(`${marker}:(-?\\d+):([01]):([^\\n]*)\\n`),
+        markerLine: new RegExp(
+          `${marker}:(-?\\d+):([01]):([0-9,]*):([^\\n]*)\\n`,
+        ),
         resolve: resolvePromise,
         timer: null,
         onAbort: null,
@@ -788,12 +802,17 @@ export class PersistentShell implements BackgroundProcess {
       // read with the group, before a `set -v` inside it could echo it, and
       // its `2>/dev/null` swallows what `set -x` would trace of it. Neither
       // then reaches the marker line below.
+      // The stage statuses are read in the SAME assignment as `$?`: any
+      // command in between would replace them. They are joined by `printf
+      // -v`, not by `"${a[*]}"`, which joins with whatever `IFS` the command
+      // left behind, and not by a `$(…)`, which is a fork per call.
+      const stages = "PIPESTATUS[@]";
       const script = [
         "{",
         "set +e; set +u",
         command,
-        "} </dev/null; { __herta_rc=$?; set +xv; } 2>/dev/null",
-        `__herta_reset=0; case "$PWD/" in "$__herta_ws"/*) ;; *) cd "$__herta_ws" && __herta_reset=1 ;; esac; printf '\\n%s:%s:%s:%s\\n' '${marker}' "$__herta_rc" "$__herta_reset" "$PWD"`,
+        `} </dev/null; { __herta_ps=("\${${stages}}") __herta_rc=$?; set +xv; } 2>/dev/null`,
+        `__herta_reset=0; case "$PWD/" in "$__herta_ws"/*) ;; *) cd "$__herta_ws" && __herta_reset=1 ;; esac; printf -v __herta_pl '%s,' "\${__herta_ps[@]}"; printf '\\n%s:%s:%s:%s:%s\\n' '${marker}' "$__herta_rc" "$__herta_reset" "$__herta_pl" "$PWD"`,
         "",
       ].join("\n");
       child.stdin?.write(script);

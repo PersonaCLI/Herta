@@ -31,6 +31,7 @@ import {
   makeBashRule,
   registerBashRule,
   SHELL_BG_ID,
+  testRunnerExit,
 } from "./index.js";
 import { PersistentShell } from "./persistent-shell.js";
 import { bashJsonSchema, bashZodJsonSchema } from "./schema.js";
@@ -269,6 +270,113 @@ d("bash tool (real bash)", () => {
     expect(data.testRun?.command).toBe("node --test t.test.mjs");
     await ctx.bg.stopAll();
   });
+
+  // Real run 2026-11-12: `npm test 2>&1 | tee before.log`, two of three
+  // tests red, and the record said `tests: passed (exit 0)`.
+  it("a test run piped into another command is judged by the runner's own exit, not the pipe's last command's", async () => {
+    ws = await mkTmpWorkspace({
+      "red.test.mjs":
+        "import test from 'node:test'; import assert from 'node:assert'; test('no', () => { assert.equal(1, 2); });\n",
+      "green.test.mjs": "import test from 'node:test'; test('ok', () => {});\n",
+    });
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+
+    const red = await tool.run(
+      call("node --test red.test.mjs 2>&1 | tee before.log"),
+      ctx,
+      noopProgress,
+    );
+    const redData = red.data as RunCommandData;
+    // The line itself exited 0: that is bash, and it is still what is said.
+    expect(redData.exitCode).toBe(0);
+    expect(red.summary).toContain("exit 0");
+    // The tests did not pass.
+    expect(redData.testRun?.status).toBe("failed");
+    expect(redData.testRun?.summary).toMatch(/^exit 1, /);
+    expect(redData.testRun?.command).toBe("node --test red.test.mjs");
+    // And the model is told, since no `[exit code: N]` line says so.
+    expect(red.modelText).toContain(
+      "[the test runner exited 1; the line's exit code 0 is the last command of its pipe]",
+    );
+
+    const green = await tool.run(
+      call("node --test green.test.mjs 2>&1 | tail -20", "c2"),
+      ctx,
+      noopProgress,
+    );
+    const greenData = green.data as RunCommandData;
+    expect(greenData.testRun?.status).toBe("passed");
+    expect(green.modelText).not.toContain("the test runner exited");
+
+    // Behind a `cd`, with a third stage.
+    const chained = await tool.run(
+      call("cd . && node --test red.test.mjs 2>&1 | tee a.log | tail -5", "c3"),
+      ctx,
+      noopProgress,
+    );
+    expect((chained.data as RunCommandData).testRun?.status).toBe("failed");
+    await ctx.bg.stopAll();
+  });
+
+  it("a test run whose own status is not in hand is no test evidence: the line keeps its exit row, and the model is told", async () => {
+    ws = await mkTmpWorkspace({
+      "red.test.mjs":
+        "import test from 'node:test'; import assert from 'node:assert'; test('no', () => { assert.equal(1, 2); });\n",
+      "green.test.mjs": "import test from 'node:test'; test('ok', () => {});\n",
+    });
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+    // It read `tests: passed (exit 0)` until 2026-11-12: the exit is echo's.
+    const after = await tool.run(
+      call("node --test red.test.mjs 2>&1 | tee log.txt; echo done"),
+      ctx,
+      noopProgress,
+    );
+    const afterData = after.data as RunCommandData;
+    expect(afterData.testRun).toBeUndefined();
+    expect(afterData.exitCode).toBe(0);
+    expect(after.ok).toBe(true);
+    expect(after.modelText).toContain("[test result not recorded:");
+    // The line is still a test run to the dispatch: it ran tests.
+    expect(
+      tool.runsTests?.({
+        command: "node --test red.test.mjs 2>&1 | tee log.txt; echo done",
+      }),
+    ).toBe(true);
+    // A GREEN run of that shape loses its row too: nothing proves the pass.
+    const green = await tool.run(
+      call("node --test green.test.mjs; echo done", "c2"),
+      ctx,
+      noopProgress,
+    );
+    expect((green.data as RunCommandData).testRun).toBeUndefined();
+    // `|| true` hides the status on purpose.
+    const swallowed = await tool.run(
+      call("node --test red.test.mjs || true", "c3"),
+      ctx,
+      noopProgress,
+    );
+    expect((swallowed.data as RunCommandData).testRun).toBeUndefined();
+    // An unpiped run on its own was always read right, and still is.
+    const plain = await tool.run(
+      call("node --test red.test.mjs", "c4"),
+      ctx,
+      noopProgress,
+    );
+    expect((plain.data as RunCommandData).testRun?.status).toBe("failed");
+    expect(plain.modelText).toContain("[exit code: 1]");
+    expect(plain.modelText).not.toContain("test result not recorded");
+    expect(plain.modelText).not.toContain("the test runner exited");
+    // `&&` after a green run proves the pass.
+    const chained = await tool.run(
+      call("node --test green.test.mjs && echo ok", "c5"),
+      ctx,
+      noopProgress,
+    );
+    expect((chained.data as RunCommandData).testRun?.status).toBe("passed");
+    await ctx.bg.stopAll();
+  }, 60_000);
 
   it("the rule: allow-listed reads pass, writes/unknowns ask, catastrophes deny; the effective cwd follows the shell", async () => {
     ws = await mkTmpWorkspace({ "a.txt": "x\n", "sub/b.txt": "y\n" });
@@ -582,6 +690,101 @@ d("bash tool (real bash)", () => {
     expect(r.ok).toBe(false);
     expect(r.modelText).toContain("Parameter `command` is required");
     expect(ctx.bg.get(SHELL_BG_ID)).toBeUndefined();
+  });
+});
+
+describe("testRunnerExit: whose exit status speaks for a test run, if any does", () => {
+  const read = (exit: number | null) => ({ read: true, exit });
+  const UNREAD = { read: false };
+
+  it("the runner's own stage, when it is a stage of the line's last pipeline", () => {
+    expect(testRunnerExit("npm test 2>&1 | tee log", 0, [1, 0])).toEqual(
+      read(1),
+    );
+    expect(testRunnerExit("cd pkg && npm test | tail -40", 0, [2, 0])).toEqual(
+      read(2),
+    );
+    expect(
+      testRunnerExit("npx vitest run | tee a | tail", 0, [1, 0, 0]),
+    ).toEqual(read(1));
+    // A green run is green.
+    expect(testRunnerExit("npm test | tee log", 0, [0, 0])).toEqual(read(0));
+  });
+
+  it("the line's exit code, when the runner is the last thing the line ran", () => {
+    expect(testRunnerExit("npm test", 1, [1])).toEqual(read(1));
+    expect(testRunnerExit("cd pkg && npm test", 0, [0])).toEqual(read(0));
+    expect(testRunnerExit("cd a; npm test", 2, [2])).toEqual(read(2));
+    // The runner as the last stage of a pipe: the line's exit is its own,
+    // whatever the shell did or did not report.
+    expect(testRunnerExit("cat names | npm test", 3, [0, 3])).toEqual(read(3));
+    expect(testRunnerExit("cat names | npm test", 3, undefined)).toEqual(
+      read(3),
+    );
+  });
+
+  it("the line's exit code, when only `&&` joins follow the runner: zero proves the pass, non-zero claims none", () => {
+    expect(testRunnerExit("npm test && echo ok", 0, [0])).toEqual(read(0));
+    expect(testRunnerExit("npm test && npm run build", 1, [1])).toEqual(
+      read(1),
+    );
+    expect(testRunnerExit("cd a && npm test && echo ok", 0, [0])).toEqual(
+      read(0),
+    );
+  });
+
+  it("not read: a command after the runner that the exit code may be", () => {
+    expect(testRunnerExit("npm test; echo done", 0, [0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm test\necho done", 0, [0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm test || true", 0, [0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm test | tee log; echo done", 0, [0])).toEqual(
+      UNREAD,
+    );
+    // A pipe after the runner hides its status from the `&&`.
+    expect(testRunnerExit("npm test | tee log && echo ok", 0, [0])).toEqual(
+      UNREAD,
+    );
+    // `&&` then `;`: the last join decides nothing about the first.
+    expect(testRunnerExit("npm test && echo a; echo b", 0, [0])).toEqual(
+      UNREAD,
+    );
+    // Two test runs: the first names the run, and it is not the last word.
+    expect(
+      testRunnerExit("npm test; npx vitest run | tail", 0, [1, 0]),
+    ).toEqual(UNREAD);
+  });
+
+  it("not read: a `||` before the runner — it may not have run", () => {
+    expect(testRunnerExit("true || npm test", 0, [0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm ci || npm test | tail", 0, [0, 0])).toEqual(
+      UNREAD,
+    );
+  });
+
+  it("not read: an earlier stage whose status the shell did not report stage for stage", () => {
+    expect(testRunnerExit("npm test | tee log", 0, [0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm test | tee log", 0, [1, 0, 0])).toEqual(UNREAD);
+    expect(testRunnerExit("npm test | tee log", 0, undefined)).toEqual(UNREAD);
+  });
+
+  it("a line the reader does not model is read only when the test run is its last segment", () => {
+    // A comment after an unpiped run: the run is the last segment.
+    expect(testRunnerExit("npm test # the suite", 1, [1])).toEqual(read(1));
+    expect(testRunnerExit("npm test | tail -5 # the tail", 0, [1, 0])).toEqual(
+      UNREAD,
+    );
+    expect(testRunnerExit("npm test | tee $(date +%s).log", 0, [1, 0])).toEqual(
+      UNREAD,
+    );
+  });
+
+  it("no exit code at all — a timeout, a dead shell — is the runner's failure, as before", () => {
+    expect(testRunnerExit("npm test | tee log", null, undefined)).toEqual(
+      read(null),
+    );
+    expect(testRunnerExit("npm test; echo done", null, undefined)).toEqual(
+      read(null),
+    );
   });
 });
 

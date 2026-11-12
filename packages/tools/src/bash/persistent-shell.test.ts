@@ -203,6 +203,43 @@ d("PersistentShell (real bash)", () => {
     expect(r.cwdReset).toBe(false);
   });
 
+  it("reports the exit status of every stage of the last pipeline: a failure upstream of a pipe is not lost (real run 2026-11-12)", async () => {
+    const piped = await shell.run("(exit 3) | cat | cat", {
+      timeoutMs: 10_000,
+    });
+    // The line's exit code is its last stage's, as bash has it.
+    expect(piped.exitCode).toBe(0);
+    expect(piped.pipeStatus).toEqual([3, 0, 0]);
+    // A single command is a pipeline of one.
+    const single = await shell.run("(exit 4)", { timeoutMs: 10_000 });
+    expect(single.exitCode).toBe(4);
+    expect(single.pipeStatus).toEqual([4]);
+    // The LAST pipeline: a command after the pipe replaces its statuses.
+    const after = await shell.run("(exit 5) | cat; echo done", {
+      timeoutMs: 10_000,
+    });
+    expect(after.output.trim()).toBe("done");
+    expect(after.pipeStatus).toEqual([0]);
+    // Neither protocol variable reaches a command's output.
+    expect(piped.output).toBe("");
+  });
+
+  it("the stage statuses survive what a command leaves behind: its own IFS, `set -u`, `set -x`", async () => {
+    const ifs = await shell.run("IFS=:; (exit 2) | cat", { timeoutMs: 10_000 });
+    expect(ifs.pipeStatus).toEqual([2, 0]);
+    const strict = await shell.run("set -u; set -x; (exit 6) | cat", {
+      timeoutMs: 10_000,
+    });
+    expect(strict.exitCode).toBe(0);
+    expect(strict.pipeStatus).toEqual([6, 0]);
+    // The trailer's own lines are not traced into the output.
+    expect(strict.output).not.toContain("__herta");
+    // And the next call starts untraced, with the cwd it had.
+    const next = await shell.run("echo ok", { timeoutMs: 10_000 });
+    expect(next.output.trim()).toBe("ok");
+    expect(next.pipeStatus).toEqual([0]);
+  });
+
   it("keeps cwd, variables and functions across calls (the trained shape's persistence)", async () => {
     writeFileSync(join(ws, "a.txt"), "A\n");
     await shell.run(

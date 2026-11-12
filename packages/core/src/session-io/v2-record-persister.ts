@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  truncateSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeFileAtomicSync } from "../atomic-write.js";
@@ -41,6 +42,83 @@ export interface ForResumeOpts {
 }
 
 const wallClock = (): string => new Date().toISOString();
+
+/*
+ * The two rewrites, by bytes (review 2026-11-10, second pass).
+ *
+ * A rewind and an attachment removal each decoded the whole file to a
+ * string, split it, parsed EVERY line as JSON to tell a block from a meta
+ * line, joined it and wrote all of it back, synchronously on the desktop's
+ * main thread: about 10 ms a megabyte, 411 ms for a 47 MB session. Neither
+ * needs any of that. A rewind drops the file's end, so it finds the byte
+ * where the first withdrawn block starts and truncates there; nothing is
+ * rewritten. A replacement changes one line, so it writes the bytes before
+ * it, the new line and the bytes after it.
+ *
+ * What a line is can be told without parsing it. The persister writes
+ * `_kind` FIRST on every meta line, so a line that opens `{"_kind":` is
+ * one; and a line in which the key is never spelled cannot carry it, so it
+ * is a block. Only a line that spells `"_kind"` somewhere else — a block
+ * whose text says it, as a transcript about this file does — is parsed,
+ * and classified exactly as before.
+ */
+const NEWLINE = 0x0a;
+const META_PREFIX = Buffer.from('{"_kind":');
+const META_KEY = Buffer.from('"_kind"');
+
+interface LineRange {
+  readonly start: number;
+  /** Exclusive, and not counting the line break. */
+  readonly end: number;
+  /** The file's last bytes, with no line break after them: what a failed
+   *  append leaves. */
+  readonly partial: boolean;
+}
+
+/** The non-empty lines after the header, as byte ranges. A file with no
+ *  whole header line has none: it is the reader's to report. */
+function* linesAfterHeader(buf: Buffer): Generator<LineRange> {
+  let start = buf.indexOf(NEWLINE) + 1;
+  if (start === 0) return;
+  while (start < buf.length) {
+    const nl = buf.indexOf(NEWLINE, start);
+    const end = nl === -1 ? buf.length : nl;
+    if (end > start) yield { start, end, partial: nl === -1 };
+    if (nl === -1) return;
+    start = nl + 1;
+  }
+}
+
+/** Whether a line carries a top-level `_kind`; "corrupt" when only parsing
+ *  could say and it does not parse. */
+function lineKind(buf: Buffer, line: LineRange): "meta" | "block" | "corrupt" {
+  const { start, end } = line;
+  if (
+    !line.partial &&
+    end - start >= META_PREFIX.length &&
+    buf.compare(
+      META_PREFIX,
+      0,
+      META_PREFIX.length,
+      start,
+      start + META_PREFIX.length,
+    ) === 0
+  ) {
+    return "meta";
+  }
+  // A fragment may be cut anywhere, so it is always parsed.
+  if (!line.partial && !buf.subarray(start, end).includes(META_KEY)) {
+    return "block";
+  }
+  try {
+    const parsed = JSON.parse(buf.toString("utf8", start, end)) as {
+      _kind?: unknown;
+    };
+    return parsed._kind === undefined ? "block" : "meta";
+  } catch {
+    return "corrupt";
+  }
+}
 
 /**
  * Repair the one corruption a crash can leave behind: the process died
@@ -250,37 +328,30 @@ export class V2RecordPersister {
    * keeps. A `workspace_set` from inside the withdrawn span is dropped with it
    * (on resume, `read-session-file` falls back to the prior workspace).
    *
-   * The rewrite is atomic — a temp file is written then renamed over the session
-   * file — so a crash mid-write never leaves a partially-rewritten transcript.
+   * Nothing is rewritten: the file is shortened at the byte where the first
+   * withdrawn block's line starts, so it ends, as before, on a whole line.
    */
   truncateToBlockCount(keepBlockCount: number): void {
-    let raw: string;
+    let buf: Buffer;
     try {
-      raw = readFileSync(this.sessionFile, "utf8");
+      buf = readFileSync(this.sessionFile);
     } catch (err) {
       // No file on disk yet → nothing persisted to truncate.
       if ((err as { code?: string }).code === "ENOENT") return;
       throw err;
     }
-    const lines = raw.split("\n");
-    if (lines[lines.length - 1] === "") lines.pop();
-    const header = lines[0];
-    if (header === undefined) return; // empty/headerless file → nothing to do
-    const kept: string[] = [header];
     let blockCount = 0;
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined || line.length === 0) continue;
-      let parsed: { _kind?: string };
-      try {
-        parsed = JSON.parse(line) as { _kind?: string };
-      } catch {
-        // Corrupt/partial trailing line — stop; never keep past a bad line.
+    let cut: number | undefined;
+    let unfinished = false;
+    for (const line of linesAfterHeader(buf)) {
+      const kind = lineKind(buf, line);
+      // Corrupt/partial trailing line — stop; never keep past a bad line.
+      if (kind === "corrupt") {
+        cut = line.start;
         break;
       }
-      const isBlock = parsed._kind === undefined;
-      // The cut is the first WITHDRAWN BLOCK, so parse before cutting (audit
-      // 2026-07-10 §6): with the count check first, a meta line (e.g.
+      // The cut is the first WITHDRAWN BLOCK, so classify before cutting
+      // (audit 2026-07-10 §6): with the count check first, a meta line (e.g.
       // `workspace_set`) sitting exactly at the boundary — after the last
       // kept block, before the first withdrawn one — was dropped too, and a
       // resume reverted the workspace. A meta line physically before the
@@ -288,11 +359,27 @@ export class V2RecordPersister {
       // belongs to the kept era; meta INSIDE the span still drops with it.
       // (Masked today only because appendWorkspaceSet call sites append a
       // → 系统 note block immediately after the meta line.)
-      if (isBlock && blockCount >= keepBlockCount) break;
-      kept.push(line);
-      if (isBlock) blockCount += 1;
+      if (kind === "block" && blockCount >= keepBlockCount) {
+        cut = line.start;
+        break;
+      }
+      if (kind === "block") blockCount += 1;
+      // A whole line that is kept but was never ended: end it, as the
+      // rewrite this replaces did, or the next append would join it.
+      if (line.partial) unfinished = true;
     }
-    writeFileAtomicSync(this.sessionFile, `${kept.join("\n")}\n`);
+    if (cut !== undefined) {
+      if (cut >= buf.length) return;
+      try {
+        truncateSync(this.sessionFile, cut);
+      } catch {
+        // A file system that will not shorten a file in place: write the
+        // kept bytes the way this always did.
+        writeFileAtomicSync(this.sessionFile, buf.subarray(0, cut));
+      }
+      return;
+    }
+    if (unfinished) appendFileSync(this.sessionFile, "\n", "utf8");
   }
 
   /**
@@ -312,44 +399,50 @@ export class V2RecordPersister {
    * record that a concurrent rewind may since have shortened.
    */
   replaceBlockAt(blockIndex: number, block: TerminalRecordBlock): void {
-    let raw: string;
+    let buf: Buffer;
     try {
-      raw = readFileSync(this.sessionFile, "utf8");
+      buf = readFileSync(this.sessionFile);
     } catch (err) {
       if ((err as { code?: string }).code === "ENOENT") return;
       throw err;
     }
-    const lines = raw.split("\n");
-    if (lines[lines.length - 1] === "") lines.pop();
     let blockCount = 0;
-    let replaced = false;
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined || line.length === 0) continue;
-      let parsed: { _kind?: string; at?: unknown };
+    for (const line of linesAfterHeader(buf)) {
+      const kind = lineKind(buf, line);
+      if (kind === "corrupt") return; // never rewrite past a bad line
+      if (kind === "meta") continue;
+      if (blockCount !== blockIndex) {
+        blockCount += 1;
+        continue;
+      }
+      let parsed: { at?: unknown };
       try {
-        parsed = JSON.parse(line) as { _kind?: string; at?: unknown };
+        parsed = JSON.parse(buf.toString("utf8", line.start, line.end)) as {
+          at?: unknown;
+        };
       } catch {
-        break; // corrupt/partial tail — never rewrite past a bad line
+        return;
       }
-      if (parsed._kind !== undefined) continue; // meta line, not a block
-      if (blockCount === blockIndex) {
-        // Keep the line's original timestamp when the replacement carries
-        // none (2026-08-17): the in-memory record never holds `at` (it is
-        // stamped here on append), so a replaced block used to lose it and
-        // a removed attachment reloaded with no time. The event happened
-        // when it happened; withdrawal does not move it.
-        const stamped =
-          block.at === undefined && typeof parsed.at === "string"
-            ? { ...block, at: parsed.at }
-            : block;
-        lines[i] = JSON.stringify(stamped);
-        replaced = true;
-        break;
-      }
-      blockCount += 1;
+      // Keep the line's original timestamp when the replacement carries
+      // none (2026-08-17): the in-memory record never holds `at` (it is
+      // stamped here on append), so a replaced block used to lose it and
+      // a removed attachment reloaded with no time. The event happened
+      // when it happened; withdrawal does not move it.
+      const stamped =
+        block.at === undefined && typeof parsed.at === "string"
+          ? { ...block, at: parsed.at }
+          : block;
+      // The bytes before the line, the new line, the bytes after it — the
+      // line break included, or one supplied where the line had none.
+      writeFileAtomicSync(
+        this.sessionFile,
+        Buffer.concat([
+          buf.subarray(0, line.start),
+          Buffer.from(JSON.stringify(stamped), "utf8"),
+          line.partial ? Buffer.from("\n") : buf.subarray(line.end),
+        ]),
+      );
+      return;
     }
-    if (!replaced) return;
-    writeFileAtomicSync(this.sessionFile, `${lines.join("\n")}\n`);
   }
 }

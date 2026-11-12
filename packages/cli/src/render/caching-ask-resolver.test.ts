@@ -23,7 +23,11 @@ const style = makeStyle({ enabled: false });
 function mkReq(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
   return {
     id: "p1",
-    call: { id: "c1", tool: "edit_file", input: { path: "x.txt" } },
+    call: {
+      id: "c1",
+      tool: "str_replace_editor",
+      input: { command: "str_replace", path: "x.txt" },
+    },
     reason: "writes file",
     risk: "workspace_write",
     files: ["x.txt"],
@@ -90,14 +94,16 @@ describe("CachingAskResolver", () => {
     const decision = await wrapper.present(mkReq(), ac.signal);
     expect(decision).toBe("allow");
     // Keyed on the task scope (ADR 0026): the remember covers every file
-    // write until the brief ends, both write tools included.
-    expect(cache.has("edit_file", "workspace_write", "task")).toBe(true);
-    expect(cache.has("write_new_file", "workspace_write", "task")).toBe(true);
+    // write until the brief ends — the key is the act, not the file.
+    expect(cache.has("str_replace_editor", "workspace_write", "task")).toBe(
+      true,
+    );
+    expect(cache.list()).toEqual(["file_write:task:workspace_write"]);
   });
 
   it("cache hit: returns allow immediately without calling inner; prints marker", async () => {
     const cache = new SessionApprovalCache();
-    cache.add("edit_file", "workspace_write", "task");
+    cache.add("str_replace_editor", "workspace_write", "task");
     const { inner, stdout } = mkInner();
     // outcomes intentionally empty — inner must NOT be called.
     const wrapper = new CachingAskResolver(inner, cache, stdout, style);
@@ -106,7 +112,7 @@ describe("CachingAskResolver", () => {
     expect(decision).toBe("allow");
     expect(inner.optionsLog).toEqual([]);
     expect(stdout.full()).toContain("auto-allow");
-    expect(stdout.full()).toContain("edit_file");
+    expect(stdout.full()).toContain("str_replace_editor");
     expect(stdout.full()).toContain("workspace_write");
     expect(stdout.full()).toContain("cached for this task");
   });
@@ -134,7 +140,7 @@ describe("CachingAskResolver", () => {
 
   it("cache hit only matches the same (tool, risk, scope) tuple", async () => {
     const cache = new SessionApprovalCache();
-    cache.add("edit_file", "workspace_write", "x.txt");
+    cache.add("str_replace_editor", "workspace_write", "task");
     const { inner, stdout } = mkInner();
     inner.outcomes = ["deny"];
     const wrapper = new CachingAskResolver(inner, cache, stdout, style);
@@ -142,7 +148,9 @@ describe("CachingAskResolver", () => {
     // Different tool — cache miss, falls through to inner.
     const decision = await wrapper.present(
       mkReq({
-        call: { id: "c2", tool: "write_new_file", input: {} },
+        call: { id: "c2", tool: "bash", input: { command: "rustfmt x.rs" } },
+        argv: ["rustfmt", "x.rs"],
+        files: undefined,
       }),
       ac.signal,
     );
@@ -156,7 +164,7 @@ describe("CachingAskResolver", () => {
     // is cleared at backend turn end by wireTaskScopedApprovalCache). Every
     // auto-approved write still projects its patch preview into the record.
     const cache = new SessionApprovalCache();
-    cache.add("edit_file", "workspace_write", "task");
+    cache.add("str_replace_editor", "workspace_write", "task");
     const { inner, stdout } = mkInner();
     // outcomes intentionally empty — inner must NOT be called.
     const wrapper = new CachingAskResolver(inner, cache, stdout, style);
@@ -182,20 +190,23 @@ describe("CachingAskResolver", () => {
     expect(typeof wrapper.present).toBe("function");
   });
 
-  describe("run_command per-binary caching", () => {
+  describe("bash, cached per program", () => {
+    // As bash asks: the line, and the argv its rule derived from it.
     function mkRunReq(
-      argv: unknown,
+      argv: readonly string[],
       risk: PermissionRequest["risk"] = "workspace_write",
     ): PermissionRequest {
       return mkReq({
-        call: { id: "c1", tool: "run_command", input: { argv } },
+        call: { id: "c1", tool: "bash", input: { command: argv.join(" ") } },
         risk,
+        argv,
+        files: undefined,
       });
     }
 
     it("cache hit on same binary skips the prompt", async () => {
       const cache = new SessionApprovalCache();
-      cache.add("run_command", "workspace_write", "rustfmt");
+      cache.add("bash", "workspace_write", "rustfmt");
       const { inner, stdout } = mkInner();
       // intentionally no scripted outcome — inner must NOT be called.
       const wrapper = new CachingAskResolver(inner, cache, stdout, style);
@@ -206,12 +217,12 @@ describe("CachingAskResolver", () => {
       );
       expect(decision).toBe("allow");
       expect(inner.optionsLog).toEqual([]);
-      expect(stdout.full()).toContain("auto-allow: run_command rustfmt");
+      expect(stdout.full()).toContain("auto-allow: bash rustfmt");
     });
 
     it("cache miss: different binary prompts (and offers remember)", async () => {
       const cache = new SessionApprovalCache();
-      cache.add("run_command", "workspace_write", "rustfmt");
+      cache.add("bash", "workspace_write", "rustfmt");
       const { inner, stdout } = mkInner();
       inner.outcomes = ["allow"];
       const wrapper = new CachingAskResolver(inner, cache, stdout, style);
@@ -232,8 +243,8 @@ describe("CachingAskResolver", () => {
       const wrapper = new CachingAskResolver(inner, cache, stdout, style);
       const ac = new AbortController();
       await wrapper.present(mkRunReq(["rustfmt", "x.rs"]), ac.signal);
-      expect(cache.has("run_command", "workspace_write", "rustfmt")).toBe(true);
-      expect(cache.has("run_command", "workspace_write", "gofmt")).toBe(false);
+      expect(cache.has("bash", "workspace_write", "rustfmt")).toBe(true);
+      expect(cache.has("bash", "workspace_write", "gofmt")).toBe(false);
     });
 
     it("interpreters cache only by a PINNED workspace script — never by their bare name (audit T3.4 review; refined 2026-08-17)", async () => {
@@ -249,9 +260,7 @@ describe("CachingAskResolver", () => {
       await wrapper.present(mkRunReq(["python3", "build.py"]), ac.signal);
       expect(inner.optionsLog).toEqual([{ showRemember: true }]);
       expect(cache.size()).toBe(1);
-      expect(cache.list()).toEqual([
-        "run_command:python3 build.py:workspace_write",
-      ]);
+      expect(cache.list()).toEqual(["bash:python3 build.py:workspace_write"]);
       // The arbitrary-code shape is still never offered / never stored: a
       // `python3 -c` after the remember above still prompts.
       await wrapper.present(mkRunReq(["python3", "-c", "print(1)"]), ac.signal);
@@ -284,10 +293,11 @@ describe("CachingAskResolver", () => {
       inner.outcomes = ["allow"];
       const wrapper = new CachingAskResolver(inner, cache, stdout, style);
       const ac = new AbortController();
-      // No argv at all
+      // No argv at all: the rule derived none from the line.
       await wrapper.present(
         mkReq({
-          call: { id: "c1", tool: "run_command", input: {} },
+          call: { id: "c1", tool: "bash", input: { command: "$(x)" } },
+          files: undefined,
         }),
         ac.signal,
       );
@@ -303,8 +313,12 @@ describe("CachingAskResolver", () => {
         const permissions = new WorkspacePermissions(() => root);
         const write = (): PermissionRequest =>
           mkReq({
-            call: { id: "c1", tool: "edit_file", input: { path: "a.txt" } },
-            code: "edit_file_ask",
+            call: {
+              id: "c1",
+              tool: "str_replace_editor",
+              input: { command: "str_replace", path: "a.txt" },
+            },
+            code: "str_replace_editor_ask",
             undoable: true,
           });
         const first = mkInner();
@@ -337,7 +351,7 @@ describe("CachingAskResolver", () => {
         ).resolves.toBe("allow");
         expect(second.inner.optionsLog).toEqual([]);
         expect(second.stdout.full()).toContain(
-          "auto-allow: edit_file workspace_write (a write undo can take back)",
+          "auto-allow: str_replace_editor workspace_write (a write undo can take back)",
         );
         // A git commit trust used to let through prompts (no reviewer here),
         // and offers no [r] (already on).
@@ -354,10 +368,12 @@ describe("CachingAskResolver", () => {
           mkReq({
             call: {
               id: "c2",
-              tool: "run_command",
-              input: { argv: ["git", "commit", "-m", "x"] },
+              tool: "bash",
+              input: { command: "git commit -m x" },
             },
             code: "command_ask_vcs",
+            argv: ["git", "commit", "-m", "x"],
+            files: undefined,
           }),
           new AbortController().signal,
         );

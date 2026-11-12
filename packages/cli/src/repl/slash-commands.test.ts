@@ -192,8 +192,8 @@ describe("handleSlashCommand", () => {
 
   it("/permissions lists approvals sorted", async () => {
     const cache = new SessionApprovalCache();
-    cache.add("write_new_file", "workspace_write", "task");
-    cache.add("run_command", "workspace_write", "git");
+    cache.add("str_replace_editor", "workspace_write", "task");
+    cache.add("bash", "workspace_write", "git");
     const out = new MockWritable();
     await handleSlashCommand(
       "/permissions",
@@ -202,14 +202,14 @@ describe("handleSlashCommand", () => {
     const text = out.full();
     expect(text).toContain("session approvals (2)");
     expect(text).toContain("file_write:task:workspace_write");
-    expect(text).toContain("run_command:git:workspace_write");
+    expect(text).toContain("bash:git:workspace_write");
     expect(text).toContain("/permissions clear");
   });
 
   it("/permissions clear empties the cache and prints count", async () => {
     const cache = new SessionApprovalCache();
-    cache.add("edit_file", "workspace_write", "a.ts");
-    cache.add("write_new_file", "workspace_write", "b.ts");
+    cache.add("str_replace_editor", "workspace_write", "task");
+    cache.add("bash", "workspace_write", "git");
     const out = new MockWritable();
     await handleSlashCommand(
       "/permissions clear",

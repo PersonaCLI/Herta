@@ -32,11 +32,7 @@ export const CALL_ERROR_DENY_CODES: ReadonlySet<string> = new Set([
   // The call's shape.
   "invalid_input",
   "path_not_absolute",
-  "parse_failed",
   // The edit's anchor.
-  "hunk_not_found",
-  "hunk_ambiguous",
-  "hunk_overlap",
   "edit_not_found",
   "edit_ambiguous",
   "insert_out_of_range",

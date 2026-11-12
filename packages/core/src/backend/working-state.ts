@@ -4,12 +4,12 @@ import type { Finding } from "../findings-ledger.js";
  * The working state the harness keeps for 板砖 once old iterations have been
  * dropped from its transcript (2026-09-29 long-run study, proposal 2).
  *
- * The budget trim drops whole old groups and leaves a count. Four things
+ * The budget trim drops whole old groups and leaves a count. Three things
  * then vanish that the model cannot cheaply work out again: the files it
- * has changed, the background commands still running (their ids were in a
- * dropped launch result), the conclusions it has recorded (so at the ledger's
- * cap it cannot consolidate), and what the user said while it worked (a
- * steer sits in a droppable group). This block states them from the
+ * has changed, the conclusions it has recorded (so at the ledger's cap it
+ * cannot consolidate), and what the user said while it worked (a steer sits
+ * in a droppable group). (A fourth, the standard set's managed background
+ * commands, left with that set: ADR 0086.) This block states them from the
  * harness's own records — deterministic, never model-written — in the state
  * trailer after the transcript, so the cached prefix is untouched. Claude Code rebuilds the same kind of state after a
  * compaction; Codex rebuilds its context from live state. Herta never
@@ -24,11 +24,6 @@ export interface WorkingStateInput {
     /** `+N -M` when the diff was measured. */
     readonly diffSummary?: string;
   }>;
-  /** Background commands still running (model-visible ids). */
-  readonly background: ReadonlyArray<{
-    readonly id: string;
-    readonly command: string;
-  }>;
   /** Conclusions recorded with report_finding. */
   readonly findings: readonly Finding[];
   /** What the user said while this run worked, oldest first. */
@@ -36,10 +31,8 @@ export interface WorkingStateInput {
 }
 
 const MAX_FILES = 30;
-const MAX_BACKGROUND = 8;
 const MAX_STEERS = 5;
 const MAX_STEER_CHARS = 400;
-const MAX_COMMAND_CHARS = 120;
 
 function clip(text: string, max: number): string {
   const line = text.replace(/\s+/g, " ").trim();
@@ -82,18 +75,6 @@ export function renderWorkingState(
     if (more > 0) out.push(en ? `- …and ${more} more` : `- ……另 ${more} 个`);
   } else {
     out.push(en ? "Files changed: none yet." : "改过的文件：暂无。");
-  }
-
-  const bg = input.background.slice(0, MAX_BACKGROUND);
-  if (bg.length > 0) {
-    out.push(
-      en
-        ? "Background commands still running (read with command_output, end with command_stop):"
-        : "仍在后台运行的命令（用 command_output 读输出，用 command_stop 结束）：",
-    );
-    for (const b of bg) {
-      out.push(`- ${b.id}: ${clip(b.command, MAX_COMMAND_CHARS)}`);
-    }
   }
 
   if (input.findings.length > 0) {

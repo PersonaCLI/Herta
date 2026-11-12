@@ -12,7 +12,11 @@ function writeReq(
 ): PermissionRequest {
   return {
     id: "p1",
-    call: { id: "c1", tool: "edit_file", input: { path: "x.txt" } },
+    call: {
+      id: "c1",
+      tool: "str_replace_editor",
+      input: { command: "str_replace", path: "/ws/x.txt" },
+    },
     reason: "writes file",
     risk: "workspace_write",
     files: ["x.txt"],
@@ -26,10 +30,13 @@ function cmdReq(
 ): PermissionRequest {
   return {
     id: "p2",
-    call: { id: "c2", tool: "run_command", input: { argv } },
+    // As bash asks: the line in its input, the argv its rule derived on
+    // the request.
+    call: { id: "c2", tool: "bash", input: { command: argv.join(" ") } },
     reason: "unknown command",
     risk: "workspace_write",
     code: "command_ask_unknown",
+    argv,
     ...overrides,
   };
 }
@@ -118,7 +125,7 @@ describe("ApprovalPolicy — what only the owner answers (review 2026-10-30)", (
 describe("ApprovalPolicy — automatic review (ADR 0064 amendment 2026-10-10)", () => {
   // An undoable write: the rule marked it, and every class is a write class.
   const undoable = (over: Partial<PermissionRequest> = {}) =>
-    writeReq({ code: "edit_file_ask", undoable: true, ...over });
+    writeReq({ code: "str_replace_editor_ask", undoable: true, ...over });
   const cmd = (code: string, over: Partial<PermissionRequest> = {}) =>
     cmdReq(["git", "commit", "-m", "x"], { code, ...over });
 

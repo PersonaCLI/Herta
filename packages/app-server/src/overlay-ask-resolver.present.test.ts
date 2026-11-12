@@ -13,7 +13,11 @@ import { OverlayAskResolver } from "./overlay-ask-resolver.js";
 function makeRequest(over: Partial<PermissionRequest> = {}): PermissionRequest {
   return {
     id: "req-1",
-    call: { id: "call-1", tool: "write_new_file", input: { path: "a.ts" } },
+    call: {
+      id: "call-1",
+      tool: "str_replace_editor",
+      input: { command: "create", path: "a.ts" },
+    },
     reason: "write a new file",
     risk: "workspace_write",
     ...over,
@@ -58,9 +62,11 @@ describe("OverlayAskResolver — a remember never covers a reach into .herta (re
     });
     const cmd = (argv: string[]): PermissionRequest =>
       makeRequest({
-        call: { id: "c", tool: "run_command", input: { argv } },
+        call: { id: "c", tool: "bash", input: { command: argv.join(" ") } },
         risk: "workspace_write",
         code: "command_ask_unknown",
+        // What the bash rule derived from the line.
+        argv,
       });
     const first = resolver.present(
       cmd(["myprog", "--build"]),
@@ -91,18 +97,18 @@ describe("OverlayAskResolver — a remember never covers a reach into .herta (re
 });
 
 describe("OverlayAskResolver.present — payload enrichment", () => {
-  it("carries tool + summary, no command for non-run_command tools", () => {
+  it("carries tool + summary, and no command for a tool that runs none", () => {
     const { resolver, pending } = makeResolver();
     void resolver.present(makeRequest(), new AbortController().signal);
     expect(pending).toHaveLength(1);
     const p = pending[0];
-    expect(p?.tool).toBe("write_new_file");
+    expect(p?.tool).toBe("str_replace_editor");
     expect(p?.summary).toBe("write a new file");
     expect(p?.command).toBeUndefined();
     expect(p?.risk).toBe("workspace_write");
   });
 
-  it("derives command (argv joined) for run_command", () => {
+  it("a deleted tool's ask shows no command: `run_command`'s argv is read by nobody now (ADR 0086)", () => {
     const { resolver, pending } = makeResolver();
     void resolver.present(
       makeRequest({
@@ -115,7 +121,7 @@ describe("OverlayAskResolver.present — payload enrichment", () => {
       }),
       new AbortController().signal,
     );
-    expect(pending[0]?.command).toBe("npm install left-pad");
+    expect(pending[0]?.command).toBeUndefined();
   });
 
   it("a dev server's start shows the launcher entry's command (ADR 0083 §5)", () => {

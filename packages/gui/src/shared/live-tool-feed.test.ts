@@ -147,18 +147,18 @@ describe("createLiveToolFeed (ADR 0073)", () => {
     });
   });
 
-  it("an edit shows what it removes and what it adds, hunk by hunk", () => {
+  it("an edit shows what it removes and what it adds", () => {
     const h = harness();
     h.feed.push(
       delta(
         "c1",
-        "edit_file",
-        '{"path":"a.ts","hunks":[{"search":"a = 1","replace":"a = 2"},{"search":"b","replace":"c\\nd"}]}',
+        "str_replace_editor",
+        '{"command":"str_replace","path":"a.ts","old_str":"a = 1\\nb","new_str":"a = 2\\nc\\nd"}',
       ),
     );
     const v = h.tick()?.views[0];
     expect(v?.mode).toBe("diff");
-    expect(v?.tail).toBe("-a = 1\n+a = 2\n-b\n+c\n+d");
+    expect(v?.tail).toBe("-a = 1\n-b\n+a = 2\n+c\n+d");
     const h2 = harness();
     h2.feed.push(
       delta(
@@ -170,21 +170,23 @@ describe("createLiveToolFeed (ADR 0073)", () => {
     expect(h2.tick()?.views[0]?.tail).toBe("-x\n+y");
   });
 
-  it("an editor `view` and a read have no stream: they show only as the step in flight, named by the record's summary once dispatched", () => {
+  it("an editor `view` and an excerpt have no stream: they show only as the step in flight, named by the record's summary once dispatched", () => {
     const h = harness();
     h.feed.push(
       delta("c1", "str_replace_editor", '{"command":"view","path":"a.ts"}'),
     );
-    // A read's arguments are not watched at all.
-    h.feed.push(delta("c2", "read_file", '{"path":"a.ts"}'));
+    // An excerpt's arguments are not watched at all.
+    h.feed.push(
+      delta("c2", "show_excerpt", '{"path":"a.ts","fromLine":1,"toLine":4}'),
+    );
     expect(h.tick()?.views).toEqual([
       expect.objectContaining({ id: "c1", streams: false, tail: "", lines: 0 }),
     ]);
-    h.feed.push(started("c2", "read_file", "a.ts"));
+    h.feed.push(started("c2", "show_excerpt", "a.ts:1-4"));
     expect(h.tick()?.views[1]).toMatchObject({
       id: "c2",
       started: true,
-      summary: "a.ts",
+      summary: "a.ts:1-4",
       streams: false,
     });
   });
@@ -240,19 +242,29 @@ describe("createLiveToolFeed (ADR 0073)", () => {
     });
   });
 
-  it("run_command has no draft; it shows from its start, named by the record's summary", () => {
+  it("a call whose arguments are not watched has no draft; it shows from its start, named by the record's summary", () => {
     const h = harness();
-    h.feed.push(delta("c1", "run_command", '{"argv":["npm","test"]}'));
+    h.feed.push(delta("c1", "web_search", '{"query":"vitest 4"}'));
     h.tick();
     expect(h.sent).toEqual([]);
+    h.feed.push(started("c1", "web_search", "vitest 4"));
+    expect(h.tick()?.views[0]).toMatchObject({
+      tool: "web_search",
+      started: true,
+      summary: "vitest 4",
+      streams: false,
+      tail: "",
+    });
+  });
+
+  it("only bash's output streams: a deleted tool's is not shown, and its call makes no op row (ADR 0086)", () => {
+    const h = harness();
     h.feed.push(started("c1", "run_command", "npm test"));
     h.feed.push(output("c1", "ok\n"));
-    expect(h.tick()?.views[0]).toMatchObject({
-      tool: "run_command",
-      stage: "running",
-      commandLine: "npm test",
-      tail: "ok",
-    });
+    const s = h.tick();
+    expect(s?.views[0]).toMatchObject({ streams: false, tail: "", lines: 0 });
+    expect(s?.views[0]?.ordinal).toBeUndefined();
+    expect(s?.startedOps).toBe(0);
   });
 
   it("the tail is bounded; the line count covers the whole text", () => {
@@ -272,8 +284,8 @@ describe("createLiveToolFeed (ADR 0073)", () => {
       h.feed.push(
         delta(
           "c1",
-          "write_new_file",
-          i === 0 ? '{"path":"a","content":"' : "x",
+          "str_replace_editor",
+          i === 0 ? '{"command":"create","path":"a","file_text":"' : "x",
         ),
       );
     }
@@ -293,7 +305,7 @@ describe("createLiveToolFeed (ADR 0073)", () => {
       ok: false,
       tail: "FAIL",
     });
-    h.feed.push(started("c2", "read_file", "a.ts"));
+    h.feed.push(started("c2", "str_replace_editor", "view a.ts"));
     const s = h.tick();
     expect(s?.views.map((v) => v.id)).toEqual(["c1", "c2"]);
     expect(s?.focus).toBe("c2");
@@ -302,7 +314,7 @@ describe("createLiveToolFeed (ADR 0073)", () => {
 
   it("numbers the op-making calls as the record numbers their rows; a call with no op row is not counted", () => {
     const h = harness();
-    h.feed.push(started("c1", "read_file", "a.ts"));
+    h.feed.push(started("c1", "show_excerpt", "a.ts:1-4"));
     h.feed.push(started("c2", "report_finding", "the cache is stale"));
     h.feed.push(started("c3", "str_replace_editor", "view a.ts"));
     h.feed.push(delta("c4", "bash", '{"command":"npm te'));
@@ -321,7 +333,7 @@ describe("createLiveToolFeed (ADR 0073)", () => {
   it("keeps a run's recent calls, bounded — the oldest goes first", () => {
     const h = harness();
     for (let i = 0; i < 40; i += 1) {
-      h.feed.push(started(`c${i}`, "read_file", `f${i}.ts`));
+      h.feed.push(started(`c${i}`, "str_replace_editor", `view f${i}.ts`));
     }
     const s = h.tick();
     expect(s?.views).toHaveLength(32);
@@ -332,8 +344,20 @@ describe("createLiveToolFeed (ADR 0073)", () => {
 
   it("a draft the finished message does not carry (a retried inference) is dropped", () => {
     const h = harness();
-    h.feed.push(delta("lost", "write_new_file", '{"path":"a","content":"x'));
-    h.feed.push(delta("kept", "write_new_file", '{"path":"b","content":"y'));
+    h.feed.push(
+      delta(
+        "lost",
+        "str_replace_editor",
+        '{"command":"create","path":"a","file_text":"x',
+      ),
+    );
+    h.feed.push(
+      delta(
+        "kept",
+        "str_replace_editor",
+        '{"command":"create","path":"b","file_text":"y',
+      ),
+    );
     h.feed.push(
       ev({
         type: "assistant.final",
@@ -341,7 +365,7 @@ describe("createLiveToolFeed (ADR 0073)", () => {
         message: {
           role: "assistant",
           text: "",
-          toolCalls: [{ id: "kept", tool: "write_new_file", input: {} }],
+          toolCalls: [{ id: "kept", tool: "str_replace_editor", input: {} }],
           ts: "",
         },
       }),
@@ -421,14 +445,14 @@ describe("quietSince: 板砖 thinking between steps (owner 2026-10-12)", () => {
     expect(h.tick()?.quietSince).toBeUndefined();
     h.feed.push(finished("w1", "bash"));
     h.tick();
-    h.feed.push(started("r1", "read_file", "a.ts"));
+    h.feed.push(started("r1", "str_replace_editor", "view a.ts"));
     expect(h.tick()?.quietSince).toBeUndefined();
     clock = 2_000;
-    h.feed.push(finished("r1", "read_file"));
+    h.feed.push(finished("r1", "str_replace_editor"));
     expect(h.tick()?.quietSince).toBe(2_000);
     // Still the same quiet stretch: its start holds.
     clock = 9_000;
-    h.feed.push(finished("r1", "read_file"));
+    h.feed.push(finished("r1", "str_replace_editor"));
     expect(h.tick()?.quietSince).toBe(2_000);
   });
 
@@ -436,12 +460,12 @@ describe("quietSince: 板砖 thinking between steps (owner 2026-10-12)", () => {
     let clock = 1_000;
     const h = harness({ now: () => clock });
     h.feed.push(runStarted);
-    h.feed.push(started("a", "read_file", "a.ts"));
-    h.feed.push(started("b", "read_file", "b.ts"));
-    h.feed.push(finished("a", "read_file"));
+    h.feed.push(started("a", "str_replace_editor", "view a.ts"));
+    h.feed.push(started("b", "str_replace_editor", "view b.ts"));
+    h.feed.push(finished("a", "str_replace_editor"));
     expect(h.tick()?.quietSince).toBeUndefined();
     clock = 3_000;
-    h.feed.push(finished("b", "read_file"));
+    h.feed.push(finished("b", "str_replace_editor"));
     expect(h.tick()?.quietSince).toBe(3_000);
   });
 

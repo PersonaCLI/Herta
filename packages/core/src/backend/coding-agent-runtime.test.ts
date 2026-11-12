@@ -171,8 +171,8 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "call-1",
-              tool: "command_stop",
-              input: { id: "bg-1" },
+              tool: "bash",
+              input: { command: "npm run build" },
             },
           },
           { type: "finish", reason: "tool_calls" },
@@ -182,13 +182,18 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const { runtime, tools } = makeRuntime(provider);
     tools.register({
-      name: "command_stop",
+      name: "bash",
       schema: () => ({
-        name: "command_stop",
-        description: "Stop a command",
+        name: "bash",
+        description: "Run a command",
         inputSchema: { type: "object", properties: {} },
       }),
-      run: async () => ({ ok: true, summary: "stopped bg-1" }),
+      // A command counts on exit 0 only: running it is not the evidence.
+      run: async () => ({
+        ok: true,
+        summary: "exit 0",
+        data: { exitCode: 0 },
+      }),
     });
 
     const report = await runtime.runBrief(sampleBrief);
@@ -477,7 +482,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "call-1",
-              tool: "run_command",
+              tool: "bash",
               input: { argv: ["pnpm", "test"] },
             },
           },
@@ -488,9 +493,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const { runtime, tools } = makeRuntime(provider);
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "fake",
         inputSchema: {},
       }),
@@ -737,7 +742,7 @@ describe("CodingAgentRuntime.runBrief", () => {
 
   it("captures the actual tool name and risk in permission events", async () => {
     const requestedRisk = "workspace_write" as const;
-    const requestedTool = "edit_file";
+    const requestedTool = "str_replace_editor";
     const askingPermissions: PermissionEngine = {
       check: async (call) => ({
         kind: "ask" as const,
@@ -808,7 +813,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "patch-1",
-              tool: "edit_file",
+              tool: "str_replace_editor",
               input: { path: "src/x.ts" },
             },
           },
@@ -821,9 +826,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     const tools = new InMemoryToolRegistry();
     const bus = new InMemoryEventBus<AgentEvent>();
     tools.register({
-      name: "edit_file",
+      name: "str_replace_editor",
       schema: () => ({
-        name: "edit_file",
+        name: "str_replace_editor",
         description: "patch a file",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -886,7 +891,7 @@ describe("CodingAgentRuntime.runBrief", () => {
         [
           {
             type: "tool-call-request",
-            call: { id: "tc1", tool: "run_command", input: {} },
+            call: { id: "tc1", tool: "bash", input: {} },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -905,9 +910,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const tools = new InMemoryToolRegistry();
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "run a command",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -935,12 +940,12 @@ describe("CodingAgentRuntime.runBrief", () => {
         call: { id: string; tool: string },
         ctx: { bus: InMemoryEventBus<AgentEvent> },
       ) => {
-        if (call.tool !== "run_command") return { kind: "allow" as const };
+        if (call.tool !== "bash") return { kind: "allow" as const };
         ctx.bus.publish({
           type: "permission.resolved",
           layer: "backend",
           id: "perm-1",
-          tool: "run_command",
+          tool: "bash",
           decision: "blocked",
           risk: "workspace_write",
           code: "command_blocked",
@@ -973,7 +978,7 @@ describe("CodingAgentRuntime.runBrief", () => {
         [
           {
             type: "tool-call-request",
-            call: { id: "tc1", tool: "edit_file", input: {} },
+            call: { id: "tc1", tool: "str_replace_editor", input: {} },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -985,9 +990,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const tools = new InMemoryToolRegistry();
     tools.register({
-      name: "edit_file",
+      name: "str_replace_editor",
       schema: () => ({
-        name: "edit_file",
+        name: "str_replace_editor",
         description: "patch a file",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1061,7 +1066,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc2",
-              tool: "run_command",
+              tool: "bash",
               input: { argv: ["shutdown", "/s"] },
             },
           },
@@ -1084,9 +1089,9 @@ describe("CodingAgentRuntime.runBrief", () => {
       run: async () => ({ ok: true, summary: "read 1 file" }),
     });
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "run",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1094,7 +1099,7 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const blockingEngine: PermissionEngine = {
       check: async (call) =>
-        call.tool === "run_command"
+        call.tool === "bash"
           ? {
               kind: "deny",
               reason: "system control: shutdown",
@@ -1121,7 +1126,7 @@ describe("CodingAgentRuntime.runBrief", () => {
     expect(report.changedFiles).toHaveLength(0);
     const blocked = report.permissions.find((p) => p.decision === "blocked");
     expect(blocked).toBeDefined();
-    expect(blocked?.tool).toBe("run_command");
+    expect(blocked?.tool).toBe("bash");
   });
 
   it("a WITHHELD READ does not cap the status (git-dev lab 2026-08-26)", async () => {
@@ -1136,7 +1141,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc1",
-              tool: "write_new_file",
+              tool: "str_replace_editor",
               input: { path: "src/x.ts" },
             },
           },
@@ -1147,7 +1152,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc2",
-              tool: "run_command",
+              tool: "bash",
               input: { argv: ["ls", ".git"] },
             },
           },
@@ -1161,9 +1166,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const tools = new InMemoryToolRegistry();
     tools.register({
-      name: "write_new_file",
+      name: "str_replace_editor",
       schema: () => ({
-        name: "write_new_file",
+        name: "str_replace_editor",
         description: "write",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1174,9 +1179,9 @@ describe("CodingAgentRuntime.runBrief", () => {
       }),
     });
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "run",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1184,7 +1189,7 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const readDenyingEngine: PermissionEngine = {
       check: async (call) =>
-        call.tool === "run_command"
+        call.tool === "bash"
           ? {
               kind: "deny",
               reason: "read-only command targets ./.git",
@@ -1224,7 +1229,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc1",
-              tool: "write_new_file",
+              tool: "str_replace_editor",
               input: { path: "src/x.ts" },
             },
           },
@@ -1233,7 +1238,7 @@ describe("CodingAgentRuntime.runBrief", () => {
         [
           {
             type: "tool-call-request",
-            call: { id: "tc2", tool: "run_command", input: { argv: 42 } },
+            call: { id: "tc2", tool: "bash", input: { argv: 42 } },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -1245,9 +1250,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const tools = new InMemoryToolRegistry();
     tools.register({
-      name: "write_new_file",
+      name: "str_replace_editor",
       schema: () => ({
-        name: "write_new_file",
+        name: "str_replace_editor",
         description: "write",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1258,9 +1263,9 @@ describe("CodingAgentRuntime.runBrief", () => {
       }),
     });
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "run",
         inputSchema: { type: "object", properties: {} },
       }),
@@ -1268,7 +1273,7 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const invalidInputEngine: PermissionEngine = {
       check: async (call) =>
-        call.tool === "run_command"
+        call.tool === "bash"
           ? {
               kind: "deny",
               reason: "argv must be an array",
@@ -1315,7 +1320,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc2",
-              tool: "write_new_file",
+              tool: "str_replace_editor",
               input: { path: "src/x.ts" },
             },
           },
@@ -1328,24 +1333,25 @@ describe("CodingAgentRuntime.runBrief", () => {
       ],
     });
     const tools = new InMemoryToolRegistry();
-    for (const name of ["str_replace_editor", "write_new_file"]) {
-      tools.register({
-        name,
-        schema: () => ({
-          name,
-          description: name,
-          inputSchema: { type: "object", properties: {} },
-        }),
-        run: async () => ({
-          ok: true,
-          summary: "wrote src/x.ts",
-          data: { relPath: "src/x.ts", created: true },
-        }),
-      });
-    }
+    tools.register({
+      name: "str_replace_editor",
+      schema: () => ({
+        name: "str_replace_editor",
+        description: "str_replace_editor",
+        inputSchema: { type: "object", properties: {} },
+      }),
+      run: async () => ({
+        ok: true,
+        summary: "wrote src/x.ts",
+        // `wrote` is what makes an editor call a mutation: a view has none.
+        data: { relPath: "src/x.ts", created: true, wrote: true },
+      }),
+    });
+    // The first call is the one its rule refuses; the second is a write that
+    // goes through.
     const engine: PermissionEngine = {
       check: async (call) =>
-        call.tool === "str_replace_editor"
+        call.id === "tc1"
           ? { kind: "deny", reason: `refused: ${code}`, code }
           : { kind: "allow" },
       resolve: () => {},
@@ -1369,7 +1375,7 @@ describe("CodingAgentRuntime.runBrief", () => {
   it.each([
     "path_not_absolute",
     "edit_not_found",
-    "hunk_not_found",
+    "edit_ambiguous",
     "create_exists",
     "stale_view",
     "view_required",
@@ -1466,7 +1472,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc1",
-              tool: "run_command",
+              tool: "bash",
               input: { argv: ["pnpm", "test"] },
             },
           },
@@ -1480,9 +1486,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const { runtime, tools } = makeRuntime(provider);
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "fake",
         inputSchema: {},
       }),
@@ -1563,7 +1569,7 @@ describe("CodingAgentRuntime.runBrief", () => {
             type: "tool-call-request",
             call: {
               id: "tc1",
-              tool: "run_command",
+              tool: "bash",
               input: { argv: ["echo", "hi"] },
             },
           },
@@ -1577,9 +1583,9 @@ describe("CodingAgentRuntime.runBrief", () => {
     });
     const { runtime, tools } = makeRuntime(provider);
     tools.register({
-      name: "run_command",
+      name: "bash",
       schema: () => ({
-        name: "run_command",
+        name: "bash",
         description: "fake",
         inputSchema: {},
       }),

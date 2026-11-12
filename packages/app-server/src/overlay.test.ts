@@ -32,7 +32,11 @@ import type { OverlayEvent } from "./types.js";
 function makeRequest(id = "req-1", file = "x.txt"): PermissionRequest {
   return {
     id,
-    call: { id: "call-1", tool: "edit_file", input: { path: file } },
+    call: {
+      id: "call-1",
+      tool: "str_replace_editor",
+      input: { command: "str_replace", path: file },
+    },
     reason: "writes a file",
     risk: "workspace_write",
     // The rule-resolved path — the approval cache keys on it (audit T3.4).
@@ -330,7 +334,7 @@ describe("OverlayAskResolver — pending + resolveExternal", () => {
 
   it("persistence cache: allow+session causes next identical ask to short-circuit without overlay", async () => {
     /**
-     * First ask for edit_file/workspace_write → resolve allow+session.
+     * First ask for a file write → resolve allow+session.
      * Second identical ask → present() should return "allow" immediately
      * (cache hit) without emitting a new "pending" overlay event.
      */

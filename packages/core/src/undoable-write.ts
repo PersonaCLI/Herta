@@ -22,8 +22,6 @@ import type { PermissionRequest } from "./types/events.js";
  * `find -exec` and a shell body with a redirect, which run programs.
  */
 export const UNDOABLE_WRITE_CODES: ReadonlySet<string> = new Set([
-  "edit_file_ask",
-  "write_new_file_ask",
   "str_replace_editor_ask",
   "command_ask_write",
   "command_ask_fs",

@@ -69,8 +69,8 @@ function runtimeWith(
   const seen: Array<ToolContext["undo"]> = [];
   // An editor: captures what it replaces, reports the path it wrote.
   tools.register({
-    name: "edit_file",
-    schema: schema("edit_file"),
+    name: "str_replace_editor",
+    schema: schema("str_replace_editor"),
     run: async (_call: unknown, ctx: ToolContext): Promise<ToolResult> => {
       seen.push(ctx.undo);
       await ctx.undo?.captureWrite({
@@ -81,7 +81,7 @@ function runtimeWith(
       return {
         ok: true,
         summary: "edited",
-        data: { relPath: "a.ts", diff: "" },
+        data: { relPath: "a.ts", diff: "", wrote: true },
       };
     },
   });
@@ -150,7 +150,7 @@ const views = async () => undoSegments(await readUndoIndex(undoDirFor()));
 
 describe("a run keeps what its editors replace (ADR 0074 §1)", () => {
   it("a dispatch opens a segment at its record length, and its tools capture into it", async () => {
-    const { runtime, seen } = runtimeWith(calling("edit_file"), {
+    const { runtime, seen } = runtimeWith(calling("str_replace_editor"), {
       undoDir: undoDirFor(),
     });
     await runtime.runBrief(
@@ -171,14 +171,14 @@ describe("a run keeps what its editors replace (ADR 0074 §1)", () => {
   });
 
   it("no undo folder (the CLI, tests), or no record length to key it by: the tools get no undo", async () => {
-    const none = runtimeWith(calling("edit_file"), {});
+    const none = runtimeWith(calling("str_replace_editor"), {});
     await none.runtime.runBrief(
       { taskId: "task-1" },
       { userMessages: [{ text: "edit it" }], recordLength: 12 },
     );
     expect(none.seen).toEqual([undefined]);
 
-    const unkeyed = runtimeWith(calling("edit_file"), {
+    const unkeyed = runtimeWith(calling("str_replace_editor"), {
       undoDir: undoDirFor(),
     });
     await unkeyed.runtime.runBrief(
@@ -203,7 +203,7 @@ describe("a run keeps what its editors replace (ADR 0074 §1)", () => {
         [
           {
             type: "tool-call-request",
-            call: { id: "c2", tool: "edit_file", input: {} },
+            call: { id: "c2", tool: "str_replace_editor", input: {} },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -244,7 +244,7 @@ describe("a run notes what its commands changed (ADR 0074 §2)", () => {
       { head: "h1", dirty: ["a.ts", "package-lock.json"] },
     ];
     let call = 0;
-    const { runtime } = runtimeWith(calling("edit_file", "bash"), {
+    const { runtime } = runtimeWith(calling("str_replace_editor", "bash"), {
       undoDir: undoDirFor(),
       repoProbe: async () => snapshots[call++] ?? null,
     });
@@ -269,7 +269,7 @@ describe("a run notes what its commands changed (ADR 0074 §2)", () => {
 
   it("a read-only command — `git status` in a folder that is no repository — notes nothing (live check, 2026-10-07)", async () => {
     const { runtime } = runtimeWith(
-      calling("edit_file", ["bash", { readOnly: true }]),
+      calling("str_replace_editor", ["bash", { readOnly: true }]),
       { undoDir: undoDirFor() },
     );
     await runtime.runBrief(
@@ -357,7 +357,7 @@ describe("a run notes what its commands changed (ADR 0074 §2)", () => {
   });
 
   it("a run that ran no command notes nothing", async () => {
-    const { runtime } = runtimeWith(calling("edit_file"), {
+    const { runtime } = runtimeWith(calling("str_replace_editor"), {
       undoDir: undoDirFor(),
     });
     await runtime.runBrief(

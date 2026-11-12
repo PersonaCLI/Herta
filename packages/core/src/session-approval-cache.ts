@@ -13,12 +13,13 @@ import type { AgentEvent, PermissionRequest } from "./types/events.js";
 /**
  * Tools whose workspace_write approval can be remembered — each keyed by a
  * per-call SCOPE discriminator:
- *   - edit_file / write_new_file → the constant "task" scope: one remember
- *     covers ALL file writes (both tools) for the REMAINDER OF THE CURRENT
- *     板砖 TASK (ADR 0026, owner decision 2026-07-24 — the T3.4 per-path key
- *     re-prompted for every new file of a multi-file commission).
- *   - run_command → argv[0] (the binary) — a remembered `npm test` must not
- *     cover `python attacker.py`, so commands keep the discriminator.
+ *   - the editor → the constant "task" scope: one remember covers ALL file
+ *     writes for the REMAINDER OF THE CURRENT 板砖 TASK (ADR 0026, owner
+ *     decision 2026-07-24 — the T3.4 per-path key re-prompted for every new
+ *     file of a multi-file commission).
+ *   - bash → the program its rule derived, argv[0] (the binary) — a
+ *     remembered `npm test` must not cover `python attacker.py`, so commands
+ *     keep the discriminator.
  *
  * The cache's LIFETIME is what bounds the file-write grant: it is cleared
  * when the backend brief ends (`wireTaskScopedApprovalCache` below), so no
@@ -27,19 +28,16 @@ import type { AgentEvent, PermissionRequest } from "./types/events.js";
  * preview into the record (D7) — the evidence trail is unaffected.
  */
 const SCOPED_CACHEABLE_TOOLS: ReadonlySet<string> = new Set([
-  "edit_file",
-  "write_new_file",
-  "run_command",
-  // Minimal contract (ADR 0040): the editor's writes share the file-write
-  // identity; `bash` is scoped by the program its RULE derived (or not at all).
+  // The editor's writes share the file-write identity; `bash` is scoped by
+  // the program its RULE derived (or not at all).
   "str_replace_editor",
   "bash",
 ]);
 
-/** edit_file, write_new_file and str_replace_editor share one cache identity:
- *  approving "writes for this task" must cover creating a file AND the
- *  follow-up edits to it (pre-unification the two tools re-prompted separately
- *  on the same path); the minimal contract's editor is the same act. */
+/** A file write has one cache identity whichever tool made it: approving
+ *  "writes for this task" must cover creating a file AND the follow-up edits
+ *  to it. There is one writing tool now (ADR 0086); the identity stays, so a
+ *  second one would share it. */
 function normalizeTool(tool: string): string {
   return WRITING_TOOLS.has(tool) ? "file_write" : tool;
 }
@@ -157,32 +155,19 @@ const UNCACHEABLE_INTERPRETERS: ReadonlySet<string> = new Set([
  * `undefined` when no scope is derivable OR the scope is too weak to be safe —
  * which makes the request non-cacheable (fail-closed), never a broad match.
  *
- * - run_command → argv[0] (binary discriminator; a benign `npm test` remember
- *   must not cover `python attacker.py`), EXCEPT generic interpreters/shells
- *   whose argv[0] doesn't constrain the executed code — those are never cached.
- * - edit_file / write_new_file → the constant "task" scope (ADR 0026): the
- *   remember covers every file write until the brief ends and the cache is
- *   cleared. Still gated on the rule-RESOLVED path being present — a rule
- *   that produced no canonical target stays non-cacheable (fail-closed).
+ * - bash → argv[0] of the one program its rule derived (binary
+ *   discriminator; a benign `npm test` remember must not cover `python
+ *   attacker.py`), EXCEPT generic interpreters/shells whose argv[0] doesn't
+ *   constrain the executed code — those are never cached.
+ * - the editor → the constant "task" scope (ADR 0026): the remember covers
+ *   every file write until the brief ends and the cache is cleared. Still
+ *   gated on the rule-RESOLVED path being present — a rule that produced no
+ *   canonical target stays non-cacheable (fail-closed).
  */
 export function permissionCacheScope(
   request: PermissionRequest,
 ): string | undefined {
   const tool = request.call.tool;
-  if (tool === "run_command") {
-    const input = request.call.input;
-    if (typeof input !== "object" || input === null) return undefined;
-    const argv = (input as { argv?: unknown }).argv;
-    if (!Array.isArray(argv) || argv.length === 0) return undefined;
-    const first = argv[0];
-    if (typeof first !== "string" || first.length === 0) return undefined;
-    // Before the interpreters: `bun x eslint` pinned `x` as bun's script.
-    if (runsAPackageBinary(argv)) return undefined;
-    if (UNCACHEABLE_INTERPRETERS.has(binaryBasename(first))) {
-      return pinnedInterpreterScope(argv);
-    }
-    return first;
-  }
   if (WRITING_TOOLS.has(tool)) {
     const first = request.files?.[0];
     return typeof first === "string" && first.length > 0 ? "task" : undefined;
@@ -192,8 +177,8 @@ export function permissionCacheScope(
     // program a command line really runs, after the model's
     // `cd <workspace> &&` prefix, or nothing when the line runs several
     // programs / an interpreter body / a redirect outside the workspace.
-    // From there, EXACTLY run_command's rule: argv[0], minus the
-    // interpreter/shell/wrapper set — the same code path so they cannot drift.
+    // From there: argv[0], minus the interpreter/shell/wrapper set.
+    // Before the interpreters: `bun x eslint` pinned `x` as bun's script.
     // A chained line whose every (non-reader, non-builtin) program is the
     // SAME identity scopes by that identity too — `git add && git commit`
     // is a "git" line — because the cache is per program, not per rule.

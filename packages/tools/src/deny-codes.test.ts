@@ -91,7 +91,7 @@ describe("every rule-deny code is decided (ADR 0047 amendment 2026-09-29)", () =
       "invalid_input",
       "path_not_absolute",
       "edit_not_found",
-      "hunk_ambiguous",
+      "edit_ambiguous",
       "view_required",
       "path_outside_workspace",
       "path_denied",

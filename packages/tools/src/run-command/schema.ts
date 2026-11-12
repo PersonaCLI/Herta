@@ -1,9 +1,13 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
-// Strict (2026-07-31): a wrong optional key name (`timeout` for `timeoutMs`,
-// `background` for `runInBackground`) used to be silently stripped — the
-// command ran with defaults instead of what the model asked for.
+/**
+ * What the argv rule (`makeRunCommandRule`) is asked about: a program with
+ * its arguments, and where it would run. It was `run_command`'s input; that
+ * tool is deleted (ADR 0086) and nothing model-facing carries this shape
+ * now — the one asker is the launcher, for a dev server's entry (ADR 0083
+ * §5). Strict, so a caller that adds a field the rule does not judge hears
+ * about it.
+ */
 export const runCommandInputSchema = z
   .object({
     argv: z
@@ -19,73 +23,7 @@ export const runCommandInputSchema = z
       .describe(
         "Workspace-relative working directory. Default: the workspace root.",
       ),
-    timeoutMs: z
-      .number()
-      .int()
-      .min(1, "timeoutMs must be positive")
-      .max(600_000, "timeoutMs must be ≤ 600000")
-      .optional()
-      .describe(
-        "Kill the command after this many milliseconds. Default 120000, maximum 600000.",
-      ),
-    /** Extra environment for the child (ADR 0025 slice 4). Merged over the
-     *  inherited env; a fixed denylist of escalation-prone keys (PATH,
-     *  NODE_OPTIONS, LD_*, git exec hooks, …) is rejected. */
-    env: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe(
-        "Extra environment variables for this command only. PATH and loader variables are refused.",
-      ),
-    /** Start the command in the background (ADR 0025 slice 4). Returns
-     *  immediately with a backgroundId; read output with command_output,
-     *  stop with command_stop. For long-running processes (dev servers,
-     *  watchers). */
-    runInBackground: z
-      .boolean()
-      .optional()
-      .describe(
-        "Start the command in the background and return a backgroundId at once; read its output with command_output and stop it with command_stop. For servers and watchers.",
-      ),
   })
   .strict();
 
 export type RunCommandInput = z.infer<typeof runCommandInputSchema>;
-
-export const runCommandJsonSchema = zodToJsonSchema(runCommandInputSchema);
-
-export const commandOutputInputSchema = z
-  .object({
-    backgroundId: z
-      .string()
-      .min(1)
-      .describe("The id run_command returned for the background command."),
-    /** Return only output appended since the given byte offset into the
-     *  merged stream (default 0 = from the start). */
-    sinceByte: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .describe(
-        "Return only output after this byte offset of the merged stream. Default 0 (from the start).",
-      ),
-  })
-  .strict();
-export type CommandOutputInput = z.infer<typeof commandOutputInputSchema>;
-export const commandOutputJsonSchema = zodToJsonSchema(
-  commandOutputInputSchema,
-);
-
-export const commandStopInputSchema = z
-  .object({
-    backgroundId: z
-      .string()
-      .min(1)
-      .describe(
-        "The id run_command returned for the background command to stop.",
-      ),
-  })
-  .strict();
-export type CommandStopInput = z.infer<typeof commandStopInputSchema>;
-export const commandStopJsonSchema = zodToJsonSchema(commandStopInputSchema);

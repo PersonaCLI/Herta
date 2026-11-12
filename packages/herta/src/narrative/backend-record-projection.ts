@@ -16,7 +16,6 @@ import type {
   DoneMarkerSummary,
   EvidenceSection,
   RunCommandData,
-  SearchTextData,
   ShowExcerptData,
   SystemBlock,
   SystemBlockDigest,
@@ -367,57 +366,6 @@ export function sanitizeSystemBlock(block: SystemBlock): SystemBlock {
  *  per-line clip keeps a minified one-liner from eating the whole budget. */
 /** How many of a run's receipts its marker lists: its last. */
 const RECEIPTS_LISTED = 6;
-const SEARCH_ROW_MAX_ITEMS = 40;
-const SEARCH_ROW_MAX_CHARS = 4000;
-const SEARCH_ROW_MAX_LINE_CHARS = 200;
-
-/**
- * `↳ N matches in M files` with the hit list in the two-state evidence lane.
- * Item shape `path:line: content` — the citation form 板砖 and Herta both
- * already use for excerpts, so a later "show me line 33" is one hop away.
- */
-export function projectSearchResult(data: SearchTextData): SystemBlock {
-  const total = data.matches.length;
-  const files = new Set(data.matches.map((m) => m.path)).size;
-  const body =
-    total === 0
-      ? `↳ 0 matches${data.truncated ? " (truncated)" : ""}`
-      : `↳ ${total} matches in ${files} files${data.truncated ? " (truncated)" : ""}`;
-  const items: string[] = [];
-  let chars = 0;
-  for (const m of data.matches) {
-    if (items.length >= SEARCH_ROW_MAX_ITEMS) break;
-    const content =
-      m.content.length > SEARCH_ROW_MAX_LINE_CHARS
-        ? `${m.content.slice(0, SEARCH_ROW_MAX_LINE_CHARS)}…`
-        : m.content;
-    const item = `${m.path}:${m.line}: ${content}`;
-    if (chars + item.length > SEARCH_ROW_MAX_CHARS && items.length > 0) break;
-    items.push(item);
-    chars += item.length + 1;
-  }
-  const omitted = total - items.length;
-  const block: SystemBlock = {
-    kind: "system",
-    label: "差分协处理器",
-    body,
-    digest: {
-      kind: "search",
-      pattern: data.pattern,
-      matches: total,
-      files,
-      truncated: data.truncated,
-    },
-  };
-  if (items.length === 0) return block;
-  const detailLines = [`↳ 匹配 /${data.pattern}/:`, ...items];
-  if (omitted > 0) detailLines.push(`（另有 ${omitted} 处未列出）`);
-  return {
-    ...block,
-    evidenceDetail: detailLines.join("\n"),
-    evidence: [{ kind: "matches", pattern: data.pattern, items, omitted }],
-  };
-}
 
 /** web_search's result data as the bridge reads it (`@herta/tools`'
  *  `WebSearchData`; herta does not depend on tools). */
@@ -562,7 +510,7 @@ export function projectBackendEventUnsanitized(
       const label = workflowLabel(event.tool, event.inputSummary);
       if (label === null) return null;
       // The editor's summary leads with its command word so the verb can be
-      // chosen; the row itself reads like edit_file's (`Writing <path>`). A
+      // chosen; the row itself reads `Writing <path>` / `Reading <path>`. A
       // page step's leads with its mode or action, which the verb says.
       const arg =
         event.tool === "str_replace_editor"
@@ -671,18 +619,8 @@ export function projectBackendEventUnsanitized(
             }`,
           };
         }
-        // search_text surfaces its hits (2026-08-17). Same reasoning as
-        // show_excerpt and for the same lane: a search's op row said only that
-        // a search happened, so "which lines mention X" — the answer 板砖 was
-        // sent for — reached nobody unless it re-presented the lines. Bounded
-        // hard: this is a hit list, not the files.
-        if (event.tool === "search_text") {
-          const data = event.result.data as SearchTextData | undefined;
-          if (data === undefined || !Array.isArray(data.matches)) return null;
-          return projectSearchResult(data);
-        }
         // The web (ADR 0080): what a search found and what a page says ride
-        // the two-state lane like a search_text hit list or an excerpt — in
+        // the two-state lane like an excerpt — in
         // front of Herta this turn, a citation after.
         if (event.tool === "web_search") {
           const data = event.result.data as WebSearchResultData | undefined;
@@ -752,64 +690,17 @@ export function projectBackendEventUnsanitized(
               : {}),
           };
         }
-        // Success: run_command (incl. the background trio) surfaces a result
-        // block — its output is otherwise invisible. The minimal contract's
-        // `bash` (ADR 0040) returns the same RunCommandData and gets the same
-        // rows. Other tools' successes stay silent; their Writing/Reading
-        // start-line already covered them.
-        if (
-          event.tool !== "run_command" &&
-          event.tool !== "bash" &&
-          event.tool !== "command_output" &&
-          event.tool !== "command_stop"
-        )
-          return null;
+        // Success: a command surfaces a result block — its output is
+        // otherwise invisible. Other tools' successes stay silent; their
+        // Writing/Reading start-line already covered them.
+        if (event.tool !== "bash") return null;
         const data = event.result.data as Partial<RunCommandData> | undefined;
         if (data === undefined) return null;
 
-        // Managed background commands (ADR 0025 slice 4): a "background …"
-        // status row instead of an exit row, so the record shows a dev
-        // server as running rather than "exit ?". Structured `bg` digest
-        // (2026-07-23) lets renderers localize; a null exitCode means the
-        // process ended by signal/kill — never render a literal "null".
-        if (data.backgroundId !== undefined) {
-          const bgState =
-            event.tool === "command_stop"
-              ? "stopped"
-              : data.running === true
-                ? "running"
-                : "exited";
-          const bgVerb =
-            bgState === "exited"
-              ? data.exitCode === null || data.exitCode === undefined
-                ? "exited (signal)"
-                : `exited (${data.exitCode})`
-              : bgState;
-          const bgStdout = (data.stdout ?? "").trimEnd();
-          const bgTail =
-            event.tool === "command_output" && bgStdout.length > 0
-              ? boundedTail(data.stdout ?? "", "", { sourceTruncated: false })
-              : { text: "" };
-          return {
-            kind: "system",
-            label: "差分协处理器",
-            body: `↳ background ${data.backgroundId}: ${bgVerb}`,
-            digest: {
-              kind: "bg",
-              id: data.backgroundId,
-              state: bgState,
-              ...(bgState === "exited"
-                ? { exitCode: data.exitCode ?? null }
-                : {}),
-            },
-            ...(bgTail.text.length > 0
-              ? {
-                  evidenceDetail: `↳ 输出:\n${bgTail.text}`,
-                  evidence: [{ kind: "output", text: bgTail.text }] as const,
-                }
-              : {}),
-          };
-        }
+        // The standard set's managed background commands had their own row
+        // here (`↳ background bg-1: running`, a `bg` digest). The tools are
+        // deleted (ADR 0086); a record that holds such rows still draws them,
+        // from the digest.
 
         // Test runs: terse tests line, no output detail (the testRun summary
         // is complete on its own).
@@ -984,35 +875,20 @@ export function workflowLabel(
   inputSummary = "",
 ): Extract<SystemBlockDigest, { kind: "op" }>["verb"] | null {
   switch (tool) {
-    case "read_file":
-    case "glob":
     // show_excerpt starts as a Reading row like any other read; what makes
     // it different is its FINISHED row, which carries the excerpt.
     case "show_excerpt":
-    // command_output reads a background process's output; the arg says
-    // `bg-N output` (2026-08-17 — was `Running bg-N`).
-    case "command_output":
       return "Reading";
-    case "search_text":
-      return "Searching";
-    case "edit_file":
-    case "write_new_file":
-      return "Writing";
-    // Minimal contract (ADR 0040): one editor tool, four commands — the verb
-    // comes from the summary's leading word, which the loop's summarizeInput
-    // guarantees is the command (`view path` / `str_replace path` …).
+    // One editor tool, four commands (ADR 0040) — the verb comes from the
+    // summary's leading word, which the loop's summarizeInput guarantees is
+    // the command (`view path` / `str_replace path` …).
     case "str_replace_editor":
       return /^view(\s|$)/.test(inputSummary) ? "Reading" : "Writing";
-    case "run_command":
     case "bash":
       return "Running";
-    case "command_stop":
-      // Not a run. Herta reads these rows, and `Running bg-1` on the stop
-      // call read as a second launch (real session 2026-08-16).
-      return "Stopping";
-    case "git_status":
-    case "git_diff":
-      return "Inspecting";
+    // `Searching`, `Stopping` and `Inspecting` were the standard set's verbs
+    // (ADR 0086). No tool earns them now; the digest's type keeps them for
+    // the records that hold them.
     case "memory_save":
       return "Saving memory";
     case "digest_document":

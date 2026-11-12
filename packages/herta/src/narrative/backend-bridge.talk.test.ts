@@ -29,8 +29,8 @@ const read = (bus: InMemoryEventBus<AgentEvent>, id: string, file: string) =>
   publishWithLayer(bus, "backend", {
     type: "tool.call.started",
     id,
-    tool: "read_file",
-    inputSummary: file,
+    tool: "str_replace_editor",
+    inputSummary: `view ${file}`,
   } as never);
 
 const talk = (bus: InMemoryEventBus<AgentEvent>, id: string, text: string) =>
@@ -223,7 +223,7 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
           publishWithLayer(b, "backend", {
             type: "tool.call.finished",
             id: "c1",
-            tool: "read_file",
+            tool: "str_replace_editor",
             result: {
               ok: false,
               error: { code: "not_found", message: "no a.ts" },
@@ -381,8 +381,8 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
             publishWithLayer(b, "backend", {
               type: "tool.call.started",
               id: "c2",
-              tool: "write_new_file",
-              inputSummary: "src/new.ts",
+              tool: "str_replace_editor",
+              inputSummary: "create src/new.ts",
             } as never);
             talk(b, "t2", "对了，控制台也看一眼。");
             steer(b, "s1", "先别动 api 目录");
@@ -523,7 +523,7 @@ describe("talk while 板砖 works (ADR 0085 step 3)", () => {
             publishWithLayer(b, "backend", {
               type: "tool.call.finished",
               id: "c1",
-              tool: "read_file",
+              tool: "str_replace_editor",
               result: {
                 ok: false,
                 error: { code: "not_found", message: "no a.ts" },

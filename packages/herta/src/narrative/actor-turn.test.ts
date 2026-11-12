@@ -833,10 +833,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -876,7 +876,7 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     expect(systems).toHaveLength(2);
     // First system block is the projected patch.preview; the last is the
     // run-closing done-marker.
-    expect((systems[0] as { body: string }).body).toContain("stale_read");
+    expect((systems[0] as { body: string }).body).toContain("stale_view");
     expect((systems[1] as { role?: string }).role).toBe("done-marker");
 
     // Three scripted completion calls happened, plus the two auto thoughts.
@@ -886,7 +886,7 @@ describe("runActorCompletionTurn — in-turn beats", () => {
     // The beat prompt (prompts[1]) should include the projected backend
     // SystemBlock so Herta sees what she's reacting to.
     expect(prompts[1]).toContain("系统");
-    expect(prompts[1]).toContain("这一步没成（edit_file）"); // the failed step, as she reads it (ADR 0079)
+    expect(prompts[1]).toContain("这一步没成（str_replace_editor）"); // the failed step, as she reads it (ADR 0079)
     expect(prompts[1]).toContain("foo.ts");
     expect(prompts[1]).toMatch(/（我 说）\n$/); // beat prompt ends with forced-speech open tag
   });
@@ -916,10 +916,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -973,10 +973,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1036,10 +1036,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1092,10 +1092,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1147,10 +1147,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1219,10 +1219,10 @@ describe("runActorCompletionTurn — in-turn beats", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1551,10 +1551,10 @@ describe("runActorCompletionTurn — onPrompt callback (prompt dump)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -1601,7 +1601,7 @@ describe("runActorCompletionTurn — onPrompt callback (prompt dump)", () => {
     ]);
     // The beat prompt should be the one that ends with the open tag and
     // contains the projected backend system block.
-    expect(requests[2]?.prompt).toContain("这一步没成（edit_file）");
+    expect(requests[2]?.prompt).toContain("这一步没成（str_replace_editor）");
     expect(requests[2]?.prompt).toMatch(/（我 说）\n$/);
   });
 
@@ -1766,10 +1766,10 @@ describe("runActorCompletionTurn — thought/speech surface", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -2001,8 +2001,8 @@ describe("runActorCompletionTurn — renderer cursor / record sync (C1 regressio
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t1",
-          tool: "read_file",
-          inputSummary: "foo.ts",
+          tool: "str_replace_editor",
+          inputSummary: "view foo.ts",
         });
         return {
           taskId: brief.taskId,
@@ -2566,10 +2566,10 @@ describe("runActorCompletionTurn — two-phase mood routing (Slice 13)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -6568,14 +6568,14 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t1",
-          tool: "read_file",
-          inputSummary: "a.ts",
+          tool: "str_replace_editor",
+          inputSummary: "view a.ts",
         });
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t2",
-          tool: "edit_file",
-          inputSummary: "a.ts",
+          tool: "str_replace_editor",
+          inputSummary: "str_replace a.ts",
         });
         return {
           taskId: brief.taskId,
@@ -6638,17 +6638,17 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t-read",
-          tool: "read_file",
-          inputSummary: '{"path":"foo.ts"}',
+          tool: "str_replace_editor",
+          inputSummary: "view foo.ts",
         });
         // Emit a patch.preview to trigger a beat.
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-foo.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "foo.ts", retryable: false },
+            error: { code: "stale_view", message: "foo.ts", retryable: false },
             summary: "edit failed",
           },
         });
@@ -6677,8 +6677,8 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
     // (compactBridgeOutput: false — even with 2 system blocks present).
     expect(beatPrompt).not.toContain("板砖之前做过的事（细节不在手边）：");
     // Raw blocks present in the beat prompt.
-    expect(beatPrompt).toContain("这一步没成（edit_file）");
-    expect(beatPrompt).toContain('{"path":"foo.ts"}'); // the step, uncompacted
+    expect(beatPrompt).toContain("这一步没成（str_replace_editor）");
+    expect(beatPrompt).toContain("读 foo.ts"); // the step, uncompacted
   });
 
   it("selfCorrection + compactable system run upstream: both preserved in next-turn prompt", async () => {
@@ -6735,14 +6735,14 @@ describe("runActorCompletionTurn — compaction (2026-05-24)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t1",
-          tool: "read_file",
-          inputSummary: "x.ts",
+          tool: "str_replace_editor",
+          inputSummary: "view x.ts",
         });
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t2",
-          tool: "edit_file",
-          inputSummary: "x.ts",
+          tool: "str_replace_editor",
+          inputSummary: "str_replace x.ts",
         });
         return {
           taskId: brief.taskId,

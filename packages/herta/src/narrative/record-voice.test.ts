@@ -841,11 +841,19 @@ describe("the web rows (ADR 0080)", () => {
 
   it("a stored page 板砖 reads, quotes or cites reads as the site's page — a command keeps its words", () => {
     expect(
-      read(started("read_file", ".herta/web/vitest.dev-11d34302.md:8-24")),
+      read(
+        started(
+          "str_replace_editor",
+          "view .herta/web/vitest.dev-11d34302.md:8-24",
+        ),
+      ),
     ).toBe("读 网页 vitest.dev 第 8–24 行");
     expect(
       read(
-        started("read_file", ".herta/web/vitest.dev-11d34302.md:8-24"),
+        started(
+          "str_replace_editor",
+          "view .herta/web/vitest.dev-11d34302.md:8-24",
+        ),
         "en",
       ),
     ).toBe("Read the vitest.dev page lines 8–24");

@@ -355,8 +355,8 @@ describe("a turn with talk during its run (ADR 0085 step 3)", () => {
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "c1",
-          tool: "read_file",
-          inputSummary: "src/Login.jsx",
+          tool: "str_replace_editor",
+          inputSummary: "view src/Login.jsx",
         } as never);
         bus.publish({
           type: "user.talk",

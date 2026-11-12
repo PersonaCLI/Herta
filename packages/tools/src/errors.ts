@@ -32,10 +32,6 @@ export type ToolErrorCode =
   | "binary_file"
   | "invalid_input"
   | "read_failed"
-  | "parse_failed"
-  | "hunk_not_found"
-  | "hunk_ambiguous"
-  | "hunk_overlap"
   | "write_failed"
   | "command_blocked"
   | "timeout"
@@ -55,10 +51,6 @@ export const TOOL_ERROR_CODES: readonly ToolErrorCode[] = [
   "binary_file",
   "invalid_input",
   "read_failed",
-  "parse_failed",
-  "hunk_not_found",
-  "hunk_ambiguous",
-  "hunk_overlap",
   "write_failed",
   "command_blocked",
   "timeout",

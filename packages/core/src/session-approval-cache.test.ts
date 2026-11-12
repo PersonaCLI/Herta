@@ -9,70 +9,79 @@ import {
 import type { AgentEvent, PermissionRequest } from "./types/events.js";
 
 describe("SessionApprovalCache", () => {
+  // The two tools whose asks can be remembered: the editor and bash.
+  const EDITOR = "str_replace_editor";
+
   it("starts empty", () => {
     const c = new SessionApprovalCache();
     expect(c.size()).toBe(0);
     expect(c.list()).toEqual([]);
-    expect(c.has("edit_file", "workspace_write", "a.ts")).toBe(false);
+    expect(c.has(EDITOR, "workspace_write", "a.ts")).toBe(false);
   });
 
-  it("isCacheable: only edit_file/write_new_file/run_command at workspace_write WITH a scope", () => {
+  it("isCacheable: only the editor and bash, at workspace_write, WITH a scope", () => {
     const c = new SessionApprovalCache();
-    expect(c.isCacheable("edit_file", "workspace_write", "a.ts")).toBe(true);
-    expect(c.isCacheable("write_new_file", "workspace_write", "b.ts")).toBe(
-      true,
-    );
-    expect(c.isCacheable("run_command", "workspace_write", "node")).toBe(true);
+    expect(c.isCacheable(EDITOR, "workspace_write", "a.ts")).toBe(true);
+    expect(c.isCacheable("bash", "workspace_write", "node")).toBe(true);
     // Cacheable tool but NO scope — fail-closed, not cacheable (audit T3.4).
-    expect(c.isCacheable("edit_file", "workspace_write")).toBe(false);
-    expect(c.isCacheable("write_new_file", "workspace_write")).toBe(false);
-    expect(c.isCacheable("run_command", "workspace_write")).toBe(false);
+    expect(c.isCacheable(EDITOR, "workspace_write")).toBe(false);
+    expect(c.isCacheable("bash", "workspace_write")).toBe(false);
     // Cacheable tools at non-write risks — not cacheable.
-    expect(c.isCacheable("edit_file", "workspace_destructive", "a.ts")).toBe(
-      false,
-    );
-    expect(c.isCacheable("edit_file", "workspace_read", "a.ts")).toBe(false);
-    expect(c.isCacheable("edit_file", "network", "a.ts")).toBe(false);
+    expect(c.isCacheable(EDITOR, "workspace_destructive", "a.ts")).toBe(false);
+    expect(c.isCacheable(EDITOR, "workspace_read", "a.ts")).toBe(false);
+    expect(c.isCacheable(EDITOR, "network", "a.ts")).toBe(false);
+    // No other tool, and none of the deleted standard set's (ADR 0086).
+    for (const tool of [
+      "show_excerpt",
+      "dev_server",
+      "edit_file",
+      "write_new_file",
+      "run_command",
+    ]) {
+      expect(c.isCacheable(tool, "workspace_write", "x"), tool).toBe(false);
+    }
   });
 
   it("add records cacheable scoped tuples", () => {
     const c = new SessionApprovalCache();
-    c.add("edit_file", "workspace_write", "task");
+    c.add(EDITOR, "workspace_write", "task");
     expect(c.size()).toBe(1);
-    expect(c.has("edit_file", "workspace_write", "task")).toBe(true);
+    expect(c.has(EDITOR, "workspace_write", "task")).toBe(true);
   });
 
-  it("unifies edit_file and write_new_file under one file_write key (ADR 0026)", () => {
+  it("a file write is kept under the file_write key, per scope (ADR 0026)", () => {
     const c = new SessionApprovalCache();
     // Approving "writes for this task" covers creating a file AND the
-    // follow-up edits — the two tools no longer re-prompt separately.
-    c.add("edit_file", "workspace_write", "task");
-    expect(c.has("write_new_file", "workspace_write", "task")).toBe(true);
-    expect(c.has("edit_file", "workspace_write", "task")).toBe(true);
-    // A different scope still misses (run_command binaries keep theirs).
-    expect(c.has("edit_file", "workspace_write", "other")).toBe(false);
+    // follow-up edits: the key is the act, not the tool's name.
+    c.add(EDITOR, "workspace_write", "task");
+    expect(c.list()).toEqual(["file_write:task:workspace_write"]);
+    expect(c.has(EDITOR, "workspace_write", "task")).toBe(true);
+    // A different scope still misses (bash programs keep theirs).
+    expect(c.has(EDITOR, "workspace_write", "other")).toBe(false);
+    expect(c.has("bash", "workspace_write", "task")).toBe(false);
   });
 
   it("add no-ops on non-cacheable tuples (defense-in-depth)", () => {
     const c = new SessionApprovalCache();
-    c.add("run_command", "workspace_write"); // no binary scope
-    c.add("edit_file", "workspace_destructive", "a.ts");
-    c.add("edit_file", "network", "a.ts");
-    c.add("edit_file", "workspace_write"); // no path scope
+    c.add("bash", "workspace_write"); // no program scope
+    c.add(EDITOR, "workspace_destructive", "a.ts");
+    c.add(EDITOR, "network", "a.ts");
+    c.add(EDITOR, "workspace_write"); // no scope
+    c.add("run_command", "workspace_write", "git"); // no such tool any more
     expect(c.size()).toBe(0);
   });
 
   it("add is idempotent", () => {
     const c = new SessionApprovalCache();
-    c.add("edit_file", "workspace_write", "a.ts");
-    c.add("edit_file", "workspace_write", "a.ts");
+    c.add(EDITOR, "workspace_write", "a.ts");
+    c.add(EDITOR, "workspace_write", "a.ts");
     expect(c.size()).toBe(1);
   });
 
   it("clear empties the cache", () => {
     const c = new SessionApprovalCache();
-    c.add("edit_file", "workspace_write", "a.ts");
-    c.add("write_new_file", "workspace_write", "b.ts");
+    c.add(EDITOR, "workspace_write", "a.ts");
+    c.add(EDITOR, "workspace_write", "b.ts");
     expect(c.size()).toBe(2);
     c.clear();
     expect(c.size()).toBe(0);
@@ -81,81 +90,79 @@ describe("SessionApprovalCache", () => {
 
   it("list returns a sorted snapshot with the normalized tool + scope in the key", () => {
     const c = new SessionApprovalCache();
-    c.add("write_new_file", "workspace_write", "task");
-    c.add("run_command", "workspace_write", "git");
+    c.add(EDITOR, "workspace_write", "task");
+    c.add("bash", "workspace_write", "git");
     const snapshot = c.list();
     expect(snapshot).toEqual([
+      "bash:git:workspace_write",
       "file_write:task:workspace_write",
-      "run_command:git:workspace_write",
     ]);
     // Mutate the cache afterwards — snapshot stays unchanged.
     c.clear();
     expect(snapshot).toEqual([
+      "bash:git:workspace_write",
       "file_write:task:workspace_write",
-      "run_command:git:workspace_write",
     ]);
   });
 
-  describe("run_command per-binary caching", () => {
-    it("isCacheable(run_command, workspace_write, <binary>) is true", () => {
+  describe("bash, cached per program", () => {
+    it("isCacheable(bash, workspace_write, <program>) is true", () => {
       const c = new SessionApprovalCache();
-      expect(c.isCacheable("run_command", "workspace_write", "python3")).toBe(
-        true,
-      );
-      expect(c.isCacheable("run_command", "workspace_write", "node")).toBe(
-        true,
-      );
+      expect(c.isCacheable("bash", "workspace_write", "python3")).toBe(true);
+      expect(c.isCacheable("bash", "workspace_write", "node")).toBe(true);
     });
 
-    it("isCacheable(run_command) without binary is false (granularity required)", () => {
+    it("isCacheable(bash) without a program is false (granularity required)", () => {
       const c = new SessionApprovalCache();
-      expect(c.isCacheable("run_command", "workspace_write")).toBe(false);
+      expect(c.isCacheable("bash", "workspace_write")).toBe(false);
     });
 
-    it("isCacheable(run_command, <non-write risk>) is false even with binary", () => {
+    it("isCacheable(bash, <non-write risk>) is false even with a program", () => {
       const c = new SessionApprovalCache();
-      expect(c.isCacheable("run_command", "workspace_destructive", "rm")).toBe(
-        false,
-      );
-      expect(c.isCacheable("run_command", "network", "curl")).toBe(false);
-      expect(c.isCacheable("run_command", "workspace_read", "cat")).toBe(false);
+      expect(c.isCacheable("bash", "workspace_destructive", "rm")).toBe(false);
+      expect(c.isCacheable("bash", "network", "curl")).toBe(false);
+      expect(c.isCacheable("bash", "workspace_read", "cat")).toBe(false);
     });
 
-    it("has(run_command, ..., binary) only matches the same binary", () => {
+    it("has(bash, ..., program) only matches the same program", () => {
       const c = new SessionApprovalCache();
-      c.add("run_command", "workspace_write", "python3");
-      expect(c.has("run_command", "workspace_write", "python3")).toBe(true);
-      expect(c.has("run_command", "workspace_write", "node")).toBe(false);
-      expect(c.has("run_command", "workspace_write")).toBe(false);
+      c.add("bash", "workspace_write", "python3");
+      expect(c.has("bash", "workspace_write", "python3")).toBe(true);
+      expect(c.has("bash", "workspace_write", "node")).toBe(false);
+      expect(c.has("bash", "workspace_write")).toBe(false);
     });
 
-    it("add(run_command, workspace_destructive, binary) is no-op", () => {
+    it("add(bash, workspace_destructive, program) is no-op", () => {
       const c = new SessionApprovalCache();
-      c.add("run_command", "workspace_destructive", "rm");
+      c.add("bash", "workspace_destructive", "rm");
       expect(c.size()).toBe(0);
     });
 
     it("list includes the scope in every key", () => {
       const c = new SessionApprovalCache();
-      c.add("edit_file", "workspace_write", "task");
-      c.add("run_command", "workspace_write", "python3");
-      c.add("run_command", "workspace_write", "node");
+      c.add(EDITOR, "workspace_write", "task");
+      c.add("bash", "workspace_write", "python3");
+      c.add("bash", "workspace_write", "node");
       expect(c.list()).toEqual([
+        "bash:node:workspace_write",
+        "bash:python3:workspace_write",
         "file_write:task:workspace_write",
-        "run_command:node:workspace_write",
-        "run_command:python3:workspace_write",
       ]);
     });
   });
 });
 
 describe("permissionCacheScope — command wrappers (audit S5)", () => {
+  // As bash asks: the request carries the argv its rule derived from the
+  // line (ADR 0040). `run_command` asked with the argv in its input; the
+  // scoping rules these tests pin are the same ones.
   const scopeFor = (argv: readonly string[]) =>
     permissionCacheScope({
       id: "r",
-      call: { id: "c", tool: "run_command", input: { argv } },
+      call: { id: "c", tool: "bash", input: { command: argv.join(" ") } },
       reason: "x",
       risk: "workspace_write",
+      argv,
     });
 
   it("refuses to cache WRAPPERS, which do not identify what runs", () => {
@@ -262,12 +269,12 @@ describe("wireTaskScopedApprovalCache (ADR 0026)", () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const cache = new SessionApprovalCache();
     wireTaskScopedApprovalCache(bus, cache);
-    cache.add("edit_file", "workspace_write", "task");
+    cache.add("str_replace_editor", "workspace_write", "task");
     expect(cache.size()).toBe(1);
     bus.publish(finished("backend"));
     expect(cache.size()).toBe(0);
 
-    cache.add("run_command", "workspace_write", "git");
+    cache.add("bash", "workspace_write", "git");
     bus.publish({
       type: "turn.failed",
       layer: "backend",
@@ -280,7 +287,7 @@ describe("wireTaskScopedApprovalCache (ADR 0026)", () => {
     const bus = new InMemoryEventBus<AgentEvent>();
     const cache = new SessionApprovalCache();
     wireTaskScopedApprovalCache(bus, cache);
-    cache.add("edit_file", "workspace_write", "task");
+    cache.add("str_replace_editor", "workspace_write", "task");
     bus.publish(finished("actor"));
     expect(cache.size()).toBe(1);
   });
@@ -290,7 +297,7 @@ describe("wireTaskScopedApprovalCache (ADR 0026)", () => {
     const cache = new SessionApprovalCache();
     const off = wireTaskScopedApprovalCache(bus, cache);
     off();
-    cache.add("edit_file", "workspace_write", "task");
+    cache.add("str_replace_editor", "workspace_write", "task");
     bus.publish(finished("backend"));
     expect(cache.size()).toBe(1);
   });
@@ -308,7 +315,30 @@ describe("permissionCacheScope", () => {
     ...over,
   });
 
-  it("run_command → argv[0]", () => {
+  it("bash → argv[0] of the program its rule derived", () => {
+    expect(permissionCacheScope(req("bash", { argv: ["npm", "test"] }))).toBe(
+      "npm",
+    );
+  });
+
+  it("the editor → the constant task scope (ADR 0026)", () => {
+    // Still gated on the rule-resolved path being PRESENT — the request must
+    // carry a canonical target for the ask to be cacheable at all.
+    expect(
+      permissionCacheScope(req("str_replace_editor", { files: ["src/a.ts"] })),
+    ).toBe("task");
+  });
+
+  it("returns undefined (fail-closed) when the scope is missing", () => {
+    // bash with no derived argv, the editor with no files, and any other tool.
+    expect(permissionCacheScope(req("bash"))).toBeUndefined();
+    expect(permissionCacheScope(req("str_replace_editor"))).toBeUndefined();
+    expect(
+      permissionCacheScope(req("show_excerpt", { files: ["x"] })),
+    ).toBeUndefined();
+  });
+
+  it("the deleted standard set's tools scope nothing, however they are asked (ADR 0086)", () => {
     expect(
       permissionCacheScope(
         req("run_command", {
@@ -317,40 +347,26 @@ describe("permissionCacheScope", () => {
             tool: "run_command",
             input: { argv: ["npm", "test"] },
           },
+          argv: ["npm", "test"],
         }),
       ),
-    ).toBe("npm");
-  });
-
-  it("edit_file / write_new_file → the constant task scope (ADR 0026)", () => {
-    // Still gated on the rule-resolved path being PRESENT — the request must
-    // carry a canonical target for the ask to be cacheable at all.
-    expect(
-      permissionCacheScope(req("edit_file", { files: ["src/a.ts"] })),
-    ).toBe("task");
-    expect(
-      permissionCacheScope(req("write_new_file", { files: ["src/b.ts"] })),
-    ).toBe("task");
-  });
-
-  it("returns undefined (fail-closed) when the scope is missing", () => {
-    // run_command with no argv, edit_file with no files, and any other tool.
-    expect(permissionCacheScope(req("run_command"))).toBeUndefined();
-    expect(permissionCacheScope(req("edit_file"))).toBeUndefined();
-    expect(
-      permissionCacheScope(req("read_file", { files: ["x"] })),
     ).toBeUndefined();
+    for (const tool of ["edit_file", "write_new_file"]) {
+      expect(
+        permissionCacheScope(req(tool, { files: ["src/a.ts"] })),
+        tool,
+      ).toBeUndefined();
+    }
   });
 
-  it("minimal contract (ADR 0040): str_replace_editor writes share the task scope; bash scopes by the RULE-derived argv[0], interpreters excluded", () => {
+  it("the editor's writes share the task scope; bash scopes by the RULE-derived argv[0], interpreters excluded (ADR 0040)", () => {
     expect(
       permissionCacheScope(req("str_replace_editor", { files: ["src/a.ts"] })),
     ).toBe("task");
     expect(permissionCacheScope(req("str_replace_editor"))).toBeUndefined();
-    // The editor joins the file-write identity: an edit_file remember covers
-    // the editor's writes and vice versa.
+    // A remember for the task covers the editor's next write.
     const c = new SessionApprovalCache();
-    c.add("edit_file", "workspace_write", "task");
+    c.add("str_replace_editor", "workspace_write", "task");
     expect(c.has("str_replace_editor", "workspace_write", "task")).toBe(true);
     // bash: the rule's argv decides; no argv → not cacheable.
     expect(
@@ -385,12 +401,7 @@ describe("permissionCacheScope", () => {
   });
 
   it("interpreters never scope by their BARE name (a python remember must not cover python -c, audit T3.4 review) — only by a pinned workspace script", () => {
-    const rc = (argv: string[]) =>
-      permissionCacheScope(
-        req("run_command", {
-          call: { id: "c", tool: "run_command", input: { argv } },
-        }),
-      );
+    const rc = (argv: string[]) => permissionCacheScope(req("bash", { argv }));
     // The pinned pair is the scope: covers `python build.py <any args>` and
     // nothing else run through python.
     expect(rc(["python", "build.py"])).toBe("python build.py");

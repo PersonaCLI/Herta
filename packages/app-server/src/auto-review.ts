@@ -438,10 +438,10 @@ export function reviewAnswer(
 }
 
 /**
- * The command a request would show on its card: `run_command`'s argv
- * joined with spaces, or the minimal contract's `bash` line verbatim.
- * Undefined for any other tool or a malformed input — such a request is
- * not a command, and no reviewer takes it.
+ * The command a request would show on its card: `bash`'s line verbatim, or
+ * a dev server's argv joined with spaces. Undefined for any other tool or a
+ * malformed input — such a request is not a command, and no reviewer takes
+ * it.
  */
 export function requestCommand(request: PermissionRequest): string | undefined {
   const input = request.call.input;
@@ -454,16 +454,12 @@ export function requestCommand(request: PermissionRequest): string | undefined {
   }
   // A dev server's start runs its launcher entry's argv, which the rule
   // derived and handed over (ADR 0083 §5): the card shows it, and a review
-  // reads it as it would read run_command's.
+  // reads it as it reads a command line.
   if (request.call.tool === "dev_server") {
     const argv = request.argv ?? [];
     return argv.length > 0 ? argv.join(" ") : undefined;
   }
-  if (request.call.tool !== "run_command") return undefined;
-  const argv = (input as { argv?: unknown }).argv;
-  if (!Array.isArray(argv) || argv.length === 0) return undefined;
-  const parts = argv.filter((a): a is string => typeof a === "string");
-  return parts.length > 0 ? parts.join(" ") : undefined;
+  return undefined;
 }
 
 /** The request's ask classes, `code` first. */

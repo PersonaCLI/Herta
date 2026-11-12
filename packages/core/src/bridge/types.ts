@@ -38,7 +38,8 @@ export interface TestRunSummary {
 }
 
 /**
- * Result-data shape of the `run_command` tool. Lives in core (not
+ * Result-data shape of a command — `bash`'s (the name is the standard
+ * set's, whose `run_command` shaped it; ADR 0086). Lives in core (not
  * @herta/tools) because it is a cross-layer contract: the tool produces
  * it, and the bridge layer (@herta/herta's backend-bridge) reads it to
  * project command results into the terminal record. Keeping it here
@@ -68,15 +69,6 @@ export interface RunCommandData {
    * Absent for non-test commands.
    */
   testRun?: TestRunSummary;
-  /**
-   * Managed background commands (ADR 0025 slice 4): `backgroundId` is
-   * set on the run_command start result and on every command_output /
-   * command_stop snapshot; `running` is true while the process is
-   * alive. The bridge projects a "background … running" row instead of
-   * an exit row when `running` is set.
-   */
-  backgroundId?: string;
-  running?: boolean;
   /**
    * The command classified `allow` — a class that changes nothing a user
    * would take back: a read, a test, a version query, `git status`. Set by
@@ -119,7 +111,7 @@ export interface RedirectWriteSummary {
  * bridge reads it, and @herta/herta must not depend on @herta/tools.
  */
 export interface ShowExcerptData {
-  /** The slice, line-numbered like read_file's content. Verbatim from disk:
+  /** The slice, line-numbered as the editor's view is. Verbatim from disk:
    *  the harness cut it, so nothing paraphrased it on the way here. */
   excerpt: string;
   /** 1-based inclusive line range actually returned. */
@@ -128,33 +120,6 @@ export interface ShowExcerptData {
   /** The requested span was clipped by the presentation bounds. */
   truncated: boolean;
   relPath: string;
-}
-
-/**
- * Result-data shape of the `search_text` tool. Here for the same reason as
- * the two above: since 2026-08-17 the bridge projects a search's hits into
- * the record (a bounded `↳ N matches` row with the matched lines in the
- * two-state evidence lane) — before that, a search's ONLY visible trace was
- * its op row, and 板砖's answer to "which lines mention X" reached nobody
- * unless it re-presented the lines with show_excerpt. Found in a real
- * session where it found 5 matches and Herta had to ask for them by name.
- */
-export interface SearchMatch {
-  path: string;
-  line: number;
-  /** The matched line, already secret-redacted (the tool redacts before
-   *  matching, so context and match lines both come from redacted text). */
-  content: string;
-  contextBefore?: string[];
-  contextAfter?: string[];
-}
-
-export interface SearchTextData {
-  /** The pattern as the model wrote it — echoed so the record row can name
-   *  what was searched without parsing the summary string. */
-  pattern: string;
-  matches: SearchMatch[];
-  truncated: boolean;
 }
 
 /**

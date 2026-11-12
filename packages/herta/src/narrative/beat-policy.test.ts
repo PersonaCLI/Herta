@@ -8,8 +8,8 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.started",
       layer: "actor",
       id: "t1",
-      tool: "read_file",
-      inputSummary: "foo.ts",
+      tool: "str_replace_editor",
+      inputSummary: "view foo.ts",
     };
     expect(classifyBeatTrigger(ev)).toBeNull();
   });
@@ -41,15 +41,15 @@ describe("classifyBeatTrigger — event → trigger", () => {
     // 2026-05-23 N2 tightening: beats no longer fire on workflow
     // start events. The model has no useful content to comment on
     // (the START event has no output yet), and firing on every
-    // file read / plan step / git_status made Herta too chatty. The
+    // file read / plan step / `git status` made Herta too chatty. The
     // → 差分协处理器 system block still appears (projected by the
     // backend bridge); Herta just doesn't beat on it.
     const ev: AgentEvent = {
       type: "tool.call.started",
       layer: "backend",
       id: "t1",
-      tool: "edit_file",
-      inputSummary: "foo.ts",
+      tool: "str_replace_editor",
+      inputSummary: "str_replace foo.ts",
     };
     expect(classifyBeatTrigger(ev)).toBeNull();
   });
@@ -59,15 +59,15 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.started",
       layer: "backend",
       id: "t1",
-      tool: "read_file",
-      inputSummary: "a.ts",
+      tool: "str_replace_editor",
+      inputSummary: "view a.ts",
     };
     const b: AgentEvent = {
       type: "tool.call.started",
       layer: "backend",
       id: "t2",
-      tool: "glob",
-      inputSummary: "src/**",
+      tool: "bash",
+      inputSummary: "ls src",
     };
     expect(classifyBeatTrigger(a)).toBeNull();
     expect(classifyBeatTrigger(b)).toBeNull();
@@ -89,7 +89,7 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: "t1",
-      tool: "edit_file",
+      tool: "str_replace_editor",
       result: { ok: true, summary: "patched foo.ts", data: {} },
     };
     expect(classifyBeatTrigger(ev)).toBeNull();
@@ -100,15 +100,15 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: "t1",
-      tool: "edit_file",
+      tool: "str_replace_editor",
       result: {
         ok: false,
-        error: { code: "stale_read", message: "...", retryable: false },
+        error: { code: "stale_view", message: "...", retryable: false },
         summary: "failed",
       },
     };
     const t = classifyBeatTrigger(ev);
-    expect(t?.signature).toBe("tool.fail:edit_file:stale_read");
+    expect(t?.signature).toBe("tool.fail:str_replace_editor:stale_view");
   });
 
   it("carries only the dedup signature — no per-event prose leaks into the spec", () => {
@@ -116,7 +116,7 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: "t1",
-      tool: "edit_file",
+      tool: "str_replace_editor",
       result: {
         ok: false,
         error: {
@@ -141,7 +141,7 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: "t1",
-      tool: "edit_file",
+      tool: "str_replace_editor",
       result: {
         ok: false,
         error: {
@@ -186,8 +186,8 @@ describe("classifyBeatTrigger — event → trigger", () => {
         summary: `crashed: ${tool}`,
       },
     });
-    const a = classifyBeatTrigger(crash("read_file"));
-    const b = classifyBeatTrigger(crash("glob"));
+    const a = classifyBeatTrigger(crash("str_replace_editor"));
+    const b = classifyBeatTrigger(crash("bash"));
     expect(a?.signature).toBe("tool.fail:crash");
     expect(b?.signature).toBe("tool.fail:crash");
     // The collapse precedes the workflow-kind allowlist: a crash on a tool
@@ -201,14 +201,45 @@ describe("classifyBeatTrigger — event → trigger", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: "c-x",
-      tool: "glob",
+      tool: "bash",
       result: {
         ok: false,
-        error: { code: "invalid_pattern", message: "bad", retryable: false },
-        summary: "invalid pattern",
+        error: { code: "invalid_input", message: "bad", retryable: false },
+        summary: "invalid input",
       },
     });
-    expect(ordinary?.signature).toBe("tool.fail:glob:invalid_pattern");
+    expect(ordinary?.signature).toBe("tool.fail:bash:invalid_input");
+  });
+
+  it("a failed step of a tool no session has earns no beat: the deleted standard set's names are unknown tools now (ADR 0086)", () => {
+    const failed = (tool: string): AgentEvent => ({
+      type: "tool.call.finished",
+      layer: "backend",
+      id: `f-${tool}`,
+      tool,
+      result: {
+        ok: false,
+        error: { code: "not_found", message: "x", retryable: false },
+        summary: "failed",
+      },
+    });
+    for (const tool of [
+      "read_file",
+      "search_text",
+      "glob",
+      "edit_file",
+      "write_new_file",
+      "run_command",
+      "command_output",
+      "command_stop",
+      "git_status",
+      "git_diff",
+    ]) {
+      expect(classifyBeatTrigger(failed(tool)), tool).toBeNull();
+    }
+    expect(classifyBeatTrigger(failed("bash"))?.signature).toBe(
+      "tool.fail:bash:not_found",
+    );
   });
 
   it("fires on a FAILED verification.finished (test-result beat — producer added 2026-07-23)", () => {
@@ -303,10 +334,10 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
       type: "tool.call.finished",
       layer: "backend",
       id: `t-${path}`,
-      tool: "edit_file",
+      tool: "str_replace_editor",
       result: {
         ok: false,
-        error: { code: "stale_read", message: path, retryable: false },
+        error: { code: "stale_view", message: path, retryable: false },
         summary: "failed",
       },
     };
@@ -335,14 +366,14 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     const p = new BeatPolicy({ clock: () => 0 });
     const t = p.shouldStage(failEv("a.ts"));
     expect(t).not.toBeNull();
-    expect(t?.signature).toBe("tool.fail:edit_file:stale_read");
+    expect(t?.signature).toBe("tool.fail:str_replace_editor:stale_view");
   });
 
   it("returns null on second event with the same signature after it fired (dedup)", () => {
     const p = new BeatPolicy({ clock: () => 1000 });
     expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
-    p.markFired("tool.fail:edit_file:stale_read", 1000);
-    // Same `tool.fail:edit_file:stale_read` signature — dedup blocks the second.
+    p.markFired("tool.fail:str_replace_editor:stale_view", 1000);
+    // Same `tool.fail:str_replace_editor:stale_view` signature — dedup blocks the second.
     expect(p.shouldStage(failEv("b.ts"))).toBeNull();
   });
 
@@ -356,7 +387,7 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
       minInterBurstMs: 3000,
     });
     expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
-    p.markFired("tool.fail:edit_file:stale_read", 0);
+    p.markFired("tool.fail:str_replace_editor:stale_view", 0);
 
     clock.now = 1000;
     expect(p.shouldStage(verificationEv())?.signature).toBe(
@@ -372,7 +403,7 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
     });
     // lastBurstAt starts at -Infinity — the first beat is never held.
     expect(p.readyToFire()).toBe(true);
-    p.markFired("tool.fail:edit_file:stale_read", 0);
+    p.markFired("tool.fail:str_replace_editor:stale_view", 0);
 
     clock.now = 1000;
     expect(p.readyToFire()).toBe(false);
@@ -401,7 +432,7 @@ describe("BeatPolicy — staging, dedup, and fire-time throttle", () => {
       minInterBurstMs: 3000,
     });
     expect(p.shouldStage(failEv("a.ts"))).not.toBeNull();
-    p.markFired("tool.fail:edit_file:stale_read", 0);
+    p.markFired("tool.fail:str_replace_editor:stale_view", 0);
     // Fired → dedup blocks re-staging.
     expect(p.shouldStage(failEv("b.ts"))).toBeNull();
 

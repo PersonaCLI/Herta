@@ -5,7 +5,7 @@ import {
   STEP_NOTICE_WINDOW,
 } from "./working-state.js";
 
-const empty = { changedFiles: [], background: [], findings: [], steers: [] };
+const empty = { changedFiles: [], findings: [], steers: [] };
 
 describe("the working state the harness keeps (2026-09-29, proposal 2)", () => {
   it("says so even when nothing has happened yet — the trim marker promises it", () => {
@@ -17,7 +17,7 @@ describe("the working state the harness keeps (2026-09-29, proposal 2)", () => {
     );
   });
 
-  it("lists files with their size when measured, live commands, findings against the cap, and steers", () => {
+  it("lists files with their size when measured, findings against the cap, and steers", () => {
     const text = renderWorkingState(
       {
         changedFiles: [
@@ -28,7 +28,6 @@ describe("the working state the harness keeps (2026-09-29, proposal 2)", () => {
             diffSummary: "changed via a command",
           },
         ],
-        background: [{ id: "bg-2", command: "npm   run\n dev" }],
         findings: [
           { claim: "x is stale", cites: ["a.ts:3"] },
           { claim: "y is fine", cites: [] },
@@ -41,7 +40,9 @@ describe("the working state the harness keeps (2026-09-29, proposal 2)", () => {
     expect(text).toContain("- a.ts (modified, +3 -1)");
     // An unmeasured summary is not shown as a size.
     expect(text).toContain("- b.ts (created)");
-    expect(text).toContain("- bg-2: npm run dev");
+    // No background list: bash has no managed background (ADR 0086).
+    expect(text).not.toContain("command_output");
+    expect(text).not.toContain("bg-");
     expect(text).toContain("Conclusions recorded (2/12):");
     expect(text).toContain("1. x is stale (a.ts:3)");
     expect(text).toContain("2. y is fine");

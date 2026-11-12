@@ -39,23 +39,18 @@ import { type UndoSegment, UndoStore } from "./undo-store.js";
 
 /**
  * Tools whose SUCCESS argues that the task advanced (audit 2026-07-24, 1.2).
- * Read-only and bookkeeping tools — read_file, search_text, glob,
- * git_status, git_diff, command_output — execute successfully
- * while changing nothing, so counting them as completion evidence let a
- * backend that merely investigated report 完成.
+ * A tool that only reads or presents — `show_excerpt`, `report_finding`, a
+ * page read — succeeds while changing nothing, so counting it as completion
+ * evidence let a backend that merely investigated report 完成.
  */
 const MUTATING_TOOLS: ReadonlySet<string> = new Set([
-  "edit_file",
-  "write_new_file",
-  "run_command",
-  "command_stop",
   // Not `memory_save` (ADR 0077): a saved fact changes the harness's own
-  // store, not the user's task, and on the default contract a run that
-  // read, failed and saved a fact would have reported 完成 — the trap the
-  // reads were taken out of (audit 2026-07-24, 1.2).
-  // Minimal contract (ADR 0040): `bash` counts like run_command (exit 0
-  // only, see below); the editor counts only for its writing commands —
-  // a `view` is a read and proves nothing (the result data says which).
+  // store, not the user's task, and a run that read, failed and saved a
+  // fact would have reported 完成 — the trap the reads were taken out of
+  // (audit 2026-07-24, 1.2).
+  // `bash` counts on exit 0 only (see below); the editor counts only for
+  // its writing commands — a `view` is a read and proves nothing (the
+  // result data says which).
   "bash",
   "str_replace_editor",
 ]);
@@ -571,10 +566,7 @@ export class CodingAgentRuntime {
               if (path !== undefined) {
                 changedByPath.set(path, {
                   path,
-                  kind:
-                    event.tool === "write_new_file" || data?.created === true
-                      ? "created"
-                      : "modified",
+                  kind: data?.created === true ? "created" : "modified",
                   diffSummary:
                     typeof data?.diff === "string"
                       ? summarizeDiff(data.diff)
@@ -665,10 +657,6 @@ export class CodingAgentRuntime {
         // Read only once old iterations have been dropped (working-state.ts).
         workingState: () => ({
           changedFiles: [...changedByPath.values()],
-          background: bg
-            .list()
-            .filter((p) => p.isRunning())
-            .map((p) => ({ id: p.id, command: p.argv.join(" ") })),
           findings: findings.all(),
           steers,
         }),

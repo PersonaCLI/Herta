@@ -350,14 +350,14 @@ describe("runBackendTurnLoop", () => {
       run: async () => ok,
     });
     tools.register({
-      name: "read_file",
-      schema: schemaFor("read_file"),
+      name: "str_replace_editor",
+      schema: schemaFor("str_replace_editor"),
       summarize: () => undefined,
       run: async () => ok,
     });
     tools.register({
-      name: "glob",
-      schema: schemaFor("glob"),
+      name: "bash",
+      schema: schemaFor("bash"),
       summarize: () => {
         throw new Error("boom");
       },
@@ -372,11 +372,15 @@ describe("runBackendTurnLoop", () => {
           },
           {
             type: "tool-call-request",
-            call: { id: "c2", tool: "read_file", input: { path: "a.ts" } },
+            call: {
+              id: "c2",
+              tool: "str_replace_editor",
+              input: { command: "view", path: "a.ts" },
+            },
           },
           {
             type: "tool-call-request",
-            call: { id: "c3", tool: "glob", input: { pattern: "src/**" } },
+            call: { id: "c3", tool: "bash", input: { command: "ls src" } },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -405,8 +409,8 @@ describe("runBackendTurnLoop", () => {
       if (e.type === "tool.call.started") headers.set(e.tool, e.inputSummary);
     }
     expect(headers.get("own")).toBe("own:hdr second line @ /repo");
-    expect(headers.get("read_file")).toBe("a.ts");
-    expect(headers.get("glob")).toBe('"src/**"');
+    expect(headers.get("str_replace_editor")).toBe("view a.ts");
+    expect(headers.get("bash")).toBe("ls src");
   });
 
   it("a tool's `runsTests` hook marks its started event — on the serial path and in a read-only batch; a no, a throw or no hook leaves it unmarked (ADR 0073 amendment 2026-10-08)", async () => {
@@ -793,7 +797,6 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
         changedFiles: [
           { path: "src/a.ts", kind: "modified" as const, diffSummary: "+3 -1" },
         ],
-        background: [{ id: "bg-1", command: "npm run dev" }],
         findings: [{ claim: "the cache is stale", cites: ["src/a.ts:3"] }],
         steers: ["先别动测试"],
       }),
@@ -840,7 +843,6 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
     const trailer = "trailingState" in seen ? (seen.trailingState ?? "") : "";
     expect(trailer).toContain("## 当前工作状态");
     expect(trailer).toContain("- src/a.ts (修改, +3 -1)");
-    expect(trailer).toContain("- bg-1: npm run dev");
     expect(trailer).toContain("1. the cache is stale (src/a.ts:3)");
     expect(trailer).toContain("「先别动测试」");
     if (first?.role === "assistant") {
@@ -865,7 +867,6 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
       ...buildDeps(provider),
       workingState: () => ({
         changedFiles: [],
-        background: [],
         findings: [],
         steers: ["x"],
       }),
@@ -899,16 +900,13 @@ describe("context budget + oversized-result persistence (ADR 0025 slice 2)", () 
 });
 
 describe("verification.finished producer (test-result beat, 2026-07-23)", () => {
-  function runCommandTurn(
-    data: Record<string, unknown>,
-    tool: "run_command" | "bash" = "run_command",
-  ) {
+  function commandTurn(data: Record<string, unknown>, tool = "bash") {
     const provider = new FakeProvider({
       turns: [
         [
           {
             type: "tool-call-request",
-            call: { id: "r1", tool, input: { argv: ["x"] } },
+            call: { id: "r1", tool, input: { command: "x" } },
           },
           { type: "finish", reason: "tool_calls" },
         ],
@@ -923,19 +921,29 @@ describe("verification.finished producer (test-result beat, 2026-07-23)", () => 
     });
     return { deps, provider };
   }
-
-  it("emits verification.finished AFTER the tool.call.finished of a test run", async () => {
-    const { deps } = runCommandTurn({
-      testRun: { status: "passed", summary: "3 passed" },
-    });
+  async function eventsOf(
+    turn: ReturnType<typeof commandTurn>,
+  ): Promise<AgentEvent[]> {
     const events: AgentEvent[] = [];
-    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
+    for await (const e of runBackendTurnLoop(turn.deps, sampleBrief, {
       signal: new AbortController().signal,
       userMessages: sampleUserMessages,
     })) {
       events.push(e);
     }
-    const types = events.map((e) => e.type);
+    return events;
+  }
+
+  // 2026-08-24 (codex study): the emit was gated on the name of the standard
+  // set's command tool, so when `bash` became the default on 2026-08-17 every
+  // test run went invisible to Herta for a week. `bash` is the command tool
+  // now, and the signal is still read off its result's data.
+  it("emits verification.finished AFTER the tool.call.finished of a test run", async () => {
+    const types = (
+      await eventsOf(
+        commandTurn({ testRun: { status: "passed", summary: "3 passed" } }),
+      )
+    ).map((e) => e.type);
     const finIdx = types.indexOf("tool.call.finished");
     const verIdx = types.indexOf("verification.finished");
     expect(finIdx).toBeGreaterThanOrEqual(0);
@@ -943,48 +951,20 @@ describe("verification.finished producer (test-result beat, 2026-07-23)", () => 
   });
 
   it("does NOT emit verification.finished for an ordinary command", async () => {
-    const { deps } = runCommandTurn({ exitCode: 0, stdout: "hello" });
-    const events: AgentEvent[] = [];
-    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
-      signal: new AbortController().signal,
-      userMessages: sampleUserMessages,
-    })) {
-      events.push(e);
-    }
+    const events = await eventsOf(
+      commandTurn({ exitCode: 0, stdout: "hello" }),
+    );
     expect(events.some((e) => e.type === "verification.finished")).toBe(false);
   });
 
-  // 2026-08-24 (codex study): the emit was gated on the tool NAME, so the
-  // minimal contract becoming the default on 2026-08-17 made every test run
-  // invisible to Herta — `bash` reports `testRun` identically. Both tools, and
-  // still keyed on the data.
-  it("emits for the minimal contract's bash too — the default since 2026-08-17", async () => {
-    const { deps } = runCommandTurn(
-      { testRun: { status: "passed", summary: "3 passed" } },
-      "bash",
+  it("only the command tool's result is read: test-shaped data from another tool is no test run", async () => {
+    const events = await eventsOf(
+      commandTurn(
+        { testRun: { status: "passed", summary: "3 passed" } },
+        "report_finding",
+      ),
     );
-    const events: AgentEvent[] = [];
-    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
-      signal: new AbortController().signal,
-      userMessages: sampleUserMessages,
-    })) {
-      events.push(e);
-    }
-    const types = events.map((e) => e.type);
-    expect(types.indexOf("verification.finished")).toBeGreaterThan(
-      types.indexOf("tool.call.finished"),
-    );
-  });
-
-  it("does NOT emit for a bash call that ran no test", async () => {
-    const { deps } = runCommandTurn({ exitCode: 0, stdout: "hello" }, "bash");
-    const events: AgentEvent[] = [];
-    for await (const e of runBackendTurnLoop(deps, sampleBrief, {
-      signal: new AbortController().signal,
-      userMessages: sampleUserMessages,
-    })) {
-      events.push(e);
-    }
+    expect(events.some((e) => e.type === "tool.call.finished")).toBe(true);
     expect(events.some((e) => e.type === "verification.finished")).toBe(false);
   });
 });
@@ -1032,7 +1012,7 @@ describe("partitionToolCalls (ADR 0025 slice 5)", () => {
 describe("malformed tool-args containment (2026-08-13)", () => {
   /** A call the provider could not parse — the shape stream.ts now yields
    *  instead of throwing ProviderError{code:"tool-args"}. */
-  const badCall = (id: string, tool = "run_command") => ({
+  const badCall = (id: string, tool = "bash") => ({
     type: "tool-call-request" as const,
     call: {
       id,
@@ -1477,22 +1457,28 @@ describe("tool-crash containment + parallel read-only batches (ADR 0025 slice 5)
 describe("summarizeInput (tool-aware working-state argument)", () => {
   it("normalizes newlines to spaces — the summary is a one-line header (slice 6)", () => {
     expect(
-      summarizeInput("run_command", {
-        argv: ["echo", "first\nsecond\r\nthird"],
+      summarizeInput("str_replace_editor", {
+        command: "view",
+        path: "src/\nfake-header.ts",
       }),
-    ).toBe("echo first second third");
-    expect(summarizeInput("read_file", { path: "src/\nfake-header.ts" })).toBe(
-      "src/ fake-header.ts",
-    );
+    ).toBe("view src/ fake-header.ts");
+    expect(
+      summarizeInput("show_excerpt", {
+        path: "src/a\r\nb.ts",
+        fromLine: 1,
+        toLine: 2,
+      }),
+    ).toBe("src/a b.ts:1-2");
   });
 
-  it("returns the path for write_new_file (no content blob)", () => {
+  it("the editor's create is its command and path, never the file's text", () => {
     expect(
-      summarizeInput("write_new_file", {
-        path: "scripts/merge_sort.py",
-        content: "#!/usr/bin/env python3\n…lots of code…",
+      summarizeInput("str_replace_editor", {
+        command: "create",
+        path: "/ws/scripts/merge_sort.py",
+        file_text: "#!/usr/bin/env python3\n…lots of code…",
       }),
-    ).toBe("scripts/merge_sort.py");
+    ).toBe("create /ws/scripts/merge_sort.py");
   });
 
   it("bash (ADR 0040): the first line of the command, marked when there is more", () => {
@@ -1600,42 +1586,6 @@ describe("summarizeInput (tool-aware working-state argument)", () => {
     );
   });
 
-  it("returns the path for edit_file (no hunks)", () => {
-    expect(
-      summarizeInput("edit_file", {
-        path: "src/foo.ts",
-        hunks: [{ search: "a", replace: "b" }],
-      }),
-    ).toBe("src/foo.ts");
-  });
-
-  it("returns the path for read_file", () => {
-    expect(summarizeInput("read_file", { path: "src/foo.ts" })).toBe(
-      "src/foo.ts",
-    );
-  });
-
-  it("returns the quoted pattern for glob (list_files left the set 2026-09-18, ADR 0067)", () => {
-    expect(summarizeInput("glob", { pattern: "src/**/*.ts" })).toBe(
-      '"src/**/*.ts"',
-    );
-  });
-
-  it("returns the quoted pattern for search_text, plus `in <path>` when scoped (2026-08-17)", () => {
-    expect(summarizeInput("search_text", { pattern: "mergesort" })).toBe(
-      '"mergesort"',
-    );
-    expect(summarizeInput("search_text", { pattern: "x", path: "." })).toBe(
-      '"x"',
-    );
-    expect(
-      summarizeInput("search_text", {
-        pattern: "CUDA|world_size",
-        path: ".herta/attachments/s1/log.txt",
-      }),
-    ).toBe('"CUDA|world_size" in .herta/attachments/s1/log.txt');
-  });
-
   it('cites show_excerpt as path:from-to / path ~"match" — not its raw JSON (real session 2026-08-16)', () => {
     expect(
       summarizeInput("show_excerpt", {
@@ -1657,15 +1607,6 @@ describe("summarizeInput (tool-aware working-state argument)", () => {
     );
   });
 
-  it("names the background id for command_output (as `… output`) and command_stop", () => {
-    expect(summarizeInput("command_output", { backgroundId: "bg-1" })).toBe(
-      "bg-1 output",
-    );
-    expect(summarizeInput("command_stop", { backgroundId: "bg-1" })).toBe(
-      "bg-1",
-    );
-  });
-
   it("returns the kind for memory_save (not the full text body)", () => {
     expect(
       summarizeInput("memory_save", {
@@ -1675,20 +1616,9 @@ describe("summarizeInput (tool-aware working-state argument)", () => {
     ).toBe("repo_fact");
   });
 
-  it("returns the joined argv for run_command", () => {
-    expect(summarizeInput("run_command", { argv: ["pytest", "-q"] })).toBe(
-      "pytest -q",
-    );
-  });
-
-  it("returns empty (verb-only) for git tools", () => {
-    expect(summarizeInput("git_status", {})).toBe("");
-    expect(summarizeInput("git_diff", { staged: true })).toBe("");
-  });
-
   it("truncates a long path to the ~80-char cap with an ellipsis", () => {
     const longPath = `src/${"a".repeat(120)}.ts`;
-    const out = summarizeInput("read_file", { path: longPath });
+    const out = summarizeInput("show_excerpt", { path: longPath });
     expect(out.length).toBeLessThanOrEqual(80);
     expect(out.endsWith("…")).toBe(true);
   });
@@ -1700,12 +1630,22 @@ describe("summarizeInput (tool-aware working-state argument)", () => {
   });
 
   it("falls back to JSON truncation when the expected field is missing", () => {
-    expect(summarizeInput("read_file", { wrong: 1 })).toBe('{"wrong":1}');
+    expect(summarizeInput("show_excerpt", { wrong: 1 })).toBe('{"wrong":1}');
+  });
+
+  it("has no case for the deleted standard set's tools: their calls read as any unknown tool's (ADR 0086)", () => {
+    expect(summarizeInput("read_file", { path: "a.ts" })).toBe(
+      '{"path":"a.ts"}',
+    );
+    expect(summarizeInput("run_command", { argv: ["npm", "test"] })).toBe(
+      '{"argv":["npm","test"]}',
+    );
+    expect(summarizeInput("git_status", {})).toBe("{}");
   });
 
   it("never throws on non-object input (defensive)", () => {
-    expect(() => summarizeInput("read_file", null)).not.toThrow();
-    expect(() => summarizeInput("read_file", 42)).not.toThrow();
+    expect(() => summarizeInput("show_excerpt", null)).not.toThrow();
+    expect(() => summarizeInput("show_excerpt", 42)).not.toThrow();
   });
 });
 

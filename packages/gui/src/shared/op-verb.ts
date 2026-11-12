@@ -1,17 +1,16 @@
 import { type BrowserOpVerb, browserOpVerb } from "@herta/core/browser-host";
 import { type ServerOpVerb, serverOpVerb } from "@herta/core/server-host";
 
-/** The op verbs a record row can carry for a live call. */
+/** The op verbs a record row can carry for a live call. A record written
+ *  on the standard set (ADR 0086) also holds `Inspecting`, `Searching` and
+ *  `Stopping` rows; no live call makes one. */
 export type LiveOpVerb =
   | BrowserOpVerb
   | ServerOpVerb
   | "Reading"
   | "Writing"
   | "Running"
-  | "Inspecting"
   | "Saving memory"
-  | "Searching"
-  | "Stopping"
   | "Digesting"
   | "Searching the web"
   | "Reading web page";
@@ -35,26 +34,12 @@ export function opVerbOf(
   summary = "",
 ): LiveOpVerb | null {
   switch (tool) {
-    case "read_file":
-    case "glob":
     case "show_excerpt":
-    case "command_output":
       return "Reading";
-    case "search_text":
-      return "Searching";
-    case "edit_file":
-    case "write_new_file":
-      return "Writing";
     case "str_replace_editor":
       return viewing ? "Reading" : "Writing";
-    case "run_command":
     case "bash":
       return "Running";
-    case "command_stop":
-      return "Stopping";
-    case "git_status":
-    case "git_diff":
-      return "Inspecting";
     case "memory_save":
       return "Saving memory";
     case "digest_document":

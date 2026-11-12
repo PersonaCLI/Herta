@@ -236,8 +236,8 @@ describe("runActorCompletionTurn — end-to-end (think → speak rhythm)", () =>
         publishWithLayer(bus, "backend", {
           type: "tool.call.started",
           id: "t1",
-          tool: "read_file",
-          inputSummary: "foo.ts",
+          tool: "str_replace_editor",
+          inputSummary: "view foo.ts",
         });
         return {
           taskId: brief.taskId,
@@ -362,10 +362,10 @@ describe("runActorCompletionTurn — Slice 13 end-to-end (mood routing)", () => 
         publishWithLayer(bus, "backend", {
           type: "tool.call.finished",
           id: "f-a.ts",
-          tool: "edit_file",
+          tool: "str_replace_editor",
           result: {
             ok: false,
-            error: { code: "stale_read", message: "a.ts", retryable: false },
+            error: { code: "stale_view", message: "a.ts", retryable: false },
             summary: "edit failed",
           },
         });

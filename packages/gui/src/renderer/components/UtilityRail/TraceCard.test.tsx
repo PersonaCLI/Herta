@@ -504,11 +504,11 @@ describe("TraceCard — the ticker (ADR 0073)", () => {
     push(h, user(), op("Reading", "a.ts"));
     live(h, [
       view({
-        tool: "read_file",
+        tool: "str_replace_editor",
         streams: false,
         started: true,
         ordinal: 0,
-        summary: "a.ts",
+        summary: "view a.ts",
       }),
     ]);
     expect(lines()).toEqual(["Explore* Reading a.ts"]);
@@ -556,11 +556,11 @@ describe("TraceCard — the ticker (ADR 0073)", () => {
     });
     const reading = view({
       id: "c3",
-      tool: "read_file",
+      tool: "str_replace_editor",
       streams: false,
       started: true,
       ordinal: 2,
-      summary: "fib.js",
+      summary: "view fib.js",
     });
     // Two steps past the record: the command that failed, then a read.
     live(h, [ran, reading]);
@@ -671,9 +671,9 @@ describe("TraceCard — the ticker (ADR 0073)", () => {
           }),
           view({
             id: "c3",
-            tool: "read_file",
+            tool: "str_replace_editor",
             ordinal: 2,
-            summary: "fib.js",
+            summary: "view fib.js",
             ...done,
           }),
         ],
@@ -761,10 +761,10 @@ describe("stepOf", () => {
     expect(
       stepOf(
         view({
-          tool: "read_file",
+          tool: "str_replace_editor",
           streams: false,
           started: true,
-          summary: "a.ts",
+          summary: "view a.ts",
         }),
       ),
     ).toEqual({
@@ -819,11 +819,11 @@ describe("pendingSteps", () => {
   const read = (id: string, ordinal: number, summary: string) =>
     view({
       id,
-      tool: "read_file",
+      tool: "str_replace_editor",
       streams: false,
       started: true,
       ordinal,
-      summary,
+      summary: `view ${summary}`,
     });
 
   it("appends exactly the dispatched steps the record has not counted yet, in order — however far it lags", () => {

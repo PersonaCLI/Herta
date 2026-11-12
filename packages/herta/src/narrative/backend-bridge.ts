@@ -181,7 +181,7 @@ async function invokeBanzhuanBridgeInner(
   // failures, none of which occur in a no-op), but using a dedicated flag
   // makes the no-op test unambiguous regardless.
   let projectedAny = false;
-  // Remember the most-recent run_command output so the done-marker roll-up
+  // Remember the most recent command's output so the done-marker roll-up
   // can include it (the report's evidence[] only has short summaries). Both
   // lanes are captured together — the canonical string and its structured
   // mirror must describe the same command, or the localized detail pane would
@@ -192,9 +192,6 @@ async function invokeBanzhuanBridgeInner(
   // this dispatch, harvested from finished command results as they project.
   let gitCommit: string | undefined;
   let gitPushedRef: string | undefined;
-  // Background-row state (reset per backend turn.started): see the
-  // PROCESS-phase comments at its use site.
-  const bgLastState = new Map<string, string>();
 
   const unsubscribe = deps.bus.onAny((event: AgentEvent) => {
     // The live views (ADR 0073) — a call's arguments as they stream, a
@@ -419,7 +416,6 @@ async function invokeBanzhuanBridgeInner(
             staged = [];
             blockedCallIds.clear();
           }
-          bgLastState.clear();
         }
 
         if (event.layer === "backend") {
@@ -431,17 +427,14 @@ async function invokeBanzhuanBridgeInner(
         }
 
         // Git outcome identity (ADR 0049 §4): harvest commit/push from every
-        // finished command result — same tool set as the result-row
+        // finished command result — the same tool as the result-row
         // projection below, data-shape-checked, exit 0 required inside the
         // detector. Last commit / last push win (bounded on purpose).
         if (
           event.type === "tool.call.finished" &&
           event.layer === "backend" &&
           event.result.ok &&
-          (event.tool === "run_command" ||
-            event.tool === "bash" ||
-            event.tool === "command_output" ||
-            event.tool === "command_stop")
+          event.tool === "bash"
         ) {
           const d = event.result.data as Partial<RunCommandData> | undefined;
           if (
@@ -511,24 +504,7 @@ async function invokeBanzhuanBridgeInner(
           talkWaiting = true;
         }
 
-        let projected = projectBackendEvent(event);
-        // Consecutive-state suppression for background rows: command_output
-        // polls with no new output would otherwise stack identical
-        // "background bg-1: running" lines. Rows carrying evidenceDetail
-        // (fresh output for Herta's prompt) always project; state CHANGES
-        // (running→exited/stopped) always project.
-        if (projected !== null && projected.digest?.kind === "bg") {
-          const d = projected.digest;
-          if (
-            d.state === "running" &&
-            bgLastState.get(d.id) === "running" &&
-            projected.evidenceDetail === undefined
-          ) {
-            projected = null;
-          } else {
-            bgLastState.set(d.id, d.state);
-          }
-        }
+        const projected = projectBackendEvent(event);
         if (projected !== null) {
           projectedAny = true;
           current = [...current, projected];

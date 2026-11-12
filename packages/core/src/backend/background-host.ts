@@ -15,11 +15,11 @@ export interface BackgroundProcess {
    *  (or a bounded grace period elapsed). Idempotent. */
   kill(): Promise<void>;
   /**
-   * Harness-owned, not model-started (ADR 0040): the minimal contract's
-   * persistent shell registers here so it dies with the brief like any
-   * background process, but its reaping is routine — it is not "a command
-   * the model left running" and must not surface as a residual risk or in
-   * `command_output`/`command_stop` listings.
+   * Harness-owned, not model-started (ADR 0040): bash's persistent shell
+   * registers here so it dies with the brief, and its reaping is routine —
+   * it is not "a command the model left running" and must not surface as a
+   * residual risk. It is the only entry there is now: the model-started
+   * ones were the standard set's managed background commands (ADR 0086).
    */
   readonly internal?: boolean;
 }

@@ -122,8 +122,7 @@ const MARKDOWN = /\.(?:md|markdown|mdx)$/i;
 const COMMENT = /^\s*(?:\/\/|\/\*|\*|#|--|<!--)/;
 const WORD = /[\p{L}\p{N}]/u;
 
-const isCommand = (v: LiveToolView): boolean =>
-  v.tool === "bash" || v.tool === "run_command";
+const isCommand = (v: LiveToolView): boolean => v.tool === "bash";
 
 /** The tail's non-blank lines with their places in the whole text. */
 function linesOf(view: LiveToolView): Line[] {

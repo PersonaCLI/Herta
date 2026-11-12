@@ -80,12 +80,10 @@ export const EMPTY_LIVE: LiveToolSnapshot = { views: [], startedOps: 0 };
  *  writes, and a shell line (a heredoc is a file being written). */
 const DRAFT_TOOLS: ReadonlySet<string> = new Set([
   "str_replace_editor",
-  "write_new_file",
-  "edit_file",
   "bash",
 ]);
 /** Calls whose OUTPUT streams while they run. */
-const OUTPUT_TOOLS: ReadonlySet<string> = new Set(["bash", "run_command"]);
+const OUTPUT_TOOLS: ReadonlySet<string> = new Set(["bash"]);
 
 export const LIVE_FEED_INTERVAL_MS = 100;
 export const TAIL_LINES = 40;
@@ -457,20 +455,6 @@ function viewOf(c: CallState, focused: boolean): LiveToolView {
       const { tail, lines } = boundTail(splitLines(first("command") ?? ""));
       return { ...base, mode: "text", tail, lines };
     }
-    case "write_new_file": {
-      const { tail, lines } = boundTail(splitLines(first("content") ?? ""));
-      return { ...base, mode: "text", tail, lines };
-    }
-    case "edit_file": {
-      // Hunk by hunk, in the order written: what goes, then what comes.
-      const diff: string[] = [];
-      for (const f of fields) {
-        if (f.key === "search") diff.push(...prefix("-", f.value));
-        else if (f.key === "replace") diff.push(...prefix("+", f.value));
-      }
-      const { tail, lines } = boundTail(diff);
-      return { ...base, mode: "diff", tail, lines };
-    }
     case "str_replace_editor": {
       const command = first("command");
       const fileText = first("file_text");
@@ -478,6 +462,7 @@ function viewOf(c: CallState, focused: boolean): LiveToolView {
         const { tail, lines } = boundTail(splitLines(fileText ?? ""));
         return { ...base, mode: "text", tail, lines };
       }
+      // What goes, then what comes, in the order written.
       const diff: string[] = [];
       for (const f of fields) {
         if (f.key === "old_str") diff.push(...prefix("-", f.value));
@@ -487,7 +472,7 @@ function viewOf(c: CallState, focused: boolean): LiveToolView {
       return { ...base, mode: "diff", tail, lines };
     }
     default:
-      // run_command before its output: nothing yet.
+      // No draft of its own to show: nothing yet.
       return { ...base, mode: "text", tail: "", lines: 0 };
   }
 }

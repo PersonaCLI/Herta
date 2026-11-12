@@ -44,6 +44,7 @@ import {
   RulePermissionEngine,
   type ServerHost,
   SessionApprovalCache,
+  sweepEvidenceSoon,
   type TerminalRecord,
   type TerminalRecordBlock,
   type WebClient,
@@ -471,6 +472,11 @@ export function hostNoteFor(
 
 export function createBackendStack(opts: BackendStackOpts): BackendStack {
   const { wsHolder, lang } = opts;
+
+  // What this workspace's commands left more than thirty days ago goes
+  // (owner 2026-11-12, `evidence-retention.ts`). Detached, async, and at
+  // most once every six hours for a workspace: the session does not wait.
+  void sweepEvidenceSoon(wsHolder.current);
 
   // Approval cache + the workspace's permission choices first: the ask
   // resolver consults them.

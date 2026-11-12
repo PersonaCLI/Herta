@@ -231,6 +231,14 @@ export {
   recapCachePath,
 } from "./session-io/delete-session-files.js";
 export {
+  EVIDENCE_CONFIRM_MS,
+  EVIDENCE_KEEP_DAYS,
+  removeSessionEvidence,
+  sessionWorkspaces,
+  sweepEvidence,
+  sweepEvidenceSoon,
+} from "./session-io/evidence-retention.js";
+export {
   type ListSessionsOpts,
   listSessionHeaders,
   listSessions,

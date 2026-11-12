@@ -1,8 +1,15 @@
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { dispatchJournalPath } from "../backend/dispatch-journal.js";
+import {
+  dispatchJournalPath,
+  readDispatchJournal,
+} from "../backend/dispatch-journal.js";
 import { undoStoreDir } from "../backend/undo-store.js";
 import { isPathInside } from "../path-containment.js";
+import {
+  removeSessionEvidence,
+  sessionWorkspaces,
+} from "./evidence-retention.js";
 
 /**
  * Where a session's recap/compaction sidecar lives. Defined in core so
@@ -32,6 +39,12 @@ export function recapCachePath(
  * `force: true` swallows ENOENT). Other I/O errors propagate. The file list
  * is kept in one place so a future per-session sidecar is a one-line addition.
  *
+ * The session's command logs go with it, and its last run's saved tool
+ * results, from every workspace the session's file names (owner 2026-11-12,
+ * `evidence-retention.ts`). They used to stay for good. The results of its
+ * earlier runs are not named anywhere once the journal has moved on; the
+ * thirty-day sweep takes those.
+ *
  * Async since 2026-09-03: the managed workspace is where 板砖 clones and
  * installs, so it can hold a `node_modules` of tens of thousands of files —
  * the recursive delete ran synchronously on the Electron main thread and the
@@ -59,9 +72,30 @@ export async function deleteSessionFiles(
     // The run journal (ADR 0071), in the `journal/` folder beside them.
     resolve(dispatchJournalPath(dir, sessionId)),
   ];
+  // Read before they go: where the session worked, and its last run.
+  const contained = files.every((f) => isPathInside(dir, f, { strict: true }));
+  const worked = contained ? await sessionWorkspaces(files[0] as string) : [];
+  const lastRun = contained
+    ? ((await readDispatchJournal(files[2] as string)) ?? []).find(
+        (e) => e.kind === "start",
+      )
+    : undefined;
   for (const f of files) {
     if (!isPathInside(dir, f, { strict: true })) continue;
     await rm(f, { force: true });
+  }
+  if (contained) {
+    await removeSessionEvidence({
+      sessionId,
+      workspaceRoots: [
+        ...(workspaceRoot !== undefined ? [workspaceRoot] : []),
+        ...worked,
+        ...(lastRun?.kind === "start" && lastRun.workspaceRoot !== undefined
+          ? [lastRun.workspaceRoot]
+          : []),
+      ],
+      runIds: lastRun?.kind === "start" ? [lastRun.taskId] : [],
+    });
   }
   // The undo store (ADR 0074 §2): a folder of kept edits per session, in
   // the `undo/` folder beside them. Contained like the files above.

@@ -17,11 +17,13 @@ Herta inference (DeepSeek completion mode)
     │   prompt = StaticHertaPrefix (HertaBio + EnvSet + 废案 few-shots
     │            + session front matter)
     │          + bounded TerminalRecord
-    │          + "\n\n（我 说）"
-    │   stop  = ["（/我 说）", "｜>"]
+    │          + the tag she completes: "\n\n（我 想）" for a thought,
+    │            then "\n\n（我 说）" for what she says
+    │   stop  = that tag's close: "（/我 想）" or "（/我 说）"
     │
     ├── Path A — direct response (chat / identity / casual)
-    │     └── one completion call. Block commits to TerminalRecord. Done.
+    │     └── she thinks once, then speaks: two completion calls.
+    │         Both blocks commit to TerminalRecord. Done.
     │
     └── Path B — coding task
           │   Herta's block contains the literal token @板砖
@@ -44,8 +46,9 @@ Herta inference (DeepSeek completion mode)
             ended run with its report last
           backend completes; harness opens a fresh （我 说） for
             Herta's verdict
-            Done. (1 final Herta completion + N backend calls
-                   + her answers and checkpoint completions)
+            Done. (Herta's own completions, a thought before each
+                   speech + N backend calls + her answers and
+                   checkpoint completions)
 ```
 
 The agent does the work. **Herta decides when to delegate, hears the

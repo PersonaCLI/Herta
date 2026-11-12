@@ -413,6 +413,16 @@ async function runIngest(
         `${result.ambiguousMentions} ambiguous mentions, claims: ${result.claimsCount}, ` +
         `llm_claims: ${llmLine}, wiki: ${result.wikiPagesCount}`,
     );
+    if (result.changedFiles.length > 0) {
+      const shown = result.changedFiles.slice(0, 10).join(", ");
+      const more =
+        result.changedFiles.length > 10
+          ? `, and ${result.changedFiles.length - 10} more`
+          : "";
+      io.log(
+        `ingest: ${result.changedFiles.length} document(s) changed since they were ingested and were left as they were; run with --force to rebuild: ${shown}${more}`,
+      );
+    }
     return 0;
   } catch (err) {
     io.err(`ingest failed: ${(err as Error).message}`);

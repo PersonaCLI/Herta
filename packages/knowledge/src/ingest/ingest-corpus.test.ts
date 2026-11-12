@@ -423,3 +423,171 @@ describe("ingestCorpus", () => {
     expect(result.wikiPagesCount).toBe(0);
   });
 });
+
+describe("ingestCorpus — a document is whole before it is done (review 2026-11-10, second pass)", () => {
+  const dbPath = (): string =>
+    join(workspace, ".herta/knowledge/herta-canon.sqlite");
+  const neutral = (): string => join(workspace, "data", "neutral", "test.html");
+  const count = (sql: string, ...args: unknown[]): number => {
+    const store = SqliteKnowledgeStore.openOrCreate({
+      dbPath: dbPath(),
+      readonly: true,
+    });
+    try {
+      return store.rawAll<{ n: number }>(sql, ...args)[0]?.n ?? -1;
+    } finally {
+      store.close();
+    }
+  };
+  const answering = (calls: { n: number }, failFirst: number) => ({
+    chatJson: async (input: { userPayload: string }) => {
+      calls.n += 1;
+      if (calls.n <= failFirst) throw new Error("the model call failed");
+      const user = JSON.parse(input.userPayload) as {
+        chunks: Array<{ chunk_id: string }>;
+      };
+      return {
+        rawJsonText: JSON.stringify({
+          chunks: [
+            {
+              chunk_id: user.chunks[0]?.chunk_id ?? "__missing__",
+              mentions: [
+                {
+                  surface: "黑塔",
+                  referent_entity_id: "herta.place.space_station",
+                  confidence: 0.9,
+                  rationale: "fake-llm",
+                },
+              ],
+              is_herta_voice_evidence: false,
+            },
+          ],
+        }),
+        model: "deepseek-fake",
+      };
+    },
+  });
+  const MENTIONS_OF_NEUTRAL = `SELECT count(*) AS n FROM entity_mentions m
+     JOIN chunks c ON c.id = m.chunk_id
+     JOIN documents d ON d.id = c.document_id
+     WHERE d.path = ?`;
+
+  const CHUNKS_OF_NEUTRAL = `SELECT count(*) AS n FROM chunks c
+     JOIN documents d ON d.id = c.document_id WHERE d.path = ?`;
+
+  it("a run cut at the model call is finished by the next one, not skipped", async () => {
+    mkdirSync(join(workspace, "data", "neutral"), { recursive: true });
+    writeFileSync(
+      neutral(),
+      `<html><body><h1>无关标题</h1><p>黑塔出现了。</p></body></html>`,
+      "utf8",
+    );
+    const calls = { n: 0 };
+    const llm = (failFirst: number) => ({
+      client: answering(calls, failFirst),
+      model: "deepseek-fake",
+      maxChunks: 100,
+      concurrency: 1,
+    });
+    await expect(
+      ingestCorpus({
+        dataRoot,
+        workspaceRoot: workspace,
+        force: true,
+        llm: llm(1),
+        extractClaims: false,
+        buildWiki: false,
+      }),
+    ).rejects.toThrow("the model call failed");
+    // The document is there, marked unfinished, with no mention yet.
+    expect(
+      count(
+        "SELECT count(*) AS n FROM documents WHERE path = ? AND source_hash LIKE 'pending:%'",
+        "data/neutral/test.html",
+      ),
+    ).toBe(1);
+    expect(count(MENTIONS_OF_NEUTRAL, "data/neutral/test.html")).toBe(0);
+    const kept = count(CHUNKS_OF_NEUTRAL, "data/neutral/test.html");
+    expect(kept).toBeGreaterThan(0);
+
+    const again = await ingestCorpus({
+      dataRoot,
+      workspaceRoot: workspace,
+      llm: llm(1),
+      extractClaims: false,
+      buildWiki: false,
+    });
+    expect(again.changedFiles).toEqual([]);
+    expect(
+      count(MENTIONS_OF_NEUTRAL, "data/neutral/test.html"),
+    ).toBeGreaterThan(0);
+    expect(
+      count(
+        "SELECT count(*) AS n FROM documents WHERE source_hash LIKE 'pending:%'",
+      ),
+    ).toBe(0);
+    // Its chunks were kept as they were: the run added only the other
+    // documents' (the cut came at the first file).
+    expect(count(CHUNKS_OF_NEUTRAL, "data/neutral/test.html")).toBe(kept);
+    expect(count("SELECT count(*) AS n FROM chunks")).toBe(
+      kept + again.chunkCount,
+    );
+
+    // And a third run has nothing to do: no call, no new chunk.
+    const before = calls.n;
+    const third = await ingestCorpus({
+      dataRoot,
+      workspaceRoot: workspace,
+      llm: llm(1),
+      extractClaims: false,
+      buildWiki: false,
+    });
+    expect(calls.n).toBe(before);
+    expect(third.chunkCount).toBe(0);
+  });
+
+  it("a document edited after its ingest is reported and left whole, and the rest still goes in", async () => {
+    await ingestCorpus({ dataRoot, workspaceRoot: workspace, force: true });
+    const edited = join(dataRoot, "plot_html", "开拓续闻", "001_群星.html");
+    const chunksOfEdited = (): number =>
+      count(
+        `SELECT count(*) AS n FROM chunks c JOIN documents d ON d.id = c.document_id WHERE d.path LIKE ?`,
+        "%001_群星.html",
+      );
+    const had = chunksOfEdited();
+    writeFileSync(
+      edited,
+      `<html><body><h1>天才群星闪耀时</h1><h2>剧情内容</h2><p>黑塔：改过的一行。</p><p>再加一段。</p></body></html>`,
+      "utf8",
+    );
+    // A new file that sorts after the edited one.
+    mkdirSync(join(dataRoot, "plot_html", "开拓续闻"), { recursive: true });
+    writeFileSync(
+      join(dataRoot, "plot_html", "开拓续闻", "002_新的.html"),
+      `<html><body><h1>新的一页</h1><p>黑塔在场。</p></body></html>`,
+      "utf8",
+    );
+
+    const run = (): ReturnType<typeof ingestCorpus> =>
+      ingestCorpus({ dataRoot, workspaceRoot: workspace });
+    const first = await run();
+    expect(first.changedFiles).toEqual([
+      "data/plot_html/开拓续闻/001_群星.html",
+    ]);
+    expect(chunksOfEdited()).toBe(had);
+    expect(
+      count(
+        "SELECT count(*) AS n FROM documents WHERE path LIKE ?",
+        "%002_新的.html",
+      ),
+    ).toBe(1);
+    // It is said again on every run until it is rebuilt, never skipped.
+    expect((await run()).changedFiles).toHaveLength(1);
+    const rebuilt = await ingestCorpus({
+      dataRoot,
+      workspaceRoot: workspace,
+      force: true,
+    });
+    expect(rebuilt.changedFiles).toEqual([]);
+  });
+});

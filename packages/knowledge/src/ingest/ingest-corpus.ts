@@ -57,7 +57,20 @@ export interface IngestResult {
   claimsCount: number;
   llmClaims?: RunLlmClaimsPassResult;
   wikiPagesCount: number;
+  /** Documents whose source changed after they were ingested. They are left
+   *  as they were: this ingest only builds, and `--force` rebuilds. */
+  changedFiles: string[];
 }
+
+/**
+ * A document's hash while its ingest is unfinished (review 2026-11-10,
+ * second pass). The hash is what a later run skips a document by, and it
+ * was written first: a run cut after it — a failed model call, Ctrl-C, a
+ * crash — left the document without its mentions, and every later run
+ * skipped it as done. The row now carries the hash behind this mark until
+ * its mentions are in, and a run that finds the mark finishes the document.
+ */
+const PENDING = "pending:";
 
 export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
   const dbPath = opts.dbPath ?? defaultDbPath(opts.workspaceRoot);
@@ -81,6 +94,7 @@ export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
   let claimsCount = 0;
   let wikiPagesCount = 0;
   let llmClaimsResult: RunLlmClaimsPassResult | undefined;
+  const changedFiles: string[] = [];
   try {
     const files = await discoverHtmlFiles(opts.dataRoot);
     fileCount = files.length;
@@ -93,20 +107,41 @@ export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
       if (existing !== undefined && existing.sourceHash === sourceHash) {
         continue; // unchanged — idempotent skip
       }
+      // The same source, cut before it finished: take it up where it is.
+      const resuming =
+        existing !== undefined &&
+        existing.sourceHash === `${PENDING}${sourceHash}`;
+      if (existing !== undefined && !resuming) {
+        // The source changed since it was ingested. Replacing a document's
+        // chunks is not something this ingest does (other tables hold their
+        // ids), and trying to used to fail on the first chunk with the new
+        // hash already written, so the next run skipped the document for
+        // good. It is left as it was and reported.
+        changedFiles.push(relPath);
+        continue;
+      }
       const stats = await stat(absPath);
       const parsed = parseHtmlDocument(html);
       const kind = classifyDocumentKind(relPath);
       const docId = `doc:${sha1(relPath)}`;
-      store.upsertDocument({
+      const document = {
         id: docId,
         kind,
         title: parsed.title || relPath,
         path: relPath,
         url: parsed.url,
-        sourceHash,
         sourceMtimeMs: stats.mtimeMs,
         createdAt: new Date().toISOString(),
+      };
+      store.upsertDocument({
+        ...document,
+        sourceHash: `${PENDING}${sourceHash}`,
       });
+      const have = resuming
+        ? store.chunkIdsOfDocument(docId)
+        : new Set<string>();
+      // Mentions are written whole: one cut among them starts them over.
+      if (resuming) store.deleteMentionsOfDocument(docId);
 
       const chunks = chunkParsedDocument(parsed, { documentId: docId });
       const labelInputs = chunks.map((c) => ({
@@ -125,6 +160,8 @@ export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
 
       // Pass 1: insert all chunks so FK constraints are satisfied before LLM pass.
       for (const c of chunks) {
+        // The chunks of a source are the same on every run.
+        if (have.has(c.id)) continue;
         const label = labels.find((l) => l.chunkId === c.id);
         const speakerMention = label?.mentions.find(
           (m) => m.speakerEntityId !== undefined,
@@ -203,6 +240,8 @@ export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
           }
         }
       }
+      // Last: the document is whole, and a later run may skip it.
+      store.upsertDocument({ ...document, sourceHash });
     }
 
     if (opts.extractClaims !== false) {
@@ -240,6 +279,7 @@ export async function ingestCorpus(opts: IngestOptions): Promise<IngestResult> {
     claimsCount,
     llmClaims: llmClaimsResult,
     wikiPagesCount,
+    changedFiles,
   };
 }
 

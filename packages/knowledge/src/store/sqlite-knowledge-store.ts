@@ -269,6 +269,25 @@ export class SqliteKnowledgeStore {
     return row;
   }
 
+  /** The ids of the chunks a document already has. */
+  chunkIdsOfDocument(documentId: string): Set<string> {
+    const rows = this.db
+      .prepare("SELECT id FROM chunks WHERE document_id = ?")
+      .all(documentId) as { id: string }[];
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** Remove every mention on a document's chunks: an ingest that was cut
+   *  after some of them writes them all again. */
+  deleteMentionsOfDocument(documentId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM entity_mentions
+         WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?)`,
+      )
+      .run(documentId);
+  }
+
   // --- chunks + FTS ---
 
   // Note: the FTS row denormalizes documents.title at insert time. If

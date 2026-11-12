@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   dreamEnabled,
-  isBackendContract,
+  effectiveModels,
   isBackendThinking,
   isModelChoice,
   normalizeModelChoice,
@@ -82,19 +82,16 @@ describe("app-settings", () => {
     expect(await readAppSettings(ws)).toEqual({});
   });
 
-  it("backend.contract round-trips beside thinking; isBackendContract accepts exactly the two names (ADR 0040)", async () => {
+  it("a file that still carries the retired tool-set choice reads as before (ADR 0086)", async () => {
     const ws = mk();
+    // Written by a build that had the choice: nothing reads the field now,
+    // and its presence must not cost the settings beside it.
     await writeAppSettings(ws, {
-      backend: { thinking: "max", contract: "minimal" },
-    });
-    expect(await readAppSettings(ws)).toEqual({
-      backend: { thinking: "max", contract: "minimal" },
-    });
-    expect(isBackendContract("standard")).toBe(true);
-    expect(isBackendContract("minimal")).toBe(true);
-    expect(isBackendContract("极简")).toBe(false);
-    expect(isBackendContract("")).toBe(false);
-    expect(isBackendContract(undefined)).toBe(false);
+      backend: { thinking: "max", contract: "standard" },
+    } as never);
+    const read = await readAppSettings(ws);
+    expect(read.backend?.thinking).toBe("max");
+    expect(effectiveModels(read).thinking).toBe("max");
   });
 
   it("isBackendThinking accepts the three tiers and rejects everything else", () => {

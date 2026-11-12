@@ -40,7 +40,6 @@ import {
   type AppSettings,
   dreamEnabled,
   effectiveModels,
-  isBackendContract,
   isBackendThinking,
   isModelChoice,
   normalizeModelChoice,
@@ -168,48 +167,30 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
   handle(CMD.getBackendConfig, async () => {
     const s = await readAppSettings(workspaceRoot());
     const v = s.backend?.thinking;
-    const c = s.backend?.contract;
     return {
       thinking: isBackendThinking(v) ? v : "high",
-      // ADR 0040: the tool contract, plus whether the minimal one can run
-      // here at all — the row says so next to the choice, where the user
-      // makes it, instead of a note in the record at the next session.
-      // Default MINIMAL (owner 2026-08-17) — must match buildConfig's.
-      contract: isBackendContract(c) ? c : "minimal",
+      // Whether 板砖 can run here at all (ADR 0086): it needs a bash, and
+      // the pane says so when there is none.
       bashFound: findBash() !== null,
     };
   });
-  handle(
-    CMD.setBackendConfig,
-    async (_e, cfg: { thinking?: unknown; contract?: unknown }) => {
-      // Validate like setTheme/setLocale: an off-enum value would fail the
-      // read-side shape check downstream — refuse it instead of persisting.
-      // Each field is optional so the two rows can write independently.
-      const thinking = isBackendThinking(cfg?.thinking)
-        ? cfg.thinking
-        : undefined;
-      const contract = isBackendContract(cfg?.contract)
-        ? cfg.contract
-        : undefined;
-      if (thinking === undefined && contract === undefined) return;
-      const next = await updateAppSettings(
-        workspaceRoot(),
-        (s): AppSettings => ({
-          ...s,
-          backend: {
-            ...s.backend,
-            ...(thinking !== undefined ? { thinking } : {}),
-            ...(contract !== undefined ? { contract } : {}),
-          },
-        }),
-      );
-      // The effort applies from 板砖's next dispatch (ADR 0081); the tool
-      // contract still waits for a restart.
-      if (thinking !== undefined) {
-        deps.host()?.setModels({ thinking: effectiveModels(next).thinking });
-      }
-    },
-  );
+  handle(CMD.setBackendConfig, async (_e, cfg: { thinking?: unknown }) => {
+    // Validate like setTheme/setLocale: an off-enum value would fail the
+    // read-side shape check downstream — refuse it instead of persisting.
+    const thinking = isBackendThinking(cfg?.thinking)
+      ? cfg.thinking
+      : undefined;
+    if (thinking === undefined) return;
+    const next = await updateAppSettings(
+      workspaceRoot(),
+      (s): AppSettings => ({
+        ...s,
+        backend: { ...s.backend, thinking },
+      }),
+    );
+    // The effort applies from 板砖's next dispatch (ADR 0081).
+    deps.host()?.setModels({ thinking: effectiveModels(next).thinking });
+  });
   // Settings → DeepSeek → 模型: per-stage model (2026-08-17). Same
   // restart-to-apply contract; buildConfig reads it at the next bootstrap
   // (an env override, if set, still wins there — it is the dev/lab knob).

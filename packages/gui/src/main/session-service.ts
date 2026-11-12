@@ -67,7 +67,6 @@ import {
 import {
   dreamEnabled,
   effectiveModels,
-  isBackendContract,
   readAppSettings,
 } from "./app-settings.js";
 import { createAttachProgressRelay } from "./attach-progress-relay.js";
@@ -357,18 +356,11 @@ export async function buildConfig(
     // off-enum value in a hand-edited settings.json falls back to it. Live
     // since ADR 0081: a change also reaches the running host (settings-ipc).
     thinking: live.thinking,
-    // 板砖's tool contract (ADR 0040): env (dev/lab knob) > Settings →
-    // 差分协处理器 → 工具契约 > MINIMAL (owner default flip 2026-08-17,
-    // after the permission lab + card fixes — ~½ prompt tokens, ~⅒
-    // cache-miss, same outcomes). Session.create verifies a bash exists
-    // before honoring `minimal` and falls back to standard otherwise.
-    backendContract:
-      process.env.HERTA_BACKEND_CONTRACT === "minimal" ||
-      process.env.HERTA_BACKEND_CONTRACT === "standard"
-        ? process.env.HERTA_BACKEND_CONTRACT
-        : isBackendContract(settings.backend?.contract)
-          ? settings.backend.contract
-          : "minimal",
+    // 板砖's tool contract (ADR 0040): the bash one, always. The standard
+    // set, its Settings row and its HERTA_BACKEND_CONTRACT knob are
+    // retired (ADR 0086); without a bash the session has no backend and
+    // says so.
+    backendContract: "minimal",
   };
 }
 

@@ -344,9 +344,11 @@ export interface BackendStackOpts {
   /** Record-store anchor (project memory lives under it). */
   readonly workspaceRoot: string;
   readonly lang: PromptLang;
-  /** The contract the caller asked for (ADR 0040). `minimal` needs a bash on
-   *  this machine; without one the stack runs `standard` and reports it via
-   *  `contract` / `bashPath` so the caller can warn where it sees fit. */
+  /** True on both hosts: 板砖 runs on the persistent bash and nothing else
+   *  (ADR 0086). Without a bash on this machine the stack has no backend and
+   *  says so through `unavailable`; the standard set is not fallen back to.
+   *  `false` builds the retired standard set, which only its own tests still
+   *  ask for until it is deleted. */
   readonly wantMinimal: boolean;
   /** 板砖's provider, or a getter for the live one (ADR 0081): resolved when
    *  each dispatch builds its runtime, so a run in flight keeps its own. */
@@ -400,11 +402,44 @@ export interface BackendStackOpts {
   readonly attachmentsPresent?: boolean;
 }
 
+/**
+ * No bash on this machine, so 板砖 cannot run (ADR 0086, owner 2026-11-12).
+ * The standard tool set used to step in here without a word; it is retired,
+ * and a session in this state says so instead: a note when it starts, and
+ * this error when Herta dispatches, which the bridge shows as the run's
+ * failure with the remedy in it.
+ */
+export class BackendUnavailableError extends Error {
+  readonly code = "backend_unavailable";
+  constructor(lang: PromptLang, platform: NodeJS.Platform = process.platform) {
+    super(backendUnavailableMessage(lang, platform));
+    this.name = "BackendUnavailableError";
+  }
+}
+
+/** What a session with no bash tells its reader, and what to do about it.
+ *  One text for the session's opening note and the dispatch's failure. */
+export function backendUnavailableMessage(
+  lang: PromptLang,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    return lang === "en"
+      ? "no bash was found on this machine, so 板砖 cannot run coding tasks. Install Git for Windows (it includes bash), or point HERTA_BASH at one, then restart."
+      : "本机没有找到 bash，板砖无法执行任务。安装 Git for Windows（自带 bash），或用 HERTA_BASH 指向一个 bash，然后重启。";
+  }
+  return lang === "en"
+    ? "no bash was found on this machine, so 板砖 cannot run coding tasks. Install bash, or point HERTA_BASH at one, then restart."
+    : "本机没有找到 bash，板砖无法执行任务。安装 bash，或用 HERTA_BASH 指向一个 bash，然后重启。";
+}
+
 export interface BackendStack {
   readonly contract: BackendContract;
-  /** The bash the minimal contract runs on; null when none was found or the
-   *  standard contract was requested. */
+  /** The bash 板砖 runs on; null when none was found (see `unavailable`) or
+   *  the retired standard set was asked for. */
   readonly bashPath: string | null;
+  /** Why this stack has no backend, or null when it has one. */
+  readonly unavailable: "no_bash" | null;
   /** Single shared bus across actor, backend, renderer and permission rules. */
   readonly bus: EventBus<AgentEvent>;
   readonly approvalCache: SessionApprovalCache;
@@ -495,12 +530,12 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // each backend brief ends, so a remembered allow never outlives the task.
   wireTaskScopedApprovalCache(bus, approvalCache);
 
-  // Tool registry — the contract asked for (ADR 0040): the trained two-tool
-  // shape (+ the two record channels) when a bash exists, else the standard
-  // set.
+  // Tool registry — the trained two-tool shape (+ the two record channels)
+  // on the machine's bash (ADR 0040). With no bash there is no backend
+  // (ADR 0086): the standard set used to be fallen back to here, silently.
   const bashPath = opts.wantMinimal ? findBash() : null;
-  const contract: BackendContract =
-    opts.wantMinimal && bashPath !== null ? "minimal" : "standard";
+  const contract: BackendContract = opts.wantMinimal ? "minimal" : "standard";
+  const unavailable = opts.wantMinimal && bashPath === null ? "no_bash" : null;
   const backendTools = new InMemoryToolRegistry();
   // The shell's own spelling of the workspace, read fresh per schema /
   // prompt build so a mid-session workspace change is reflected.
@@ -526,15 +561,18 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   // decisions are made here and at the two events that change them —
   // never per turn, since the tools array heads the cached prefix.
   if (contract === "minimal") {
-    for (const t of createMinimalTools({
-      bashPath: bashPath as string,
-      workspaceShellPath,
-      digestModel: opts.digestModel,
-      lang,
-      vision,
-      digest: false,
-      webClient: opts.webClient ?? null,
-    }))
+    // No bash, no tools: nothing is mounted for a backend that cannot run.
+    for (const t of bashPath === null
+      ? []
+      : createMinimalTools({
+          bashPath,
+          workspaceShellPath,
+          digestModel: opts.digestModel,
+          lang,
+          vision,
+          digest: false,
+          webClient: opts.webClient ?? null,
+        }))
       backendTools.register(t);
   } else {
     for (const t of createMvpTools({
@@ -571,7 +609,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     tools: backendTools,
     contract,
     workspaceHint: () =>
-      contract === "minimal"
+      contract === "minimal" && bashPath !== null
         ? shellWorkspaceHint(bashPath, wsHolder.current, lang)
         : undefined,
     // ADR 0044: the standard contract on Windows says what the host is —
@@ -587,7 +625,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
 
   // Permission rules attach to the shared engine.
   if (contract === "minimal") {
-    registerMinimalRules(permissions, { bus, bashPath });
+    if (bashPath !== null) registerMinimalRules(permissions, { bus, bashPath });
   } else {
     registerEditFileRule(permissions, { bus });
     registerWriteNewFileRule(permissions, { bus });
@@ -636,6 +674,10 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   };
 
   const runtimeFactory = (): CodingAgentRuntime => {
+    // The bridge turns this into the run's failure, remedy included.
+    if (unavailable !== null) {
+      throw new BackendUnavailableError(lang, opts.platform);
+    }
     syncVisionTool();
     return new CodingAgentRuntime({
       sessionId: randomUUID(),
@@ -684,6 +726,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   return {
     contract,
     bashPath,
+    unavailable,
     bus,
     approvalCache,
     workspacePermissions,

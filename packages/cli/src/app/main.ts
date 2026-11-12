@@ -295,12 +295,11 @@ export async function main(
   // Backend stack (shared wiring with the app-server host — see
   // @herta/app-server's session-wiring.ts): tools for the contract asked
   // for, permission engine + rules, context builder, per-dispatch runtime
-  // factory, the shared bus. The contract knob (ADR 0040): the trained
-  // two-tool shape (+ the two record channels) is the DEFAULT when a bash
-  // exists on this machine (owner flip 2026-08-17, parity with the GUI); the
-  // standard 15-tool set otherwise, or with HERTA_BACKEND_CONTRACT=standard.
-  // The CLI takes the knob from the environment like its model knobs.
-  const wantMinimal = process.env.HERTA_BACKEND_CONTRACT !== "standard";
+  // factory, the shared bus. 板砖 runs on the trained two-tool shape (+ the
+  // two record channels) over this machine's bash (ADR 0040), and on nothing
+  // else: the standard set and its HERTA_BACKEND_CONTRACT knob are retired
+  // (ADR 0086). Without a bash there is no backend, said below.
+  const wantMinimal = true;
   await prepareBackendStack({ wantMinimal });
   // ADR 0075: the automatic reviewer, as the desktop mounts it — it answers
   // only where automatic review is on (`/permissions auto-review on`, or [r]
@@ -347,13 +346,10 @@ export async function main(
         },
       ),
   });
-  if (
-    process.env.HERTA_BACKEND_CONTRACT === "minimal" &&
-    backend.bashPath === null
-  ) {
-    // Warn only on an EXPLICIT request; the default falls back silently.
+  if (backend.unavailable !== null) {
+    // Said once at start; a dispatch says it again in the record.
     stderr.write(
-      "herta: HERTA_BACKEND_CONTRACT=minimal but no bash found (install Git for Windows or set HERTA_BASH); running the standard contract\n",
+      "herta: no bash found (install Git for Windows or set HERTA_BASH): 板砖 cannot run coding tasks; chat still works\n",
     );
   }
   const { bus, approvalCache, workspacePermissions } = backend;

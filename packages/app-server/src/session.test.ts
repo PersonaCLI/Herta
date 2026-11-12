@@ -2561,14 +2561,16 @@ describe("Session — attachFiles (ADR 0033)", () => {
   });
 });
 
-// ── Contract-fallback record note (ADR 0044) ────────────────────────────────
+// ── The no-bash record note (ADR 0044, ADR 0086) ────────────────────────────
 //
-// types.ts had PROMISED "falls back to `standard` and projects a `→ 系统`
-// line saying so" since ADR 0040 — the implementation only console.warn'd,
-// which no GUI user sees (user report 2026-08-24). One note per NEW session,
+// ADR 0044 gave a session with no bash one `→ 系统` note, because the
+// console.warn it had before is something no GUI user sees (user report
+// 2026-08-24). It said the standard set was running instead; since ADR 0086
+// nothing runs instead, and the note says that. One note per NEW session,
 // naming the remedy; deferred past the opening so record order matches disk.
+// A dispatch then fails with the same words.
 
-describe("contract-fallback record note (ADR 0044)", () => {
+describe("the no-bash record note (ADR 0044, ADR 0086)", () => {
   const savedBash = process.env.HERTA_BASH;
   afterEach(() => {
     if (savedBash === undefined) delete process.env.HERTA_BASH;
@@ -2577,7 +2579,8 @@ describe("contract-fallback record note (ADR 0044)", () => {
 
   function noteBlocks(record: TerminalRecord) {
     return record.filter(
-      (b) => b.kind === "system" && b.body.includes("Git for Windows"),
+      // The remedy every platform's wording names.
+      (b) => b.kind === "system" && b.body.includes("HERTA_BASH"),
     );
   }
   /** minimal configured + deterministic no-bash (findBash override miss). */
@@ -2604,7 +2607,8 @@ describe("contract-fallback record note (ADR 0044)", () => {
     const note = notes[0];
     if (note?.kind !== "system") throw new Error("no note block");
     expect(note.label).toBe("系统");
-    expect(note.body).toContain("极简");
+    // It says what is missing and what that costs, not which tool set runs.
+    expect(note.body).toContain("板砖无法执行任务");
     // The opening streamed first; the note is the record's last block.
     expect(record.length).toBeGreaterThanOrEqual(2);
     expect(record[record.length - 1]).toBe(note);
@@ -2645,7 +2649,40 @@ describe("contract-fallback record note (ADR 0044)", () => {
     await resumed.cleanup();
   });
 
-  it("no note when the standard contract was configured, or when bash exists", async () => {
+  it("a dispatch ends at once as a failed run that names the remedy, and no model is asked to work", async () => {
+    const { session, cleanup } = await mkNoopBanzhuanSession(minimalCfg());
+    await session.submitText("看看公开资料");
+    const record = session.record;
+    const markers = record.filter(
+      (b) =>
+        b.kind === "system" && (b as { role?: string }).role === "done-marker",
+    );
+    // One run, one ending: failed, with the reason on it for both readers
+    // (her prompt reads `evidenceDetail`, the chat's row reads `evidence`).
+    expect(markers).toHaveLength(1);
+    const marker = markers[0] as {
+      body: string;
+      evidenceDetail?: string;
+      evidence?: readonly { kind: string; message?: string }[];
+    };
+    expect(marker.body.startsWith("失败")).toBe(true);
+    expect(marker.evidenceDetail).toContain("板砖无法执行任务");
+    expect(marker.evidenceDetail).toContain("HERTA_BASH");
+    expect(marker.evidence?.[0]?.message).toContain("HERTA_BASH");
+    // Not the "did nothing" ending: that would read as his choice.
+    expect(
+      record.some(
+        (b) =>
+          b.kind === "system" &&
+          (b as { role?: string }).role === "noop-marker",
+      ),
+    ).toBe(false);
+    // She speaks after it, as after any failed run.
+    expect(record[record.length - 1]?.kind).toBe("herta");
+    await cleanup();
+  }, 15_000);
+
+  it("no note when the retired standard set is what a test asked for, or when bash exists", async () => {
     const cfgStd = { ...mkConfig(), backendContract: "standard" as const };
     process.env.HERTA_BASH = join(cfgStd.workspaceRoot, "no-such-bash.exe");
     const std = await mkStubSession(cfgStd);

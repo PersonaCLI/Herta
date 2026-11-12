@@ -12,6 +12,7 @@ import { FakeProvider } from "@herta/core/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BACKEND_PROVIDER_MAX_RETRIES,
+  BackendUnavailableError,
   createBackendProvider,
   createBackendStack,
   hostNoteFor,
@@ -170,24 +171,52 @@ describe("createBackendStack", () => {
     expect(names).not.toContain("str_replace_editor");
   });
 
-  it("minimal contract falls back to standard when no bash is found", () => {
+  it("with no bash there is no backend: nothing is fallen back to, and a dispatch is refused with the remedy (ADR 0086)", () => {
     const root = mkWorkspace();
     // HERTA_BASH pointing at a nonexistent file makes findBash return null
     // without probing PATH — deterministic on every machine.
     process.env.HERTA_BASH = join(root, "no-such-bash.exe");
-    const stack = createBackendStack({
-      wsHolder: { current: root },
-      workspaceRoot: root,
-      lang: "en",
-      wantMinimal: true,
-      backendProvider: new FakeProvider({ turns: [] }),
-      backendModel: "deepseek-v4-pro",
-      digestModel: null,
-      makeAsk: () => noAsk,
-    });
-    expect(stack.contract).toBe("standard");
+    const mk = (platform: NodeJS.Platform, lang: "en" | "zh") =>
+      createBackendStack({
+        wsHolder: { current: root },
+        workspaceRoot: root,
+        lang,
+        wantMinimal: true,
+        platform,
+        backendProvider: new FakeProvider({ turns: [] }),
+        backendModel: "deepseek-v4-pro",
+        digestModel: null,
+        makeAsk: () => noAsk,
+      });
+    const stack = mk("win32", "en");
+    expect(stack.unavailable).toBe("no_bash");
+    expect(stack.contract).toBe("minimal");
     expect(stack.bashPath).toBeNull();
-    expect(stack.backendTools.list().map((t) => t.name)).not.toContain("bash");
+    // Not the standard set, and no shell either: nothing is mounted.
+    const names = stack.backendTools.list().map((t) => t.name);
+    for (const name of [
+      "bash",
+      "str_replace_editor",
+      "read_file",
+      "edit_file",
+      "run_command",
+    ]) {
+      expect(names, name).not.toContain(name);
+    }
+    expect(() => stack.runtimeFactory()).toThrow(BackendUnavailableError);
+    expect(() => stack.runtimeFactory()).toThrow(/Install Git for Windows/);
+    expect(() => stack.runtimeFactory()).toThrow(/HERTA_BASH/);
+    // Off Windows the remedy does not name a Windows installer; in Chinese
+    // it is said in Chinese.
+    expect(() => mk("linux", "en").runtimeFactory()).toThrow(/Install bash/);
+    expect(() => mk("linux", "en").runtimeFactory()).not.toThrow(/Git for/);
+    expect(() => mk("win32", "zh").runtimeFactory()).toThrow(
+      /板砖无法执行任务/,
+    );
+
+    // With a bash there is a backend, as before.
+    process.env.HERTA_BASH = root;
+    expect(mk("win32", "en").unavailable).toBeNull();
   });
 
   it("mounts view_image from the MODEL NAME — one vision rule for both hosts (2026-09-03); the flash itself sees since the 2026-09 API", () => {
@@ -435,14 +464,15 @@ describe("createBackendStack", () => {
       expect(sys).toContain("search_text");
     });
 
-    it("win32 + minimal-fallen-back-to-standard: carries it too (this IS the bash-less machine)", () => {
+    it("win32 with no bash: no backend, so no frame to carry a note (ADR 0086)", () => {
       const root = mkWorkspace();
       process.env.HERTA_BASH = join(root, "no-such-bash.exe");
       const stack = mkStack("win32", true, root);
-      expect(stack.contract).toBe("standard");
-      expect(stack.backendBuilder.build(buildInput).backendSystem).toContain(
-        "# 主机环境",
-      );
+      // This used to be the standard set with the host note; it is nothing
+      // now, and says so where a dispatch would have started.
+      expect(stack.contract).toBe("minimal");
+      expect(stack.unavailable).toBe("no_bash");
+      expect(() => stack.runtimeFactory()).toThrow(/Git for Windows/);
     });
 
     it("win32 + minimal (bash present): no note — the shell provides the Unix environment", () => {

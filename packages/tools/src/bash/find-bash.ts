@@ -13,8 +13,9 @@ import { delimiter, dirname, join, resolve } from "node:path";
  *      filesystem, not a shell over this workspace.
  *   3. On POSIX: `bash` on PATH, then the conventional absolute locations.
  *
- * Returns null when nothing usable exists — the caller falls back to the
- * standard contract (the setting says so; nothing runs half-configured).
+ * Returns null when nothing usable exists. The session then has no backend
+ * and says so (ADR 0086); nothing is fallen back to and nothing runs
+ * half-configured.
  */
 export function findBash(env: NodeJS.ProcessEnv = process.env): string | null {
   const override = env.HERTA_BASH;

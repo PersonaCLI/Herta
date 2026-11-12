@@ -269,13 +269,9 @@ export const en = {
   "banzhuan.thinking.low": "Low",
   "banzhuan.thinking.high": "High",
   "banzhuan.thinking.max": "Max",
-  "banzhuan.contract": "Tool contract",
-  "banzhuan.contractDesc":
-    "Its tools. Standard: a full set of dedicated ones. Minimal: bash and an editor, at about half the cost; needs bash on this machine. Applies on the next launch.",
-  "banzhuan.contract.noBash":
-    "No bash on this machine: pick Minimal and it still runs Standard. Install Git for Windows, then restart.",
-  "banzhuan.contract.standard": "Standard",
-  "banzhuan.contract.minimal": "Minimal",
+  "banzhuan.noBash": "No bash on this machine",
+  "banzhuan.noBashDesc":
+    "It runs on bash, and there is none here, so it takes no coding work. Install bash (on Windows, Git for Windows includes one), then restart. Chat is unaffected.",
   "banzhuan.pdfPictures": "Transcribe PDF pictures",
   "banzhuan.pdfPicturesDesc":
     "When a PDF is attached, a model transcribes its pictures into text, at most 40 calls per document. When off, the pictures are still stored, and it can still look at them. Applies immediately.",

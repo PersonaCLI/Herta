@@ -65,27 +65,12 @@ export function normalizeModelChoice(v: unknown): ModelChoice | undefined {
   return undefined;
 }
 
-/** Which model-facing tool contract 板砖 runs (ADR 0040, 2026-08-17).
- *  `standard` = the 15-tool set + the long execution contract; `minimal` = the
- *  DeepSeek-trained shape (persistent `bash` + `str_replace_editor` + the
- *  two record channels) with the short 板砖 prompt — same reliability in the
- *  lab, ~½ the prompt tokens, ~⅒ the cache-miss tokens. Needs a bash on this
- *  machine (Git for Windows ships one); without one the app falls back to
- *  `standard` and says so at session start. */
-export type BackendContractChoice = "standard" | "minimal";
-
-const BACKEND_CONTRACT_VALUES: readonly string[] = ["standard", "minimal"];
-
-export function isBackendContract(v: unknown): v is BackendContractChoice {
-  return typeof v === "string" && BACKEND_CONTRACT_VALUES.includes(v);
-}
-
 export interface AppSettings {
   readonly dream?: { readonly enabled?: boolean };
   readonly backend?: {
     readonly thinking?: BackendThinking;
-    /** Settings → 差分协处理器 → 工具契约. Absent = standard. Restart-to-apply. */
-    readonly contract?: BackendContractChoice;
+    // A file written before ADR 0086 may still carry `contract` here (the
+    // retired tool-set choice). Nothing reads it.
   };
   /** Per-stage model choice (Settings → DeepSeek → 模型). `actor` drives the
    *  narrative actor (speech / thought / beats, completion mode); `backend`

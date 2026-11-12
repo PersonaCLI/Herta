@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -226,12 +226,24 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
     ]);
   });
 
-  it("an effort pick reaches the host; a contract pick alone does not (it waits for a restart)", async () => {
+  it("an effort pick reaches the host; a pick of the retired tool set is ignored (ADR 0086)", async () => {
     const { handlers, applied } = setup();
     await handlers.get(CMD.setBackendConfig)?.(null, { thinking: "max" });
     expect(applied).toEqual([{ thinking: "max" }]);
+    // An older renderer could still send the choice: it is neither applied
+    // nor saved, and the config it reads back has no such field.
     await handlers.get(CMD.setBackendConfig)?.(null, { contract: "standard" });
     expect(applied).toEqual([{ thinking: "max" }]);
+    const read = (await handlers.get(CMD.getBackendConfig)?.(null)) as Record<
+      string,
+      unknown
+    >;
+    expect(read.thinking).toBe("max");
+    expect("contract" in read).toBe(false);
+    expect(typeof read.bashFound).toBe("boolean");
+    expect(
+      readFileSync(join(userData.dir, ".herta", "settings.json"), "utf-8"),
+    ).not.toContain("contract");
   });
 
   it("an env override still wins over a live pick, as at a fresh start", async () => {

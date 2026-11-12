@@ -4,10 +4,7 @@ import { useDemoDeviceCycle } from "../../hooks/useDemoDeviceCycle.js";
 import type { BanzhuanDeviceState } from "../../hooks/useDeviceState.js";
 import type { MessageKey } from "../../i18n/keys.js";
 import { useLocale, useT } from "../../i18n/LocaleProvider.js";
-import type {
-  BackendContractChoice,
-  BackendThinking,
-} from "../../ipc/bridge-types.js";
+import type { BackendThinking } from "../../ipc/bridge-types.js";
 import { BanzhuanDemoCard } from "../UtilityRail/BanzhuanDemoCard.js";
 import { Select } from "./Select.js";
 import { SettingRow } from "./SettingRow.js";
@@ -201,34 +198,15 @@ export function BanzhuanSettings(): JSX.Element {
   // stale value — only the newest write may revert.
   const writeSeqRef = useRef(0);
 
-  // Tool-contract row (ADR 0040). Same optimistic / latest-wins discipline as
-  // the thinking row, and on screen from the FIRST paint like it: the row
-  // used to wait for the config read to prove the bridge carries
-  // `contract`, so every switch into this pane painted two rows and then
-  // three, pushing the demo card down a beat later (owner 2026-09-07). The
-  // case it waited for does not exist — the preload ships with the
-  // renderer, and the website demo omits `setBackendConfig` altogether,
-  // which hides every row here. `bashFound` comes from main and is folded
-  // into the row description — the fallback is stated where the choice is
-  // made.
-  // Pre-load optimistic state = the real handler's default (minimal —
-  // owner flip 2026-08-17), so the pill never flashes 标准 while the
-  // config is in flight. The last-known values win over both defaults
-  // (settings-snapshot.ts): a user on 标准 no longer sees 极简 for a beat,
-  // and the no-bash sentence is in the description on the first frame.
-  const [contract, setContract] = useRememberedSetting(
-    bridge,
-    "banzhuan.contract",
-    "minimal",
-  );
+  // Whether 板砖 can run here at all (ADR 0086): it needs a bash, and where
+  // there is none the pane says so, with what to install. The tool-set
+  // choice that used to sit here is gone with the standard set. The
+  // last-known value is on the first frame (settings-snapshot.ts).
   const [bashFound, setBashFound] = useRememberedSetting(
     bridge,
     "banzhuan.bashFound",
     undefined,
   );
-  const [contractFailed, setContractFailed] = useState(false);
-  const contractTouchedRef = useRef(false);
-  const contractSeqRef = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -236,8 +214,6 @@ export function BanzhuanSettings(): JSX.Element {
       (c) => {
         if (!alive) return;
         if (!touchedRef.current) setThinking(c.thinking);
-        if (c.contract !== undefined && !contractTouchedRef.current)
-          setContract(c.contract);
         setBashFound(c.bashFound);
       },
       () => {
@@ -247,21 +223,7 @@ export function BanzhuanSettings(): JSX.Element {
     return () => {
       alive = false;
     };
-  }, [bridge, setThinking, setContract, setBashFound]);
-
-  const onContract = (next: BackendContractChoice): void => {
-    const prev = contract;
-    contractSeqRef.current += 1;
-    const seq = contractSeqRef.current;
-    contractTouchedRef.current = true;
-    setContract(next);
-    setContractFailed(false);
-    void bridge.setBackendConfig?.({ thinking, contract: next }).catch(() => {
-      if (seq !== contractSeqRef.current) return;
-      setContract(prev);
-      setContractFailed(true);
-    });
-  };
+  }, [bridge, setThinking, setBashFound]);
 
   // There is no 3D device row (owner 2026-10-01, ADR 0057 §2.7 amended):
   // the rail card draws the lit device wherever the GPU allows and the flat
@@ -366,28 +328,11 @@ export function BanzhuanSettings(): JSX.Element {
             }
           />
         )}
-        {thinkingSupported && (
+        {thinkingSupported && bashFound === false && (
           <SettingRow
-            title={t("banzhuan.contract")}
-            description={
-              bashFound === false
-                ? `${t("banzhuan.contractDesc")} ${t("banzhuan.contract.noBash")}`
-                : t("banzhuan.contractDesc")
-            }
-            control={
-              <Select<BackendContractChoice>
-                value={contract}
-                ariaLabel={t("banzhuan.contract")}
-                options={[
-                  {
-                    value: "standard",
-                    label: t("banzhuan.contract.standard"),
-                  },
-                  { value: "minimal", label: t("banzhuan.contract.minimal") },
-                ]}
-                onChange={onContract}
-              />
-            }
+            title={t("banzhuan.noBash")}
+            description={t("banzhuan.noBashDesc")}
+            control={null}
           />
         )}
         {pdfSupported && (
@@ -412,16 +357,12 @@ export function BanzhuanSettings(): JSX.Element {
           />
         )}
       </div>
-      {((thinkingSupported && (failed || contractFailed)) || pdfFailed) && (
+      {((thinkingSupported && failed) || pdfFailed) && (
         <p className="settings-note">{t("common.couldntSave")}</p>
       )}
-      {thinkingSupported &&
-        !failed &&
-        !contractFailed &&
-        !pdfFailed &&
-        loadFailed && (
-          <p className="settings-note">{t("settings.loadFailed")}</p>
-        )}
+      {thinkingSupported && !failed && !pdfFailed && loadFailed && (
+        <p className="settings-note">{t("settings.loadFailed")}</p>
+      )}
 
       <div className="settings-bz-demo">
         <BanzhuanDemoCard state={state} onHoverChange={setPaused} />

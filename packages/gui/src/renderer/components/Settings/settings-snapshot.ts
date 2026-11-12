@@ -2,7 +2,6 @@ import { useCallback, useState } from "react";
 import type { FlowSettingsView } from "../../../shared/flow.js";
 import type {
   AttentionSettings,
-  BackendContractChoice,
   BackendThinking,
   DeepSeekKeyStatus,
   HertaBridge,
@@ -62,7 +61,6 @@ export interface SettingsSnapshot {
   "deepseek.keyStatus": DeepSeekKeyStatus | null;
   "deepseek.models": ModelConfig;
   "banzhuan.thinking": BackendThinking;
-  "banzhuan.contract": BackendContractChoice;
   "banzhuan.bashFound": boolean | undefined;
   "banzhuan.pdfPictureTranscripts": boolean;
   /** Settings → 信息流: the switch and the picked keywords, and the day's
@@ -183,7 +181,6 @@ export function primeSettings(bridge: HertaBridge): void {
   void bridge.getModelConfig?.().then((v) => keep("deepseek.models", v), quiet);
   void bridge.getBackendConfig?.().then((c) => {
     keep("banzhuan.thinking", c.thinking);
-    if (c.contract !== undefined) keep("banzhuan.contract", c.contract);
     keep("banzhuan.bashFound", c.bashFound);
   }, quiet);
   void bridge

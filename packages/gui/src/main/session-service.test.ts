@@ -395,8 +395,7 @@ describe("buildConfig", () => {
     expect(cfg.providers.backendModel).toBe("deepseek-flash");
   });
 
-  it("backendContract (ADR 0040): default MINIMAL (owner flip 2026-08-17); setting honored; env beats setting; off-enum → default", async () => {
-    vi.stubEnv("HERTA_BACKEND_CONTRACT", undefined);
+  it("backendContract is always the bash one: a setting or a variable asking for the retired set is ignored (ADR 0086)", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "herta-bc-contract-"));
     const home = mkdtempSync(join(tmpdir(), "herta-bc-contracth-"));
     expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
@@ -409,21 +408,14 @@ describe("buildConfig", () => {
       "utf-8",
     );
     expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
-      "standard",
+      "minimal",
     );
-    vi.stubEnv("HERTA_BACKEND_CONTRACT", "minimal");
+    // And the knob that used to override it.
+    vi.stubEnv("HERTA_BACKEND_CONTRACT", "standard");
     expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
       "minimal",
     );
     vi.stubEnv("HERTA_BACKEND_CONTRACT", undefined);
-    writeFileSync(
-      join(cwd, ".herta", "settings.json"),
-      JSON.stringify({ backend: { contract: "极简" } }),
-      "utf-8",
-    );
-    expect((await buildConfig(cwd, home, "sk")).backendContract).toBe(
-      "minimal",
-    );
   });
 
   it("falls back to 'high' for an off-enum hand-edited thinking value", async () => {

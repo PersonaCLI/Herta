@@ -102,6 +102,7 @@ import {
 import { loadSessionVoice, type SessionVoice } from "./session-voice.js";
 import {
   type BackendStack,
+  backendUnavailableMessage,
   createActorStack,
   createBackendProvider,
   createBackendStack,
@@ -332,20 +333,6 @@ export interface SessionInternalDeps {
    *  so a test can watch its tool registry follow the workspace and the
    *  attachments. Production never passes it. */
   readonly backendStackObserver?: (stack: BackendStack) => void;
-}
-
-/**
- * ADR 0044: the record note a NEW session carries when the configured
- * `minimal` contract fell back to `standard` because no bash exists on this
- * machine. Names the remedy — before this, the only surfaces were a
- * console.warn no GUI user sees and a Settings sentence that named the
- * problem but not the fix. Static harness text (the appendSystemNote caller
- * owns sanitizing; there is no user input here).
- */
-function contractFallbackNote(lang: PromptLang): string {
-  return lang === "en"
-    ? 'no bash found — the "minimal" tool contract is unavailable, running "standard" this session. Install Git for Windows (or set HERTA_BASH) and restart.'
-    : "未检测到 bash：工具契约「极简」不可用，本次按「标准」运行。安装 Git for Windows（或设置 HERTA_BASH）后重启生效。";
 }
 
 /**
@@ -673,10 +660,10 @@ export class SessionImpl implements Session {
   }
 
   /**
-   * ADR 0044: flush the deferred contract-fallback note (minimal asked for,
-   * no bash on this machine) as an out-of-turn `→ 系统` record note — the
+   * ADR 0044, ADR 0086: flush the deferred no-bash note (no bash on this
+   * machine, so no backend) as an out-of-turn `→ 系统` record note — the
    * shared record per D7, so the user learns the remedy where they live and
-   * Herta can answer "why is 板砖 on the standard contract" from the record.
+   * Herta can answer "why can 板砖 not run here" from the record.
    *
    * Deferred rather than appended at create because the record's block order
    * must match the persisted order: a NEW session's opening seed is persisted
@@ -2381,11 +2368,10 @@ export class SessionImpl implements Session {
       journalPath: dispatchJournalPath(config.transcriptDir, sessionId),
       // And what 板砖's editors replace, for undo (ADR 0074).
       undoDir: undoStoreDir(config.transcriptDir, sessionId),
-      // The contract the setting asks for (ADR 0040). `minimal` needs a bash
-      // on this machine; without one the session runs `standard`. The
-      // Settings row shows the detection result (the GUI's getBackendContract
-      // reports `bashFound`), and since ADR 0044 a NEW session also carries
-      // one `→ 系统` record note naming the remedy (see contractFallbackNote).
+      // 板砖 runs on a bash (ADR 0040) and nothing else (ADR 0086). Without
+      // one the session has no backend: Settings says so (`bashFound`), a NEW
+      // session carries one `→ 系统` note naming the remedy, and a dispatch
+      // fails with the same words (`backendUnavailableMessage`).
       wantMinimal: config.backendContract === "minimal",
       // ADR 0067: a reopened record that already carries a document mounts
       // `digest_document` from the start; a fresh session waits for one.
@@ -2485,11 +2471,9 @@ export class SessionImpl implements Session {
     if (overlayResolver === undefined) {
       throw new Error("createBackendStack did not build the ask resolver");
     }
-    const contractFellBack =
-      config.backendContract === "minimal" && backend.bashPath === null;
-    if (contractFellBack) {
+    if (backend.unavailable !== null) {
       console.warn(
-        "[herta] backendContract=minimal requested but no bash found (install Git for Windows or set HERTA_BASH); running the standard contract",
+        "[herta] no bash found (install Git for Windows or set HERTA_BASH): 板砖 cannot run coding tasks in this session",
       );
     }
     const { bus, workspacePermissions, runtimeFactory } = backend;
@@ -2764,11 +2748,11 @@ export class SessionImpl implements Session {
       openingLeadMs: deps.openingLeadMs,
       deepSeekKey,
       lang,
-      // ADR 0044: NEW sessions only — a resumed record already carried the
-      // note when it was new (and the machine state may have changed since).
+      // NEW sessions only — a resumed record already carried the note when
+      // it was new (and the machine state may have changed since).
       pendingContractNote:
-        contractFellBack && initialRecord.length === 0
-          ? contractFallbackNote(lang)
+        backend.unavailable !== null && initialRecord.length === 0
+          ? backendUnavailableMessage(lang)
           : null,
       // The captioning instrument (ADR 0048 §3). Same shape as the digest
       // model above: absent under provider overrides, so a test never reaches

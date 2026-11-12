@@ -245,13 +245,9 @@ export const zh = {
   "banzhuan.thinking.max": "最高",
   // Tool contract (ADR 0040, 2026-08-17). Owner register: what it is, the
   // one trade-off, apply semantics; the no-bash sentence only when detected.
-  "banzhuan.contract": "工具契约",
-  "banzhuan.contractDesc":
-    "它的工具。标准：整套专用工具；极简：bash 加一把编辑器，开销约为一半，须本机装有 bash。下次启动生效。",
-  "banzhuan.contract.noBash":
-    "本机没有 bash：选极简，它也照标准干。装好 Git for Windows 后重启。",
-  "banzhuan.contract.standard": "标准",
-  "banzhuan.contract.minimal": "极简",
+  "banzhuan.noBash": "本机没有 bash",
+  "banzhuan.noBashDesc":
+    "它靠 bash 干活，这台机器上没有，编码的活接不了。装一个 bash（Windows 上装 Git for Windows 即可，自带），然后重启。聊天不受影响。",
   // 3D device card (ADR 0057). Same register as the rows above: what it is,
   // the one trade-off, apply semantics.
   "banzhuan.pdfPictures": "转写 PDF 图片",

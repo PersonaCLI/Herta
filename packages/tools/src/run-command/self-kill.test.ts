@@ -26,15 +26,7 @@ import {
 /** The CLI on Windows: node.exe at 4242, started by a shell at 4100, with
  *  one helper of the same program at 4300. */
 const PROCESSES: readonly HostProcess[] = [
-  {
-    pid: 4242,
-    self: true,
-    name: "node.exe",
-    ppid: 4100,
-    commandLine: "C:\\Program Files\\nodejs\\node.exe C:\\apps\\herta\\cli.js",
-    user: "trailblazer",
-    uid: 1000,
-  },
+  { pid: 4242, self: true, name: "node.exe" },
   { pid: 4100 },
   { pid: 4300, name: "node.exe" },
 ];
@@ -72,8 +64,6 @@ describe("a kill aimed at the app itself is blocked (2026-11-04)", () => {
       ["pkill", "node"],
       ["pkill", "-9", "nod"],
       ["pkill", "-x", "node"],
-      ["pkill", "-f", "herta"],
-      ["pkill", "-f", "cli\\.js"],
       ["killall", "node"],
       ["killall", "-9", "node"],
       ["tskill", "node"],
@@ -82,23 +72,14 @@ describe("a kill aimed at the app itself is blocked (2026-11-04)", () => {
     }
   });
 
-  it("every process of a user, or one a filter alone chooses", () => {
+  it("every process there is, or every one but a name", () => {
     for (const argv of [
       ["kill", "-9", "-1"],
       ["kill", "--", "-1"],
-      ["pkill", "-u", "trailblazer"],
-      ["pkill", "--euid=trailblazer"],
-      ["killall", "-u", "trailblazer"],
-      ["taskkill", "/F", "/FI", "USERNAME eq trailblazer"],
       ["pkill", "-v", "python"],
     ]) {
       expect(verdict(argv).kind, argv.join(" ")).toBe("block");
     }
-  });
-
-  it("the children of its parent, the app among them", () => {
-    expect(verdict(["pkill", "-P", "4100"]).kind).toBe("block");
-    expect(verdict(["pkill", "-P", "4100", "python"]).kind).toBe("ask");
   });
 
   it("through PowerShell's Stop-Process, and its `kill` alias", () => {
@@ -140,6 +121,126 @@ describe("a kill aimed at the app itself is blocked (2026-11-04)", () => {
     if (byPid.kind !== "block") throw new Error("not blocked");
     expect(byPid.reason).toContain("the process that started this app");
     expect(byPid.suggestion).toContain("that pid belongs to this app");
+  });
+});
+
+// Owner 2026-11-12: the guard is cut to kills by pid and by program name.
+// Before the cut these lines were read, and those that reach the app were
+// blocked. A block has no card; an ask has one, which a review model may
+// answer.
+describe("a kill chosen by command line, by user or by parent is not read: it asks (owner 2026-11-12)", () => {
+  /** A host that still says what the guard used to read, through a cast
+   *  (the type has lost the fields). The cut is that the guard does not READ
+   *  these, not that nobody tells it: a guard taught them back would block
+   *  the lines below on this host, and on the plain one it would not. */
+  const told = {
+    processes: () => [
+      {
+        pid: 4242,
+        self: true,
+        name: "node.exe",
+        ppid: 4100,
+        commandLine:
+          "C:\\Program Files\\nodejs\\node.exe C:\\apps\\herta\\cli.js",
+        user: "trailblazer",
+        uid: 1000,
+      },
+      { pid: 4100 },
+      { pid: 4300, name: "node.exe", ppid: 4242 },
+    ],
+  } as unknown as HostIdentity;
+  const on = (argv: string[]) => classifyCommand(argv, { host: told });
+  const onLine = (line: string) =>
+    classifyShellCommandDetailed(line, { workspaceRoot: WS, paths, host: told })
+      .verdict;
+
+  it("by command line, the app's own included", () => {
+    for (const argv of [
+      ["pkill", "-f", "herta"],
+      ["pkill", "-f", "cli\\.js"],
+      ["pkill", "-f", "node"],
+      ["pkill", "--full", "node"],
+      ["pkill", "-if", "NODE"],
+      ["pkill", "node", "-f"],
+      ["pkill", "-f", "vite"],
+    ]) {
+      expect(on(argv).kind, argv.join(" ")).toBe("ask");
+    }
+  });
+
+  it("by user, alone or beside a pid or a name that is the app's", () => {
+    for (const argv of [
+      ["pkill", "-u", "trailblazer"],
+      ["pkill", "--euid=trailblazer"],
+      ["pkill", "-U", "1000"],
+      ["pkill", "-u", "root,trailblazer"],
+      ["pkill", "-u", "trailblazer", "node"],
+      ["killall", "-u", "trailblazer"],
+      ["killall", "-u", "trailblazer", "node"],
+      ["killall", "--user=trailblazer", "node"],
+      ["taskkill", "/F", "/FI", "USERNAME eq trailblazer"],
+      ["taskkill", "/F", "/FI", "USERNAME eq DESKTOP-1\\trailblazer"],
+      ["taskkill", "/F", "/FI", "USERNAME ne postgres"],
+      ["taskkill", "/F", "/IM", "node.exe", "/FI", "USERNAME eq trailblazer"],
+      ["taskkill", "/PID", "4242", "/FI:USERNAME eq trailblazer"],
+      ["taskkill", "/F", "/IM", "node.exe", "/FI", "USERNAME eq postgres"],
+    ]) {
+      expect(on(argv).kind, argv.join(" ")).toBe("ask");
+    }
+  });
+
+  it("by parent, the app's own parent and the app as a parent included", () => {
+    for (const argv of [
+      ["pkill", "-P", "4100"],
+      ["pkill", "--parent", "4242"],
+      ["pkill", "--parent=4242"],
+      ["pkill", "-P", "4242", "node"],
+      ["pkill", "-P", "4100", "python"],
+    ]) {
+      expect(on(argv).kind, argv.join(" ")).toBe("ask");
+    }
+  });
+
+  it("in the shell's own lane, and through the pipe that spells one", () => {
+    for (const line of [
+      "pkill -KILL -u $USER",
+      "pkill -u $(id -u)",
+      "killall -u $USER",
+      "pkill -f cli.js",
+      "pgrep -f cli.js | xargs -r kill",
+      "pgrep -u trailblazer node | xargs kill",
+    ]) {
+      expect(onLine(line).kind, line).toBe("ask");
+      expect(on(["bash", "-c", line]).kind, line).toBe("ask");
+    }
+  });
+
+  it("asks as a kill does, in the class no rule can allow", () => {
+    for (const argv of [
+      ["pkill", "-f", "herta"],
+      ["pkill", "-u", "trailblazer"],
+      ["pkill", "-P", "4242"],
+      ["killall", "-u", "trailblazer", "node"],
+      ["taskkill", "/F", "/FI", "USERNAME eq trailblazer"],
+    ]) {
+      const v = on(argv);
+      expect(v.kind === "ask" ? v.code : v.kind, argv.join(" ")).toBe(
+        "command_ask_process",
+      );
+    }
+  });
+
+  it("the same line without that option still blocks", () => {
+    for (const argv of [
+      ["pkill", "node"],
+      ["pkill", "-i", "NODE"],
+      ["killall", "node"],
+      ["taskkill", "/F", "/IM", "node.exe"],
+      ["taskkill", "/PID", "4242"],
+      ["bash", "-c", "pgrep node | xargs -r kill"],
+    ]) {
+      expect(on(argv).kind, argv.join(" ")).toBe("block");
+    }
   });
 });
 
@@ -223,25 +324,32 @@ describe("the bash contract's lines (2026-11-04)", () => {
 
 describe("nothing a line says reaches a regular expression (review 2026-11-05)", () => {
   /** One process, so a table can name it. */
-  const named = (name: string, commandLine = name): HostIdentity => ({
-    processes: () => [{ pid: 4242, self: true, name, ppid: 4100, commandLine }],
+  const named = (name: string): HostIdentity => ({
+    processes: () => [{ pid: 4242, self: true, name }],
   });
   const denied = (argv: string[], who: HostIdentity): boolean =>
     selfKillDenial(argv, who, false) !== null;
 
-  /** The classifier is synchronous on the main thread. This command line is
-   *  short on purpose: a backtracking engine spends seconds on it and fails
-   *  the test, where on the app's real one it never comes back and the test
-   *  run would hang with it. */
-  const short = named("node.exe", "a".repeat(26));
+  /** The classifier is synchronous on the main thread. This name is short on
+   *  purpose: a backtracking engine spends seconds on it and fails the test,
+   *  where on a long one it never comes back and the test run would hang
+   *  with it. (It was the app's command line until `pkill -f` stopped being
+   *  read, owner 2026-11-12; a name is matched the same way.) The wildcard
+   *  keeps the name it was sized on: over this one it would not come back. */
+  const short = named("a".repeat(26));
+  const plain = named("node.exe");
 
   it("a line built to backtrack answers at once", () => {
     const started = performance.now();
     const verdicts = [
-      ["pkill", "-f", "(.+)+X"],
-      ["taskkill", "/IM", `${"*".repeat(24)}b`],
-      ["taskkill", "/FI", `PID eq ${" ".repeat(1600)}\nx\ny`],
-    ].map((argv) => classifyCommand(argv, { host: short }).kind);
+      classifyCommand(["pkill", "(.+)+X"], { host: short }),
+      classifyCommand(["taskkill", "/IM", `${"*".repeat(24)}b`], {
+        host: plain,
+      }),
+      classifyCommand(["taskkill", "/FI", `PID eq ${" ".repeat(1600)}\nx\ny`], {
+        host: plain,
+      }),
+    ].map((v) => v.kind);
     expect(performance.now() - started).toBeLessThan(1000);
     // Nobody can tell what the pattern selects, or what that filter does.
     expect(verdicts).toEqual(["ask", "ask", "ask"]);
@@ -249,7 +357,7 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
 
   it("the bash contract's line asks too", () => {
     const started = performance.now();
-    const v = classifyShellCommandDetailed("sudo pkill -f '(.+)+X'", {
+    const v = classifyShellCommandDetailed("sudo pkill '(.+)+X'", {
       workspaceRoot: WS,
       paths,
       host: short,
@@ -261,11 +369,11 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
   it("what a kill is usually written with still reads", () => {
     for (const argv of [
       ["pkill", "-x", "node.exe"],
-      ["pkill", "-f", "node.exe"],
-      ["pkill", "-f", "node.*cli"],
-      ["pkill", "-f", "nodejs.+cli\\.js$"],
+      ["pkill", "node.exe"],
+      ["pkill", "no.*exe"],
+      ["pkill", "no.+\\.exe$"],
       ["pkill", "^node$"],
-      ["pkill", "-f", "vite|herta"],
+      ["pkill", "vite|node"],
       ["pkill", "-i", "NODE"],
       ["pkill", "."],
       ["pkill", ""],
@@ -280,13 +388,13 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
       expect(verdict(argv).kind, argv.join(" ")).toBe("block");
     }
     for (const argv of [
-      ["pkill", "-f", "vite|webpack"],
+      ["pkill", "vite|webpack"],
       ["pkill", "-x", "no.e.ex"],
-      ["pkill", "-f", "^vite"],
+      ["pkill", "^vite"],
       ["pkill", "^ode"],
       ["pkill", "nod$"],
       ["pkill", "node\\.py"],
-      ["pkill", "-f", "a\\|node"],
+      ["pkill", "a\\|node"],
       ["killall", "no.*"],
       ["killall", "-r", "^ode"],
       ["taskkill", "/IM", "n?de.py"],
@@ -306,7 +414,7 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
       ["pkill", "\\bnode"],
       ["pkill", "node\\"],
       ["pkill", "-v", "[p]ython"],
-      ["pkill", "-f", `${"a|".repeat(1000)}node`],
+      ["pkill", `${"a|".repeat(1000)}node`],
       ["killall", "-r", "[n]ode"],
     ]) {
       expect(verdict(argv).kind, argv.join(" ")).toBe("ask");
@@ -344,7 +452,7 @@ describe("nothing a line says reaches a regular expression (review 2026-11-05)",
         expect(denied(["pkill", "-x", pattern], who), `-x ${label}`).toBe(
           new RegExp(`^(?:${pattern})$`).test(name),
         );
-        expect(denied(["pkill", "-if", pattern.toUpperCase(), "--"], who)).toBe(
+        expect(denied(["pkill", "-i", pattern.toUpperCase(), "--"], who)).toBe(
           new RegExp(pattern.toUpperCase(), "i").test(name),
         );
       }
@@ -411,23 +519,14 @@ describe("what cannot touch the app is not refused (review 2026-11-05)", () => {
     }
   });
 
-  it("a word only the shell reads is the shell's own user, and a quoted $PPID is a word", () => {
-    expect(shellVerdict("pkill -KILL -u $USER").kind).toBe("block");
-    expect(shellVerdict("pkill -u $(id -u)").kind).toBe("block");
-    expect(shellVerdict("killall -u $USER").kind).toBe("block");
+  it("a quoted $PPID is a word", () => {
     expect(shellVerdict("kill '$PPID'").kind).not.toBe("block");
     expect(shellVerdict("kill -0 $PPID").kind).not.toBe("block");
     expect(shellVerdict('kill "$PPID"').kind).toBe("block");
   });
 
-  it("the app's own user, a real signal and a real path still block", () => {
+  it("a real signal and a real path still block", () => {
     for (const argv of [
-      ["pkill", "-u", "TRAILBLAZER"],
-      ["pkill", "-u", "1000"],
-      ["pkill", "-u", "root,trailblazer"],
-      ["pkill", "-u", "trailblazer", "node"],
-      ["taskkill", "/F", "/FI", "USERNAME eq DESKTOP-1\\trailblazer"],
-      ["taskkill", "/F", "/FI", "USERNAME ne postgres"],
       ["kill", "-1", "4242"],
       ["kill", "-s", "TERM", "4242"],
       ["/bin/kill", "4242"],
@@ -440,15 +539,6 @@ describe("what cannot touch the app is not refused (review 2026-11-05)", () => {
     ]) {
       expect(verdict(argv).kind, argv.join(" ")).toBe("block");
     }
-  });
-
-  it("an app that cannot say who it runs as asks about a plain user", () => {
-    const unknown: HostIdentity = {
-      processes: () => [{ pid: 4242, self: true, name: "node.exe" }],
-    };
-    expect(
-      classifyCommand(["pkill", "-u", "trailblazer"], { host: unknown }).kind,
-    ).toBe("ask");
   });
 });
 
@@ -584,19 +674,20 @@ describe("the rest of what reaches the app (review 2026-11-05, G3–G5, G12)", (
     blocks(["Stop-Process", "-Id", "4242", "-WhatIf:$false"]);
   });
 
-  it("a helper is a child of the app, so pkill -P reaches it", () => {
-    const parent: HostIdentity = {
+  it("a helper is reached by its pid and by its name; by its parent the line asks (owner 2026-11-12)", () => {
+    // The helper still says who started it, through a cast: the guard does
+    // not read that, whoever tells it.
+    const desktop = {
       processes: () => [
         { pid: 4242, self: true, name: "Herta" },
         { pid: 4300, name: "Herta", ppid: 4242 },
       ],
-    };
-    expect(
-      classifyCommand(["pkill", "-P", "4242"], { host: parent }).kind,
-    ).toBe("block");
-    expect(
-      classifyCommand(["pkill", "-P", "1234"], { host: parent }).kind,
-    ).not.toBe("block");
+    } as unknown as HostIdentity;
+    const on = (argv: string[]) => classifyCommand(argv, { host: desktop });
+    expect(on(["kill", "4300"]).kind).toBe("block");
+    expect(on(["pkill", "Herta"]).kind).toBe("block");
+    expect(on(["pkill", "-P", "4242"]).kind).toBe("ask");
+    expect(on(["pkill", "-P", "1234"]).kind).toBe("ask");
   });
 
   it("names a Mac's helpers, which are programs of their own", () => {
@@ -619,7 +710,7 @@ describe("the rest of what reaches the app (review 2026-11-05, G3–G5, G12)", (
   it("a pipe that is a kill by name is that kill", () => {
     for (const line of [
       "pgrep node | xargs kill -9",
-      "pgrep -f cli.js | xargs -r kill",
+      "pgrep -x node | xargs -r kill",
       "pidof node.exe | xargs kill",
       "Get-Process node | Stop-Process -Force",
       "gps node | kill",
@@ -661,12 +752,13 @@ describe("hostIdentity — this process, its parent, the desktop's helpers", () 
     const own = procs.find((p) => p.self === true);
     expect(own?.pid).toBe(process.pid);
     expect(own?.name).toBe(basename(process.execPath));
-    expect(own?.ppid).toBe(process.ppid);
     // Not on Windows, where the number can outlive its process (G7).
     expect(procs.some((p) => p.pid === process.ppid)).toBe(
       process.platform !== "win32",
     );
-    expect(own?.user?.length).toBeGreaterThan(0);
+    // Its pid and name are all it says of itself (owner 2026-11-12): no
+    // command line, user or parent, which no reader here asks for.
+    expect(Object.keys(own ?? {}).sort()).toEqual(["name", "pid", "self"]);
   });
 
   it("adds the helpers the desktop registers, and survives a list that throws", () => {

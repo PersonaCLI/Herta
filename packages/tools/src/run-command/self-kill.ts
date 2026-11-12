@@ -1,4 +1,3 @@
-import { userInfo } from "node:os";
 import { basename } from "node:path";
 
 /**
@@ -11,13 +10,19 @@ import { basename } from "node:path";
  * not serve, so such a line is BLOCKED: no card, no review, no rule.
  *
  * What the harness knows about itself, read only when a line kills
- * something: its own pid, program name and command line; its parent's pid
- * (the shell that started the CLI, the dev server that started Electron);
- * and, on the desktop, Electron's other processes (killing a renderer blanks
- * the window). Ancestors above the parent, and a kill whose targets arrive
+ * something: its own pid and program name; its parent's pid (the shell that
+ * started the CLI, the dev server that started Electron); and, on the
+ * desktop, Electron's other processes (killing a renderer blanks the
+ * window). Ancestors above the parent, and a kill whose targets arrive
  * through a substitution, are not judged here: they ask as before. The two
  * pipes that are a kill by name (`pgrep x | xargs kill`, `Get-Process x |
  * Stop-Process`) are read as that kill by the classifier (`pipedKills`).
+ *
+ * Read: a kill that chooses by pid or by program name. One that chooses by
+ * command line (`pkill -f`), by user (`pkill -u`, `killall -u`, a `USERNAME`
+ * filter) or by parent (`pkill -P`) is not read, whatever it would reach: it
+ * asks, as any kill does (owner 2026-11-12). So the app's command line, its
+ * user and who started its helpers are not among what the harness lists.
  *
  * Nothing a line says reaches a regular expression (review 2026-11-05). This
  * runs synchronously on the app's main thread and JavaScript's engine
@@ -35,14 +40,6 @@ export interface HostProcess {
   /** Its program's file name, as a by-name kill matches it (`node.exe`,
    *  `Herta`). Unknown for the parent. */
   readonly name?: string;
-  /** Its parent's pid, for `pkill -P`. */
-  readonly ppid?: number;
-  /** Its command line, as `pkill -f` matches it. */
-  readonly commandLine?: string;
-  /** The user it runs as, for `pkill -u`: known for this process, unknown
-   *  for the others. */
-  readonly user?: string;
-  readonly uid?: number;
 }
 
 /** The processes that are this app, listed when a line kills something. */
@@ -64,16 +61,7 @@ export function hostIdentity(): HostIdentity {
   return {
     processes(): readonly HostProcess[] {
       const name = basename(process.execPath);
-      const out: HostProcess[] = [
-        {
-          pid: process.pid,
-          self: true,
-          name,
-          ppid: process.ppid,
-          commandLine: [process.execPath, ...process.argv.slice(1)].join(" "),
-          ...ownUser(),
-        },
-      ];
+      const out: HostProcess[] = [{ pid: process.pid, self: true, name }];
       // Not on Windows: nothing re-parents a process there, so `process.ppid`
       // stays the starter's pid after it exits, and a block has no override
       // for whichever process gets that number next (review 2026-11-05, G7).
@@ -90,7 +78,7 @@ export function hostIdentity(): HostIdentity {
       for (const pid of helpers) {
         if (pid === process.pid) continue;
         for (const helper of helperNames(name, process.platform)) {
-          out.push({ pid, name: helper, ppid: process.pid });
+          out.push({ pid, name: helper });
         }
       }
       return out;
@@ -105,16 +93,6 @@ export function helperNames(name: string, platform: string): readonly string[] {
   return ["", " (Renderer)", " (GPU)", " (Plugin)"].map(
     (kind) => `${name} Helper${kind}`,
   );
-}
-
-/** Who this process runs as; nothing when the system cannot say. */
-function ownUser(): { user?: string; uid?: number } {
-  const uid = process.getuid?.();
-  try {
-    return { user: userInfo().username, ...(uid !== undefined ? { uid } : {}) };
-  } catch {
-    return uid !== undefined ? { uid } : {};
-  }
 }
 
 /** Why a line is refused, and the move that serves its purpose instead. */
@@ -171,7 +149,7 @@ export function selfKillDenial(
     suggestion:
       select.by === "pid"
         ? "that pid belongs to this app: list the processes (tasklist / ps) and end the one you mean by its own pid; a dev server started with dev_server stops with dev_server"
-        : "end the process you mean by its own pid (tasklist / ps lists them), not by a program name or user this app shares; a dev server started with dev_server stops with dev_server",
+        : "end the process you mean by its own pid (tasklist / ps lists them), not by a program name this app shares; a dev server started with dev_server stops with dev_server",
   };
 }
 
@@ -236,34 +214,6 @@ function anyOf(selectors: ReadonlyArray<Selector | null>): Selector | null {
 
 /** Every process (`kill -1`, all a filter lets through). */
 const EVERY: Selector = { by: "all", matches: () => true };
-
-/** A process that runs as `who`: a name, a uid, or a word the shell fills in
- *  (`$USER`, `$(id -u)`), which is the shell's own user: the app's. A plain
- *  word that is another user reaches none of the app's processes, and when
- *  the app cannot say who it runs as the line asks (review 2026-11-05). */
-function runsAs(who: string, p: HostProcess): boolean {
-  // The shell lane reads a substitution as this placeholder.
-  if (who.includes("__SUBST__") || !/^[\w.-]+$/.test(who)) return true;
-  if (/^\d+$/.test(who)) return p.uid === Number(who);
-  return p.user?.toLowerCase() === who.toLowerCase();
-}
-
-/** The processes of the users a line names. */
-function byUsers(users: readonly string[]): Selector | null {
-  if (users.length === 0) return null;
-  return {
-    by: "all",
-    matches: (p) => users.some((who) => runsAs(who, p)),
-  };
-}
-
-/** What every one of them selects; null when none selects anything. */
-function allOf(selectors: ReadonlyArray<Selector | null>): Selector | null {
-  const live = selectors.filter((s): s is Selector => s !== null);
-  const first = live[0];
-  if (first === undefined) return null;
-  return { by: first.by, matches: (p) => live.every((s) => s.matches(p)) };
-}
 
 /** Signal 0 only asks whether a process is there: it ends nothing. */
 function noSignal(value: string | undefined): boolean {
@@ -504,15 +454,21 @@ const PKILL_VALUE_OPTS: ReadonlySet<string> = new Set([
   "--queue",
 ]);
 
-const USER_OPTS: ReadonlySet<string> = new Set(["-u", "-U", "--euid", "--uid"]);
+/** pkill's options that choose by who runs a process or by who started it.
+ *  A line that carries one is not read (owner 2026-11-12): it asks. */
+const PKILL_UNREAD_OPTS: ReadonlySet<string> = new Set([
+  "-u",
+  "-U",
+  "--euid",
+  "--uid",
+  "-P",
+  "--parent",
+]);
 
 function pkillSelector(args: readonly string[]): Selector | null {
-  let full = false;
   let exact = false;
   let icase = false;
   let invert = false;
-  const users: string[] = [];
-  const parents: number[] = [];
   let pattern: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
@@ -524,6 +480,7 @@ function pkillSelector(args: readonly string[]): Selector | null {
     const eq = a.indexOf("=");
     const opt = long ? (eq < 0 ? a : a.slice(0, eq)) : a.slice(0, 2);
     if (a.startsWith("-") && PKILL_VALUE_OPTS.has(opt)) {
+      if (PKILL_UNREAD_OPTS.has(opt)) return null;
       const attached = long
         ? eq < 0
           ? undefined
@@ -534,16 +491,11 @@ function pkillSelector(args: readonly string[]): Selector | null {
       const value = attached ?? args[i + 1] ?? "";
       if (attached === undefined) i += 1;
       if (opt === "--signal" && noSignal(value)) return null;
-      if (USER_OPTS.has(opt)) users.push(...value.split(","));
-      if (opt === "-P" || opt === "--parent") {
-        for (const v of value.split(",")) {
-          if (/^\d+$/.test(v)) parents.push(Number(v));
-        }
-      }
       continue;
     }
-    if (a === "--full") full = true;
-    else if (a === "--exact") exact = true;
+    // By command line: not read either.
+    if (a === "--full") return null;
+    if (a === "--exact") exact = true;
     else if (a === "--ignore-case") icase = true;
     else if (a === "--inverse") invert = true;
     else if (noSignal(a)) return null;
@@ -551,8 +503,8 @@ function pkillSelector(args: readonly string[]): Selector | null {
       // A signal, or a long flag that selects nothing.
     } else if (/^-[a-z]+$/.test(a)) {
       for (const c of a.slice(1)) {
-        if (c === "f") full = true;
-        else if (c === "x") exact = true;
+        if (c === "f") return null;
+        if (c === "x") exact = true;
         else if (c === "i") icase = true;
         else if (c === "v") invert = true;
       }
@@ -560,28 +512,15 @@ function pkillSelector(args: readonly string[]): Selector | null {
       pattern ??= a;
     }
   }
-  const byParent: Selector | null =
-    parents.length === 0
-      ? null
-      : {
-          by: "pid",
-          matches: (p) => p.ppid !== undefined && parents.includes(p.ppid),
-        };
-  // No pattern: every process of a user (`pkill -u me`), or of a parent.
-  if (pattern === undefined) return allOf([byUsers(users), byParent]);
+  if (pattern === undefined) return null;
   const test = regex(pattern, exact, icase);
   if (test === null) return null;
-  const named: Selector = {
+  return {
     by: "name",
-    matches: (p) => {
-      const hit = full
-        ? p.commandLine !== undefined && test(p.commandLine)
-        : nameMatches(p, test);
-      if (p.name === undefined && !full) return false;
-      return invert ? !hit : hit;
-    },
+    // A process whose name is unknown (the parent) is matched by no name,
+    // inverted or not.
+    matches: (p) => p.name !== undefined && nameMatches(p, test) !== invert,
   };
-  return allOf([named, byParent, byUsers(users)]);
 }
 
 // ── killall ────────────────────────────────────────────────────────────────
@@ -608,7 +547,6 @@ const KILLALL_VALUE_OPTS: ReadonlySet<string> = new Set([
 function killallSelector(args: readonly string[]): Selector | null {
   let regexp = false;
   let icase = false;
-  const users: string[] = [];
   const names: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i] as string;
@@ -618,11 +556,11 @@ function killallSelector(args: readonly string[]): Selector | null {
     }
     const opt = a.startsWith("--") ? (a.split("=")[0] as string) : a;
     if (KILLALL_VALUE_OPTS.has(opt)) {
+      // By user: not read (owner 2026-11-12), the line asks.
+      if (opt === "-u" || opt === "--user") return null;
       const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1];
       if (!a.includes("=")) i += 1;
       if ((opt === "-s" || opt === "--signal") && noSignal(value)) return null;
-      if ((opt === "-u" || opt === "--user") && value !== undefined)
-        users.push(value);
       // BSD's `-c name`: only processes of that name.
       if (opt === "-c" && value !== undefined) names.push(value);
       continue;
@@ -641,18 +579,14 @@ function killallSelector(args: readonly string[]): Selector | null {
       names.push(a);
     }
   }
-  if (names.length === 0) return byUsers(users);
   const tests = names
     .map((n) => (regexp ? regex(n, false, icase) : literal(n, icase)))
     .filter((t): t is TextTest => t !== null);
   if (tests.length === 0) return null;
-  return allOf([
-    {
-      by: "name",
-      matches: (p) => nameMatches(p, (s) => tests.some((test) => test(s))),
-    },
-    byUsers(users),
-  ]);
+  return {
+    by: "name",
+    matches: (p) => nameMatches(p, (s) => tests.some((test) => test(s))),
+  };
 }
 
 // ── taskkill / tskill (Windows) ────────────────────────────────────────────
@@ -696,7 +630,9 @@ function taskkillSelector(args: readonly string[]): Selector | null {
       images.push(wildcard(value));
       i += 1;
     } else if (sw === "fi") {
-      filters.push(taskkillFilter(value));
+      const filter = taskkillFilter(value);
+      if (filter === null) return null;
+      filters.push(filter);
       i += 1;
     }
     if (attached !== null) i = before;
@@ -741,8 +677,10 @@ const FILTER_RELATIONS: ReadonlySet<string> = new Set([
 
 /** One `/FI "NAME OP VALUE"` filter. A filter this guard does not read
  *  (STATUS, MEMUSAGE, WINDOWTITLE …) is taken to match: the process might
- *  pass it. */
-function taskkillFilter(text: string): TaskkillFilter {
+ *  pass it. Null for a `USERNAME` filter: a line that chooses by user is not
+ *  read at all (owner 2026-11-12), and taking it to match would refuse
+ *  `/IM node.exe /FI "USERNAME eq postgres"`, which cannot touch the app. */
+function taskkillFilter(text: string): TaskkillFilter | null {
   const [name, relation, ...rest] = text.trim().split(/\s+/);
   const op = relation?.toLowerCase();
   if (name === undefined || op === undefined || rest.length === 0) {
@@ -751,6 +689,7 @@ function taskkillFilter(text: string): TaskkillFilter {
   const field = name.toLowerCase();
   const value = rest.join(" ");
   if (!FILTER_RELATIONS.has(op)) return UNREAD_FILTER;
+  if (field === "username") return null;
   if (field === "imagename") {
     const test = wildcard(value);
     return {
@@ -762,13 +701,6 @@ function taskkillFilter(text: string): TaskkillFilter {
         const hit = nameMatches(p, test);
         return op === "ne" ? !hit : hit;
       },
-    };
-  }
-  if (field === "username" && (op === "eq" || op === "ne")) {
-    const who = value.split("\\").pop() ?? value;
-    return {
-      read: true,
-      test: (p) => (op === "ne") !== runsAs(who, p),
     };
   }
   if (field === "pid" && /^\d+$/.test(value)) {

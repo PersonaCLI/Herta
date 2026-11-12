@@ -191,6 +191,40 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
     ).toBeNull();
   });
 
+  // Owner 2026-11-12: on a machine with no bash the session's one note
+  // said that 板砖 cannot run, and drew as a closed `System` row.
+  it("a notice defaults OPEN: its sentence is readable without a click, and the user can still close it", () => {
+    const notice: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "no bash was found on this machine, so 板砖 cannot run coding tasks.",
+      notice: "backend_unavailable",
+    };
+    const { container } = renderWithLocale(<A blocks={[notice]} />);
+    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    expect(
+      container.querySelector(".activity-line__history.is-open")?.textContent,
+    ).toContain("no bash was found on this machine");
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
+  it("an ordinary out-of-turn system note still waits for a click", () => {
+    const note: SystemBlock = {
+      kind: "system",
+      label: "系统",
+      body: "workspace → C:/proj",
+    };
+    renderWithLocale(<A blocks={[note]} />);
+    expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
   it("a mixed group counts as backend activity and stays collapsed", () => {
     renderWithLocale(<A blocks={[attach("spec.md"), step("Reading a.ts")]} />);
     expect(screen.getByRole("button").getAttribute("aria-expanded")).toBe(

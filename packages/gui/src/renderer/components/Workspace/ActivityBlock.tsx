@@ -171,11 +171,15 @@ export const ActivityBlock = memo(function ActivityBlock(
   // 0033): "which files did I just hand over" is the whole point of the row,
   // so it defaults OPEN — a collapsed `系统 ›` with the filenames behind a
   // click answered nothing (owner 2026-08-10). So does an undo line: what
-  // came back is its point. Anything else waits for a click.
+  // came back is its point. So does a group that holds a NOTICE — what the
+  // session cannot do, such as the no-bash note (owner 2026-11-12): its
+  // sentence was one click away while it said that nothing runs. Anything
+  // else waits for a click.
   const isAttachmentGroup =
     blocks.length > 0 && blocks.every((b) => b.digest?.kind === "attachment");
+  const holdsNotice = blocks.some((b) => b.notice !== undefined);
   const expanded = expandable
-    ? (userToggled ?? (isAttachmentGroup || undoDigest !== null))
+    ? (userToggled ?? (isAttachmentGroup || undoDigest !== null || holdsNotice))
     : false;
   // The history's rows mount on the FIRST expand and stay mounted — the same
   // lifecycle as a row's own diff and detail panes (ActivityStep), one level

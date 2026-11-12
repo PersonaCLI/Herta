@@ -704,7 +704,14 @@ export class SessionImpl implements Session {
     const note = this.pendingContractNote;
     if (note === null || this.currentTurn !== null) return;
     this.pendingContractNote = null;
-    this.driver.appendSystemNote("系统", note);
+    // Marked as a notice: the desktop folds an out-of-turn system note
+    // behind a click, and this one says that nothing runs.
+    this.driver.appendSystemBlock({
+      kind: "system",
+      label: "系统",
+      body: note,
+      notice: "backend_unavailable",
+    });
     this._record = this.driver.getRecord();
   }
 

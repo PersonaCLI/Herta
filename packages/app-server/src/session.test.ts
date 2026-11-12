@@ -2606,6 +2606,9 @@ describe("the no-bash record note (ADR 0044, ADR 0086)", () => {
     expect(note.label).toBe("系统");
     // It says what is missing and what that costs, not which tool set runs.
     expect(note.body).toContain("板砖无法执行任务");
+    // Marked as a notice, so a renderer that folds system notes behind a
+    // click shows this one open (owner 2026-11-12).
+    expect(note.notice).toBe("backend_unavailable");
     // The opening streamed first; the note is the record's last block.
     expect(record.length).toBeGreaterThanOrEqual(2);
     expect(record[record.length - 1]).toBe(note);

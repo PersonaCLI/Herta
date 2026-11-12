@@ -926,6 +926,17 @@ export interface SystemBlock {
    */
   readonly role?: "done-marker" | "noop-marker";
   /**
+   * A standing notice about what THIS session cannot do, which the reader
+   * must not have to ask for. One today: `backend_unavailable`, the note a
+   * new session carries when the machine has no bash and 板砖 cannot run
+   * (ADR 0086). A fact about the block, like `role`: a renderer that folds
+   * out-of-turn system notes behind a click shows a notice open (owner
+   * 2026-11-12 — the desktop drew this one as a closed `System` row, its
+   * sentence one click away, while it said that nothing runs). Invisible to
+   * Herta's prompt, which reads the body as before.
+   */
+  readonly notice?: "backend_unavailable";
+  /**
    * Structured roll-up mirroring the done-marker `body` for localizing
    * renderers. See `DoneMarkerSummary`. Set ONLY on done-marker blocks by the
    * bridge; the canonical `body` stays authoritative. Display-only — invisible

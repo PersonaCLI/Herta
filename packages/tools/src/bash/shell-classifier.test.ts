@@ -1716,3 +1716,42 @@ describe("classifyShellCommand — a name given a value without `K=V` (review 20
     expect(kind("read -p PATH -t 1 TERM")).toBe("allow");
   });
 });
+
+// 2026-11-12. `cd .h* && echo x > permissions.json` asked as an ordinary
+// write: the pattern was a directory name to the cwd tracker, and the write
+// after it named no `.herta`. With automatic review on, such a write is
+// answered by the reviewer, or runs with no review where undo can take it
+// back — and it landed in the harness's own state.
+describe("a cd through a pattern into .herta is the owner's alone, as `cd .herta` is", () => {
+  const codes = (cmd: string): readonly string[] => {
+    const r = classifyShellCommandDetailed(cmd, opts);
+    return r.verdict.kind === "ask"
+      ? (r.codes ?? [r.verdict.code])
+      : [r.verdict.kind];
+  };
+
+  it("a pattern that could be .herta asks as a reach into the harness's state", () => {
+    for (const line of [
+      "cd .h* && echo x > permissions.json",
+      "cd .h* && printf '{}' > perm*",
+      "cd .her?a && rm -f *",
+      "pushd .[h]erta && echo x > y",
+      "cd src/../.h* && echo x > y",
+      "cd .* && echo x > y",
+    ]) {
+      expect(codes(line), line).toContain("command_ask_harness_state");
+    }
+  });
+
+  it("a pattern that cannot be .herta is an ordinary cd: a leading dot must be spelled", () => {
+    for (const line of [
+      "cd s* && ls",
+      "cd * && ls",
+      "cd ?herta && ls",
+      "cd src && ls",
+      'cd ".h*" && ls',
+    ]) {
+      expect(codes(line), line).not.toContain("command_ask_harness_state");
+    }
+  });
+});

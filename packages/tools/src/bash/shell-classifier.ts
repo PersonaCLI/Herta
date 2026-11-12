@@ -1207,6 +1207,22 @@ function classifySegment(
       }
     }
     const target = words[ti];
+    // Into the workspace's `.herta` through a pattern. `cd .h* && echo x >
+    // permissions.json` asked as an ordinary write, which automatic review
+    // answers or lets run: the pattern was a directory name to the tracker
+    // and the write after it named no `.herta` (2026-11-12).
+    if (
+      target !== undefined &&
+      cdReachesHarnessState(target, globbed.has(target), opts)
+    ) {
+      asks.push({
+        kind: "ask",
+        risk: "workspace_write",
+        code: HARNESS_STATE_ASK_CODE,
+        reason: `${name} into the harness's own state (.herta); every relative path after it lands there`,
+      });
+      return segmentVerdict(asks);
+    }
     if (
       target === undefined ||
       target === "~" ||
@@ -1824,6 +1840,19 @@ function nativeOf(token: string, opts: ShellClassifyOpts): string | null {
 function gitInternalTarget(token: string, opts: ShellClassifyOpts): boolean {
   const at = resolveWorkspacePath(token, opts);
   return at !== null && gitInternalsWrite(opts.workspaceRoot, at.native);
+}
+
+/** A `cd` target that lands in the workspace's `.herta` by a pattern, which
+ *  the cwd tracker does not follow. The literal `cd .herta` is the
+ *  tracker's. */
+function cdReachesHarnessState(
+  target: string,
+  glob: boolean,
+  opts: ShellClassifyOpts,
+): boolean {
+  if (!glob) return false;
+  const at = resolveWorkspacePath(target, opts);
+  return at !== null && globReachesHertaState(at.relative);
 }
 
 /** Denial when writing the path a shell token names would change the

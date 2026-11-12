@@ -232,32 +232,41 @@ export function applyMigrations(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
 
-  db.exec(DDL_V1);
-  recordVersion(db, 1);
+  // One writer from the first step to the last (review 2026-11-10, second
+  // pass). Each step looks at the schema and then changes it, and the steps
+  // ran one statement at a time: two processes opening a database that
+  // still needed a step both saw the column missing, and the second to add
+  // it failed with "duplicate column name". `BEGIN IMMEDIATE` makes the
+  // second wait, and then see what the first did. A step that fails also
+  // leaves nothing half-applied.
+  db.transaction(() => {
+    db.exec(DDL_V1);
+    recordVersion(db, 1);
 
-  db.exec(DDL_V2);
-  recordVersion(db, 2);
+    db.exec(DDL_V2);
+    recordVersion(db, 2);
 
-  db.exec(DDL_V3);
-  recordVersion(db, 3);
+    db.exec(DDL_V3);
+    recordVersion(db, 3);
 
-  db.exec(DDL_V4);
-  recordVersion(db, 4);
+    db.exec(DDL_V4);
+    recordVersion(db, 4);
 
-  applyV5(db);
-  recordVersion(db, 5);
+    applyV5(db);
+    recordVersion(db, 5);
 
-  applyV6(db);
-  recordVersion(db, 6);
+    applyV6(db);
+    recordVersion(db, 6);
 
-  applyV7(db);
-  recordVersion(db, 7);
+    applyV7(db);
+    recordVersion(db, 7);
 
-  applyV8(db);
-  recordVersion(db, 8);
+    applyV8(db);
+    recordVersion(db, 8);
 
-  applyV9(db);
-  recordVersion(db, 9);
+    applyV9(db);
+    recordVersion(db, 9);
+  }).immediate();
 }
 
 /**

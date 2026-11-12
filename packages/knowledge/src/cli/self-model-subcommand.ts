@@ -704,14 +704,20 @@ function loadVoiceProfile(dbPath: string, io: SelfModelCliIo) {
     dbPath,
     readonly: true,
   });
-  const profile = store.getVoiceProfile(HERTA_PERSON_PRIME);
-  if (profile === undefined) {
-    io.err(
-      "no voice profile in DB — the voice_profiles row is required (the generation pipeline was retired 2026-07-14; use a DB that already carries the row).",
-    );
-    return null;
+  // Closed on both ways out: the handle was left open for the life of the
+  // command (review 2026-11-10, second pass).
+  try {
+    const profile = store.getVoiceProfile(HERTA_PERSON_PRIME);
+    if (profile === undefined) {
+      io.err(
+        "no voice profile in DB — the voice_profiles row is required (the generation pipeline was retired 2026-07-14; use a DB that already carries the row).",
+      );
+      return null;
+    }
+    return profile;
+  } finally {
+    store.close();
   }
-  return profile;
 }
 
 function makeClient(

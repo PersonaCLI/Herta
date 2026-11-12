@@ -130,3 +130,169 @@ export function scanJsonStrings(text: string): JsonStringField[] {
   }
   return out;
 }
+
+/**
+ * `scanJsonStrings` for a text that only grows (review 2026-11-10, second
+ * pass). The live view scanned a call's whole arguments again on every
+ * flush, so a file being written cost more each time the longer it got:
+ * 11 ms a flush at 800 000 characters. Fed only the new characters, this
+ * keeps what it has read, and `fields` is at every moment what a scan of
+ * everything fed so far returns (a test holds the two together).
+ */
+export class JsonStringScanner {
+  private readonly stack: Frame[] = [];
+  private readonly out: {
+    key: string | null;
+    value: string;
+    complete: boolean;
+  }[] = [];
+  /** The string being read, if any: a key, or the field its value fills. */
+  private reading:
+    | { readonly key: true; text: string }
+    | {
+        readonly key: false;
+        readonly field: { value: string; complete: boolean };
+      }
+    | null = null;
+  /** An escape cut off at the end of what was fed: held until it is whole. */
+  private escape = "";
+  /** An escape that can never be read ended the scan, as it ends a whole
+   *  one: nothing after it is looked at. */
+  private dead = false;
+
+  get fields(): readonly JsonStringField[] {
+    return this.out;
+  }
+
+  push(more: string): void {
+    if (this.dead || more.length === 0) return;
+    const text = this.escape + more;
+    this.escape = "";
+    const n = text.length;
+    let i = 0;
+    while (i < n) {
+      if (this.reading !== null) {
+        i = this.readString(text, i);
+        if (this.dead) return;
+        continue;
+      }
+      const c = text[i] as string;
+      i += 1;
+      const top = this.stack[this.stack.length - 1];
+      if (c === '"') {
+        if (top?.kind === "object" && top.expectKey) {
+          this.reading = { key: true, text: "" };
+        } else {
+          const key =
+            top === undefined
+              ? null
+              : top.kind === "object"
+                ? top.lastKey
+                : top.key;
+          const field = { key, value: "", complete: false };
+          this.out.push(field);
+          this.reading = { key: false, field };
+        }
+      } else if (c === "{" || c === "[") {
+        const key =
+          top === undefined
+            ? null
+            : top.kind === "object"
+              ? top.lastKey
+              : top.key;
+        this.stack.push({
+          kind: c === "{" ? "object" : "array",
+          key,
+          expectKey: c === "{",
+          lastKey: null,
+        });
+      } else if (c === "}" || c === "]") {
+        this.stack.pop();
+      } else if (c === ":") {
+        if (top?.kind === "object") top.expectKey = false;
+      } else if (c === ",") {
+        if (top?.kind === "object") top.expectKey = true;
+      }
+    }
+  }
+
+  /** Read on in the open string from `text[i]`; returns where it stopped. */
+  private readString(text: string, from: number): number {
+    const n = text.length;
+    let i = from;
+    let run = i;
+    let add = "";
+    const flush = (): void => {
+      if (i > run) add += text.slice(run, i);
+    };
+    let closed = false;
+    while (i < n) {
+      const d = text[i] as string;
+      if (d === '"') {
+        flush();
+        i += 1;
+        closed = true;
+        break;
+      }
+      if (d !== "\\") {
+        i += 1;
+        continue;
+      }
+      flush();
+      const e = text[i + 1];
+      if (e === undefined) {
+        // Cut off after the backslash: wait for the rest.
+        this.escape = text.slice(i);
+        i = n;
+        run = i;
+        break;
+      }
+      if (e === "u") {
+        const hex = text.slice(i + 2, i + 6);
+        if (hex.length < 4) {
+          // Cut off inside the four digits: whole only if what is there
+          // could still become them.
+          if (/^[0-9a-fA-F]*$/.test(hex)) {
+            this.escape = text.slice(i);
+          } else {
+            this.dead = true;
+          }
+          i = n;
+          run = i;
+          break;
+        }
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          this.dead = true;
+          i = n;
+          run = i;
+          break;
+        }
+        add += String.fromCharCode(Number.parseInt(hex, 16));
+        i += 6;
+        run = i;
+        continue;
+      }
+      add += SIMPLE_ESCAPES[e] ?? e;
+      i += 2;
+      run = i;
+    }
+    if (!closed) flush();
+    const reading = this.reading;
+    if (reading === null) return i;
+    if (reading.key) {
+      reading.text += add;
+      if (closed) {
+        const top = this.stack[this.stack.length - 1];
+        if (top?.kind === "object") top.lastKey = reading.text;
+        this.reading = null;
+      }
+    } else {
+      if (add.length > 0) reading.field.value += add;
+      if (closed) {
+        reading.field.complete = true;
+        this.reading = null;
+      }
+    }
+    return i;
+  }
+}

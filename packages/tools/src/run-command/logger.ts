@@ -57,7 +57,7 @@ export async function writeRunLog(
       ? `${label} (CAPPED — ${bytes} total bytes observed, output above the capture limit was dropped)`
       : `${label} (${bytes} bytes)`;
   const body = `${[
-    "=== herta run_command log ===",
+    "=== herta command log ===",
     `sessionId: ${sessionId}`,
     `callId: ${callId}`,
     `ts: ${payload.ts}`,

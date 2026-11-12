@@ -954,7 +954,14 @@ describe("a folded failure says why (release review 2026-10-22)", () => {
       const text = readFileSync(join(root, f), "utf8");
       for (const m of text.matchAll(/\bcode:\s*"([a-z_]+)"/g))
         codes.add(m[1] as string);
+      // A rule hands its code to `deny(`: the scan read `code:` alone until
+      // 2026-11-12, so the editor's own `view_required` and `stale_view`
+      // had no words and nothing said so.
+      for (const m of text.matchAll(/\bdeny\(\s*"([a-z_]+)"/g))
+        codes.add(m[1] as string);
     }
+    expect(codes.has("view_required")).toBe(true);
+    expect(codes.has("stale_view")).toBe(true);
     // Asks and denials never fold as failures (a denial is not projected);
     // the ws_ codes are the workspace check's, never a tool result.
     const failures = [...codes].filter(
@@ -972,6 +979,41 @@ describe("a folded failure says why (release review 2026-10-22)", () => {
     for (const lang of ["zh", "en"] as const)
       for (const code of failures)
         expect(fold(code, lang), `${lang}: ${code}`).not.toBe(bare[lang]);
+  });
+
+  it("the editor's own refusals say why, as its failed edit does", () => {
+    const editor = (code: string, lang: "zh" | "en") =>
+      foldedRunLine(
+        row({
+          label: "系统",
+          body: `↳ str_replace_editor failed: ${code}: x`,
+          digest: {
+            kind: "tool-fail",
+            tool: "str_replace_editor",
+            code,
+            message: "x",
+          },
+        }),
+        lang,
+      );
+    expect(editor("stale_view", "zh")).toBe(
+      "这一步没成（str_replace_editor）：文件看过之后又被改了",
+    );
+    expect(editor("view_required", "zh")).toBe(
+      "这一步没成（str_replace_editor）：插入之前没先看过文件",
+    );
+    expect(editor("create_exists", "zh")).toBe(
+      "这一步没成（str_replace_editor）：文件已经存在",
+    );
+    expect(editor("create_exists", "en")).toBe(
+      "A step failed (str_replace_editor): the file already exists",
+    );
+    expect(editor("stale_view", "en")).toBe(
+      "A step failed (str_replace_editor): the file changed after it was viewed",
+    );
+    expect(editor("view_required", "en")).toBe(
+      "A step failed (str_replace_editor): the file was not viewed before the insert",
+    );
   });
 });
 

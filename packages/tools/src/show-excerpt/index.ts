@@ -95,7 +95,7 @@ export function showExcerptTool(opts: ShowExcerptToolOpts = {}): HertaTool {
         description:
           "Show a verbatim slice of a workspace text file to the user and to Herta. " +
           "Use this when the task asks to SEE, quote, or read out file content — " +
-          "read_file alone is silent to both of them. `{path}` alone shows the " +
+          "the editor's `view` alone is silent to both of them. `{path}` alone shows the " +
           "head of the file; give `fromLine`/`toLine` for a range, or `match` " +
           "(a literal substring) with optional `context` lines each side. The " +
           "excerpt is taken from disk, so it is exact; do not retype content " +

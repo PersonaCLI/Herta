@@ -797,14 +797,15 @@ function segmentVerdict(
   };
 }
 
-/** The env-key rule is run_command's ALLOW-list (fail closed): a key that
- *  is not on it asks — the user sees `FOO=bar cmd` and decides. */
+/** The env-key rule is the command env ALLOW-list (`run-command/
+ *  env-guard.ts`, fail closed): a key that is not on it asks — the user
+ *  sees `FOO=bar cmd` and decides. */
 function envAsk(verb: string, key: string): Extract<Verdict, { kind: "ask" }> {
   return {
     kind: "ask",
     risk: "workspace_write",
     code: "command_ask_env",
-    reason: `${verb} the environment variable ${key} (not on the run_command env allow-list — review it)`,
+    reason: `${verb} the environment variable ${key} (not on the command env allow-list — review it)`,
   };
 }
 

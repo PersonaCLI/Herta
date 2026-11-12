@@ -35,7 +35,7 @@ describe("writeRunLog", () => {
     const path = await writeRunLog(ws.root, "sess-1", "call-1", payload());
     expect(path).toBe(".herta/logs/sess-1-call-1.log");
     const content = await readFile(join(ws.root, path), "utf-8");
-    expect(content).toContain("=== herta run_command log ===");
+    expect(content).toContain("=== herta command log ===");
     expect(content).toContain("sessionId: sess-1");
     expect(content).toContain("callId: call-1");
     expect(content).toContain('argv: ["echo","hi"]');
@@ -74,7 +74,7 @@ describe("writeRunLog", () => {
     );
     expect(path).toBe(".herta/logs/s-c.log");
     const content = await readFile(join(ws.root, path), "utf-8");
-    expect(content).toContain("=== herta run_command log ===");
+    expect(content).toContain("=== herta command log ===");
   });
 
   it("never lets a traversal callId escape .herta/logs (audit 2026-07-13 T2.4)", async () => {

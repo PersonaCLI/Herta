@@ -15,21 +15,25 @@ import {
  * transcript stores a preview + the path instead. The
  * `tool.call.finished` EVENT always carries the full result — the report
  * absorber, renderer projection, and evidence surfaces are untouched;
- * only what re-enters the model's prompt is bounded. read_file has a
- * read-only carve-out for `.herta/tool-results/` (path-safety.ts), so
- * the model can follow the pointer when the preview isn't enough.
+ * only what re-enters the model's prompt is bounded. The readers — the
+ * editor's `view`, and the shell's `cat` / `sed -n` — have a read-only
+ * carve-out for `.herta/tool-results/` (path-safety.ts), so the model can
+ * follow the pointer when the preview isn't enough.
  *
  * Thresholds: 24K chars (~6K tokens ASCII, ~24K tokens worst-case CJK)
- * catches the real offenders — git_diff can return up to 4 MiB, a
- * read_file of a big file up to ~10 MiB serialized — while normal edit
- * diffs and command tails pass through untouched. Preview 2K chars.
+ * catches the real offenders — a whole diff, a view of a long file —
+ * while normal edit diffs and command tails pass through untouched.
+ * Preview 2K chars.
  *
  * The file is written to be read a page at a time (review 2026-11-10,
  * second pass). It used to be the payload's JSON, which is one line however
- * long: `read_file` with an offset and a limit, as the note says to, got
- * the whole line back, that was oversized and persisted again, and the
- * model was left with the same preview. A file read whole past about 500
- * lines showed its first 40. See `pageable`.
+ * long: a paged read, as the note says to make, got the whole line back,
+ * that was oversized and persisted again, and the model was left with the
+ * same preview. A file read whole past about 500 lines showed its first
+ * 40. See `pageable`.
+ *
+ * The note names the tools the session has (ADR 0086). Until 2026-11-12 it
+ * said `read_file`, which 板砖 on bash never had.
  */
 export const PERSIST_RESULT_THRESHOLD_CHARS = 24_000;
 export const PERSIST_PREVIEW_CHARS = 2_000;
@@ -133,7 +137,7 @@ export function persistOversizedResult(opts: {
       originalChars: serialized.length,
       lines,
       preview: text.slice(0, PERSIST_PREVIEW_CHARS),
-      note: `full result too large for context — persisted to ${relPath} (${lines} lines); if the preview is not enough, read_file that path with an offset and a limit of ${PERSIST_PAGE_LINES} lines or fewer (a larger page is persisted again)`,
+      note: `full result too large for context — persisted to ${relPath} (${lines} lines); if the preview is not enough, view that path a page at a time: str_replace_editor view with a view_range of ${PERSIST_PAGE_LINES} lines or fewer (a larger page is persisted again)`,
     },
     ...(opts.result.error !== undefined ? { error: opts.result.error } : {}),
     ...(opts.result.suggestion !== undefined

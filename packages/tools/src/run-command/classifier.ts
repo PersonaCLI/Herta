@@ -610,9 +610,9 @@ function recursiveContentRead(argv: readonly string[]): Verdict | null {
     kind: "ask",
     risk: "workspace_read",
     code: "command_ask_recursive_read",
-    // The advice names what both contracts have. It said "prefer search_text",
-    // a tool the default contract does not mount (review 2026-11-10).
-    reason: `${a0} recursive/unfiltered content read bypasses the credential denylist — prefer git grep, which reads tracked files only, or name the files (search_text does this where the session has it)`,
+    // The advice names what the session has. It said "prefer search_text",
+    // a tool bash sessions never had (review 2026-11-10) and none has now.
+    reason: `${a0} recursive/unfiltered content read bypasses the credential denylist — prefer git grep, which reads tracked files only, or name the files`,
   };
 }
 

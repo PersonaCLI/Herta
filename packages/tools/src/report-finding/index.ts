@@ -218,7 +218,7 @@ function badCite(raw: string, why: string): ToolResult<ReportFindingData> {
       retryable: false,
     },
     suggestion:
-      "Cite only locations you actually read: `path:line` or `path:from-to` from a read_file / show_excerpt / search_text result. Fix the cite; do not drop the citation.",
+      "Cite only locations you actually read: `path:line` or `path:from-to` from a view, a show_excerpt or a grep result. Fix the cite; do not drop the citation.",
     summary: "invalid cite",
   };
 }

@@ -137,7 +137,7 @@ export async function checkReadPaths(
         return {
           ok: false,
           code: "path_denied",
-          message: `${describe(cand)} → the pattern matches more than ${MAX_GLOB_MATCHES} paths, too many to check; name the files, or search with git grep (search_text and glob do this where the session has them)`,
+          message: `${describe(cand)} → the pattern matches more than ${MAX_GLOB_MATCHES} paths, too many to check; name the files, or search with git grep`,
         };
       reals = [];
       for (const m of matches) {

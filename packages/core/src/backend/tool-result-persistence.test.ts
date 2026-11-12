@@ -75,7 +75,9 @@ describe("persistOversizedResult", () => {
     expect(data.persisted).toBe(true);
     expect(data.path).toBe(out.persistedPath);
     expect(data.preview.length).toBe(PERSIST_PREVIEW_CHARS);
-    expect(data.note).toContain("read_file");
+    // It names a tool the session has, and none it does not (ADR 0086).
+    expect(data.note).toContain("str_replace_editor view");
+    expect(data.note).not.toContain("read_file");
   });
 
   // Review 2026-11-10, second pass: the file was one line of JSON, so the
@@ -118,7 +120,7 @@ describe("persistOversizedResult", () => {
     const data = out.transcriptResult.data as { lines: number; note: string };
     expect(data.lines).toBe(onDisk.length - 1);
     expect(data.note).toContain(`${data.lines} lines`);
-    expect(data.note).toContain(`limit of ${PERSIST_PAGE_LINES} lines`);
+    expect(data.note).toContain(`view_range of ${PERSIST_PAGE_LINES} lines`);
     // A page of that size is not itself oversized.
     const page = onDisk
       .slice(from + 1, from + 1 + PERSIST_PAGE_LINES)

@@ -768,6 +768,11 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     file_exists: "文件已经存在",
     parent_invalid: "上级目录用不了",
     insert_out_of_range: "插入的位置超出了文件",
+    // The editor's own three, which its rule hands to `deny(` (2026-11-12:
+    // they folded with no cause while the deleted editors' did not).
+    view_required: "插入之前没先看过文件",
+    stale_view: "文件看过之后又被改了",
+    create_exists: "文件已经存在",
     path_not_absolute: "路径不是绝对路径",
     write_failed: "写不进去",
     unavailable: "暂时用不了",
@@ -831,6 +836,9 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     file_exists: "the file already exists",
     parent_invalid: "the folder above it is not usable",
     insert_out_of_range: "the insert point is past the end of the file",
+    view_required: "the file was not viewed before the insert",
+    stale_view: "the file changed after it was viewed",
+    create_exists: "the file already exists",
     path_not_absolute: "the path was not absolute",
     write_failed: "could not write it",
     unavailable: "unavailable for now",

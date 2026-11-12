@@ -259,7 +259,7 @@ export function digestDocumentTool(opts: DigestDocumentToolOpts): HertaTool {
             retryable: false,
           },
           suggestion:
-            "For a repo file, search it (grep / search_text) or read the range you need.",
+            "For a repo file, search it (git grep / rg) or view the range you need.",
           summary: `not an attachment: ${rel}`,
         };
       }

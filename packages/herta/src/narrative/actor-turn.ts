@@ -45,6 +45,7 @@ import {
   parseHertaBlock,
   stripBanzhuanTrigger,
 } from "./parse.js";
+import { ACTOR_WINDOW_TOKENS, assertPromptFits } from "./prompt-size.js";
 import { compactThreshold } from "./session-recap.js";
 import {
   type PreparedRecap,
@@ -560,12 +561,17 @@ export async function runActorCompletionTurn(
 ): Promise<ActorTurnState> {
   const sizes: number[] = [];
   const ownHook = deps.onCompletionPrompt;
+  const window = deps.promptWindowTokens ?? ACTOR_WINDOW_TOKENS;
   try {
     return await runTurn(state, userText, {
       ...deps,
       onCompletionPrompt: (prompt) => {
-        sizes.push(estimatePromptTokens(prompt));
+        const size = estimatePromptTokens(prompt);
+        sizes.push(size);
         ownHook?.(prompt);
+        // The hook fires before the request leaves: a prompt the window
+        // cannot hold ends the turn here (`prompt-size.ts`).
+        assertPromptFits(size, window);
       },
     });
   } finally {

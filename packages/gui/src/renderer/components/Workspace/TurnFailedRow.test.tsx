@@ -27,6 +27,12 @@ describe("turnFailedMessageKey", () => {
     );
   });
 
+  it("a message too large for the model says so, and not `connection lost` (review 2026-11-10)", () => {
+    expect(turnFailedMessageKey(null, "prompt-too-large")).toBe(
+      "workspace.turnFailedTooLarge",
+    );
+  });
+
   it("other provider codes fall through to the status mapping", () => {
     expect(turnFailedMessageKey(402, "http")).toBe("workspace.turnFailed402");
     expect(turnFailedMessageKey(null, "network")).toBe("workspace.turnFailed");

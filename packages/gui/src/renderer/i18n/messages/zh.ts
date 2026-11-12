@@ -453,6 +453,8 @@ export const zh = {
   "workspace.turnFailed503": "DeepSeek 服务器繁忙——请稍后重试。",
   "workspace.turnFailedTls":
     "到 DeepSeek 的加密连接被拒绝，通常是公司代理或 VPN 拦截——重发无效，请检查网络设置。",
+  "workspace.turnFailedTooLarge":
+    "这条消息太长，模型一次读不下，没有发出——请撤回后分段发送，或作为文件附上。",
   "workspace.sending": "消息正在穿越银河",
   "workspace.gammaStorm": "消息受到伽马风暴干扰…",
   "workspace.gammaStormLong": "干扰还没平息，消息仍在路上…",

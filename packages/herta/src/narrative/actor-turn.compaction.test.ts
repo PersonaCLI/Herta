@@ -13,6 +13,7 @@ import {
 } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { type ActorTurnDeps, runActorCompletionTurn } from "./actor-turn.js";
+import { ACTOR_WINDOW_TOKENS, PromptTooLargeError } from "./prompt-size.js";
 import {
   type CompactionConfig,
   compactThreshold,
@@ -243,5 +244,49 @@ describe("runActorCompletionTurn — the turn's note for the usage log (long-run
     } finally {
       setUsageNoteSink(undefined);
     }
+  });
+});
+
+describe("runActorCompletionTurn — a prompt the window cannot hold (review 2026-11-10, second pass)", () => {
+  it("is not sent: the turn ends with an error the notice has words for", async () => {
+    const { provider, prompts } = mkProvider();
+    // A window this small stands in for a paste larger than the real one.
+    const deps = { ...mkDeps(provider), promptWindowTokens: 400 };
+    const notes: UsageNote[] = [];
+    setUsageNoteSink((n) => notes.push(n));
+    try {
+      const paste = "这一段很长。".repeat(400);
+      const turn = runActorCompletionTurn(
+        { record: priorRecord() },
+        paste,
+        deps,
+      );
+      await expect(turn).rejects.toBeInstanceOf(PromptTooLargeError);
+      await expect(turn).rejects.toMatchObject({
+        name: "PromptTooLargeError",
+        code: "prompt-too-large",
+        windowTokens: 400,
+      });
+      // Nothing left for the provider.
+      expect(prompts).toEqual([]);
+      // The turn still reports what it measured.
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatchObject({ kind: "actor-turn", calls: 1 });
+    } finally {
+      setUsageNoteSink(undefined);
+    }
+  });
+
+  it("is measured against the model's window, not the recap's knob", async () => {
+    // The recap's `contextWindowTokens` says when to compact; a host that
+    // lowers it to compact sooner must not have its turns refused.
+    const { provider, prompts } = mkProvider();
+    await runActorCompletionTurn(
+      { record: priorRecord() },
+      "现在呢？",
+      mkDeps(provider, mkRecapRuntime()),
+    );
+    expect(prompts).toHaveLength(2);
+    expect(ACTOR_WINDOW_TOKENS).toBe(1_000_000);
   });
 });

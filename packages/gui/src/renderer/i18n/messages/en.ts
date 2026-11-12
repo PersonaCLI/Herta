@@ -479,6 +479,8 @@ export const en = {
     "DeepSeek servers are busy — please try again later.",
   "workspace.turnFailedTls":
     "The secure connection to DeepSeek was refused — usually a company proxy or VPN. Resending will not help; check your network settings.",
+  "workspace.turnFailedTooLarge":
+    "That message is too long for the model to read at once, so it was not sent. Rewind it, then send it in parts or attach it as a file.",
   "workspace.sending": "Message is crossing the galaxy…",
   "workspace.gammaStorm": "Message caught in a gamma storm…",
   "workspace.gammaStormLong":

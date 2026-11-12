@@ -20,6 +20,12 @@ export function turnFailedMessageKey(
   // advice — the same request over the same untrusted proxy fails identically
   // every time. The user has to change a machine setting (audit S3).
   if (providerCode === "network-tls") return "workspace.turnFailedTls";
+  // Never sent: the message with its conversation is more than the model's
+  // window holds, and resending the same one changes nothing (review
+  // 2026-11-10, second pass).
+  if (providerCode === "prompt-too-large") {
+    return "workspace.turnFailedTooLarge";
+  }
   switch (status) {
     case 401:
       return "workspace.turnFailed401";

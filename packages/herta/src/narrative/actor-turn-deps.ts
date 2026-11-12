@@ -175,9 +175,15 @@ export interface ActorTurnDeps {
    * Fires with every completion prompt the turn asks for — each thought and
    * speech (the phase-2 funnel, an adopted speculative thought included) and
    * each beat. `runActorCompletionTurn` sets it to measure the turn for the
-   * usage log (long-run study item 6); a caller's own hook still fires.
+   * usage log (long-run study item 6); a caller's own hook still fires. It
+   * fires before the request leaves, and the turn's own throws there for a
+   * prompt larger than the model's window (`prompt-size.ts`).
    */
   readonly onCompletionPrompt?: (prompt: string) => void;
+  /** The most a completion prompt may estimate to. Absent, the model's own
+   *  window (`ACTOR_WINDOW_TOKENS`); a test sets a small one. Not the
+   *  recap's `contextWindowTokens`: that one is a knob for when to compact. */
+  readonly promptWindowTokens?: number;
   /**
    * The intent router's state (Slice 13). The actor runs in two-phase
    * mood-routing mode: every iteration always thinks first (（我 想）), then

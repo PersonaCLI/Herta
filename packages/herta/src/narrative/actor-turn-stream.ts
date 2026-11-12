@@ -188,9 +188,14 @@ const PRIMARY_COMPLETION_MAX_TOKENS = 2048;
  * times as long before it is stopped, which is the price; past that a
  * speech is cut where it stands, as before. A thought is not continued:
  * nobody is waiting to read its end, and she speaks next either way. Nor is
- * a beat or an answer during a run, whose caps are short on purpose.
+ * a beat, whose cap is short on purpose.
+ *
+ * An answer during a run is (owner 2026-11-12: "Answers during a run"). It
+ * is a reply to the user like any other, and one cut at its own cap (600)
+ * was committed as whole in the same way. The same number of times, at its
+ * own cap, in `streamInRunSpeech`.
  */
-const MAX_SPEECH_CONTINUATIONS = 2;
+export const MAX_SPEECH_CONTINUATIONS = 2;
 
 /**
  * Index of the FIRST complete stop marker in `buffered`, or `buffered.length`

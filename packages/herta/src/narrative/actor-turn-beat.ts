@@ -11,6 +11,7 @@ import { judgeTriggerAndNeutralize } from "./actor-turn-judges.js";
 import { resolveHints } from "./actor-turn-prompts.js";
 import {
   firstStopIndexAtLineStart,
+  MAX_SPEECH_CONTINUATIONS,
   STOP_CLOSER_USER,
   STOP_OPENER_USER,
   STOP_PAGE_HEADING,
@@ -164,7 +165,15 @@ export function makeFireAnswer(
     // The beat's dump lane: an in-run completion, told apart by its prompt.
     deps.onPrompt?.("beat", prompt);
     deps.onCompletionPrompt?.(prompt);
-    const raw = await streamInRunSpeech(deps, prompt, abortSignal, 600);
+    // A reply, so one cut at its cap is continued as her speech is (owner
+    // 2026-11-12); a beat is not.
+    const raw = await streamInRunSpeech(
+      deps,
+      prompt,
+      abortSignal,
+      600,
+      MAX_SPEECH_CONTINUATIONS,
+    );
     if (raw === null) return null;
     let text = sanitizeActorText(raw, { role: "speech" });
     let steered = "";
@@ -227,12 +236,18 @@ export function makeFireAnswer(
  * One in-run speech, streamed: a beat's or an answer's. Returns the text to
  * commit (trimmed, or raw when trimming would empty what was already shown),
  * or null when nothing should be committed. Every stream it opens it closes.
+ *
+ * `continuations`: how many times a speech cut at `maxTokens` is written on
+ * from its last character — the block so far goes onto the end of the prompt
+ * and the next completion continues it, as the main loop does for her speech
+ * (`MAX_SPEECH_CONTINUATIONS`). Zero for a beat.
  */
 async function streamInRunSpeech(
   deps: ActorTurnDeps,
   beatPrompt: string,
   abortSignal: AbortSignal,
   maxTokens: number,
+  continuations = 0,
 ): Promise<string | null> {
   let beatBuffered = "";
   let beatEmittedTail = 0;
@@ -248,61 +263,90 @@ async function streamInRunSpeech(
   ] as const;
 
   try {
-    for await (const ev of deps.provider.streamCompletion(
-      {
-        model: deps.model,
-        prompt: beatPrompt,
-        // Beats are short reactive utterances; they don't carry
-        // inline tool calls in practice. If a beat ever DID emit one
-        // we'd lack the parallel-supervisor coordination that the
-        // main loop has — keep beats simple, no mid-stream watcher.
-        // Include the user envelope's tags so a runaway beat that
-        // hallucinates the user's next message (`（开拓者 说）...`, or
-        // the reply without its open tag and then `（/开拓者 说）`)
-        // halts immediately, same as the main-loop streams.
-        stop: [...beatStops],
-        // Backstop, not the primary terminator: the `（/我 说）` close marker
-        // (a stop sequence) ends a well-behaved beat well under this cap — a
-        // one/two-line Chinese reaction + marker is ~15-40 tokens. The cap
-        // only bites a runaway beat that never closes. Raised 100 → 220
-        // (2026-06-28) so a slightly longer beat (e.g. a fuller take on a
-        // diff) finishes its sentence AND the close marker instead of being
-        // cut at finish_reason=length and leaking a dangling `（/`
-        // (the dangling-prefix strip below still cleans that residual case).
-        // History: 60 was too tight (truncated the marker), then 100. Kept as
-        // a guard so a misbehaving beat can't run to DeepSeek's ~4096 default
-        // mid-backend-work — beats stay short by design, not just by hint.
-        // An answer to talk is a reply, not a reaction: 600.
-        maxTokens,
-      },
-      abortSignal,
-    )) {
-      if (ev.type === "text-delta") {
-        beatBuffered += ev.text;
-        if (deps.sink !== undefined) {
-          // firstStopIndex caps the emit at any COMPLETE stop marker a
-          // misbehaving provider streamed past (fence-fuzz, 2026-07-09).
-          const safeEnd = Math.min(
-            safeEmitBoundaryAtLineStart(beatBuffered, beatStops),
-            firstStopIndexAtLineStart(beatBuffered, beatStops),
-          );
-          if (safeEnd > beatEmittedTail) {
-            // Defer beginHertaStream until just before the first emit so
-            // that if no tokens are ever safe to emit we never open the
-            // stream and have nothing to balance with endHertaStream.
-            if (!beginCalled) {
-              deps.sink.beginHertaStream("speech");
-              beginCalled = true;
-            }
-            deps.sink.streamHertaToken(
-              beatBuffered.slice(beatEmittedTail, safeEnd),
+    for (let pass = 0; ; pass += 1) {
+      let cutAtCap = false;
+      for await (const ev of deps.provider.streamCompletion(
+        {
+          model: deps.model,
+          // On a later pass the speech so far is the end of the prompt.
+          prompt: `${beatPrompt}${beatBuffered}`,
+          // Beats are short reactive utterances; they don't carry
+          // inline tool calls in practice. If a beat ever DID emit one
+          // we'd lack the parallel-supervisor coordination that the
+          // main loop has — keep beats simple, no mid-stream watcher.
+          // Include the user envelope's tags so a runaway beat that
+          // hallucinates the user's next message (`（开拓者 说）...`, or
+          // the reply without its open tag and then `（/开拓者 说）`)
+          // halts immediately, same as the main-loop streams.
+          stop: [...beatStops],
+          // Backstop, not the primary terminator: the `（/我 说）` close marker
+          // (a stop sequence) ends a well-behaved beat well under this cap — a
+          // one/two-line Chinese reaction + marker is ~15-40 tokens. The cap
+          // only bites a runaway beat that never closes. Raised 100 → 220
+          // (2026-06-28) so a slightly longer beat (e.g. a fuller take on a
+          // diff) finishes its sentence AND the close marker instead of being
+          // cut at finish_reason=length and leaking a dangling `（/`
+          // (the dangling-prefix strip below still cleans that residual case).
+          // History: 60 was too tight (truncated the marker), then 100. Kept as
+          // a guard so a misbehaving beat can't run to DeepSeek's ~4096 default
+          // mid-backend-work — beats stay short by design, not just by hint.
+          // An answer to talk is a reply, not a reaction: 600.
+          maxTokens,
+        },
+        abortSignal,
+      )) {
+        if (ev.type === "text-delta") {
+          beatBuffered += ev.text;
+          if (deps.sink !== undefined) {
+            // firstStopIndex caps the emit at any COMPLETE stop marker a
+            // misbehaving provider streamed past (fence-fuzz, 2026-07-09).
+            const safeEnd = Math.min(
+              safeEmitBoundaryAtLineStart(beatBuffered, beatStops),
+              firstStopIndexAtLineStart(beatBuffered, beatStops),
             );
-            beatEmittedTail = safeEnd;
+            if (safeEnd > beatEmittedTail) {
+              // Defer beginHertaStream until just before the first emit so
+              // that if no tokens are ever safe to emit we never open the
+              // stream and have nothing to balance with endHertaStream.
+              if (!beginCalled) {
+                deps.sink.beginHertaStream("speech");
+                beginCalled = true;
+              }
+              deps.sink.streamHertaToken(
+                beatBuffered.slice(beatEmittedTail, safeEnd),
+              );
+              beatEmittedTail = safeEnd;
+            }
           }
+          // A continuation that has closed the block is done: the provider
+          // stops at a marker it writes whole, and cannot see one whose start
+          // was in the prompt.
+          if (
+            pass > 0 &&
+            firstStopIndexAtLineStart(beatBuffered, beatStops) <
+              beatBuffered.length
+          ) {
+            break;
+          }
+        } else if (ev.type === "finish") {
+          cutAtCap = ev.reason === "length";
+          break;
         }
-      } else if (ev.type === "finish") {
+      }
+      if (!cutAtCap || pass >= continuations) break;
+      // Closed already: the cap caught only what a provider wrote past it.
+      if (
+        firstStopIndexAtLineStart(beatBuffered, beatStops) < beatBuffered.length
+      ) {
         break;
       }
+      // A marker the cap cut in half is written again from its start, so the
+      // provider sees it whole and stops there. None of it was on screen: the
+      // emit above never passes this boundary.
+      beatBuffered = beatBuffered.slice(
+        0,
+        safeEmitBoundaryAtLineStart(beatBuffered, beatStops),
+      );
     }
   } catch (err) {
     // Beat stream died mid-flight (interrupt, provider error). If nothing

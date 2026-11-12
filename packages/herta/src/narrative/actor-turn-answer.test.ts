@@ -14,7 +14,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_ACTOR_HINTS } from "./actor-hints.js";
 import { type ActorTurnDeps, runActorCompletionTurn } from "./actor-turn.js";
-import { makeFireAnswer } from "./actor-turn-beat.js";
+import { makeFireAnswer, makeFireBeat } from "./actor-turn-beat.js";
 import { COMPACTION_TEXT } from "./compaction-text.js";
 import {
   banzhuanSentences,
@@ -338,6 +338,142 @@ describe("makeFireAnswer — her answer to talk during a run", () => {
       const block = await answer(liveRecord, stop.signal, () => true);
       expect(asked()).toBe(0);
       expect(block?.steered).toBe("@板砖 先补测试。");
+    });
+  });
+});
+
+// Owner 2026-11-12. Her speech cut at its cap has been continued since
+// 2026-11-11; an answer during a run, cut at its own cap (600), was still
+// committed as a whole one.
+describe("an answer during a run that is cut at its cap is continued", () => {
+  const cut = (text: string): CompletionEvent[] => [
+    { type: "text-delta", text },
+    { type: "finish", reason: "length" },
+  ];
+  /** Every request, with the script each one is answered from. */
+  function recording(scripts: CompletionEvent[][]): {
+    provider: CompletionProviderAdapter;
+    requests: CompletionRequest[];
+  } {
+    const requests: CompletionRequest[] = [];
+    let i = 0;
+    return {
+      requests,
+      provider: {
+        streamCompletion(req: CompletionRequest) {
+          requests.push(req);
+          return streamOf(scripts[i++] ?? [{ type: "finish", reason: "stop" }]);
+        },
+      },
+    };
+  }
+  const fire = (
+    p: CompletionProviderAdapter,
+    extra: Partial<ActorTurnDeps> = {},
+  ) =>
+    makeFireAnswer(
+      deps(p, extra),
+      0,
+      undefined,
+      0,
+    )(liveRecord, new AbortController().signal, () => true);
+
+  it("the answer so far goes onto the end of the prompt, and the next completion writes on from its last character", async () => {
+    const { provider: p, requests } = recording([
+      cut("周六下午三点，在二号会议室。议程有三项：第一项是"),
+      says("预算，第二项是排期。（/我 说）"),
+    ]);
+    const block = await fire(p);
+    expect(block).toEqual({
+      kind: "herta",
+      surface: "speech",
+      text: "周六下午三点，在二号会议室。议程有三项：第一项是预算，第二项是排期。",
+      duringRun: true,
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.prompt).toBe(
+      `${requests[0]?.prompt}周六下午三点，在二号会议室。议程有三项：第一项是`,
+    );
+    // Each pass at the answer's own cap, not the speech's.
+    expect(requests.map((r) => r.maxTokens)).toEqual([600, 600]);
+  });
+
+  it("what is on screen is what is committed: one stream, the two halves in order", async () => {
+    const shown: string[] = [];
+    let begun = 0;
+    let ended = 0;
+    const sink = {
+      beginHertaStream: () => {
+        begun += 1;
+      },
+      streamHertaToken: (t: string) => {
+        shown.push(t);
+      },
+      endHertaStream: () => {
+        ended += 1;
+      },
+      flushBlocks: () => {},
+    } as unknown as NonNullable<ActorTurnDeps["sink"]>;
+    const { provider: p } = recording([
+      cut("三点，在二号"),
+      says("会议室。（/我 说）"),
+    ]);
+    const block = await fire(p, { sink });
+    expect(block?.text).toBe("三点，在二号会议室。");
+    expect(shown.join("")).toBe("三点，在二号会议室。");
+    expect(begun).toBe(1);
+    expect(ended).toBe(1);
+  });
+
+  it("twice at most: an answer still cut after that is committed where it stands", async () => {
+    const { provider: p, requests } = recording([
+      cut("一"),
+      cut("二"),
+      cut("三"),
+      says("四（/我 说）"),
+    ]);
+    const block = await fire(p);
+    expect(requests).toHaveLength(3);
+    expect(block?.text).toBe("一二三");
+  });
+
+  it("a close tag the cap cut in half is written again whole, and none of it is committed", async () => {
+    const { provider: p, requests } = recording([
+      cut("三点。（/我"),
+      says("（/我 说）"),
+    ]);
+    const block = await fire(p);
+    expect(block?.text).toBe("三点。");
+    // The half tag is not in the second prompt: the provider sees the tag
+    // whole when it writes it, and stops there.
+    expect(requests[1]?.prompt.endsWith("三点。")).toBe(true);
+  });
+
+  it("an answer that closed before its cap is not continued", async () => {
+    const { provider: p, requests } = recording([
+      says("三点。（/我 说）"),
+      says("不该有这一段。（/我 说）"),
+    ]);
+    expect((await fire(p))?.text).toBe("三点。");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("a beat cut at its cap is not continued: its cap is short on purpose", async () => {
+    const { provider: p, requests } = recording([
+      cut("测试挂了一个，是登录那条"),
+      says("，等它修。（/我 说）"),
+    ]);
+    const beat = makeFireBeat(deps(p), 0, undefined, 0);
+    const block = await beat(
+      liveRecord,
+      { signature: "verification.finished" },
+      new AbortController().signal,
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.maxTokens).toBe(220);
+    expect(block).toMatchObject({
+      kind: "herta",
+      text: "测试挂了一个，是登录那条",
     });
   });
 });

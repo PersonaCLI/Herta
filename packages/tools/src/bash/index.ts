@@ -116,12 +116,11 @@ export function shellWorkspaceHint(
 /**
  * `bash(command)` — the minimal contract's shell (ADR 0040).
  *
- * One PersistentShell per brief, registered as an INTERNAL background entry
- * so the runtime's brief-end `stopAll()` reaps it. Output is redacted,
- * persisted to `.herta/logs` like run_command's, and returned to the model
- * as plain text (`modelText`) with `[exit code: N]` on non-zero, while the
- * harness gets RunCommandData (exit, duration, tail, testRun) so the record
- * shows the same rows a run_command would.
+ * One PersistentShell per brief, registered with the brief's
+ * BackgroundHost so the runtime's brief-end `stopAll()` reaps it. Output is
+ * redacted, persisted to `.herta/logs`, and returned to the model as plain
+ * text (`modelText`) with `[exit code: N]` on non-zero, while the harness
+ * gets RunCommandData (exit, duration, tail, testRun) for the record's rows.
  */
 /** The first part of a shell line that IS a test runner (`cd x && npm
  *  test` → `npm test`), or null. One walk for both readers — the result's
@@ -183,7 +182,7 @@ export function bashTool(opts: BashToolOpts): HertaTool {
       }
       const command = parsed.data.command;
 
-      let shell = ctx.bg.getInternal(SHELL_BG_ID);
+      let shell = ctx.bg.get(SHELL_BG_ID);
       if (!(shell instanceof PersistentShell)) {
         // The shell lives for the brief; the run's journal learns each bash
         // it starts (ADR 0071 §1.6).

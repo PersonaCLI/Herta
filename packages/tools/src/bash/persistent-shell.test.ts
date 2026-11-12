@@ -405,8 +405,7 @@ d("PersistentShell (real bash)", () => {
     }
   }, 90_000);
 
-  it("registers as an INTERNAL background process and kill() is idempotent", async () => {
-    expect(shell.internal).toBe(true);
+  it("registers under its fixed id and kill() is idempotent", async () => {
     expect(shell.id).toBe("shell");
     await shell.run("true", { timeoutMs: 10_000 });
     expect(shell.isRunning()).toBe(true);

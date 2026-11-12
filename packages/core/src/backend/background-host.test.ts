@@ -23,16 +23,12 @@ function fakeProc(
 }
 
 describe("BackgroundHost", () => {
-  it("mints unique ids and registers/gets by id", () => {
+  it("registers an entry and hands it back to its owner by id", () => {
     const h = new BackgroundHost();
-    const a = h.nextId();
-    const b = h.nextId();
-    expect(a).not.toBe(b);
-    const p = fakeProc(a);
+    const p = fakeProc("shell");
     h.register(p);
-    expect(h.get(a)).toBe(p);
+    expect(h.get("shell")).toBe(p);
     expect(h.get("nope")).toBeUndefined();
-    expect(h.list()).toHaveLength(1);
   });
 
   it("rejects duplicate ids", () => {
@@ -41,35 +37,18 @@ describe("BackgroundHost", () => {
     expect(() => h.register(fakeProc("x"))).toThrow(/duplicate/);
   });
 
-  it("stopAll kills only still-running processes and returns the count", async () => {
+  it("stopAll kills only the entries that may still have something running", async () => {
     const h = new BackgroundHost();
     const running = fakeProc("r", true);
     const dead = fakeProc("d", false);
     h.register(running);
     h.register(dead);
-    const n = await h.stopAll();
-    expect(n).toBe(1);
+    await h.stopAll();
     expect(running.killed).toBe(true);
     expect(dead.killed).toBe(false);
   });
 
-  it("internal entries (the minimal contract's shell, ADR 0040) are reaped by stopAll but never listed, addressed, or counted", async () => {
-    const h = new BackgroundHost();
-    const shell = Object.assign(fakeProc("shell-1"), { internal: true });
-    const userProc = fakeProc("bg-1");
-    h.register(shell);
-    h.register(userProc);
-    expect(h.list().map((p) => p.id)).toEqual(["bg-1"]);
-    expect(h.get("shell-1")).toBeUndefined();
-    expect(h.getInternal("shell-1")).toBe(shell);
-    const n = await h.stopAll();
-    expect(shell.killed).toBe(true);
-    expect(userProc.killed).toBe(true);
-    // Only the model-started process is "left running at brief end".
-    expect(n).toBe(1);
-  });
-
-  it("stopAll tolerates a kill that rejects (allSettled)", async () => {
+  it("stopAll tolerates a kill that rejects (allSettled), and still kills the rest", async () => {
     const h = new BackgroundHost();
     h.register({
       id: "boom",
@@ -79,6 +58,16 @@ describe("BackgroundHost", () => {
         throw new Error("kill failed");
       },
     });
-    await expect(h.stopAll()).resolves.toBe(1);
+    const other = fakeProc("other");
+    h.register(other);
+    await expect(h.stopAll()).resolves.toBeUndefined();
+    expect(other.killed).toBe(true);
+  });
+
+  it("has no model-facing half: no minted ids, no listing, nothing counted (ADR 0086)", () => {
+    const h = new BackgroundHost() as unknown as Record<string, unknown>;
+    expect(h.nextId).toBeUndefined();
+    expect(h.list).toBeUndefined();
+    expect(h.getInternal).toBeUndefined();
   });
 });

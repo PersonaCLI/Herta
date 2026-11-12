@@ -102,13 +102,12 @@ d("bash tool (real bash)", () => {
     expect(data.argv).toEqual(["cat a.txt; echo done"]);
     expect(existsSync(join(ws.root, data.logPath))).toBe(true);
     expect(r.summary).toMatch(/^ran `cat a\.txt; echo done` \(exit 0/);
-    // The shell is an internal background entry: reaped by stopAll, invisible to the model.
-    expect(ctx.bg.getInternal(SHELL_BG_ID)).toBeInstanceOf(PersistentShell);
-    expect(ctx.bg.list()).toHaveLength(0);
-    expect(await ctx.bg.stopAll()).toBe(0);
-    expect(
-      (ctx.bg.getInternal(SHELL_BG_ID) as PersistentShell).isRunning(),
-    ).toBe(false);
+    // The shell is the brief's one kept process: reaped by stopAll.
+    expect(ctx.bg.get(SHELL_BG_ID)).toBeInstanceOf(PersistentShell);
+    await ctx.bg.stopAll();
+    expect((ctx.bg.get(SHELL_BG_ID) as PersistentShell).isRunning()).toBe(
+      false,
+    );
   });
 
   it("streams the command's output to the live view — whole lines, redacted, no protocol lines — on the first call of a fresh shell and after (ADR 0073)", async () => {
@@ -582,7 +581,7 @@ d("bash tool (real bash)", () => {
     );
     expect(r.ok).toBe(false);
     expect(r.modelText).toContain("Parameter `command` is required");
-    expect(ctx.bg.getInternal(SHELL_BG_ID)).toBeUndefined();
+    expect(ctx.bg.get(SHELL_BG_ID)).toBeUndefined();
   });
 });
 

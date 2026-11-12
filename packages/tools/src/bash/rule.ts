@@ -57,7 +57,7 @@ export function makeBashRule(deps: BashRuleDeps): PermissionRule {
         reason: formatInputIssues(parsed.error),
       };
     }
-    const shell = ctx.bg.getInternal(SHELL_BG_ID);
+    const shell = ctx.bg.get(SHELL_BG_ID);
     const cwd =
       shell instanceof PersistentShell ? shell.cwd : ctx.workspaceRoot;
     const { verdict, codes, steps } = classifyShellCommandDetailed(

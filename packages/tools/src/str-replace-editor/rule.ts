@@ -70,7 +70,7 @@ export function makeStrReplaceEditorRule(
       return { kind: "deny", code: "invalid_input", reason: message };
     }
     const input = parsed.data;
-    const shell = ctx.bg.getInternal(SHELL_BG_ID);
+    const shell = ctx.bg.get(SHELL_BG_ID);
     const wsShell =
       shell instanceof PersistentShell
         ? shell.workspaceShellPath

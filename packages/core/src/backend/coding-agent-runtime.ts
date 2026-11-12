@@ -741,7 +741,6 @@ export class CodingAgentRuntime {
         ...(undoSegment !== undefined ? { undo: undoSegment.undo } : {}),
       };
 
-      let stoppedBackground = 0;
       try {
         for await (const event of runBackendTurnLoop(
           turnDepsWithJournal,
@@ -769,16 +768,11 @@ export class CodingAgentRuntime {
         }
       } finally {
         unsubscribe();
-        // No unmanaged backgrounding (ADR 0025 slice 4): whatever the model
-        // left running dies with the brief — on success, failure, AND abort
-        // (this finally runs when the loop throws).
-        stoppedBackground = await bg.stopAll();
-      }
-      if (stoppedBackground > 0) {
-        builder.addResidualRisk(
-          `${stoppedBackground} background command(s) still running at brief end were stopped`,
-          { leading: true },
-        );
+        // No unmanaged backgrounding (ADR 0025 slice 4): the shell, and
+        // whatever the model left running in it, dies with the brief — on
+        // success, failure, AND abort (this finally runs when the loop
+        // throws). Routine: it is not a risk on the report (ADR 0086).
+        await bg.stopAll();
       }
 
       // Attribute anything the editors did not report — shell writes, moves,

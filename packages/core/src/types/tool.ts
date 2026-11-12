@@ -93,7 +93,8 @@ export interface ToolContext {
   signal: AbortSignal;
   workspaceRoot: string;
   reads: ReadLedger;
-  /** Per-brief managed background commands (ADR 0025 slice 4). */
+  /** The processes kept for this brief and ended with it: bash's shell
+   *  (ADR 0040). */
   bg: BackgroundHost;
   bus: EventBus<AgentEvent>;
   memory: MemoryManager;

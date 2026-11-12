@@ -37,8 +37,8 @@ import { type ShellPaths, shellPathsFor } from "./shell-paths.js";
  *
  * Timeout kills the whole process tree and the next call respawns a fresh
  * shell (state lost — the model is told). Registered with the brief's
- * BackgroundHost as an INTERNAL entry, so `stopAll()` at brief end reaps it
- * like any background process without reporting it as one.
+ * BackgroundHost, so `stopAll()` at brief end reaps it; that is routine and
+ * reported nowhere.
  */
 export interface ShellRunResult {
   /** Merged stdout+stderr, `\r\n` normalized, marker stripped, capped. */
@@ -83,7 +83,7 @@ export interface PersistentShellOpts {
   onShellPid?: (pid: number, group: MsysGroup & { ps: string }) => void;
 }
 
-/** BackgroundHost id under which the shell registers (internal). */
+/** BackgroundHost id under which the shell registers. */
 export const SHELL_BG_ID = "shell";
 
 const DEFAULT_MAX_OUTPUT = 1_048_576;
@@ -193,7 +193,6 @@ export function feedLiveLines(
 
 export class PersistentShell implements BackgroundProcess {
   readonly id = SHELL_BG_ID;
-  readonly internal = true;
   readonly argv: readonly string[];
   readonly paths: ShellPaths;
   /** The shell's own spelling of the workspace (what `pwd` prints there). */
@@ -291,8 +290,8 @@ export class PersistentShell implements BackgroundProcess {
     if (this.shellAlive()) return true;
     this.pruneGroups();
     // Windows: whether an exited shell's MSYS group still has members takes
-    // a `ps` to know; answer yes and let `kill` find out (the shell is an
-    // internal entry, so a yes costs no report line).
+    // a `ps` to know; answer yes and let `kill` find out (reaping the
+    // shell is reported nowhere, so a yes costs nothing).
     return this.exitedGroups.size > 0 || this.exitedMsysGroups.length > 0;
   }
 

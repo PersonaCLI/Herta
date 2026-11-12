@@ -123,6 +123,8 @@ describe("RealDeepSeekClient", () => {
         completionTokens: 900,
         cacheHitTokens: 3000,
         cacheMissTokens: 1000,
+        // How long the call took rides the same line (review 2026-11-10).
+        ms: expect.any(Number),
       },
       {
         model: "deepseek-v4-pro",
@@ -130,6 +132,7 @@ describe("RealDeepSeekClient", () => {
         completionTokens: 5,
         cacheHitTokens: null,
         cacheMissTokens: null,
+        ms: expect.any(Number),
       },
     ]);
   });
@@ -330,5 +333,150 @@ describe("RealDeepSeekClient.chatJson — reasoning_effort", () => {
     }).chatJson({ systemPrompt: "s", userPayload: "u", model: "m" });
     expect(sentBody.reasoning_effort).toBeUndefined();
     expect(sentBody.thinking).toBeUndefined();
+  });
+});
+
+describe("RealDeepSeekClient — a call can be cut (review 2026-11-10, second pass)", () => {
+  const ask = { systemPrompt: "s", userPayload: "{}", model: "deepseek-chat" };
+  const answer = (): Response =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "{}" } }],
+        model: "deepseek-chat",
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  /** A request that never answers until its signal cuts it. */
+  const hanging = (seen: { calls: number }): typeof fetch =>
+    ((_url: unknown, init?: RequestInit) => {
+      seen.calls += 1;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(Object.assign(new Error("cut"), { name: "AbortError" })),
+        );
+      });
+    }) as unknown as typeof fetch;
+
+  it("the client's signal cuts the request in flight, and it is not tried again", async () => {
+    const seen = { calls: 0 };
+    const cut = new AbortController();
+    const failures: unknown[] = [];
+    const client = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: hanging(seen),
+      maxRetries: 3,
+      backoffMs: 1,
+      signal: cut.signal,
+      onFailure: (f) => failures.push(f),
+    });
+    const call = client.chatJson(ask);
+    await new Promise((r) => setTimeout(r, 5));
+    cut.abort();
+    await expect(call).rejects.toMatchObject({ name: "AbortError" });
+    expect(seen.calls).toBe(1);
+    expect(failures).toEqual([
+      { model: "deepseek-chat", outcome: "aborted", ms: expect.any(Number) },
+    ]);
+    // A client already cut makes no request at all.
+    await expect(client.chatJson(ask)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(seen.calls).toBe(1);
+  });
+
+  it("the signal ends the wait between two attempts at once", async () => {
+    const cut = new AbortController();
+    let calls = 0;
+    const failing = (async () => {
+      calls += 1;
+      // Cut while the client waits out its backoff.
+      setTimeout(() => cut.abort(), 5);
+      return new Response("{}", { status: 500 });
+    }) as unknown as typeof fetch;
+    const client = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: failing,
+      maxRetries: 3,
+      backoffMs: 60_000,
+      signal: cut.signal,
+    });
+    const started = Date.now();
+    await expect(client.chatJson(ask)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(calls).toBe(1);
+  });
+
+  it("an attempt has a deadline of its own, and one that passes it is tried again", async () => {
+    const seen = { calls: 0 };
+    const slowThenFine = ((url: unknown, init?: RequestInit) => {
+      if (seen.calls === 0) return hanging(seen)(url as string, init);
+      seen.calls += 1;
+      return Promise.resolve(answer());
+    }) as unknown as typeof fetch;
+    const usages: { ms?: number }[] = [];
+    const client = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: slowThenFine,
+      maxRetries: 2,
+      backoffMs: 1,
+      timeoutMs: 20,
+      onUsage: (u) => usages.push(u),
+    });
+    const out = await client.chatJson(ask);
+    expect(out.rawJsonText).toBe("{}");
+    expect(seen.calls).toBe(2);
+    // The usage line carries the whole call's time, the lost attempt included.
+    expect(usages[0]?.ms).toBeGreaterThanOrEqual(20);
+  });
+
+  it("a call that only ever times out says so", async () => {
+    const seen = { calls: 0 };
+    const failures: { outcome: string }[] = [];
+    const client = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: hanging(seen),
+      maxRetries: 2,
+      backoffMs: 1,
+      timeoutMs: 10,
+      onFailure: (f) => failures.push(f),
+    });
+    await expect(client.chatJson(ask)).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
+    expect(seen.calls).toBe(2);
+    expect(failures.map((f) => f.outcome)).toEqual(["timeout"]);
+  });
+
+  it("names what ended a refused call and a malformed one, and a throwing observer never breaks either", async () => {
+    const outcomes: string[] = [];
+    const refused = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: (async () =>
+        new Response("{}", { status: 401 })) as unknown as typeof fetch,
+      onFailure: (f) => {
+        outcomes.push(f.outcome);
+        throw new Error("observer broke");
+      },
+    });
+    await expect(refused.chatJson(ask)).rejects.toBeInstanceOf(
+      DeepSeekHttpError,
+    );
+    const shapeless = new RealDeepSeekClient({
+      apiKey: "sk-xxx",
+      model: "deepseek-chat",
+      fetch: (async () =>
+        new Response("{}", { status: 200 })) as unknown as typeof fetch,
+      onFailure: (f) => outcomes.push(f.outcome),
+    });
+    await expect(shapeless.chatJson(ask)).rejects.toThrow(/shape invalid/);
+    expect(outcomes).toEqual(["http", "shape"]);
   });
 });

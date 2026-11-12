@@ -34,7 +34,11 @@ import {
   resolveDreamConfig,
   runDreamPass,
 } from "@herta/knowledge";
-import { reportProviderUsage } from "@herta/providers";
+import {
+  providerFetch,
+  reportProviderFailure,
+  reportProviderUsage,
+} from "@herta/providers";
 import {
   reapOrphanedDispatches,
   sealOpenDispatch,
@@ -82,6 +86,9 @@ class SessionHostImpl implements SessionHost {
   private _active: Session | null = null;
   private readonly dreamTrigger: DreamTrigger;
   private dreamIntervalHandle: ReturnType<typeof setInterval> | null = null;
+  /** Aborted at `dispose`: the dream pass's calls take its signal, so a
+   *  pass in flight ends there (review 2026-11-10, second pass). */
+  private readonly dreamAbort = new AbortController();
   /** Mutable live DeepSeek key. Seeded from config; updated by setDeepSeekKey
    *  (no-key onboarding / Settings). Each session reads it through a getter, so
    *  a change takes effect on the NEXT turn with no restart. */
@@ -260,8 +267,8 @@ class SessionHostImpl implements SessionHost {
       // Dream uses the SAME live key as chat (the live holder, seeded from the
       // secure store), not any external env/file source. No key → skip silently.
       const key = this.keyHolder.current.trim();
-      if (key === "") {
-        // No key configured — skip silently. D4: no throw.
+      if (key === "" || this.dreamAbort.signal.aborted) {
+        // No key configured, or the host is gone — skip silently. D4: no throw.
         return;
       }
       const dreamCfg = resolveDreamConfig(this.config.dream);
@@ -270,6 +277,7 @@ class SessionHostImpl implements SessionHost {
       // to run to completion beside the live turn on the same key.
       const activityAtStart = this.dreamTrigger.activityCount;
       const shouldYield = (): boolean =>
+        this.dreamAbort.signal.aborted ||
         this._active?.turnInFlight === true ||
         this.dreamTrigger.activityCount !== activityAtStart;
       const client = new RealDeepSeekClient({
@@ -280,6 +288,17 @@ class SessionHostImpl implements SessionHost {
         // that runs while the user is away was the one the log never saw.
         onUsage: (u) =>
           reportProviderUsage({ endpoint: "chat", source: "dream", ...u }),
+        // And the calls that ended with no answer, as every other provider's
+        // do since the review of 2026-11-10.
+        onFailure: (f) =>
+          reportProviderFailure({ endpoint: "chat", site: "dream", ...f }),
+        // The app's own transport (audit S3): the pass used the platform's
+        // fetch, which reads neither the OS proxy nor the OS trust store, so
+        // behind an intercepting proxy the chat worked and no dream ever ran.
+        fetch: providerFetch(),
+        // Cut when the host is disposed. The user coming back does not cut a
+        // call: the pass yields at its next episode, as before (ADR 0069).
+        signal: this.dreamAbort.signal,
       });
 
       // Enumerate sessions, GROUPED by the interaction language each was
@@ -842,6 +861,8 @@ class SessionHostImpl implements SessionHost {
       clearInterval(this.dreamIntervalHandle);
       this.dreamIntervalHandle = null;
     }
+    // A pass in flight ends at its call, without consuming its episode.
+    this.dreamAbort.abort();
   }
 }
 

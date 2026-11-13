@@ -79,8 +79,21 @@ class Cdp {
       if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
       else p.resolve(msg.result);
     });
+    // A page that goes away answers nothing more: fail the calls still
+    // pending instead of waiting on them for ever (see `isInterface`).
+    this.closed = false;
+    this.ws.addEventListener("close", () => {
+      this.closed = true;
+      for (const p of this.pending.values()) {
+        p.reject(new Error("the page's debug connection closed"));
+      }
+      this.pending.clear();
+    });
   }
   send(method, params = {}) {
+    if (this.closed) {
+      return Promise.reject(new Error("the page's debug connection closed"));
+    }
     const id = this.next++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -102,14 +115,22 @@ class Cdp {
   }
 }
 
+/**
+ * The interface's own page. A first launch also opens a hidden window that
+ * carries stored settings to the app's own origin and is closed moments
+ * later (`renderer-origin-move.ts`, 2026-11-12); "the first page that is not
+ * devtools" could be that one, and a probe attached to it waits on a page
+ * that is gone. The interface is `…/index.html` whatever serves it.
+ */
+const isInterface = (t) =>
+  t.type === "page" && /\/index\.html(?:[?#]|$)/.test(t.url ?? "");
+
 async function findTarget() {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`http://127.0.0.1:${PORT}/json/list`);
-      const page = (await res.json()).find(
-        (t) => t.type === "page" && !t.url.startsWith("devtools://"),
-      );
+      const page = (await res.json()).find(isInterface);
       if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
     } catch {
       /* app still starting */

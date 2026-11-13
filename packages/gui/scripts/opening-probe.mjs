@@ -60,6 +60,20 @@ mkdirSync(OUT, { recursive: true });
 const PORT = 9223;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * The interface's own page, among the debug port's targets.
+ *
+ * "The first page that is not devtools" was the rule until 0.1.12. On a first
+ * launch the app now opens a hidden window before its real one: it carries
+ * what the interface stored to the app's own origin and is closed moments
+ * later (`renderer-origin-move.ts`, 2026-11-12). It runs on a fresh profile
+ * too, since Chromium has made the `Local Storage` folder by then. Attached
+ * to that page, the probe asked a page that was gone and never heard back.
+ * The interface is `…/index.html` whatever serves it.
+ */
+const isInterface = (t) =>
+  t.type === "page" && /\/index\.html(?:[?#]|$)/.test(t.url ?? "");
+
 class Cdp {
   constructor(wsUrl) {
     this.ws = new WebSocket(wsUrl);
@@ -82,11 +96,25 @@ class Cdp {
       if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
       else p.resolve(msg.result);
     });
+    // A page that goes away answers nothing more. Without this every call
+    // still pending waited for ever, and the step timed out with no output
+    // (0.1.12's first linux-build, see `isInterface`).
+    this.closed = false;
+    this.ws.addEventListener("close", () => {
+      this.closed = true;
+      for (const p of this.pending.values()) {
+        p.reject(new Error("the page's debug connection closed"));
+      }
+      this.pending.clear();
+    });
   }
   on(method, fn) {
     this.handlers.set(method, fn);
   }
   send(method, params = {}) {
+    if (this.closed) {
+      return Promise.reject(new Error("the page's debug connection closed"));
+    }
     const id = this.next++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -245,10 +273,7 @@ try {
       const list = await (
         await fetch(`http://127.0.0.1:${PORT}/json/list`)
       ).json();
-      target =
-        list.find(
-          (t) => t.type === "page" && !t.url.startsWith("devtools://"),
-        ) ?? null;
+      target = list.find(isInterface) ?? null;
     } catch {
       /* not listening yet */
     }

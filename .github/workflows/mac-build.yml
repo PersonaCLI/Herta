@@ -84,6 +84,19 @@ jobs:
       - name: extractor tests under macOS Node (ADR 0038)
         run: pnpm exec vitest run packages/app-server/src/document-text.test.ts packages/app-server/src/attachments.test.ts
 
+      # ADR 0040 amendment 2026-11-12: a test result is read from the shell's
+      # PIPESTATUS, and that was probed on bash 5.3 (Git for Windows) only. A
+      # Mac's own bash is 3.2: it is the one an app started from the Finder
+      # finds, and no other machine of ours has it. `HERTA_BASH` pins it here,
+      # whatever Homebrew put on the runner's PATH. These files run a real
+      # shell; a red one stops the run before anything is signed.
+      - name: the shell's pipe-status reading under macOS's own bash (ADR 0040)
+        env:
+          HERTA_BASH: /bin/bash
+        run: |
+          /bin/bash --version | head -1
+          pnpm exec vitest run packages/tools/src/bash/persistent-shell.test.ts packages/tools/src/bash/index.test.ts packages/tools/src/bash/last-pipeline.test.ts packages/tools/src/bash/test-hint.test.ts
+
       # The App Store Connect key has to be a FILE on disk — electron-builder
       # passes APPLE_API_KEY to notarytool as a path, not as key material. Kept
       # outside the workspace so no later step can sweep it into an artifact,

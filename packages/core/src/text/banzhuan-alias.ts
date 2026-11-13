@@ -124,20 +124,41 @@ export function mapOutsideQuotation(
 }
 
 /** Apply `map` to the stretches of `text` OUTSIDE single-backtick inline
- *  code spans, leaving the spans (backticks included) verbatim. */
+ *  code spans. The spans (backticks included) stay verbatim, unless `span`
+ *  is given: then each goes through it. */
 export function mapOutsideInlineSpans(
   text: string,
   map: (segment: string) => string,
+  span: (code: string) => string = (code) => code,
 ): string {
   let out = "";
   let last = 0;
   for (const m of text.matchAll(INLINE_CODE_SPAN)) {
     const idx = m.index ?? 0;
     out += map(text.slice(last, idx));
-    out += m[0];
+    out += span(m[0]);
     last = idx + m[0].length;
   }
   return out + map(text.slice(last));
+}
+
+/**
+ * A QUOTED trigger token as an EN conversation shows it: `@Brick`, the name
+ * an EN user reads on the chip and types (owner 2026-11-13). It stays code,
+ * never a chip: a quoted token dispatches nothing, and a chip would say it
+ * had.
+ *
+ * It was left as the wire token on the rule that code is verbatim. But the
+ * commonest quoted token is one the harness writes itself: past the per-turn
+ * dispatch budget a further `@板砖` of Herta's is committed quoted
+ * (`neutralizeBanzhuanTrigger`), and an English conversation then showed a
+ * lone CJK token in the middle of her sentence. Only the token is renamed. A
+ * bare 板砖 in a span, and everything in a fenced block, is still verbatim: a
+ * path or an identifier may hold it. `text` is a span or its inside; zh is
+ * returned byte-identical.
+ */
+export function aliasQuotedTrigger(text: string, lang: "zh" | "en"): string {
+  return lang === "en" ? text.replaceAll("@板砖", "@Brick") : text;
 }
 
 /**
@@ -161,7 +182,8 @@ export function aliasBanzhuanPlain(text: string, lang: "zh" | "en"): string {
  * rendering: like `aliasBanzhuanPlain`, but a 板砖 inside a single-backtick
  * inline span or a ``` fenced region stays verbatim — parity with the GUI,
  * whose tokenizer exempts code nodes and whose bubble exempts fence
- * segments. The fence scan is line-based (shapes above); an unclosed fence
+ * segments. One exception, the GUI's too: the trigger token quoted in a
+ * span reads `@Brick` (`aliasQuotedTrigger`). The fence scan is line-based (shapes above); an unclosed fence
  * extends to the end of the text, matching the pacer's stance. Inline spans
  * are only recognised OUTSIDE fences (inside a fence everything is verbatim
  * anyway). zh is returned byte-identical.
@@ -176,8 +198,10 @@ export function aliasBanzhuanDisplay(text: string, lang: "zh" | "en"): string {
   const flushPlain = (): void => {
     if (plain.length === 0) return;
     out.push(
-      mapOutsideInlineSpans(plain.join("\n"), (seg) =>
-        seg.replaceAll("板砖", "Brick"),
+      mapOutsideInlineSpans(
+        plain.join("\n"),
+        (seg) => seg.replaceAll("板砖", "Brick"),
+        (code) => aliasQuotedTrigger(code, "en"),
       ),
     );
     plain = [];

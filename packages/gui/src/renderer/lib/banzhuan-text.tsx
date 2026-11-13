@@ -1,3 +1,4 @@
+import { aliasQuotedTrigger } from "@herta/core/banzhuan-alias";
 import { Fragment, type ReactNode } from "react";
 import { tokenizeBanzhuanMentions } from "./banzhuan-mention.js";
 import { measureRevealSpan } from "./reveal-perf.js";
@@ -58,7 +59,13 @@ export function renderBanzhuanText(
       // Display-only (D7): the record keeps the backticks — that is what
       // Herta's prompt reads, what the CLI prints, and what the composer
       // overlay must keep to stay metric-identical to the textarea.
-      const inner = node.value.slice(1, -1);
+      //
+      // The quoted trigger token reads `@Brick` in an EN conversation (owner
+      // 2026-11-13, `aliasQuotedTrigger`): still code, never a chip.
+      const inner = aliasQuotedTrigger(
+        node.value.slice(1, -1),
+        alias ? "en" : "zh",
+      );
       if (inner.length > 0) {
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: stable positional split of one string

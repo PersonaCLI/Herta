@@ -278,6 +278,7 @@ export {
   aliasBanzhuanDisplay,
   aliasBanzhuanPlain,
   aliasBrickInput,
+  aliasQuotedTrigger,
   BRICK_INPUT_MENTION,
   dealiasBrickDraft,
   INLINE_CODE_SPAN,

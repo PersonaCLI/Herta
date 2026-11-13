@@ -62,15 +62,33 @@ describe("renderBanzhuanText — 板砖→Brick surface alias", () => {
     expect(container.querySelector(".banzhuan-mention")).toBeNull();
   });
 
-  it("does not touch a backticked @板砖 (quotation, not a mention)", () => {
+  // Owner 2026-11-13. It showed the wire token: past the dispatch budget a
+  // further `@板砖` of Herta's is committed quoted, and an English
+  // conversation then had a lone CJK token in the middle of her sentence.
+  it("a backticked @板砖 is a quotation, not a mention, and reads @Brick in EN", () => {
     const { container } = render(
       renderBanzhuanText("write `@板砖` here", "bubble", "en"),
     );
-    // Still a code span, so no chip and no EN alias inside it — but the
-    // delimiters are display-stripped (2026-07-27).
-    expect(container.querySelector(".inline-code")?.textContent).toBe("@板砖");
+    // Still a code span, so no chip; the delimiters are display-stripped
+    // (2026-07-27); the token has the name an EN user reads and types.
+    expect(container.querySelector(".inline-code")?.textContent).toBe("@Brick");
     expect(container.querySelector(".banzhuan-mention")).toBeNull();
-    expect(container.textContent).toBe("write @板砖 here");
+    expect(container.textContent).toBe("write @Brick here");
+  });
+
+  it("only the token is renamed in a span; zh and other code are verbatim", () => {
+    const zh = render(renderBanzhuanText("写 `@板砖` 就行", "bubble", "zh"));
+    expect(zh.container.querySelector(".inline-code")?.textContent).toBe(
+      "@板砖",
+    );
+    const code = render(
+      renderBanzhuanText("see `docs/板砖.md` and `@板砖 run`", "bubble", "en"),
+    );
+    expect(
+      [...code.container.querySelectorAll(".inline-code")].map(
+        (c) => c.textContent,
+      ),
+    ).toEqual(["docs/板砖.md", "@Brick run"]);
   });
 
   it("the COMPOSER overlay keeps its backticks (caret metrics)", () => {

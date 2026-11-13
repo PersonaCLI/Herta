@@ -1852,7 +1852,9 @@ describe("NarrativeRenderer — EN word-pacing + Brick alias (lang 'en')", () =>
     );
   });
 
-  it("keeps a backticked `@板砖` quotation verbatim in an EN committed block", () => {
+  // It printed the wire token until the owner's report of 2026-11-13: a
+  // dispatch past the budget is committed quoted, and read `@板砖` in English.
+  it("a backticked `@板砖` stays a quotation and reads `@Brick` in an EN committed block", () => {
     const { out, r } = mkEn(false);
     r.update([
       {
@@ -1861,7 +1863,9 @@ describe("NarrativeRenderer — EN word-pacing + Brick alias (lang 'en')", () =>
         text: "the token is `@板砖`, but say @板砖 to use it",
       },
     ]);
-    expect(out.full()).toBe("the token is `@板砖`, but say @Brick to use it\n");
+    expect(out.full()).toBe(
+      "the token is `@Brick`, but say @Brick to use it\n",
+    );
   });
 
   it("slow-stream keeps a fenced 板砖 verbatim (aliased ONCE before the split)", async () => {

@@ -95,8 +95,24 @@ describe("aliasBrickInput (input reverse alias, @-form only)", () => {
 describe("aliasBanzhuanDisplay (code-aware display alias)", () => {
   it("aliases prose but keeps a single-backtick span verbatim (EN)", () => {
     expect(
+      aliasBanzhuanDisplay("run `cat 板砖.md`; ask @板砖 nicely", "en"),
+    ).toBe("run `cat 板砖.md`; ask @Brick nicely");
+  });
+
+  // Owner 2026-11-13: past the dispatch budget a further `@板砖` of Herta's
+  // is committed quoted, and an English conversation showed the wire token.
+  it("the trigger token quoted in a span reads `@Brick`, still quoted (EN)", () => {
+    expect(
       aliasBanzhuanDisplay("the token is `@板砖`; ask @板砖 nicely", "en"),
-    ).toBe("the token is `@板砖`; ask @Brick nicely");
+    ).toBe("the token is `@Brick`; ask @Brick nicely");
+    expect(
+      aliasBanzhuanDisplay("say `@板砖 run the tests` and it goes", "en"),
+    ).toBe("say `@Brick run the tests` and it goes");
+    // zh is byte-identical, and a fenced block is verbatim in both.
+    expect(aliasBanzhuanDisplay("令牌是 `@板砖`", "zh")).toBe("令牌是 `@板砖`");
+    expect(aliasBanzhuanDisplay("```\n`@板砖`\n```", "en")).toBe(
+      "```\n`@板砖`\n```",
+    );
   });
 
   it("keeps a ``` fenced region verbatim, aliasing the prose around it (EN)", () => {

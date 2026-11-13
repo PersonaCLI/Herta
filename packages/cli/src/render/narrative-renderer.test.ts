@@ -236,6 +236,51 @@ describe("NarrativeRenderer — EN system-block localization", () => {
     );
   });
 
+  // Owner 2026-11-13: the last test run decides how the roll-up reads.
+  it("recomposes a run that went red, was fixed and went green as passed", () => {
+    const { out, r } = mkEn();
+    r.update([
+      {
+        kind: "system",
+        label: "差分协处理器",
+        body: "完成 · 1 个文件 · 测试通过（此前失败 1 次）",
+        role: "done-marker",
+        markerSummary: {
+          kind: "done",
+          state: "completed",
+          fileCount: 1,
+          tests: { passed: 1, failed: 1, last: "passed" },
+          riskCount: 0,
+        },
+      },
+    ]);
+    expect(out.full()).toBe(
+      "→ Coprocessor\n  Done · 1 file · tests passed (1 failed run before)\n",
+    );
+  });
+
+  it("recomposes a run whose last test run failed as failed", () => {
+    const { out, r } = mkEn();
+    r.update([
+      {
+        kind: "system",
+        label: "差分协处理器",
+        body: "部分完成 · 测试失败（3 次中 2 次）",
+        role: "done-marker",
+        markerSummary: {
+          kind: "done",
+          state: "partial",
+          fileCount: 0,
+          tests: { passed: 1, failed: 2, last: "failed" },
+          riskCount: 0,
+        },
+      },
+    ]);
+    expect(out.full()).toBe(
+      "→ Coprocessor\n  Partial · tests failed (2 of 3 runs)\n",
+    );
+  });
+
   it("localizes the noop-marker body", () => {
     const { out, r } = mkEn();
     r.update([

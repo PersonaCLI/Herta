@@ -57,6 +57,58 @@ describe("composeMarkerSummary", () => {
     );
   });
 
+  // Owner 2026-11-13: the last test run decides. A live run that went red,
+  // was fixed and went green read "tests 1 passed, 1 failed" on its row.
+  it("red, a fix, green: the tests passed, with the failed runs before", () => {
+    const one = done({
+      state: "completed",
+      fileCount: 1,
+      tests: { passed: 1, failed: 1, last: "passed" },
+      riskCount: 0,
+    });
+    expect(composeMarkerSummary(one, ten)).toBe(
+      "Done · 1 file · tests passed (1 failed run before)",
+    );
+    expect(composeMarkerSummary(one, tzh)).toBe(
+      "完成 · 1 个文件 · 测试通过（此前失败 1 次）",
+    );
+    const two = done({
+      state: "completed",
+      fileCount: 1,
+      tests: { passed: 1, failed: 2, last: "passed" },
+      riskCount: 0,
+    });
+    expect(composeMarkerSummary(two, ten)).toBe(
+      "Done · 1 file · tests passed (2 failed runs before)",
+    );
+    expect(composeMarkerSummary(two, tzh)).toBe(
+      "完成 · 1 个文件 · 测试通过（此前失败 2 次）",
+    );
+  });
+
+  it("a run whose last test run failed says so, and how many of its runs did", () => {
+    const mixed = done({
+      state: "partial",
+      fileCount: 1,
+      tests: { passed: 2, failed: 1, last: "failed" },
+      riskCount: 0,
+    });
+    expect(composeMarkerSummary(mixed, ten)).toBe(
+      "Partial · 1 file · tests failed (1 of 3 runs)",
+    );
+    expect(composeMarkerSummary(mixed, tzh)).toBe(
+      "部分完成 · 1 个文件 · 测试失败（3 次中 1 次）",
+    );
+    const only = done({
+      state: "failed",
+      fileCount: 0,
+      tests: { passed: 0, failed: 1, last: "failed" },
+      riskCount: 0,
+    });
+    expect(composeMarkerSummary(only, ten)).toBe("Failed · tests failed");
+    expect(composeMarkerSummary(only, tzh)).toBe("失败 · 测试失败");
+  });
+
   it("state-only roll-up with a single risk (no files, no tests)", () => {
     const s = done({ state: "blocked", fileCount: 0, riskCount: 1 });
     expect(composeMarkerSummary(s, ten)).toBe("Blocked · 1 risk");

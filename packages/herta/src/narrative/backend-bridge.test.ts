@@ -2750,7 +2750,8 @@ describe("invokeBanzhuanBridge — done-marker", () => {
       kind: "done",
       state: "completed",
       fileCount: 1,
-      tests: { passed: 1, failed: 0 },
+      // `last`: how the run's testing ended (owner 2026-11-13).
+      tests: { passed: 1, failed: 0, last: "passed" },
       riskCount: 0,
     });
     expect(out[out.length - 1]).toBe(marker); // done-marker is LAST

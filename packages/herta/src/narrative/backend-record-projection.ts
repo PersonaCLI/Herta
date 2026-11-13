@@ -912,10 +912,23 @@ export function workflowLabel(
 const CN_MARKER_LABELS = (stateWord: string): MarkerSummaryLabels => ({
   stateWord,
   file: (n) => `${n} 个文件`,
-  tests: (passed, failed) =>
-    failed === 0
-      ? `测试 ${passed}/${passed}`
-      : `测试 ${passed} 通过，${failed} 失败`,
+  // The last test run decides (owner 2026-11-13, `testRollup`). `counts` is
+  // the wording every marker with a failed run had before, kept for a marker
+  // whose order is not known.
+  tests: (r) => {
+    switch (r.kind) {
+      case "passed":
+        return `测试 ${r.runs}/${r.runs}`;
+      case "passed-after-failures":
+        return `测试通过（此前失败 ${r.failed} 次）`;
+      case "failed":
+        return r.runs === 1
+          ? "测试失败"
+          : `测试失败（${r.runs} 次中 ${r.failed} 次）`;
+      case "counts":
+        return `测试 ${r.passed} 通过，${r.failed} 失败`;
+    }
+  },
   risk: (n) => `${n} 风险`,
   lines: (add, del) => `+${add} −${del}`,
   // Git outcome identity (ADR 0049 §4): a commit is remembered by its sha,
@@ -997,12 +1010,19 @@ export function buildDoneMarker(
   const word = STATUS_WORD[report.status] ?? report.status;
   const fileCount = report.changedFiles.length;
   // Test counts computed once; feed both the canonical body and the structured
-  // markerSummary so they can never drift.
+  // markerSummary so they can never drift. `report.tests` is in the order the
+  // runs happened (the runtime appends each as its command returns), so the
+  // last one that passed or failed is how the run's testing ENDED.
+  let lastDecided: "passed" | "failed" | undefined;
+  for (const t of report.tests) {
+    if (t.status === "passed" || t.status === "failed") lastDecided = t.status;
+  }
   const testCounts =
     report.tests.length > 0
       ? {
           passed: report.tests.filter((t) => t.status === "passed").length,
           failed: report.tests.filter((t) => t.status === "failed").length,
+          ...(lastDecided !== undefined ? { last: lastDecided } : {}),
         }
       : undefined;
   const riskCount = report.residualRisks.length;

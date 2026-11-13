@@ -291,6 +291,8 @@ export { estimatePromptTokens } from "./text/estimate-prompt-tokens.js";
 export {
   composeMarkerSummary,
   type MarkerSummaryLabels,
+  type TestRollup,
+  testRollup,
 } from "./text/marker-summary.js";
 export {
   namePickedElements,

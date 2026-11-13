@@ -153,8 +153,23 @@ export interface DoneMarkerSummary {
   readonly state: ExecutionStatus;
   /** Count of changed files (0 when the run touched none). */
   readonly fileCount: number;
-  /** Present only when the run executed ≥1 test; mirrors the `tests P/F` roll-up. */
-  readonly tests?: { readonly passed: number; readonly failed: number };
+  /**
+   * Present only when the run executed ≥1 test. `passed` and `failed` count
+   * its test RUNS, in the order they ran — not its tests.
+   *
+   * `last` is how the last of those runs went, and it decides how the
+   * roll-up reads (owner 2026-11-13, `testRollup`). A run that went red, was
+   * fixed and went green counts one of each, and "1 passed, 1 failed" read as
+   * a failure still standing: the supervisor vetoed Herta's true "3/3 passed"
+   * on it and she told the user a test was failing (live run 2026-11-13).
+   * Absent on a record written before this field, whose order is not known:
+   * its roll-up reads by the two counts, as it always did.
+   */
+  readonly tests?: {
+    readonly passed: number;
+    readonly failed: number;
+    readonly last?: "passed" | "failed";
+  };
   /** Count of residual risks flagged by the backend (0 when none). */
   readonly riskCount: number;
   /**

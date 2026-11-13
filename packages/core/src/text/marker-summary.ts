@@ -1,6 +1,43 @@
 import type { DoneMarkerSummary } from "../types/terminal-record.js";
 
 /**
+ * How a run's test runs read as ONE statement (owner 2026-11-13). The counts
+ * in a marker are of test RUNS, in the order they ran, and the last run
+ * decides: a run that went red, was fixed and went green ENDED green. Read by
+ * the two counts alone it said "1 passed, 1 failed", which is how a failure
+ * still standing reads.
+ */
+export type TestRollup =
+  /** No run failed: `runs` passed. Zero when none passed either (skipped,
+   *  or the tests were never found). */
+  | { readonly kind: "passed"; readonly runs: number }
+  /** The last run passed; `failed` runs before it did not. */
+  | { readonly kind: "passed-after-failures"; readonly failed: number }
+  /** The last run failed: `failed` of the `runs` did. */
+  | { readonly kind: "failed"; readonly failed: number; readonly runs: number }
+  /** Runs failed and their order is not known (a record written before
+   *  `tests.last`): the two counts, as such a marker always read. */
+  | {
+      readonly kind: "counts";
+      readonly passed: number;
+      readonly failed: number;
+    };
+
+/** The one reading of a marker's test counts that every wording follows:
+ *  the record's own body, Herta's view of it, the desktop and the CLI. */
+export function testRollup(
+  tests: NonNullable<DoneMarkerSummary["tests"]>,
+): TestRollup {
+  const { passed, failed, last } = tests;
+  if (failed === 0) return { kind: "passed", runs: passed };
+  if (last === "passed") return { kind: "passed-after-failures", failed };
+  if (last === "failed") {
+    return { kind: "failed", failed, runs: passed + failed };
+  }
+  return { kind: "counts", passed, failed };
+}
+
+/**
  * Localized label fragments for {@link composeMarkerSummary}. The caller
  * (CLI system-localize, GUI marker-summary) owns the WORDING — its locale
  * catalog, singular/plural forms, all-pass vs failed test phrasing — while
@@ -11,8 +48,9 @@ export interface MarkerSummaryLabels {
   readonly stateWord: string;
   /** File-count segment, called only when the run touched ≥1 file. */
   readonly file: (n: number) => string;
-  /** Test segment, called only when the run executed ≥1 test. */
-  readonly tests: (passed: number, failed: number) => string;
+  /** Test segment, called only when the run executed ≥1 test, with the one
+   *  reading of its runs (`testRollup`): the caller words each kind. */
+  readonly tests: (rollup: TestRollup) => string;
   /** Risk-count segment, called only when the backend flagged ≥1 risk. */
   readonly risk: (n: number) => string;
   /** Added/removed lines, called only when every changed file had a real
@@ -59,7 +97,7 @@ export function composeMarkerSummary(
     parts.push(labels.lines(m.lines.add, m.lines.del));
   }
   if (m.tests !== undefined) {
-    parts.push(labels.tests(m.tests.passed, m.tests.failed));
+    parts.push(labels.tests(testRollup(m.tests)));
   }
   // Git outcome identity (ADR 0049 §4): the commit/push the run landed,
   // after the work segments they conclude and before the risk tally.

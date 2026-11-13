@@ -842,6 +842,12 @@ export const en = {
   "record.marker.files": "{n} files",
   "record.marker.tests": "tests {passed}/{total}",
   "record.marker.testsFailed": "tests {passed} passed, {failed} failed",
+  "record.marker.testsPassedAfterRun":
+    "tests passed ({failed} failed run before)",
+  "record.marker.testsPassedAfterRuns":
+    "tests passed ({failed} failed runs before)",
+  "record.marker.testsFailedLast": "tests failed",
+  "record.marker.testsFailedOf": "tests failed ({failed} of {total} runs)",
   "record.marker.risk": "{n} risk",
   "record.marker.risks": "{n} risks",
   "record.marker.aborted": "run aborted",

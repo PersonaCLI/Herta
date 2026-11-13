@@ -44,10 +44,31 @@ export function composeMarkerSummary(
       n === 1
         ? t("record.marker.file", { n: 1 })
         : t("record.marker.files", { n }),
-    tests: (passed, failed) =>
-      failed === 0
-        ? t("record.marker.tests", { passed, total: passed })
-        : t("record.marker.testsFailed", { passed, failed }),
+    // The last test run decides how it reads (owner 2026-11-13): after red,
+    // a fix and green this said "tests 1 passed, 1 failed". `counts` is that
+    // older wording, for a marker whose order is not known.
+    tests: (r) => {
+      switch (r.kind) {
+        case "passed":
+          return t("record.marker.tests", { passed: r.runs, total: r.runs });
+        case "passed-after-failures":
+          return r.failed === 1
+            ? t("record.marker.testsPassedAfterRun", { failed: 1 })
+            : t("record.marker.testsPassedAfterRuns", { failed: r.failed });
+        case "failed":
+          return r.runs === 1
+            ? t("record.marker.testsFailedLast")
+            : t("record.marker.testsFailedOf", {
+                failed: r.failed,
+                total: r.runs,
+              });
+        case "counts":
+          return t("record.marker.testsFailed", {
+            passed: r.passed,
+            failed: r.failed,
+          });
+      }
+    },
     risk: (n) =>
       n === 1
         ? t("record.marker.risk", { n: 1 })

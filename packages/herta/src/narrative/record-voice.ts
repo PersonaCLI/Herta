@@ -5,6 +5,8 @@ import {
   isServerOpVerb,
   nameQuotedPages,
   type SystemBlock,
+  type TestRollup,
+  testRollup,
 } from "@herta/core";
 import { pageRouteOf } from "./page-record-projection.js";
 import { isPageDigest, pageFoldLine, pageRowForHerta } from "./page-voice.js";
@@ -85,6 +87,44 @@ const EN_STATE: Record<string, string> = {
   partial: "Partly done",
 };
 
+/**
+ * A run's testing, in her view. The last test run decides how it reads
+ * (owner 2026-11-13): "1 过、1 没过" after red, a fix and green is what the
+ * supervisor took for a failure still standing, and it vetoed her true
+ * "3/3 passed" (live run 2026-11-13). None passed and none failed is not a
+ * pass: the tests were skipped or never found (release review 2026-10-22;
+ * D3).
+ */
+function zhTests(r: TestRollup): string {
+  switch (r.kind) {
+    case "passed":
+      return r.runs > 0 ? `测试 ${r.runs}/${r.runs} 通过` : "测试一个都没跑";
+    case "passed-after-failures":
+      return `测试最后通过了（此前 ${r.failed} 次没过）`;
+    case "failed":
+      return r.runs === 1
+        ? "测试没过"
+        : `测试最后没过（${r.runs} 次里 ${r.failed} 次没过）`;
+    case "counts":
+      return `测试 ${r.passed} 过、${r.failed} 没过`;
+  }
+}
+
+function enTests(r: TestRollup): string {
+  switch (r.kind) {
+    case "passed":
+      return r.runs > 0 ? `tests ${r.runs}/${r.runs} passed` : "no test ran";
+    case "passed-after-failures":
+      return `tests passed on the last run (${r.failed} failed run${r.failed === 1 ? "" : "s"} before)`;
+    case "failed":
+      return r.runs === 1
+        ? "tests failed"
+        : `tests failed on the last run (${r.failed} of ${r.runs} runs failed)`;
+    case "counts":
+      return `tests ${r.passed} passed, ${r.failed} failed`;
+  }
+}
+
 const TEXTS: Record<PromptLang, Texts> = {
   zh: {
     verb: {
@@ -159,17 +199,7 @@ const TEXTS: Record<PromptLang, Texts> = {
           `改了 ${m.fileCount} 个文件${m.lines !== undefined ? `（+${m.lines.add} −${m.lines.del}）` : ""}`,
         );
       }
-      if (m.tests !== undefined) {
-        // None passed and none failed is not a pass: the tests were
-        // skipped or never found (release review 2026-10-22; D3).
-        parts.push(
-          m.tests.failed > 0
-            ? `测试 ${m.tests.passed} 过、${m.tests.failed} 没过`
-            : m.tests.passed > 0
-              ? `测试 ${m.tests.passed}/${m.tests.passed} 通过`
-              : "测试一个都没跑",
-        );
-      }
+      if (m.tests !== undefined) parts.push(zhTests(testRollup(m.tests)));
       if (m.git?.commit !== undefined) parts.push(`提交 ${m.git.commit}`);
       if (m.git?.pushedRef !== undefined)
         parts.push(`推到了 ${m.git.pushedRef}`);
@@ -269,15 +299,7 @@ const TEXTS: Record<PromptLang, Texts> = {
           `changed ${m.fileCount} file${m.fileCount === 1 ? "" : "s"}${m.lines !== undefined ? ` (+${m.lines.add} −${m.lines.del})` : ""}`,
         );
       }
-      if (m.tests !== undefined) {
-        parts.push(
-          m.tests.failed > 0
-            ? `tests ${m.tests.passed} passed, ${m.tests.failed} failed`
-            : m.tests.passed > 0
-              ? `tests ${m.tests.passed}/${m.tests.passed} passed`
-              : "no test ran",
-        );
-      }
+      if (m.tests !== undefined) parts.push(enTests(testRollup(m.tests)));
       if (m.git?.commit !== undefined) parts.push(`committed ${m.git.commit}`);
       if (m.git?.pushedRef !== undefined)
         parts.push(`pushed to ${m.git.pushedRef}`);

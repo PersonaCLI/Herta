@@ -43,10 +43,22 @@ function composeMarkerSummaryEN(m: DoneMarkerSummary): string {
   return composeMarkerSummary(m, {
     stateWord: EN_STATE_WORD[m.state],
     file: (n) => (n === 1 ? "1 file" : `${n} files`),
-    tests: (passed, failed) =>
-      failed === 0
-        ? `tests ${passed}/${passed}`
-        : `tests ${passed} passed, ${failed} failed`,
+    // The last test run decides how it reads (owner 2026-11-13); `counts`
+    // is the older wording, for a marker whose order is not known.
+    tests: (r) => {
+      switch (r.kind) {
+        case "passed":
+          return `tests ${r.runs}/${r.runs}`;
+        case "passed-after-failures":
+          return `tests passed (${r.failed} failed run${r.failed === 1 ? "" : "s"} before)`;
+        case "failed":
+          return r.runs === 1
+            ? "tests failed"
+            : `tests failed (${r.failed} of ${r.runs} runs)`;
+        case "counts":
+          return `tests ${r.passed} passed, ${r.failed} failed`;
+      }
+    },
     risk: (n) => (n === 1 ? "1 risk" : `${n} risks`),
     // Digits, matching the canonical body. The GUI omits this segment because
     // it renders the same numbers as an animated element instead.

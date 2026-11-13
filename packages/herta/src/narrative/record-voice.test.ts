@@ -91,6 +91,52 @@ describe("the done-marker reads as a sentence", () => {
     );
   });
 
+  // Owner 2026-11-13. Live run: red, a fix, green read "tests 1 passed, 1
+  // failed" here; the supervisor took it for a failure still standing and
+  // vetoed her true "3/3 passed".
+  it("the last test run decides: red, a fix, green reads as passed", () => {
+    const m = marker("completed", {
+      tests: { passed: 1, failed: 1, last: "passed" },
+    });
+    expect(read(m)).toBe(
+      "做完了：改了 2 个文件（+196 −0），测试最后通过了（此前 1 次没过）。",
+    );
+    expect(read(m, "en")).toBe(
+      "Done: changed 2 files (+196 −0), tests passed on the last run (1 failed run before).",
+    );
+    expect(
+      read(
+        marker("completed", {
+          tests: { passed: 2, failed: 2, last: "passed" },
+        }),
+        "en",
+      ),
+    ).toContain("tests passed on the last run (2 failed runs before)");
+  });
+
+  it("a last run that failed reads as failed, with how many of the runs did", () => {
+    const m = marker("partial", {
+      tests: { passed: 2, failed: 1, last: "failed" },
+    });
+    expect(read(m)).toBe(
+      "做了一部分：改了 2 个文件（+196 −0），测试最后没过（3 次里 1 次没过）。",
+    );
+    expect(read(m, "en")).toBe(
+      "Partly done: changed 2 files (+196 −0), tests failed on the last run (1 of 3 runs failed).",
+    );
+    const only = marker("failed", {
+      tests: { passed: 0, failed: 1, last: "failed" },
+    });
+    expect(read(only)).toContain("测试没过。");
+    expect(read(only, "en")).toContain("tests failed.");
+  });
+
+  it("a marker written before the run order was kept reads by its counts", () => {
+    const m = marker("completed", { tests: { passed: 1, failed: 1 } });
+    expect(read(m)).toContain("测试 1 过、1 没过");
+    expect(read(m, "en")).toContain("tests 1 passed, 1 failed");
+  });
+
   it("a run that ended on a web page or a search: the tail names the site, never the URL or the stored path (release review 2026-10-22)", () => {
     const url = "https://nodejs.org/api/fs.html?x=1";
     const path = ".herta/web/nodejs.org-ab12cd34.md";

@@ -110,6 +110,33 @@ export const BACKEND_CONTRACT = "minimal";
  * mounted); a contract line is bytes on the shared, cached prefix. Prompt
  * text has to earn its place with measured behaviour, not a plausible story.
  */
+/**
+ * Where a test result is read, said up front (owner 2026-11-13).
+ *
+ * A test run is evidence only when the exit status in hand is the runner's
+ * own (ADR 0040 amendment 2026-11-12). 板砖 learned that from a note in the
+ * result: `…; echo "EXIT=${PIPESTATUS[0]}"` after the tests left no test
+ * row, the note said why, and it ran them again. Measured in the live run of
+ * 2026-11-13: it followed the note 3 times of 3, and it met it anew in 3 of
+ * 4 runs, because a run starts with no memory of the one before. One
+ * duplicate test run a dispatch is what this sentence is for.
+ *
+ * It is in the contract's workspace line, beside "run tests with npm test",
+ * and not in the bash tool's description: that description is the trained
+ * shape's own text (ADR 0040), and this is a fact about this harness. What
+ * it says is what `testRunnerExit` does; `bash/test-hint.test.ts` in
+ * @herta/tools holds the two together.
+ *
+ * Measured after, once (2026-11-13, the same two tasks on the build with
+ * this sentence): six test lines, each in a call of its own with the tests
+ * last, all six read, none in the unread shape. One session a side, so a
+ * direction and not a rate.
+ */
+const TEST_RUN_HINT: Record<"zh" | "en", string> = {
+  zh: "测试单独跑一条命令，放在这一行的最后（后面接管道可以，如 npm test 2>&1 | tail -40）。测试进程自己的退出码会替你读出，后面不要再接别的命令（不要 ; echo $?，不要 || true），否则这次的结果不会记入。",
+  en: 'Run them in a call of their own, as its last command (a pipe after them is fine: npm test 2>&1 | tail -40). The runner\'s own exit status is read for you, so put nothing after it (no "; echo $?", no "|| true"), or the result is not recorded.',
+};
+
 export function minimalBackendContract(
   lang: "zh" | "en",
   workspaceHint?: string,
@@ -120,7 +147,7 @@ export function minimalBackendContract(
     "你不和开拓者说话，也不扮演黑塔。你的产出是仓库里的改动和命令的结果；分析得出的结论要用 report_finding 逐条记下（claim 用中文写，附 path:line 出处），要给人看某几行时用 show_excerpt——你最后一条消息里的文字没有人会看到。",
     ...(workspaceHint !== undefined && workspaceHint.length > 0
       ? [
-          `工作区：${workspaceHint}。bash 一开始就在工作区里，目录和变量在命令之间保持，不必每条命令都先 cd。搜索代码优先用 git grep -n（只搜已跟踪文件）；跑测试用 npm test 或 node --test。`,
+          `工作区：${workspaceHint}。bash 一开始就在工作区里，目录和变量在命令之间保持，不必每条命令都先 cd。搜索代码优先用 git grep -n（只搜已跟踪文件）；跑测试用 npm test 或 node --test。${TEST_RUN_HINT.zh}`,
         ]
       : []),
   ];
@@ -130,7 +157,7 @@ export function minimalBackendContract(
     "You do not speak to the user and you do not play Herta. Your output is the changes in the repository and the results of the commands you run; record analytical conclusions one by one with report_finding (claim in English, cite path:line), and use show_excerpt when someone needs to see specific lines — the text of your final message is seen by no one.",
     ...(workspaceHint !== undefined && workspaceHint.length > 0
       ? [
-          `Workspace: ${workspaceHint}. bash starts inside it and keeps its directory and variables between commands — no need to cd first every time. Search code with git grep -n (tracked files only); run tests with npm test or node --test.`,
+          `Workspace: ${workspaceHint}. bash starts inside it and keeps its directory and variables between commands — no need to cd first every time. Search code with git grep -n (tracked files only); run tests with npm test or node --test. ${TEST_RUN_HINT.en}`,
         ]
       : []),
   ];

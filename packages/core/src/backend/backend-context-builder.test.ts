@@ -404,6 +404,26 @@ describe("user-facing text follows the conversation's language (ADR 0016 amendme
     expect(minimalBackendContract("en")).toContain("claim in English");
   });
 
+  // Owner 2026-11-13. It rides the workspace line, beside "run tests with
+  // npm test": the bash tool's description stays the trained shape's text.
+  // What it says is held against the reader in @herta/tools
+  // (`bash/test-hint.test.ts`).
+  it("the workspace line says where a test result is read, in the conversation's language", () => {
+    const en = minimalBackendContract("en", "/ws");
+    expect(en).toContain(
+      "run tests with npm test or node --test. Run them in a call of their own, as its last command (a pipe after them is fine: npm test 2>&1 | tail -40).",
+    );
+    expect(en).toContain("or the result is not recorded.");
+    const zh = minimalBackendContract("zh", "/ws");
+    expect(zh).toContain(
+      "跑测试用 npm test 或 node --test。测试单独跑一条命令，放在这一行的最后",
+    );
+    expect(zh).toContain("否则这次的结果不会记入。");
+    // No workspace line, no sentence: the short contract is as it was.
+    expect(minimalBackendContract("en")).not.toContain("npm test");
+    expect(minimalBackendContract("zh")).not.toContain("npm test");
+  });
+
   it("the contract mentions no todo list (ADR 0073)", () => {
     for (const text of [
       minimalBackendContract("zh", "/ws"),

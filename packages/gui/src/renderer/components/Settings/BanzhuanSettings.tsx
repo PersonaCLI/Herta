@@ -21,7 +21,8 @@ type DemoState =
 interface StateMeta {
   readonly stateKey: MessageKey;
   readonly legendKey: MessageKey;
-  /** Legend swatch color — approximates the state's glow. Decorative. */
+  /** The state's colour: the legend's swatch, and what the ring in the
+   *  drawing takes while the demo shows this state. Decorative. */
   readonly dot: string;
 }
 
@@ -72,11 +73,12 @@ function metaFor(state: BanzhuanDeviceState): StateMeta {
  * backend, the backend thinking-effort Select (low/high/max,
  * restart-to-apply), then a read-only device card that auto-cycles through
  * its lifecycle (pause on hover) with a synced caption, plus a static
- * 5-state legend. The visual reuses the live rail card; only the meaning
- * text lives here. Per-workspace permission choices (automatic review) do
- * NOT live in this pane: they're managed in the device card's ⋯ menu next to
- * the workspace they bind to (owner 2026-08-04, for the command rules that
- * were removed on 2026-10-10).
+ * 5-state legend. The visual is the pane's own line drawing of the device
+ * (`BanzhuanDemoCard`, ADR 0057 §2.4 as amended 2026-11-13); its ring takes
+ * the colour of the legend's swatch. Per-workspace permission choices
+ * (automatic review) do NOT live in this pane: they're managed in the device
+ * card's ⋯ menu next to the workspace they bind to (owner 2026-08-04, for
+ * the command rules that were removed on 2026-10-10).
  *
  * Layout rules (owner feedback 2026-08-03, "re-design — it changed the
  * panel height"): the pane must stay inside `.settings-content`'s stable
@@ -227,8 +229,9 @@ export function BanzhuanSettings(): JSX.Element {
 
   // There is no 3D device row (owner 2026-10-01, ADR 0057 §2.7 amended):
   // the rail card draws the lit device wherever the GPU allows and the flat
-  // art everywhere else, with nothing to choose. The demo card below stays
-  // on the flat renders on purpose — one GPU scene per app, in the rail.
+  // art everywhere else, with nothing to choose. The demo card below is a
+  // line drawing (ADR 0057 §2.4 as amended 2026-11-13): no image and no GPU
+  // context, so the one scene per app stays the rail's.
 
   // PDF picture transcription (2026-10-01). Live (main applies it to the next
   // attach), per user, default on; the first frame shows the last-known value
@@ -365,7 +368,11 @@ export function BanzhuanSettings(): JSX.Element {
       )}
 
       <div className="settings-bz-demo">
-        <BanzhuanDemoCard state={state} onHoverChange={setPaused} />
+        <BanzhuanDemoCard
+          state={state}
+          led={meta.dot}
+          onHoverChange={setPaused}
+        />
         <div className="settings-bz-caption">
           <span className="settings-bz-caption-name">{t(meta.stateKey)}</span>
           <span className="settings-bz-caption-meaning">

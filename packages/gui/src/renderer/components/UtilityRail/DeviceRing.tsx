@@ -3,13 +3,14 @@ import { useId } from "react";
 /**
  * The 板砖 device ring — the ellipse stack + its gradient/filter defs that sit
  * behind the agent device image and recolor per state (via the
- * `.agent-ring.is-<state>` rules). Shared by the live rail `DeviceCard` and the
- * read-only Settings demo card (was inlined in DeviceCard.tsx). Lifted verbatim
+ * `.agent-ring.is-<state>` rules). Drawn by `DeviceGlow` as the rail card's
+ * no-WebGL fallback (was inlined in DeviceCard.tsx). Lifted verbatim
  * from packages/gui/src/renderer/reference/UX_v5.html .agent-ring > svg.
  *
  * The gradient/filter ids are made unique per instance (`useId`) so two rings on
- * the page at once — the rail card behind the open Settings modal's demo card —
- * don't collide on document-global `url(#id)` references.
+ * the page at once don't collide on document-global `url(#id)` references.
+ * (That was the Settings demo card over the rail's, until the demo became a
+ * line drawing of its own on 2026-11-13.)
  */
 export function RingSVG(): JSX.Element {
   // useId() may contain ":" which is invalid inside an SVG url(#…) fragment.

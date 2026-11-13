@@ -411,8 +411,9 @@ export function DeviceGlow(props: DeviceGlowProps): JSX.Element {
         // Release the context itself, not only its objects (2026-09-10): a
         // detached canvas keeps its context until GC, and Chromium force-
         // loses the OLDEST live context past 16 — which on the WebGL2 path
-        // is the 3D device scene's own. The Settings pane mounts a glow per
-        // visit; without this each visit left one behind.
+        // is the 3D device scene's own. The Settings pane mounted a glow per
+        // visit then, and without this each visit left one behind (the pane
+        // draws its device in SVG since 2026-11-13; the rail card remounts).
         gl.getExtension("WEBGL_lose_context")?.loseContext();
       };
     };

@@ -55,6 +55,34 @@ describe("BanzhuanSettings", () => {
       expect(container.querySelector("code")?.textContent).toBe("@Brick");
     });
 
+    it("the ring in the drawing takes the legend's swatch for the state on show", () => {
+      // One colour per state, said once (STATE_META): the drawing cannot
+      // drift from the legend under it.
+      const { container } = renderPane();
+      const card = container.querySelector(".settings-bz-card") as HTMLElement;
+      const led = (): string => {
+        const hex = card.style.getPropertyValue("--bz-led");
+        const [r, g, b] = [1, 3, 5].map((i) =>
+          Number.parseInt(hex.slice(i, i + 2), 16),
+        );
+        return `rgb(${r}, ${g}, ${b})`;
+      };
+      const swatch = (label: string): string => {
+        const item = [
+          ...container.querySelectorAll(".settings-bz-legend-item"),
+        ].find((el) => el.textContent === label);
+        return (item?.querySelector(".settings-bz-dot") as HTMLElement).style
+          .backgroundColor;
+      };
+      expect(led()).toBe(swatch("Idle"));
+      act(() => vi.advanceTimersByTime(1600));
+      expect(card.getAttribute("data-state")).toBe("delegated");
+      expect(led()).toBe(swatch("Working"));
+      act(() => vi.advanceTimersByTime(2600));
+      expect(card.getAttribute("data-state")).toBe("waitingApproval");
+      expect(led()).toBe(swatch("Awaiting approval"));
+    });
+
     it("advances the caption as the cycle runs, and hover pauses it", () => {
       const { container } = renderPane();
       act(() => vi.advanceTimersByTime(1600));
@@ -191,15 +219,16 @@ describe("BanzhuanSettings", () => {
       expect(container.textContent).not.toContain("3D device");
     });
 
-    it("the demo card below stays on the flat renders — one GPU scene per app", () => {
+    it("the demo card below is a line drawing: no scene, no canvas, no image (§2.4 amended 2026-11-13)", () => {
+      // One GPU scene per app, in the rail. The pane's picture of the
+      // device is inline SVG, so it opens no context of any kind.
       const mock = createMockHertaBridge({ deviceSceneResult: true });
       const { container } = renderPane(mock);
-      expect(
-        container.querySelector(".settings-bz-card .device-scene-canvas"),
-      ).toBeNull();
-      expect(
-        container.querySelector(".settings-bz-card img.agent-device-img"),
-      ).not.toBeNull();
+      const card = container.querySelector(".settings-bz-card");
+      expect(card?.querySelector(".device-scene-canvas")).toBeNull();
+      expect(card?.querySelector("canvas")).toBeNull();
+      expect(card?.querySelector("img")).toBeNull();
+      expect(card?.querySelector("svg.bz-art .bz-art-led")).not.toBeNull();
     });
   });
 

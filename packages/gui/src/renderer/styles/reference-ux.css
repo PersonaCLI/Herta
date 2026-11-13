@@ -8070,24 +8070,110 @@ button.commit-view__path:hover {
   gap: 6px;
   margin: 2px 0 10px;
 }
-/* Strip the rail card's panel chrome — show only the (scaled) device visual. */
-.device-card.settings-bz-card {
-  height: auto;
-  background: none;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
-  border-radius: 0;
-  overflow: visible;
-}
-.settings-bz-card::before { display: none; }
-.settings-bz-card .agent-preview {
+/* The device as a line drawing (BanzhuanDemoCard.tsx; ADR 0057 §2.4 as
+   amended 2026-11-13). The box keeps the size the flat render had here, so
+   the pane's height is what it was. Lines take the theme's ink through
+   currentColor, in three weights (outline, inner edge, detail); the ring,
+   its glow and the disc behind the device take the state's colour,
+   `--bz-led`, which the pane sets from the legend's own swatch. */
+.settings-bz-card {
   width: 132px;
   height: 165px;
-  cursor: default;
+  color: var(--ink);
+  --bz-led: #7ba3f0;
+  --bz-detail-a: 0.3;
+  --bz-glow-a: 0.5;
+  --bz-back-a: 0.1;
 }
-.settings-bz-card .agent-preview::after {
-  cursor: default;
+:root[data-theme="dark"] .settings-bz-card {
+  --bz-detail-a: 0.34;
+  --bz-glow-a: 0.7;
+  --bz-back-a: 0.13;
+}
+.bz-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.bz-art-outline,
+.bz-art-edge,
+.bz-art-detail {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bz-art-outline { stroke-width: 1.8; opacity: 0.86; }
+.bz-art-edge { stroke-width: 1.15; opacity: 0.5; }
+/* No line under 1 px: at a 125 % display a thinner one greys out. */
+.bz-art-detail { stroke-width: 1; opacity: var(--bz-detail-a); }
+.bz-art-ripple { stroke-dasharray: 30 5 52 5 200; }
+.bz-art-tint { fill: currentColor; opacity: 0.045; }
+.bz-art-back {
+  fill: var(--bz-led);
+  opacity: var(--bz-back-a);
+  transition: fill 350ms ease;
+}
+.bz-art-led {
+  stroke: var(--bz-led);
+  stroke-width: 2.6;
+  transition: stroke 350ms ease;
+}
+.bz-art-glow {
+  stroke: var(--bz-led);
+  stroke-width: 6;
+  filter: blur(3.4px);
+  opacity: var(--bz-glow-a);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: stroke 350ms ease;
+  animation: bz-art-breathe var(--agent-breathe-duration) ease-in-out infinite;
+}
+/* A lighter arc that runs round the ring while it works. */
+.bz-art-spin {
+  stroke: color-mix(in srgb, var(--bz-led) 30%, #fff);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-dasharray: 16 84;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* The tempos are the rail ring's own (`.agent-ring.is-*`): 1.3 s working,
+   1.9 s held on an approval; green pops once, red blinks twice. */
+.settings-bz-card[data-state="delegated"] .bz-art-glow { animation-duration: 1.3s; }
+.settings-bz-card[data-state="delegated"] .bz-art-spin {
+  opacity: 0.95;
+  animation: bz-art-spin 1.15s linear infinite;
+}
+.settings-bz-card[data-state="waitingApproval"] .bz-art-glow { animation-duration: 1.9s; }
+.settings-bz-card[data-state="succeeded"] .bz-art-glow {
+  animation: bz-art-pop 600ms ease-out 1 both;
+}
+.settings-bz-card[data-state="failed"] .bz-art-led {
+  animation: bz-art-blink 1.1s linear 1;
+}
+@keyframes bz-art-breathe {
+  0%, 100% { opacity: var(--bz-glow-a); }
+  50% { opacity: calc(var(--bz-glow-a) * 0.45); }
+}
+@keyframes bz-art-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes bz-art-pop {
+  0% { transform: scale(1.35); opacity: 1; }
+  100% { transform: scale(1); opacity: var(--bz-glow-a); }
+}
+@keyframes bz-art-blink {
+  0%, 24%, 48%, 100% { opacity: 1; }
+  12%, 36% { opacity: 0.15; }
+}
+/* `[data-state]` so these outrank the per-state rules above. */
+@media (prefers-reduced-motion: reduce) {
+  .settings-bz-card[data-state] .bz-art-glow,
+  .settings-bz-card[data-state] .bz-art-spin,
+  .settings-bz-card[data-state] .bz-art-led {
+    animation: none;
+  }
 }
 .settings-bz-caption {
   text-align: center;

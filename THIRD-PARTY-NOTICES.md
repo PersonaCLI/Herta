@@ -58,7 +58,7 @@ Not listed here, because they travel separately:
 | dayjs | 1.11.23 | MIT | renderer |
 | debug | 4.4.3 | MIT | main process |
 | docx-preview | 0.4.0 | Apache-2.0 | renderer |
-| dompurify | 3.4.14 | (MPL-2.0 OR Apache-2.0) | renderer |
+| dompurify | 3.4.18 | (MPL-2.0 OR Apache-2.0) | renderer |
 | electron-updater | 6.8.9 | MIT | main process |
 | es-toolkit | 1.52.0 | MIT | renderer |
 | espeak-ng (linked into the neural-voice runtime) | sherpa-onnx fork, commit ed530aa1 | GPL-3.0-or-later | resources/tts-runtime/ (statically linked into sherpa-onnx-c-api; source at the URL above, built by sherpa-onnx 1.13.6's CMake tree) |
@@ -1458,7 +1458,7 @@ Apache License
    limitations under the License.
 ```
 
-### dompurify 3.4.14 — (MPL-2.0 OR Apache-2.0)
+### dompurify 3.4.18 — (MPL-2.0 OR Apache-2.0)
 
 - Author: Dr.-Ing. Mario Heiderich, Cure53 <mario@cure53.de> (https://cure53.de/)
 - Source: https://github.com/cure53/DOMPurify

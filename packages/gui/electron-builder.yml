@@ -40,6 +40,40 @@ asarUnpack:
 # Electron's Node, so it needs no rebuild against Electron's headers.
 npmRebuild: false
 
+# Electron fuses (owner 2026-11-16, with the Electron 43.8.10 upgrade): each
+# turns off a way to run code in this app that the app itself never uses.
+# What it relies on was checked first:
+# - Node is never started from the app's own binary. The voice worker is a
+#   utilityProcess, which does not read ELECTRON_RUN_AS_NODE, and nothing
+#   calls process.fork.
+# - Provider calls go through Chromium's network stack (net-transport.ts), so
+#   NODE_EXTRA_CA_CERTS, which the nodeOptions fuse also turns off, was never
+#   what a corporate root CA reached them through.
+# - The probes and the live-run harness attach with --remote-debugging-port,
+#   a Chromium switch, not Node's --inspect.
+# - The app's code is all in app.asar; asarUnpack holds resources only.
+# Left as Electron ships them:
+# - grantFileProtocolExtraPrivileges, ON. The interface is served from
+#   herta-app:// (app-protocol.ts), but one file:// page is still loaded: the
+#   hidden window that carries what the interface stored before 0.1.12 to the
+#   new origin, once (renderer-origin-move.ts). With this fuse off that page's
+#   localStorage throws, and the settings of anyone updating straight from
+#   0.1.11 or older stay behind (packaged build, 2026-11-16: a key seeded at
+#   the old origin was carried with the fuse on, and not with it off). Turn
+#   it off when the move is retired.
+# - Cookie encryption: a one-way change of the cookie store, an owner's call
+#   of its own. And the browser-process V8 snapshot.
+# resetAdHocDarwinSignature: an UNSIGNED mac build (mac-build's default
+# loop) would otherwise launch with the ad-hoc signature the flip broke; a
+# signed build is signed after the flip either way.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  resetAdHocDarwinSignature: true
+
 # Ship only the Chromium UI locales the app can actually speak (size audit
 # 2026-07-16: locales/ was 46.6 MB unpacked — every Chromium language — for
 # an app whose own locale system is zh/en). These are Chromium-internal

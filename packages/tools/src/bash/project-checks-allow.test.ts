@@ -4,7 +4,8 @@ import { classifyShellCommandDetailed } from "./shell-classifier.js";
 import { makeMsysPaths, type ShellPaths } from "./shell-paths.js";
 
 // Owner 2026-11-16, from the review of 2026-11-10: four of the project's own
-// checks still asked as "unrecognized command" every time.
+// checks still asked as "unrecognized command" every time, and a find that
+// only reads landed in the one class no automatic review can answer.
 
 const WIN = process.platform === "win32";
 const WS = WIN ? "E:\\repo" : "/home/u/repo";
@@ -154,5 +155,80 @@ describe("the project's own checks run without asking (owner 2026-11-16)", () =>
         insideWorkspace: () => false,
       }).kind,
     ).toBe("ask");
+  });
+});
+
+describe("a find that only reads asks as a read, which a review can answer (owner 2026-11-16)", () => {
+  it("-exec of wc, grep, cat, head or ls", () => {
+    for (const line of [
+      "find . -name '*.ts' -exec wc -l {} +",
+      "find src -name '*.js' -exec grep -l TODO {} \\;",
+      "find . -type f -exec ls -l {} +",
+      "find . -name '*.md' -exec head -n 3 {} \\;",
+      "find . -execdir cat {} +",
+      // Leaving `.herta` out of the walk is not reaching into it.
+      "find . -not -path './.herta/*' -exec wc -l {} +",
+    ]) {
+      expect(verdict(line), line).toMatchObject({
+        kind: "ask",
+        code: "command_ask_recursive_read",
+      });
+    }
+  });
+
+  it("is judged as a plain find is: a start outside the workspace, a credential, -L", () => {
+    // The realpath half of the reader guard runs only on a line that allows,
+    // so the classifier reads the operands of one that asks.
+    for (const line of [
+      "find .. -exec cat {} +",
+      "find . -exec cat ~/.ssh/id_rsa \\;",
+      "find . -exec grep -f ~/.ssh/id_rsa {} +",
+      "find . -exec cat .env \\;",
+      "find . -name '*.pem' -exec cat {} +",
+      "find -L . -exec cat {} +",
+    ]) {
+      expect(verdict(line), line).toMatchObject({
+        kind: "ask",
+        code: "command_ask_reader_path",
+      });
+    }
+  });
+
+  it("a find that reads inside .herta or the harness's home is refused, as before", () => {
+    for (const line of [
+      "find .herta -exec cat {} +",
+      "find src .herta -exec wc -l {} +",
+      `find ${WIN ? "E:/repo" : "/home/u/repo"}/.herta -exec cat {} +`,
+      "find ~/.herta -exec cat {} +",
+    ]) {
+      expect(kind(line), line).toBe("block");
+    }
+  });
+
+  it("an -exec group with no end is not one that only reads", () => {
+    expect(verdict("find . -exec wc")).toMatchObject({
+      code: "command_ask_harness_state",
+    });
+  });
+
+  it("anything that deletes, writes or runs another program stays in the owner-only class", () => {
+    for (const line of [
+      "find . -delete",
+      "find . -exec rm {} +",
+      "find . -exec cat {} + -delete",
+      "find . -exec sh -c 'cat $1' _ {} \\;",
+      "find . -name x -exec grep -l y {} \\; -exec rm {} \\;",
+      "find . -ok cat {} \\;",
+    ]) {
+      expect(verdict(line), line).toMatchObject({
+        kind: "ask",
+        code: "command_ask_harness_state",
+      });
+    }
+  });
+
+  it("a writing find into .herta is still refused outright", () => {
+    expect(kind("find .herta -exec rm {} +")).toBe("block");
+    expect(kind("find .herta -fprint list.txt")).not.toBe("allow");
   });
 });

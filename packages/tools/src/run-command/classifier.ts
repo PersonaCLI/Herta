@@ -2369,6 +2369,91 @@ const FIND_ACTION_PREDICATES: ReadonlySet<string> = new Set([
   "-fls",
 ]);
 
+/** The programs a find may `-exec` and still only read (owner 2026-11-16). */
+const FIND_READ_ONLY_EXEC: ReadonlySet<string> = new Set([
+  "wc",
+  "grep",
+  "cat",
+  "head",
+  "ls",
+]);
+
+/**
+ * Whether every action of a find runs a program that only reads: each is an
+ * `-exec` or `-execdir` of `wc`, `grep`, `cat`, `head` or `ls`, and there is
+ * at least one (owner 2026-11-16). `-delete`, `-ok`, `-fprint` and an `-exec`
+ * of anything else leave it a find that writes or runs, as before.
+ */
+export function findReadsOnly(argv: readonly string[]): boolean {
+  let actions = 0;
+  for (let i = 1; i < argv.length; i += 1) {
+    const a = argv[i] as string;
+    if (!FIND_ACTION_PREDICATES.has(a)) continue;
+    if (a !== "-exec" && a !== "-execdir") return false;
+    const program = argv[i + 1];
+    if (
+      program === undefined ||
+      !FIND_READ_ONLY_EXEC.has(interpreterName(program))
+    ) {
+      return false;
+    }
+    // To the group's end: `;` (however escaped) or `+`. A group with no end
+    // is a line find refuses; it is not read as one that only reads.
+    let j = i + 2;
+    while (j < argv.length && !FIND_GROUP_END.test(argv[j] as string)) j += 1;
+    if (j >= argv.length) return false;
+    i = j;
+    actions += 1;
+  }
+  return actions > 0;
+}
+
+/** The word that ends an `-exec` group: `;`, however escaped, or `+`. */
+const FIND_GROUP_END = /^(\\?;|\+)$/;
+/** The words of an `-exec` group that are find's, not the program's. */
+const FIND_GROUP_WORD = /^(\\?;|\+|\{\})$/;
+
+/**
+ * `find -L` / `-follow` dereference symlinks during traversal, so `find`
+ * escapes the repo through an in-workspace directory symlink and discloses
+ * out-of-workspace/credential file NAMES — the operand-only reader guard
+ * never sees the walked tree (audit T3.4 review). ASK (the flag is visible
+ * in the command).
+ */
+function findFollowsLinks(argv: readonly string[]): Verdict | null {
+  if (!argv.includes("-L") && !argv.includes("-follow")) return null;
+  return {
+    kind: "ask",
+    risk: "workspace_read",
+    code: "command_ask_reader_path",
+    reason:
+      "find -L/-follow dereferences symlinks during traversal, escaping the workspace guard",
+  };
+}
+
+/**
+ * A find that only reads, started inside `.herta` or the harness's home
+ * (`find .herta -exec cat {} +`): refused, as it was while every `-exec`
+ * counted as a write there (owner 2026-11-16 made the read-only ones an
+ * ordinary ask, for a walk of the workspace). The write guard places the
+ * start point, however it is spelled; a caller without one gets no check.
+ */
+function findReadsInHarnessState(
+  argv: readonly string[],
+  guard: WriteGuard | undefined,
+): Verdict | null {
+  if (guard === undefined) return null;
+  for (const start of findStartPoints(argv.slice(1))) {
+    if (guard.path(start) === null) continue;
+    return {
+      kind: "block",
+      code: "command_blocked",
+      reason: `find reads inside ${start} — the harness's own state (its records, memory, logs); a page or an attachment there is read by its full path`,
+    };
+  }
+  return null;
+}
+
 /**
  * Options that turn an allow-listed program into an arbitrary-program
  * launcher, a file writer, or a config-injection vector — keyed by the
@@ -3229,6 +3314,10 @@ function harnessReach(
     if (guard.holds === undefined) return null;
     const action = argv.find((a) => FIND_ACTION_PREDICATES.has(a));
     if (action === undefined) return null;
+    // A find that only reads (`-exec wc -l {} +`) changes nothing in .herta:
+    // it asks as the read it is, below, which a review can answer (owner
+    // 2026-11-16). It landed here, in the class no review answers.
+    if (findReadsOnly(argv)) return null;
     const start = findStartPoints(argv.slice(1)).find(
       (s) => guard.holds?.(s) === true,
     );
@@ -3439,6 +3528,8 @@ export function writtenOperands(argv: readonly string[]): string[] {
   }
   if (id === "find") {
     if (!args.some((a) => FIND_ACTION_PREDICATES.has(a))) return [];
+    // A find whose every action only reads writes nothing (owner 2026-11-16).
+    if (findReadsOnly(["find", ...args])) return [];
     const out = findStartPoints(args);
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i] as string;
@@ -3813,6 +3904,29 @@ function classifyCommandTiers(
   // any file (red team 2026-08-24). Enumerating two members of a family is how
   // that family gets used.
   if (a0 === "find") {
+    // Every action only reads (`-exec wc -l {} +`, `-exec grep -l x {} +`):
+    // a read of every match, which can reach files a single read would be
+    // refused, so it asks as `grep -r` does, in a class a review can answer
+    // (owner 2026-11-16).
+    if (findReadsOnly(argv)) {
+      return (
+        findReadsInHarnessState(argv, opts?.writeGuard) ??
+        findFollowsLinks(argv) ??
+        // Judged as a plain find is, with the exec'd readers' own operands
+        // (`-exec cat ~/.ssh/id_rsa \;`): the realpath half of the reader
+        // guard runs only on a line that allows, and this one asks.
+        readerArgvGuard(
+          argv.filter((a) => !FIND_GROUP_WORD.test(a)),
+          live,
+        ) ?? {
+          kind: "ask",
+          risk: "workspace_read",
+          code: "command_ask_recursive_read",
+          reason:
+            "find runs a reader on every match — it can read files the credential denylist keeps from a single read; prefer git grep, or name the files",
+        }
+      );
+    }
     const action = argv.find((a) => FIND_ACTION_PREDICATES.has(a));
     if (action !== undefined) {
       return {
@@ -4181,21 +4295,9 @@ function classifyCommandTiers(
     );
   }
   if (a0 === "find") {
-    // `-L`/`-follow` dereference symlinks during traversal, so `find` escapes
-    // the repo through an in-workspace directory symlink and discloses
-    // out-of-workspace/credential file NAMES — the operand-only reader guard
-    // never sees the walked tree (audit T3.4 review). ASK (the flag is
-    // visible in the command).
-    if (argv.includes("-L") || argv.includes("-follow")) {
-      return {
-        kind: "ask",
-        risk: "workspace_read",
-        code: "command_ask_reader_path",
-        reason:
-          "find -L/-follow dereferences symlinks during traversal, escaping the workspace guard",
-      };
-    }
-    return readerArgvGuard(argv, live) ?? { kind: "allow" };
+    return (
+      findFollowsLinks(argv) ?? readerArgvGuard(argv, live) ?? { kind: "allow" }
+    );
   }
   const filter = textFilterVerdict(argv, live);
   if (filter !== null) return filter;

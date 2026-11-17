@@ -8,7 +8,9 @@ import { undoStoreDir } from "../backend/undo-store.js";
 import { isPathInside } from "../path-containment.js";
 import {
   removeSessionEvidence,
+  sessionWebPages,
   sessionWorkspaces,
+  webPagesNamedElsewhere,
 } from "./evidence-retention.js";
 
 /**
@@ -75,6 +77,13 @@ export async function deleteSessionFiles(
   // Read before they go: where the session worked, and its last run.
   const contained = files.every((f) => isPathInside(dir, f, { strict: true }));
   const worked = contained ? await sessionWorkspaces(files[0] as string) : [];
+  // The web pages it fetched (owner 2026-11-16): one file per URL, so a page
+  // another session's record also names stays (`webPagesNamedElsewhere`).
+  const fetched = contained ? await sessionWebPages(files[0] as string) : [];
+  const shared =
+    fetched.length > 0
+      ? await webPagesNamedElsewhere(dir, files[0] as string, fetched)
+      : new Set<string>();
   const lastRun = contained
     ? ((await readDispatchJournal(files[2] as string)) ?? []).find(
         (e) => e.kind === "start",
@@ -95,6 +104,7 @@ export async function deleteSessionFiles(
           : []),
       ],
       runIds: lastRun?.kind === "start" ? [lastRun.taskId] : [],
+      webPages: fetched.filter((page) => !shared.has(page)),
     });
   }
   // The undo store (ADR 0074 §2): a folder of kept edits per session, in

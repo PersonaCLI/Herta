@@ -18,6 +18,7 @@ import {
   EVIDENCE_CONFIRM_MS,
   EVIDENCE_KEEP_DAYS,
   removeSessionEvidence,
+  sessionWebPages,
   sessionWorkspaces,
   sweepEvidence,
   sweepEvidenceSoon,
@@ -185,6 +186,115 @@ describe("deleteSessionFiles — the session's logs go with it", () => {
     // An earlier run is named nowhere by then: the sweep's.
     expect(existsSync(result(ran, "task-earlier"))).toBe(true);
     expect(existsSync(join(transcripts, `${SID}.jsonl`))).toBe(false);
+  });
+});
+
+// Owner 2026-11-16: the pages web_fetch saves under `.herta/web` follow the
+// same rule as logs. A page is one file per URL, shared by every session that
+// fetched that URL.
+const page = (root: string, name: string): string =>
+  join(root, ".herta", "web", name);
+const pagesOf = (root: string): string[] => {
+  try {
+    return readdirSync(join(root, ".herta", "web")).sort();
+  } catch {
+    return [];
+  }
+};
+/** A record holding one fetch row per page, as the bridge writes it. */
+function recordFetching(
+  transcripts: string,
+  sid: string,
+  ws: string,
+  pages: readonly string[],
+  separator = "/",
+): void {
+  mkdirSync(transcripts, { recursive: true });
+  writeFileSync(
+    join(transcripts, `${sid}.jsonl`),
+    `${[
+      JSON.stringify({
+        _kind: "session_meta",
+        version: 1,
+        sessionId: sid,
+        workspaceRoot: ws,
+      }),
+      ...pages.map((name) =>
+        JSON.stringify({
+          kind: "system",
+          label: "差分协处理器",
+          body: `↳ page example.com · 1200 chars`,
+          digest: {
+            kind: "web-fetch",
+            url: "https://example.com/",
+            host: "example.com",
+            title: "",
+            path: [".herta", "web", name].join(separator),
+            chars: 1200,
+          },
+        }),
+      ),
+    ].join("\n")}\n`,
+  );
+}
+
+describe("saved web pages go with their session, unless another still names them (owner 2026-11-16)", () => {
+  it("sessionWebPages reads a record's fetch rows, either separator", async () => {
+    const transcripts = join(base, "transcripts");
+    recordFetching(transcripts, SID, base, ["a.com-1111aaaa.md"]);
+    recordFetching(transcripts, OTHER, base, ["b.com-2222bbbb.md"], "\\");
+    expect(await sessionWebPages(join(transcripts, `${SID}.jsonl`))).toEqual([
+      "a.com-1111aaaa.md",
+    ]);
+    expect(await sessionWebPages(join(transcripts, `${OTHER}.jsonl`))).toEqual([
+      "b.com-2222bbbb.md",
+    ]);
+    expect(await sessionWebPages(join(transcripts, "missing.jsonl"))).toEqual(
+      [],
+    );
+  });
+
+  it("deleting a session removes the pages it alone fetched", async () => {
+    const transcripts = join(base, "transcripts");
+    const ws = join(base, "ws");
+    recordFetching(transcripts, SID, ws, [
+      "mine.com-1111aaaa.md",
+      "shared.com-3333cccc.md",
+    ]);
+    recordFetching(transcripts, OTHER, ws, ["shared.com-3333cccc.md"]);
+    put(page(ws, "mine.com-1111aaaa.md"));
+    put(page(ws, "shared.com-3333cccc.md"));
+    put(page(ws, "unnamed.com-4444dddd.md"));
+
+    await deleteSessionFiles(transcripts, SID, undefined, ws);
+
+    expect(pagesOf(ws)).toEqual([
+      "shared.com-3333cccc.md",
+      "unnamed.com-4444dddd.md",
+    ]);
+  });
+
+  it("removeSessionEvidence takes a page's name, never a path", async () => {
+    const ws = join(base, "ws");
+    put(page(ws, "x.com-1111aaaa.md"));
+    put(join(ws, "keep.md"));
+    const removed = await removeSessionEvidence({
+      sessionId: SID,
+      workspaceRoots: [ws],
+      webPages: ["x.com-1111aaaa.md", "../../keep.md", "..\\keep.md"],
+    });
+    expect(removed).toBe(1);
+    expect(pagesOf(ws)).toEqual([]);
+    expect(existsSync(join(ws, "keep.md"))).toBe(true);
+  });
+
+  it("the sweep removes a page past thirty days, confirmed a day later, and keeps a newer one", async () => {
+    const ws = join(base, "ws");
+    put(page(ws, "old.com-1111aaaa.md"), EVIDENCE_KEEP_DAYS + 5);
+    put(page(ws, "new.com-2222bbbb.md"), 2);
+    expect(await sweepEvidence(ws, NOW)).toBe(0);
+    expect(await sweepEvidence(ws, NOW + EVIDENCE_CONFIRM_MS)).toBe(1);
+    expect(pagesOf(ws)).toEqual(["new.com-2222bbbb.md"]);
   });
 });
 

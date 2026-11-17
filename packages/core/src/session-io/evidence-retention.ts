@@ -15,6 +15,8 @@ import { isPathInside } from "../path-containment.js";
  *
  * Every command writes its full output under `.herta/logs`, and every tool
  * result too large for the prompt is written under `.herta/tool-results`.
+ * Since 2026-11-16 (the owner) the pages web_fetch saves under `.herta/web`
+ * follow the same rule.
  * Nothing ever removed either: not time, and not deleting the session they
  * belonged to (review 2026-11-10, second pass). The rule now:
  *
@@ -40,7 +42,19 @@ export const EVIDENCE_CONFIRM_MS = 20 * 60 * 60 * 1000;
 
 const LOGS = [".herta", "logs"] as const;
 const RESULTS = [".herta", "tool-results"] as const;
+/** The pages web_fetch keeps (ADR 0080), one file per URL. They follow the
+ *  same rule (owner 2026-11-16): with their session, and after thirty days.
+ *  A second fetch of a URL rewrites its file, so a page in use stays new. */
+const WEB = [".herta", "web"] as const;
 const MARK = [".herta", "retention.json"] as const;
+
+/** A page's file name as web_fetch writes it (`<host>-<8 hex>.md`). */
+const WEB_PAGE_NAME = /^[A-Za-z0-9._-]{1,200}\.md$/;
+/** A page as a record names it: a fetch row's `path`, or its detail. In the
+ *  record's JSON a backslash is written twice, so either separator, once or
+ *  twice. */
+const WEB_PAGE_IN_RECORD =
+  /\.herta(?:\\\\|\\|\/)web(?:\\\\|\\|\/)([A-Za-z0-9._-]{1,200}\.md)/g;
 
 /** A session id as the log writer leaves it in a file name. One that it
  *  would have rewritten is left to the sweep. */
@@ -134,15 +148,63 @@ export async function sessionWorkspaces(
 }
 
 /**
- * Remove one session's command logs, and the saved results of the runs
- * named, from the workspaces given. Returns how many entries went. Never
- * throws: what cannot be removed now is the sweep's.
+ * The saved web pages a session's record names (its fetch rows). Empty when
+ * the file cannot be read. Read as text with one pattern, so a long record
+ * is not decoded line by line.
+ */
+export async function sessionWebPages(sessionFile: string): Promise<string[]> {
+  let text: string;
+  try {
+    text = await readFile(sessionFile, "utf8");
+  } catch {
+    return [];
+  }
+  const out = new Set<string>();
+  for (const m of text.matchAll(WEB_PAGE_IN_RECORD)) {
+    if (m[1] !== undefined) out.add(m[1]);
+  }
+  return [...out];
+}
+
+/**
+ * Of `pages`, those another session's record in `transcriptDir` still names.
+ * A page is one file per URL, so two sessions that fetched one URL share it,
+ * and deleting one must not take the other's. Only this folder's records are
+ * read: a terminal session elsewhere that fetched the same URL is not seen,
+ * and its page goes; the row says so when it is opened.
+ */
+export async function webPagesNamedElsewhere(
+  transcriptDir: string,
+  exceptFile: string,
+  pages: readonly string[],
+): Promise<Set<string>> {
+  const named = new Set<string>();
+  if (pages.length === 0) return named;
+  const except = resolve(exceptFile);
+  for (const name of await names(transcriptDir)) {
+    if (!name.endsWith(".jsonl")) continue;
+    const file = resolve(transcriptDir, name);
+    if (file === except) continue;
+    for (const page of await sessionWebPages(file)) {
+      if (pages.includes(page)) named.add(page);
+    }
+    if (named.size === pages.length) break;
+  }
+  return named;
+}
+
+/**
+ * Remove one session's command logs, the saved results of the runs named,
+ * and the saved web pages named, from the workspaces given. Returns how many
+ * entries went. Never throws: what cannot be removed now is the sweep's.
  */
 export async function removeSessionEvidence(opts: {
   readonly sessionId: string;
   readonly workspaceRoots: readonly string[];
   /** Run ids whose saved results belong to this session. */
   readonly runIds?: readonly string[];
+  /** Page file names (`<host>-<hash>.md`) this session alone named. */
+  readonly webPages?: readonly string[];
 }): Promise<number> {
   let removed = 0;
   const roots = [...new Set(opts.workspaceRoots.map((r) => resolve(r)))];
@@ -170,6 +232,19 @@ export async function removeSessionEvidence(opts: {
       if (!(await isRealDir(dir))) continue;
       try {
         await rm(dir, { recursive: true, force: true });
+        removed += 1;
+      } catch {
+        // as above
+      }
+    }
+    const web = join(root, ...WEB);
+    for (const page of opts.webPages ?? []) {
+      if (!WEB_PAGE_NAME.test(page)) continue;
+      const path = resolve(web, page);
+      if (!isPathInside(web, path, { strict: true })) continue;
+      if ((await fileTime(path)) === null) continue;
+      try {
+        await rm(path, { force: true });
         removed += 1;
       } catch {
         // as above
@@ -236,6 +311,13 @@ async function evidenceFiles(
       const time = await fileTime(path);
       if (time !== null) out.push({ path, time, emptyDir: dir });
     }
+  }
+  const web = join(root, ...WEB);
+  for (const name of await names(web)) {
+    if (!WEB_PAGE_NAME.test(name)) continue;
+    const path = join(web, name);
+    const time = await fileTime(path);
+    if (time !== null) out.push({ path, time });
   }
   return out;
 }

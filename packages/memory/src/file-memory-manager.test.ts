@@ -222,6 +222,117 @@ describe("FileMemoryManager", () => {
     expect(onDisk).toEqual(["a1", "a2", "b1", "b2"]);
   });
 
+  describe("merge on write — the other process's save in the middle of this one (owner 2026-11-16)", () => {
+    /** A shim whose `onTmpWrite` runs right after this process writes its
+     *  tmp file: the moment another process's save used to be lost in. */
+    function racing(onTmpWrite: (n: number, state: InMemoryFs) => void): {
+      shim: FsShim;
+      state: InMemoryFs;
+    } {
+      const { shim, state } = makeShim();
+      let n = 0;
+      return {
+        state,
+        shim: {
+          ...shim,
+          async writeFile(p, data) {
+            await shim.writeFile(p, data);
+            if (p.endsWith(".tmp")) onTmpWrite(++n, state);
+          },
+        },
+      };
+    }
+    const ids = (state: InMemoryFs): string[] =>
+      (state.files.get(FILE_PATH) ?? "")
+        .split("\n")
+        .filter((l) => l.length > 0)
+        .map((l) => (JSON.parse(l) as MemoryItem).id)
+        .sort();
+    const tmps = (state: InMemoryFs): string[] =>
+      [...state.files.keys()].filter((p) => p.endsWith(".tmp"));
+
+    it("a save keeps the fact another process wrote after this save read the store", async () => {
+      const foreign = mkItem({ id: "foreign", text: "from the CLI" });
+      const { shim, state } = racing((n, s) => {
+        if (n === 1) s.files.set(FILE_PATH, `${JSON.stringify(foreign)}\n`);
+      });
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      await m.save(mkItem({ id: "mine", text: "from the desktop" }));
+      expect(ids(state)).toEqual(["foreign", "mine"]);
+      expect(tmps(state)).toEqual([]);
+      expect(
+        m
+          .currentItems()
+          .map((it) => it.id)
+          .sort(),
+      ).toEqual(["foreign", "mine"]);
+    });
+
+    it("a correction keeps it too, and its named fact is looked up again", async () => {
+      const { shim, state } = racing((n, s) => {
+        if (n === 1) {
+          s.files.set(
+            FILE_PATH,
+            [
+              mkItem({ id: "3f9c2a71-x", text: "spaces" }),
+              mkItem({ id: "foreign", text: "from the CLI" }),
+            ]
+              .map((it) => `${JSON.stringify(it)}\n`)
+              .join(""),
+          );
+        }
+      });
+      state.files.set(
+        FILE_PATH,
+        `${JSON.stringify(mkItem({ id: "3f9c2a71-x", text: "spaces" }))}\n`,
+      );
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      const outcome = await m.replace(
+        "3f9c2a71",
+        mkItem({ id: "n", text: "tabs" }),
+      );
+      expect(outcome.ok).toBe(true);
+      expect(ids(state)).toEqual(["foreign", "n"]);
+    });
+
+    it("a correction whose fact the other process took out finds nothing, and writes nothing", async () => {
+      const { shim, state } = racing((n, s) => {
+        if (n === 1) {
+          s.files.set(
+            FILE_PATH,
+            `${JSON.stringify(mkItem({ id: "foreign", text: "from the CLI" }))}\n`,
+          );
+        }
+      });
+      state.files.set(
+        FILE_PATH,
+        `${JSON.stringify(mkItem({ id: "3f9c2a71-x", text: "spaces" }))}\n`,
+      );
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      const outcome = await m.replace(
+        "3f9c2a71",
+        mkItem({ id: "n", text: "tabs" }),
+      );
+      expect(outcome).toEqual({ ok: false, reason: "not_found" });
+      expect(ids(state)).toEqual(["foreign"]);
+      // The tmp the first attempt wrote is left, as a failed rename leaves
+      // one; nothing reads `.tmp` files.
+    });
+
+    it("a store rewritten under every attempt is written on the third, with what that attempt read", async () => {
+      const { shim, state } = racing((n, s) => {
+        s.files.set(
+          FILE_PATH,
+          `${JSON.stringify(mkItem({ id: `foreign-${n}`, text: `cli ${n}` }))}\n`,
+        );
+      });
+      const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });
+      await m.save(mkItem({ id: "mine", text: "from the desktop" }));
+      expect(ids(state)).toEqual(["foreign-2", "mine"]);
+      expect(tmps(state)).toEqual([]);
+    });
+  });
+
   it("currentItems returns [] before any recall or save", () => {
     const { shim } = makeShim();
     const m = new FileMemoryManager({ workspaceRoot: ROOT, fs: shim });

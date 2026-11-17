@@ -159,60 +159,99 @@ export class FileMemoryManager implements MemoryManager {
   }
 
   private async saveInner(item: MemoryItem): Promise<void> {
-    await this.fs.mkdir(this.dir, { recursive: true });
     // Merge against the ON-DISK truth, not the boot-time cache (audit
     // 2026-07-10, finding 19): GUI + CLI on one workspace is a supported
     // combination, and each process rewrote the whole file from its own
     // stale cache — every save erased the other process's items
-    // (last-writer-wins). Re-reading narrows the race to the write window
-    // below; a cross-process file lock is deliberately out of scope.
-    const existing = await this.readAll();
-    await this.writeAll(withSaved(existing, item));
+    // (last-writer-wins). `writeMerged` reads again just before it writes.
+    await this.writeMerged((existing) => ({
+      next: withSaved(existing, item),
+      outcome: undefined,
+    }));
   }
 
   private async replaceInner(
     handle: string,
     item: MemoryItem,
   ): Promise<MemoryReplaceOutcome> {
-    const existing = await this.readAll();
     const h = normalizeMemoryHandle(handle);
-    const named =
-      h === null
-        ? []
-        : existing.filter(
-            (it) =>
-              typeof it.id === "string" && it.id.toLowerCase().startsWith(h),
-          );
-    if (named.length !== 1) {
-      this.cache = existing;
+    return this.writeMerged<MemoryReplaceOutcome>((existing) => {
+      const named =
+        h === null
+          ? []
+          : existing.filter(
+              (it) =>
+                typeof it.id === "string" && it.id.toLowerCase().startsWith(h),
+            );
+      if (named.length !== 1) {
+        return {
+          next: null,
+          outcome: {
+            ok: false,
+            reason: named.length === 0 ? "not_found" : "ambiguous",
+          },
+        };
+      }
+      const replaced = named[0] as MemoryItem;
       return {
-        ok: false,
-        reason: named.length === 0 ? "not_found" : "ambiguous",
+        next: withSaved(
+          existing.filter((it) => it !== replaced),
+          item,
+        ),
+        outcome: { ok: true, replaced },
       };
-    }
-    const replaced = named[0] as MemoryItem;
-    await this.fs.mkdir(this.dir, { recursive: true });
-    await this.writeAll(
-      withSaved(
-        existing.filter((it) => it !== replaced),
-        item,
-      ),
-    );
-    return { ok: true, replaced };
+    });
   }
 
-  private async writeAll(next: MemoryItem[]): Promise<void> {
-    this.cache = next;
-    const serialized = `${next.map((it) => JSON.stringify(it)).join("\n")}\n`;
+  /**
+   * Write what `plan` makes of the store as it is on disk (owner
+   * 2026-11-16: merge on write, no lock file). The queue serializes this
+   * process; the CLI and the desktop on one workspace are two. After the
+   * new file is written beside the store, the store is read once more: when
+   * another process wrote it in the meantime, the plan runs again on what is
+   * there now, so its fact is kept. A write between that last read and the
+   * rename can still be lost — the window is one read and one rename long,
+   * where it used to be the whole save. `next: null` writes nothing.
+   */
+  private async writeMerged<T>(
+    plan: (existing: MemoryItem[]) => {
+      readonly next: MemoryItem[] | null;
+      readonly outcome: T;
+    },
+  ): Promise<T> {
     // Unique tmp per save AND per process: with the shared `.tmp` name, two
     // overlapping writers renamed each other's tmp away and the loser threw
-    // ENOENT (finding 19's second half).
-    tmpCounter += 1;
-    const tmp = `${this.path}.${process.pid}-${tmpCounter}.tmp`;
-    await this.fs.writeFile(tmp, serialized);
-    // Tried again where Windows holds the target for a moment (an antivirus,
-    // OneDrive): one refusal lost the fact 板砖 had just been told to keep.
-    await renameWithRetry(tmp, this.path, { rename: this.fs.rename });
+    // ENOENT (finding 19's second half). One name for the whole save: a
+    // second attempt writes over the first's.
+    let tmp: string | undefined;
+    let raw = await this.readRaw();
+    for (let attempt = 1; ; attempt++) {
+      const existing = parseItems(raw);
+      const { next, outcome } = plan(existing);
+      if (next === null) {
+        this.cache = existing;
+        return outcome;
+      }
+      if (tmp === undefined) {
+        await this.fs.mkdir(this.dir, { recursive: true });
+        tmpCounter += 1;
+        tmp = `${this.path}.${process.pid}-${tmpCounter}.tmp`;
+      }
+      await this.fs.writeFile(
+        tmp,
+        `${next.map((it) => JSON.stringify(it)).join("\n")}\n`,
+      );
+      const now = await this.readRaw();
+      if (now === raw || attempt >= MERGE_ATTEMPTS) {
+        // Tried again where Windows holds the target for a moment (an
+        // antivirus, OneDrive): one refusal lost the fact 板砖 had just been
+        // told to keep.
+        await renameWithRetry(tmp, this.path, { rename: this.fs.rename });
+        this.cache = next;
+        return outcome;
+      }
+      raw = now;
+    }
   }
 
   currentItems(): readonly MemoryItem[] {
@@ -220,24 +259,35 @@ export class FileMemoryManager implements MemoryManager {
   }
 
   private async readAll(): Promise<MemoryItem[]> {
-    let buf: Buffer;
+    return parseItems(await this.readRaw());
+  }
+
+  /** The store's text, or null when there is no store yet. */
+  private async readRaw(): Promise<string | null> {
     try {
-      buf = await this.fs.readFile(this.path);
+      return (await this.fs.readFile(this.path)).toString("utf8");
     } catch (err) {
-      if (isMissingFsError(err)) return [];
+      if (isMissingFsError(err)) return null;
       throw err;
     }
-    const text = buf.toString("utf8");
-    const lines = text.split("\n").filter((l) => l.length > 0);
-    const items: MemoryItem[] = [];
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line) as MemoryItem;
-        items.push(parsed);
-      } catch {
-        // silently drop corrupted line
-      }
-    }
-    return items;
   }
+}
+
+/** How many times one save merges again when the store changed under it.
+ *  The last attempt writes even so: a store another process rewrites three
+ *  times inside one save is not something to wait out. */
+const MERGE_ATTEMPTS = 3;
+
+function parseItems(text: string | null): MemoryItem[] {
+  if (text === null) return [];
+  const items: MemoryItem[] = [];
+  for (const line of text.split("\n")) {
+    if (line.length === 0) continue;
+    try {
+      items.push(JSON.parse(line) as MemoryItem);
+    } catch {
+      // silently drop corrupted line
+    }
+  }
+  return items;
 }

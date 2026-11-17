@@ -2585,6 +2585,174 @@ function escapeHatchFlag(
   return null;
 }
 
+/** A package directory spelled so that what the caller resolves is what
+ *  npm gets: no `~` (bash expands it, the resolver does not), no variable,
+ *  substitution, pattern or brace list. */
+const PLAIN_PACKAGE_DIR = /^(?!~)[^$`*?[{]*$/;
+/** A path with a `.herta` segment anywhere: a test script there is the
+ *  harness's state, not the project's (and a managed workspace's absolute
+ *  path, under `~/.herta/workspaces`, asks too — spell it relative). */
+const HERTA_SEGMENT = /(^|[\\/])\.herta([\\/]|$)/i;
+
+/** The flags that move npm or pnpm to another package's directory. */
+const PACKAGE_DIR_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["npm", new Set(["--prefix", "-C"])],
+  ["pnpm", new Set(["--prefix", "-C", "--dir"])],
+]);
+
+/**
+ * `npm test --prefix pkg`, `pnpm -C pkg test`: a test-script run in another
+ * package's directory (owner 2026-11-16). The argv without its directory
+ * flags when every one names a directory the caller says is inside the
+ * workspace and what is left is `test`, `t` or `run test`; null otherwise,
+ * and the flag keeps asking as the hatch it is (`npm test --prefix ../evil`
+ * runs another folder's script: red team 2026-08-24). An attached short form
+ * (`-Cpkg`) is not read.
+ */
+function testRunInWorkspaceDir(
+  argv: readonly string[],
+  opts: ClassifyCommandOpts | undefined,
+): readonly string[] | null {
+  const inside = opts?.insideWorkspace;
+  if (inside === undefined) return null;
+  const program = interpreterName(argv[0] as string);
+  const flags = PACKAGE_DIR_FLAGS.get(program);
+  if (flags === undefined) return null;
+  const rest: string[] = [argv[0] as string];
+  let moved = false;
+  for (let i = 1; i < argv.length; i += 1) {
+    const a = argv[i] as string;
+    const eq = a.indexOf("=");
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (!flags.has(name)) {
+      rest.push(a);
+      continue;
+    }
+    const dir = eq > 0 ? a.slice(eq + 1) : argv[i + 1];
+    if (
+      dir === undefined ||
+      dir === "" ||
+      !PLAIN_PACKAGE_DIR.test(dir) ||
+      HERTA_SEGMENT.test(dir) ||
+      !inside(dir)
+    ) {
+      return null;
+    }
+    if (eq <= 0) i += 1;
+    moved = true;
+  }
+  if (!moved) return null;
+  const isTestRun =
+    rest[1] === "test" ||
+    (program === "npm" && rest[1] === "t") ||
+    (rest[1] === "run" && rest[2] === "test");
+  return isTestRun ? rest : null;
+}
+
+/** A pnpm package selector by NAME: `web`, `@app/web`, `@app/*`, with the
+ *  graph marks `...` and `^` around it. Not a path (`.`, `./pkg`,
+ *  `{../other}`, `[origin/main]`): those name directories or git ranges. */
+const PNPM_NAME_SELECTOR =
+  /^(?:\.\.\.)?\^?(?![.])(?:@[a-z0-9_*-][a-z0-9._*-]*\/)?[a-z0-9_*-][a-z0-9._*-]*\^?(?:\.\.\.)?$/i;
+
+/** `pnpm --filter <name> test` / `pnpm -F <name> run test` (owner
+ *  2026-11-16): one workspace package's test script, chosen by name. */
+function pnpmFilteredTestRun(argv: readonly string[]): boolean {
+  let i = 1;
+  const a = argv[i];
+  let selector: string | undefined;
+  if (a === "--filter" || a === "-F") {
+    selector = argv[i + 1];
+    i += 2;
+  } else if (a?.startsWith("--filter=") === true) {
+    selector = a.slice("--filter=".length);
+    i += 1;
+  } else {
+    return false;
+  }
+  if (selector === undefined || !PNPM_NAME_SELECTOR.test(selector)) {
+    return false;
+  }
+  return argv[i] === "test" || (argv[i] === "run" && argv[i + 1] === "test");
+}
+
+/** vitest's own reporters that print and write nothing. `html`, `blob`,
+ *  and `json` / `junit` with an output file, write; a path loads a module. */
+const VITEST_PRINT_REPORTERS: ReadonlySet<string> = new Set([
+  "default",
+  "basic",
+  "verbose",
+  "dot",
+  "tap",
+  "tap-flat",
+  "tree",
+  "hanging-process",
+  "github-actions",
+]);
+
+/** vitest flags that only select tests or shape the run, with no value. */
+const VITEST_PLAIN_FLAGS: ReadonlySet<string> = new Set([
+  "--bail",
+  "--silent",
+  "--no-color",
+  "--passWithNoTests",
+  "--no-file-parallelism",
+  "--allowOnly",
+  "--hideSkippedTests",
+]);
+
+/** vitest flags that take a value naming no file: a test-name pattern, a
+ *  project's name, a number, a pool. */
+const VITEST_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "-t",
+  "--testNamePattern",
+  "--project",
+  "--maxWorkers",
+  "--minWorkers",
+  "--pool",
+  "--testTimeout",
+  "--retry",
+  "--shard",
+  "--bail",
+]);
+
+/**
+ * Whether `vitest run`'s arguments only select and report (owner
+ * 2026-11-16). Positional arguments are name filters matched inside the
+ * project's root, not paths it reads. Everything else asks: `--config`,
+ * `--root`, `--dir`, a reporter that is a path or writes, `--outputFile`,
+ * `--update`, `--coverage.*`, `--globalSetup`, `--setupFiles` and any flag
+ * this list does not name.
+ */
+function vitestArgsAreSafe(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (!a.startsWith("-")) continue;
+    const eq = a.indexOf("=");
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    const attached = eq > 0 ? a.slice(eq + 1) : undefined;
+    if (name === "--reporter") {
+      const value = attached ?? args[i + 1];
+      if (value === undefined || !VITEST_PRINT_REPORTERS.has(value)) {
+        return false;
+      }
+      if (attached === undefined) i += 1;
+      continue;
+    }
+    if (attached === undefined && VITEST_PLAIN_FLAGS.has(name)) continue;
+    if (VITEST_VALUE_FLAGS.has(name)) {
+      if (attached === undefined) {
+        const value = args[i + 1];
+        if (value === undefined || value.startsWith("-")) return false;
+        i += 1;
+      }
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 /** Block-tier scan of a whole shell body — every segment, exec-wrappers
  *  peeled, nested interpreters unwrapped. Shared with the minimal contract's
  *  shell-string classifier (ADR 0040), which layers the ask/allow tiers on
@@ -2671,6 +2839,11 @@ export interface ClassifyCommandOpts {
   /** The processes that are this app (2026-11-04): a kill aimed at one of
    *  them is blocked. Absent → no such check. */
   host?: HostIdentity;
+  /** True when a directory operand, resolved from the command's own cwd,
+   *  stays inside the workspace (owner 2026-11-16): `npm test --prefix pkg`
+   *  allows only then. Only the caller can resolve it. Absent → a directory
+   *  flag keeps asking, as before. */
+  insideWorkspace?(dir: string): boolean;
 }
 
 /** See `ClassifyCommandOpts.writeGuard`. `path` and `body` return a denial
@@ -3659,8 +3832,13 @@ function classifyCommandTiers(
   // `npm test --prefix ../evil`, `cargo test --config build.rustc-wrapper=…`,
   // `go test -exec 'sh -c …'`, `node --test --test-reporter ./r.mjs` —
   // all allow, all arbitrary execution or arbitrary file access).
+  // `npm test --prefix pkg`: the directory flag is one of npm's hatches, and
+  // it is cleared only when it names a directory inside the workspace and the
+  // command is a test-script run (owner 2026-11-16). The rest of the argv is
+  // still read for every other hatch.
+  const scopedTest = testRunInWorkspaceDir(argv, opts);
   const hatch = escapeHatchFlag(
-    argv,
+    scopedTest ?? argv,
     opts?.shell === true && opts.unresolved === true,
   );
   if (hatch !== null) {
@@ -3719,10 +3897,32 @@ function classifyCommandTiers(
   }
 
   // PHASE 5 — ALLOW
+  //
+  // Every command this phase allows runs code the workspace holds: a test
+  // script, a lint or typecheck script, a test runner reading the project's
+  // own config. The allow tier says "the project's own checks", not "nothing
+  // runs" (ADR 0087).
   if (
     (a0 === "npm" || a0 === "pnpm") &&
     (argv[1] === "test" ||
-      (argv[1] === "run" && (argv[2] === "test" || argv[2] === "lint")))
+      (argv[1] === "run" &&
+        (argv[2] === "test" || argv[2] === "lint" || argv[2] === "typecheck")))
+  ) {
+    return { kind: "allow" };
+  }
+  // A test script in a package inside the workspace (`npm test --prefix pkg`,
+  // `pnpm -C pkg test`), the directory checked above (owner 2026-11-16).
+  if (scopedTest !== null) return { kind: "allow" };
+  // One workspace package's tests (`pnpm --filter @app/web test`), selected
+  // by NAME (owner 2026-11-16). A path selector (`./pkg`, `{../other}`) asks:
+  // it can name a directory anywhere.
+  if (a0 === "pnpm" && pnpmFilteredTestRun(argv)) return { kind: "allow" };
+  // `vitest run` over the project's own config, with the flags that select
+  // or report and nothing that loads a file or writes one (owner 2026-11-16).
+  if (
+    a0 === "vitest" &&
+    argv[1] === "run" &&
+    vitestArgsAreSafe(argv.slice(2))
   ) {
     return { kind: "allow" };
   }
@@ -3733,9 +3933,11 @@ function classifyCommandTiers(
   // One difference from `pnpm run lint`: where the package has no `lint`
   // script, pnpm runs a `lint` program from `node_modules/.bin` instead of
   // failing. That is the project's own code either way, as a script is.
+  // `pnpm typecheck` joined them on 2026-11-16 (the owner), the way `pnpm
+  // lint` did.
   if (
     (a0 === "npm" && argv[1] === "t") ||
-    (a0 === "pnpm" && argv[1] === "lint")
+    (a0 === "pnpm" && (argv[1] === "lint" || argv[1] === "typecheck"))
   ) {
     return { kind: "allow" };
   }

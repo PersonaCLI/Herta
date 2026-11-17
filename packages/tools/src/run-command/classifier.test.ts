@@ -2734,6 +2734,8 @@ describe("the test and lint scripts, spelled the short way (owner 2026-11-12)", 
     }
   });
 
+  // `pnpm typecheck` left this list on 2026-11-16 (the owner): it allows now,
+  // as `pnpm lint` does (`bash/project-checks-allow.test.ts`).
   it("only those two: the other short spellings and bare script names still ask", () => {
     for (const line of [
       "pnpm t",
@@ -2742,7 +2744,7 @@ describe("the test and lint scripts, spelled the short way (owner 2026-11-12)", 
       "yarn test",
       "yarn lint",
       "pnpm build",
-      "pnpm typecheck",
+      "npm typecheck",
       "pnpm exec lint",
       "bun lint",
       "npm T",

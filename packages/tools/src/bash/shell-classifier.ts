@@ -1458,6 +1458,9 @@ function classifySegment(
     unresolved: hasLiveExpansion(seg),
     // A kill aimed at the app itself — `$PPID` here is the app (2026-11-04).
     ...(opts.host !== undefined ? { host: opts.host } : {}),
+    // Where a directory flag lands, from this segment's cwd, as a `cd` to it
+    // would (owner 2026-11-16: `npm test --prefix pkg` inside the workspace).
+    insideWorkspace: (dir) => destinationOf(spelled(dir), opts) !== null,
     // Lazy in-progress probe at the segment's effective cwd (ADR 0049 §5) —
     // consulted only for commit-concluding git shapes.
     repoInProgress: () => {

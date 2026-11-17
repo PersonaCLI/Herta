@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BACKEND_PROVIDER_MAX_RETRIES,
   BackendUnavailableError,
+  backendRunId,
   createBackendProvider,
   createBackendStack,
   hostNoteFor,
@@ -26,6 +27,26 @@ describe("BACKEND_PROVIDER_MAX_RETRIES", () => {
     // POSTs. Both hosts (session.ts, the CLI) pass this to the backend
     // provider; the actor and the sidecars keep the transport default.
     expect(BACKEND_PROVIDER_MAX_RETRIES).toBe(0);
+  });
+});
+
+describe("backendRunId — a run's logs start with its session's id (owner 2026-11-16)", () => {
+  it("prefixes the session's id, so deleting the session finds the logs", () => {
+    // `.herta/logs/<run id>-<call id>.log`; `removeSessionEvidence` takes
+    // every log whose name starts with `<session id>-`. A random run id
+    // left every log of a deleted session to the thirty-day sweep.
+    const sid = "0b6f0c1e-2a8b-4c43-9d7e-5e1f2a3b4c5d";
+    const a = backendRunId(sid);
+    const b = backendRunId(sid);
+    expect(a.startsWith(`${sid}-`)).toBe(true);
+    expect(a).toMatch(/-[0-9a-f]{8}$/);
+    expect(a).not.toBe(b);
+  });
+
+  it("is a random id where no session's id is known", () => {
+    expect(backendRunId(undefined)).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 });
 

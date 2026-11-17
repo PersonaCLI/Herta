@@ -320,8 +320,14 @@ export async function main(
     surface: "cli",
     transcriptDir,
   });
+  // Actor session ID — for new sessions, a fresh uuid; for resumes, the
+  // original session's id from the loaded file's header. Reusing the
+  // original id keeps tool-log filenames correlated across resumes: each
+  // run's id starts with it (`.herta/logs/<sessionId>-<run>-<callId>.log`).
+  const actorSessionId = resumeTarget?.sessionId ?? randomUUID();
   const backend = createBackendStack({
     wsHolder,
+    sessionId: actorSessionId,
     reviewChoicesFile,
     workspaceRoot,
     lang,
@@ -364,12 +370,6 @@ export async function main(
     );
   }
   const { bus, approvalCache, workspacePermissions } = backend;
-
-  // Actor session ID — for new sessions, a fresh uuid; for resumes, the
-  // original session's id from the loaded file's header. Reusing the
-  // original id keeps tool-log filenames correlated across resumes
-  // (e.g., .herta/logs/<sessionId>-<callId>.log).
-  const actorSessionId = resumeTarget?.sessionId ?? randomUUID();
 
   // Construct the persister: new file for fresh sessions, append-only for
   // resumes (header already on disk).

@@ -2374,6 +2374,9 @@ export class SessionImpl implements Session {
       pendingUserInput: () => steer.drain(),
       // The run journal beside the session's record (ADR 0071).
       journalPath: dispatchJournalPath(config.transcriptDir, sessionId),
+      // Each run's id starts with the session's, so deleting the session
+      // finds its command logs.
+      sessionId,
       // And what 板砖's editors replace, for undo (ADR 0074).
       undoDir: undoStoreDir(config.transcriptDir, sessionId),
       // 板砖 runs on a bash (ADR 0040) and nothing else (ADR 0086). Without

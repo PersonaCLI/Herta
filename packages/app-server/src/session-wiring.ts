@@ -380,6 +380,12 @@ export interface BackendStackOpts {
   /** Where this session keeps its run journal (ADR 0071; see
    *  `dispatchJournalPath`). Absent (the CLI): no journal is kept. */
   readonly journalPath?: string;
+  /** The chat session's id. Each run's id starts with it, so the logs a
+   *  run's commands write (`.herta/logs/<run id>-<call>.log`) carry it and
+   *  go when the session is deleted (`removeSessionEvidence`). Each run used
+   *  a random id, and deleting a session removed none of its logs
+   *  (2026-11-16). Absent: a random id, as before. */
+  readonly sessionId?: string;
   /** Where this session keeps what 板砖's editors replace, for undo (ADR
    *  0074; see `undoStoreDir`). Absent (the CLI): nothing is kept. */
   readonly undoDir?: string;
@@ -477,6 +483,18 @@ export function hostNoteFor(
 ): { hostNote?: string } {
   if (platform === "darwin") return { hostNote: darwinBackendHostNote(lang) };
   return {};
+}
+
+/**
+ * A backend run's id: `<chat session id>-<8 hex>` when the session's id is
+ * known, so the logs its commands write (`.herta/logs/<run id>-<call>.log`)
+ * start with the session's and go when it is deleted; still one id per run.
+ * A random id otherwise, as every run had before 2026-11-16.
+ */
+export function backendRunId(sessionId: string | undefined): string {
+  return sessionId !== undefined
+    ? `${sessionId}-${randomUUID().slice(0, 8)}`
+    : randomUUID();
 }
 
 export function createBackendStack(opts: BackendStackOpts): BackendStack {
@@ -623,7 +641,7 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
     }
     syncVisionTool();
     return new CodingAgentRuntime({
-      sessionId: randomUUID(),
+      sessionId: backendRunId(opts.sessionId),
       provider: backendProviderNow(),
       tools: backendTools,
       permissions,

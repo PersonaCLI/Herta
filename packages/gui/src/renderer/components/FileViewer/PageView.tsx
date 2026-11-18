@@ -17,6 +17,18 @@ import { PageNewTab } from "./PageNewTab.js";
  *  over it again: a drag or the panel's slide shows the still frame. */
 const SETTLE_FRAMES = 6;
 
+/** How many frames the laid-on page is watched after the last change before
+ *  the watch rests (half a second at 60 Hz). */
+const REST_AFTER_FRAMES = 30;
+
+/** While the watch rests, how often the box is read once, for a move that
+ *  nothing announced. */
+const RESTING_CHECK_MS = 1000;
+
+/** Events that can move the tab without changing the DOM or its size; taken
+ *  in the capture phase, since none of them bubbles from where it starts. */
+const MOVE_EVENTS = ["scroll", "transitionrun", "animationstart", "load"];
+
 /** An overlay that draws over the viewer: everything on the stack except the
  *  approval panel, an inline layer that stays out of the page by placement
  *  (ADR 0083 §3). Any of them, not only the topmost: with Flow open and an
@@ -52,6 +64,15 @@ const sameBox = (a: PageBounds | null, b: PageBounds | null): boolean =>
  * sliding, the window resized). At once on the first two, not on the next
  * frame: the page draws over any overlay, and under the pointer it takes the
  * mouse from the window (spike, 2026-10-23).
+ *
+ * The box is read frame by frame only while something may be moving it
+ * (review 2026-11-10: it was read every frame for as long as the page was
+ * laid on). Once the page is laid on and has held still for
+ * `REST_AFTER_FRAMES`, the watch rests. It wakes on whatever can move the
+ * tab: its own size, the window's, an overlay or the divider, the window
+ * showing or hiding, any change to the document, a scroll, a transition or
+ * animation starting, a resource loading. A move none of those announces is
+ * found by one read a second while it rests.
  */
 function usePageSurface(
   sessionId: string,
@@ -63,12 +84,63 @@ function usePageSurface(
   useEffect(() => {
     if (!live || bridge.pageShow === undefined) return;
     let alive = true;
+    /** The frame requested, or 0 while the watch rests. */
     let raf = 0;
     let busy = false;
     let quiet = 0;
+    /** Frames the laid-on page has held still since the last wake. */
+    let calm = 0;
     let last: PageBounds | null = null;
     let shown: PageBounds | null = null;
     let clearStill = 0;
+    const read = (el: HTMLElement): PageBounds => {
+      const r = el.getBoundingClientRect();
+      return {
+        x: Math.round(r.left),
+        y: Math.round(r.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      };
+    };
+    const blocked = (): boolean => coveredNow() || pageInMotion();
+    const tick = (): void => {
+      raf = 0;
+      const el = body.current;
+      // Rests: a freeze in flight wakes it when done; a missing body, when
+      // the document changes.
+      if (el === null || busy) return;
+      const box = read(el);
+      quiet = sameBox(box, last) ? quiet + 1 : 0;
+      last = box;
+      const wanted =
+        box.width > 0 &&
+        box.height > 0 &&
+        !blocked() &&
+        document.visibilityState === "visible";
+      if (shown !== null) {
+        if (!wanted || !sameBox(box, shown)) {
+          void freeze();
+          return;
+        }
+        calm += 1;
+        if (calm < REST_AFTER_FRAMES) raf = requestAnimationFrame(tick);
+        return;
+      }
+      // Not wanted: rests until whatever blocks it changes.
+      if (!wanted) return;
+      if (quiet >= SETTLE_FRAMES) {
+        bridge.pageShow?.(sessionId, box);
+        shown = box;
+        calm = 0;
+        window.clearTimeout(clearStill);
+        clearStill = window.setTimeout(() => setStill(null), 150);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    const wake = (): void => {
+      calm = 0;
+      if (alive && raf === 0) raf = requestAnimationFrame(tick);
+    };
     const freeze = async (): Promise<void> => {
       if (shown === null || busy) return;
       busy = true;
@@ -83,48 +155,47 @@ function usePageSurface(
         setStill({ src: shot, width: at.width, height: at.height });
       }
       busy = false;
+      wake();
     };
-    const blocked = (): boolean => coveredNow() || pageInMotion();
     const offOverlay = subscribeOverlayStack(() => {
       if (blocked()) void freeze();
+      wake();
     });
     const offMotion = subscribePageMotion(() => {
       if (blocked()) void freeze();
+      wake();
     });
-    const tick = (): void => {
-      raf = requestAnimationFrame(tick);
+    const sized =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(wake);
+    if (body.current !== null) sized?.observe(body.current);
+    const changed = new MutationObserver(wake);
+    changed.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    window.addEventListener("resize", wake);
+    document.addEventListener("visibilitychange", wake);
+    for (const type of MOVE_EVENTS) document.addEventListener(type, wake, true);
+    const resting = window.setInterval(() => {
+      if (raf !== 0 || busy || shown === null) return;
       const el = body.current;
-      if (el === null || busy) return;
-      const r = el.getBoundingClientRect();
-      const box: PageBounds = {
-        x: Math.round(r.left),
-        y: Math.round(r.top),
-        width: Math.round(r.width),
-        height: Math.round(r.height),
-      };
-      quiet = sameBox(box, last) ? quiet + 1 : 0;
-      last = box;
-      const wanted =
-        box.width > 0 &&
-        box.height > 0 &&
-        !blocked() &&
-        document.visibilityState === "visible";
-      if (shown !== null) {
-        if (!wanted || !sameBox(box, shown)) void freeze();
-        return;
-      }
-      if (wanted && quiet >= SETTLE_FRAMES) {
-        bridge.pageShow?.(sessionId, box);
-        shown = box;
-        window.clearTimeout(clearStill);
-        clearStill = window.setTimeout(() => setStill(null), 150);
-      }
-    };
+      if (el !== null && !sameBox(read(el), shown)) wake();
+    }, RESTING_CHECK_MS);
     raf = requestAnimationFrame(tick);
     return () => {
       alive = false;
       offOverlay();
       offMotion();
+      sized?.disconnect();
+      changed.disconnect();
+      window.removeEventListener("resize", wake);
+      document.removeEventListener("visibilitychange", wake);
+      for (const type of MOVE_EVENTS) {
+        document.removeEventListener(type, wake, true);
+      }
+      window.clearInterval(resting);
       cancelAnimationFrame(raf);
       window.clearTimeout(clearStill);
       bridge.pageHide?.();

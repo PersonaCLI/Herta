@@ -354,6 +354,79 @@ describe("the browser page tab (ADR 0083)", () => {
     }
   });
 
+  it("once laid on and still, the watch rests; a resize, or a move nothing announced, wakes it (review 2026-11-10)", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let lastFrame = 0;
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        lastFrame += 1;
+        frames.set(lastFrame, cb);
+        return lastFrame;
+      });
+    const caf = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((id) => {
+        frames.delete(id);
+      });
+    /** Run frames until `done` holds, at most `max`; returns how many ran. */
+    const framesUntil = (done: () => boolean, max = 60): number => {
+      let n = 0;
+      for (; n < max && !done(); n += 1) {
+        const due = [...frames.values()];
+        frames.clear();
+        act(() => {
+          for (const cb of due) cb(performance.now());
+        });
+      }
+      expect(done()).toBe(true);
+      return n;
+    };
+    try {
+      const mock = createMockHertaBridge();
+      const { page, emit } = withPage(mock);
+      const h = renderWithSession(ui(), { mock });
+      h.openSession("s1");
+      act(() => {
+        runShortcut("openBrowser");
+      });
+      await waitFor(() => expect(screen.getByTestId("page-view")).toBeTruthy());
+      const body = document.querySelector(".page-view__body") as HTMLElement;
+      let box = { left: 900, top: 140, width: 600, height: 700 };
+      body.getBoundingClientRect = () => box as DOMRect;
+      emit({});
+      framesUntil(() => page.show.mock.calls.length > 0);
+      // Laid on and holding still: it stops asking for frames.
+      const ran = framesUntil(() => frames.size === 0);
+      expect(ran).toBeLessThanOrEqual(31);
+      // The window resized: it wakes, and the moved box freezes the page.
+      box = { ...box, left: 700 };
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(frames.size).toBe(1);
+      framesUntil(() => page.freeze.mock.calls.length === 1);
+      // The freeze answers with its still frame, then wakes the watch.
+      await waitFor(() => expect(frames.size).toBe(1));
+      // Laid on again at the new place, then resting again.
+      framesUntil(() => page.show.mock.calls.length > 1);
+      expect(page.show).toHaveBeenLastCalledWith("s1", {
+        x: 700,
+        y: 140,
+        width: 600,
+        height: 700,
+      });
+      framesUntil(() => frames.size === 0);
+      // A move nothing announces: the resting read a second finds it.
+      box = { ...box, left: 650 };
+      await waitFor(() => expect(frames.size).toBe(1), { timeout: 2000 });
+      framesUntil(() => page.freeze.mock.calls.length === 2);
+    } finally {
+      raf.mockRestore();
+      caf.mockRestore();
+    }
+  });
+
   describe("the new-tab page: the launcher's servers (ADR 0083 §4; pick B)", () => {
     it("lists a card per server; an ask-class Run confirms in its card first", async () => {
       const mock = createMockHertaBridge();

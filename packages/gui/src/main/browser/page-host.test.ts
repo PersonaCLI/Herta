@@ -27,6 +27,8 @@ const h = vi.hoisted(() => ({
   gesture: false,
   /** What a step was stopped from going to. */
   refused: [] as string[],
+  /** Still frames taken of a page. */
+  captures: 0,
 }));
 
 vi.mock("electron", () => {
@@ -66,6 +68,10 @@ vi.mock("electron", () => {
         this.destroyed = true;
       },
       getURL: () => "http://localhost:5180/",
+      capturePage() {
+        h.captures += 1;
+        return Promise.resolve({ isEmpty: () => false });
+      },
     };
     constructor() {
       h.views.push(this);
@@ -119,6 +125,8 @@ type PageIpc = import("./page-host.js").PageIpc;
 
 function fakeWindow() {
   let destroyed = false;
+  let visible = true;
+  let minimized = false;
   const gone = (): never => {
     throw new TypeError("Object has been destroyed");
   };
@@ -135,6 +143,8 @@ function fakeWindow() {
   };
   const win = {
     isDestroyed: () => destroyed,
+    isVisible: () => (destroyed ? gone() : visible),
+    isMinimized: () => (destroyed ? gone() : minimized),
     get contentView() {
       return destroyed ? gone() : contentView;
     },
@@ -148,6 +158,12 @@ function fakeWindow() {
     appFocus: webContents.focus,
     close: () => {
       destroyed = true;
+    },
+    hide: (hidden: boolean) => {
+      visible = !hidden;
+    },
+    minimize: (yes: boolean) => {
+      minimized = yes;
     },
   };
 }
@@ -166,9 +182,42 @@ beforeEach(() => {
   h.refused.length = 0;
   h.gesture = false;
   h.stepping = false;
+  h.captures = 0;
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("the page's still frames (review 2026-11-10)", () => {
+  it("are taken while the page is shown on a window that can be seen", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, true);
+    host.navigate("s1", { url: "http://localhost:5180/" });
+    host.show("s1", BOX);
+    vi.advanceTimersByTime(200);
+    expect(h.captures).toBe(1);
+    vi.advanceTimersByTime(1500);
+    expect(h.captures).toBe(2);
+    host.dispose();
+  });
+
+  it("are not taken while the window is in the tray or minimized, and resume after", () => {
+    const w = fakeWindow();
+    const host = new PageHost(w.win, events, true);
+    host.navigate("s1", { url: "http://localhost:5180/" });
+    host.show("s1", BOX);
+    w.hide(true);
+    vi.advanceTimersByTime(200 + 1500 * 3);
+    expect(h.captures).toBe(0);
+    w.hide(false);
+    w.minimize(true);
+    vi.advanceTimersByTime(1500 * 3);
+    expect(h.captures).toBe(0);
+    w.minimize(false);
+    vi.advanceTimersByTime(1500);
+    expect(h.captures).toBe(1);
+    host.dispose();
+  });
 });
 
 describe("the page host as its window closes (ADR 0083 §3)", () => {

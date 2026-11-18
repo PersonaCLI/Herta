@@ -115,6 +115,14 @@ const PICK_FOLLOW_MS = 33;
  *  async readback, ~6–8 ms; nothing is encoded until a freeze asks. */
 const STILL_REFRESH_MS = 1500;
 
+/** Whether a still frame is worth taking: the window is there to be seen.
+ *  Exported for its test. */
+export function stillWorthTaking(
+  win: Pick<BrowserWindow, "isDestroyed" | "isVisible" | "isMinimized">,
+): boolean {
+  return !win.isDestroyed() && win.isVisible() && !win.isMinimized();
+}
+
 export interface PageHostEvents {
   /** The header's state changed (address, title, loading, history). */
   readonly state: (state: PageState) => void;
@@ -481,6 +489,11 @@ export class PageHost {
     const take = (): void => {
       const wc = page.view.webContents;
       if (this.onWindow !== id || !this.placed || wc.isDestroyed()) return;
+      // Nothing to show it over while the window is hidden (in the tray) or
+      // minimized, and the renderer, whose frames stop there, never takes
+      // the page off: it was captured every 1.5 s regardless (review
+      // 2026-11-10). The frame a freeze shows is the last one taken before.
+      if (!stillWorthTaking(this.win)) return;
       void wc.capturePage().then(
         (image) => {
           if (this.onWindow === id && !image.isEmpty())

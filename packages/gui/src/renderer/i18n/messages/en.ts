@@ -315,6 +315,8 @@ export const en = {
     "What this runs cannot be read from the command (encoded, computed, or fed on input) — asked every time",
   "approval.reason.commandGitInternals":
     "Changes .git internals (hooks or config) that git later runs as commands — asked every time",
+  "approval.reason.commandGitOption":
+    "This git command only reads; it asks because of the option before it (-C, --no-pager)",
   "approval.reason.commandOutside":
     "Touches a path outside the workspace — check the path",
   "approval.reason.commandLocalExec":

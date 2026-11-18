@@ -49,6 +49,9 @@ export const REASON_KEY: Record<string, MessageKey> = {
   // repo-local config key that is a command. Never a rule; a review scores
   // it high.
   command_ask_git_internals: "approval.reason.commandGitInternals",
+  // A git read behind a global option (2026-11-18): it still asks, and the
+  // card says it reads instead of "changes the repository".
+  command_ask_git_option: "approval.reason.commandGitOption",
   // Classes named earlier that never got copy, so their raw English reason
   // showed on zh cards (found 2026-10-09 by the source scan in the test).
   command_ask_outside: "approval.reason.commandOutside",

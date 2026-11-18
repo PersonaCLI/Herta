@@ -1352,6 +1352,42 @@ const GIT_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set([
   "--attr-source",
 ]);
 
+/** git's options before the subcommand that change only WHERE it works or
+ *  how it prints, never what it runs or writes (2026-11-18). `-c`,
+ *  `--config-env`, `--exec-path`, `-p` (a pager from config), `--namespace`,
+ *  `--super-prefix`, `--attr-source` and `--bare` are not among them. A
+ *  directory outside the workspace was refused before this is asked. */
+const GIT_INERT_GLOBAL_FLAGS: ReadonlySet<string> = new Set([
+  "--no-pager",
+  "-P",
+  "--no-replace-objects",
+  "--no-optional-locks",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+]);
+const GIT_INERT_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set([
+  "-C",
+  "--git-dir",
+  "--work-tree",
+]);
+
+/** Whether every global option in front of a git subcommand is inert. */
+function gitGlobalsOnlyMove(globals: readonly string[]): boolean {
+  for (let i = 0; i < globals.length; i += 1) {
+    const a = globals[i] as string;
+    if (GIT_INERT_GLOBAL_FLAGS.has(a)) continue;
+    if (GIT_INERT_GLOBAL_VALUE_FLAGS.has(a)) {
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("--git-dir=") || a.startsWith("--work-tree=")) continue;
+    return false;
+  }
+  return true;
+}
+
 /**
  * Where the subcommand actually is — `git -C sub reset --hard` puts it at 3,
  * not 1.
@@ -4275,11 +4311,43 @@ function classifyCommandTiers(
     };
   }
   if (a0 === "git" && typeof argv[1] === "string") {
+    // A read behind a global option (`git -C sub status`, `git --no-pager
+    // log`) still asks (2026-08-25), but as the read it is: it said "git -C
+    // changes the repository", naming the option as the subcommand (review
+    // 2026-11-10). Only options that move where git works or how it prints;
+    // the line without them must be one this tier allows.
+    // Behind options that only move it, the line is what it is without them:
+    // that verdict, or this class where that verdict is an allow.
+    const front = gitSub !== null && gitSub > 1 ? argv.slice(1, gitSub) : [];
+    if (gitSub !== null && gitSubName !== null && front.length > 0) {
+      if (gitGlobalsOnlyMove(front)) {
+        const plain = classifyCommandTiers(
+          ["git", ...argv.slice(gitSub)],
+          opts,
+        );
+        if (plain.kind !== "allow") return plain;
+        return {
+          kind: "ask",
+          risk: "workspace_read",
+          code: "command_ask_git_option",
+          reason: `git ${gitSubName} only reads; it asks because the allow tier does not read an option in front of it (${front.join(" ")}) — without it (cd into the directory instead of -C) it needs no approval`,
+        };
+      }
+      return {
+        kind: "ask",
+        risk: "workspace_write",
+        code: "command_ask_vcs",
+        reason: `git ${gitSubName} behind ${front.join(" ")} — an option the allow tier does not read, which can change what git runs or where it writes`,
+      };
+    }
     return {
       kind: "ask",
       risk: "workspace_write",
       code: "command_ask_vcs",
-      reason: `git ${argv[1]} changes the repository`,
+      reason:
+        gitSubName === null
+          ? `git ${argv.slice(1).join(" ")} names no subcommand the harness can read`
+          : `git ${gitSubName} changes the repository`,
       // A plain `git commit` (or `--continue`) mid-merge/rebase concludes
       // the user's half-finished operation — the card should say so
       // (ADR 0049 §5; note only, the tier is unchanged).

@@ -1373,8 +1373,11 @@ describe("git shapes that discard work or rewrite history (2026-08-25)", () => {
     // `-C` names another directory, so `git -C ../../other-repo log -p` would
     // read a tree outside the workspace. Escalating the destructive tier
     // through the prefix while leaving the allow tier anchored is the correct
-    // asymmetry — peeling only ever makes a verdict stricter.
-    expect(code(["git", "-C", "subdir", "status"])).toBe("command_ask_vcs");
+    // asymmetry — peeling only ever makes a verdict stricter. (It asks as a
+    // read since 2026-11-18; a `-C` outside the workspace asks as outside.)
+    expect(code(["git", "-C", "subdir", "status"])).toBe(
+      "command_ask_git_option",
+    );
   });
 
   it("an unresolvable PROGRAM NAME asks even with no shell expansion", () => {
@@ -2599,16 +2602,42 @@ describe("git that only reads (ADR 0045 amendment 2026-11-11 (2))", () => {
 
   it("the allow tier is still not taught about global options", () => {
     // The decision of 2026-08-25 stands: a read behind `-C dir` or
-    // `--no-pager` asks, for the new subcommands as for `git status`.
+    // `--no-pager` asks, for the new subcommands as for `git status`. Since
+    // 2026-11-18 it asks as the read it is, not as "git -C changes the
+    // repository" (review 2026-11-10).
     for (const line of [
       "git --no-pager ls-tree HEAD",
       "git -C sub ls-tree HEAD",
       "git -C sub status",
       "git --git-dir=.git cat-file -p HEAD",
+      "git -C sub stash list",
     ]) {
-      expect(verdict(line), line).toBe("command_ask_vcs");
+      expect(verdict(line), line).toBe("command_ask_git_option");
     }
     expect(verdict("git -C .. rev-list HEAD")).toBe("command_ask_outside");
+  });
+
+  it("a git line behind global options names its subcommand, never the option (2026-11-18)", () => {
+    const reason = (line: string): string => {
+      const v = classifyCommand(line.split(" "));
+      return v.kind === "ask" ? v.reason : v.kind;
+    };
+    expect(reason("git -C sub status")).toMatch(/^git status only reads/);
+    expect(reason("git -C sub commit -m x")).toBe(
+      "git commit changes the repository",
+    );
+    // Behind options that only move it, the line is what it is without them.
+    expect(verdict("git -C sub diff --no-index a b")).toBe(
+      "command_ask_reader_path",
+    );
+    expect(verdict("git -C sub stash pop")).toBe("command_ask_vcs");
+    // An option that can change what git runs keeps the change class, and
+    // the reason says why.
+    for (const line of ["git -p log", "git --no-pager --namespace=x log"]) {
+      expect(verdict(line), line).toBe("command_ask_vcs");
+      expect(reason(line), line).toMatch(/^git log behind .* an option/);
+    }
+    expect(reason("git -C sub")).toMatch(/names no subcommand/);
   });
 
   it("what allowed before allows as before, and its asking forms still ask", () => {

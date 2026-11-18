@@ -182,7 +182,7 @@ describe("settings IPC — attention (ADR 0072 §1)", () => {
 });
 
 describe("settings IPC — models and effort apply live (ADR 0081)", () => {
-  function setup(): {
+  function setup(hooks: { pathReady?: Promise<unknown> } = {}): {
     handlers: Map<string, Handler>;
     applied: unknown[];
   } {
@@ -193,7 +193,7 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
       handle: ((channel: string, fn: Handler) => {
         handlers.set(channel, fn);
       }) as never,
-      hooks: {},
+      hooks,
       host: () => ({ setModels: (m: unknown) => applied.push(m) }) as never,
       workspaceRoot: () => userData.dir,
       voice: {
@@ -244,6 +244,29 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
     expect(
       readFileSync(join(userData.dir, ".herta", "settings.json"), "utf-8"),
     ).not.toContain("contract");
+  });
+
+  it("the bash check answers once main has recovered PATH (review 2026-11-10)", async () => {
+    // The window no longer waits for the PATH probes, so the pane can ask
+    // first; `findBash` reads PATH, and an answer read before the probes
+    // land would say no bash where a fresh terminal finds one.
+    let land = (): void => {};
+    const pathReady = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    const { handlers } = setup({ pathReady });
+    let answered = false;
+    const read = handlers
+      .get(CMD.getBackendConfig)?.(null)
+      .then((v) => {
+        answered = true;
+        return v;
+      });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(answered).toBe(false);
+    land();
+    expect(await read).toMatchObject({ thinking: "high" });
+    expect(answered).toBe(true);
   });
 
   it("an env override still wins over a live pick, as at a fresh start", async () => {

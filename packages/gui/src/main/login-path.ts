@@ -15,12 +15,9 @@ import { basename } from "node:path";
  * the runner's full PATH.
  *
  * The consequences inside Herta are quiet rather than loud:
- *   - `run_command` spawns with `shell: false` and the inherited env, so
- *     `npm test` / `node script.js` / `cargo build` fail as "binary not found"
- *     for a user whose terminal runs them fine;
- *   - `detectRg()` probes bare `rg` ONCE and caches the null for the whole
- *     process lifetime, silently downgrading `search_text` to the slower JS
- *     walker for the rest of the session.
+ *   - 板砖's shell starts with the inherited env, so `npm test` /
+ *     `node script.js` / `cargo build` fail as "command not found" for a
+ *     user whose terminal runs them fine.
  *
  * So the harness recovers the PATH the user's shell would have, once, at
  * startup. This is HARNESS-set: it does not touch — and must not be confused
@@ -224,9 +221,9 @@ export async function resolveLoginPath(
 
 /**
  * Applies the recovered PATH to this process, so every child spawned later
- * (run_command, the rg probe) inherits it. Call once, before the session
- * service is constructed — `detectRg` caches its result for the process
- * lifetime, so a later fix would not take effect.
+ * (板砖's shell, the repository probe) inherits it. Call once at launch; the
+ * session service's bootstrap waits for it before it starts any child
+ * (`SettingsHooks.pathReady`).
  */
 export async function applyLoginPath(
   deps: LoginPathDeps,

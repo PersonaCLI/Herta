@@ -69,6 +69,13 @@ import { TTS_ARCHIVE_BYTES, TTS_BUNDLE_BYTES } from "./tts/tts-release.js";
 import type { VoiceModelService } from "./tts/voice-model.js";
 
 export interface SettingsHooks {
+  /** Settles once main has recovered the PATH a terminal would have (the
+   *  login shell's on macOS / Linux, the registry's on Windows). The window
+   *  no longer waits for it (review 2026-11-10: up to 3 s on macOS/Linux);
+   *  whatever reads PATH waits here instead: the session bootstrap, before
+   *  any shell or probe is started, and the bash check below. Absent in
+   *  tests: nothing to wait for. */
+  readonly pathReady?: Promise<unknown>;
   /** Fired after Settings → Language persists a new locale. Lets main-side
    *  surfaces that render OUTSIDE the renderer (the tray hover tooltip —
    *  drawn by the OS, so no React re-render reaches it) re-resolve their
@@ -167,6 +174,8 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
   handle(CMD.getBackendConfig, async () => {
     const s = await readAppSettings(workspaceRoot());
     const v = s.backend?.thinking;
+    // `findBash` reads PATH: on Windows it finds bash beside the git there.
+    await hooks.pathReady;
     return {
       thinking: isBackendThinking(v) ? v : "high",
       // Whether 板砖 can run here at all (ADR 0086): it needs a bash, and

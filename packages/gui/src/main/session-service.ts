@@ -81,6 +81,7 @@ import {
   watchAttention,
 } from "./attention.js";
 import { createElectronAttentionHost } from "./attention-electron.js";
+import { bootstrapOnce } from "./bootstrap-once.js";
 import { createFlowHost, flowDirFor } from "./flow-host.js";
 import { installMode } from "./install-mode.js";
 import {
@@ -1499,23 +1500,35 @@ export function createSessionService(
   }
   registerHandlers();
 
-  async function start(): Promise<void> {
-    // Re-entrant: did-finish-load can fire again on renderer reload. If we're
-    // already bootstrapped, just re-sync the renderer with the active session
-    // (re-point forwarders + re-send reset).
-    if (host !== null) {
-      const active = host.activeSession;
+  // Re-entrant: did-finish-load can fire again on renderer reload. If we're
+  // already bootstrapped, just re-sync the renderer with the active session
+  // (re-point forwarders + re-send reset). One bootstrap at a time: a reload
+  // while the first still waits for PATH re-syncs after it (bootstrap-once).
+  const start = bootstrapOnce({
+    booted: () => host !== null,
+    bootstrap,
+    resync: () => {
+      const active = host?.activeSession ?? null;
       // Re-sync the reloaded renderer: re-point at the open session if any, else
       // restore the connect screen (the user reloaded while still disconnected).
       if (active !== null) activation.pointAt(active);
       else activation.pointNowhere();
-      return;
-    }
+    },
+  });
+
+  /** The first start's work: the host, its settings, the connect screen.
+   *  Never rejects: a failure is the error panel. */
+  async function bootstrap(): Promise<void> {
     // Wrap the WHOLE bootstrap: a missing key (buildConfig) OR a failed
     // createSessionHost/openSession must surface as the error panel via
     // session:reset, not a silent unhandled rejection that leaves the
     // renderer stuck on an empty workbench.
     try {
+      // Every child this service starts — the backend's shell, the
+      // repository probe, a dev server — inherits PATH at spawn, and none
+      // exists before this bootstrap. So it waits here for main's PATH
+      // recovery, which the window no longer waits for (review 2026-11-10).
+      await hooks.pathReady;
       const workspaceRoot = appWorkspaceRoot();
       // Herta's synthesized voice (ADR 0042). Constructed here — before the
       // host, so every session it creates carries it — but the utility

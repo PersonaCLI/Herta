@@ -157,6 +157,9 @@ app.on("web-contents-created", (_event, contents) => {
 /** The single main window + its session service (single-window app). */
 let mainWindow: BrowserWindow | null = null;
 let mainService: SessionService | null = null;
+/** Main's PATH recovery, started at launch and not awaited by the window
+ *  (see its call site); the session service waits on it. */
+let pathReady: Promise<unknown> = Promise.resolve();
 /** Held module-level: a GC'd Tray silently vanishes from the OS tray. */
 let tray: AppTray | null = null;
 /** Auto-update service (2026-07-10): check on launch + every 4h, background
@@ -442,6 +445,7 @@ function createWindow(): BrowserWindow {
     changed: (sessionId) => toRenderer(EVT.serversChanged, sessionId),
   });
   const service = createSessionService(win.webContents, win, {
+    pathReady,
     browser: pages,
     servers,
     // Settings → Language: the tray tooltip is OS-rendered on hover, so it
@@ -738,31 +742,34 @@ void app
     // is what a corporate laptop needs and undici does not have.
     installChromiumFetch();
 
-    // macOS PATH recovery (audit S7) — BEFORE createWindow, because the session
-    // service and the cached `rg` probe both inherit whatever PATH exists when
-    // they first spawn, and detectRg() caches its answer for the process
-    // lifetime. A Finder-launched .app otherwise has only launchd's minimal
-    // PATH, so run_command cannot find node/npm/cargo and search silently
-    // downgrades to the JS walker. The Linux AppImage has the same gap for
-    // `.bashrc` tools (2026-09-23). No-op on Windows and when launched from a
-    // terminal; bounded so a slow rc file cannot delay startup.
-    await applyLoginPath({
+    // macOS PATH recovery (audit S7): a Finder-launched .app has only
+    // launchd's minimal PATH, so 板砖's shell cannot find node/npm/cargo. The
+    // Linux AppImage has the same gap for `.bashrc` tools (2026-09-23). No-op
+    // on Windows and when launched from a terminal; bounded so a slow rc file
+    // cannot hold anything for long.
+    // Windows PATH recovery (ADR 0044): the app inherits Explorer's PATH
+    // snapshot, so a node/git installed after that snapshot resolves in every
+    // fresh terminal but not here. Appends the registry's machine+user PATH
+    // entries; never removes or reorders what was inherited. No-op off win32;
+    // bounded by the reg-query timeouts.
+    // Neither is awaited here (review 2026-11-10): the window waited on them,
+    // up to 3 s on macOS/Linux, and nothing in it reads PATH. What does —
+    // the session bootstrap, before any shell or probe starts, and the
+    // Settings pane's bash check — waits for `pathReady`. Both never throw.
+    pathReady = applyLoginPath({
       platform: process.platform,
       env: process.env,
       // isatty on the fd, not process.stdin: reading that property would
       // construct a stream on the app's stdin just to ask.
       launchedFromTerminal: process.platform !== "win32" && isatty(0),
-    });
+    }).then(() =>
+      applyWindowsPath({ platform: process.platform, env: process.env }),
+    );
     // …and the encoding launchd leaves unset (ADR 0032, amended 2026-09-23):
     // without it CocoaPods refuses to run and byte-counting tools miscount
-    // Chinese. Only when no locale variable is set at all.
+    // Chinese. Only when no locale variable is set at all. The PATH probes
+    // touch PATH alone, so this need not wait for them.
     Object.assign(process.env, launchLocaleEnv(process.platform, process.env));
-    // Windows PATH recovery (ADR 0044) — same seam, same reason: the app
-    // inherits Explorer's PATH snapshot, so a node/git installed after that
-    // snapshot resolves in every fresh terminal but not here. Appends the
-    // registry's machine+user PATH entries; never removes or reorders what was
-    // inherited. No-op off win32; bounded by the reg-query timeouts.
-    await applyWindowsPath({ platform: process.platform, env: process.env });
     closeToTray = s.closeToTray ?? defaultCloseToTray(process.platform);
     lastTheme = s.theme ?? "system";
     // Native surfaces (tray context menu, system dialogs) follow Chromium's

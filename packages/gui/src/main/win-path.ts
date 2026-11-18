@@ -152,9 +152,9 @@ export async function resolveWindowsPath(
 
 /**
  * Applies the recovered PATH to this process so every child spawned later
- * (run_command, the persistent shell, the rg probe) inherits it. Call once at
- * startup, before the session service is constructed — `detectRg` caches its
- * result for the process lifetime, so a later fix would not take effect.
+ * (the persistent shell, `findBash`, the repository probe) inherits it. Call
+ * once at launch; the session service's bootstrap waits for it before it
+ * starts any child (`SettingsHooks.pathReady`).
  */
 export async function applyWindowsPath(
   deps: WinPathDeps,

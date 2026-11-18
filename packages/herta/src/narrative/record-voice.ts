@@ -825,6 +825,7 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     server_aborted: "启动半路被停下了",
     server_not_running: "那个服务器没在跑",
     unsafe_shim_arg: "参数里有 Windows 不能安全传过去的字符",
+    bash_noexec: "set -n 会让这个 shell 什么都不再执行，没发出去",
   },
   en: {
     invalid_input: "bad arguments",
@@ -890,6 +891,8 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     server_aborted: "the start was stopped half-way",
     server_not_running: "that server is not running",
     unsafe_shim_arg: "an argument cannot pass safely through Windows",
+    bash_noexec:
+      "set -n would stop the shell running anything, so it was not sent",
   },
 };
 

@@ -806,11 +806,17 @@ export class PersistentShell implements BackgroundProcess {
       // command in between would replace them. They are joined by `printf
       // -v`, not by `"${a[*]}"`, which joins with whatever `IFS` the command
       // left behind, and not by a `$(…)`, which is a fork per call.
+      // An empty line after the command (review 2026-11-10): a last line
+      // ending in a backslash continued onto the group's closing line, so
+      // the group never closed and the call waited out its timeout. The
+      // continuation now ends on the empty line; for any other command an
+      // empty line runs nothing.
       const stages = "PIPESTATUS[@]";
       const script = [
         "{",
         "set +e; set +u",
         command,
+        "",
         `} </dev/null; { __herta_ps=("\${${stages}}") __herta_rc=$?; set +xv; } 2>/dev/null`,
         `__herta_reset=0; case "$PWD/" in "$__herta_ws"/*) ;; *) cd "$__herta_ws" && __herta_reset=1 ;; esac; printf -v __herta_pl '%s,' "\${__herta_ps[@]}"; printf '\\n%s:%s:%s:%s:%s\\n' '${marker}' "$__herta_rc" "$__herta_reset" "$__herta_pl" "$PWD"`,
         "",

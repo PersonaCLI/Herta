@@ -16,6 +16,7 @@ import { writeRunLog } from "../run-command/logger.js";
 import { redactSecrets } from "../run-command/redactor.js";
 import { detectTestRun, isTestCommand } from "../run-command/test-detector.js";
 import { type Pipeline, pipelinesOf } from "./last-pipeline.js";
+import { noexecCommand } from "./noexec.js";
 import { PersistentShell, SHELL_BG_ID } from "./persistent-shell.js";
 import {
   readRedirectTargets,
@@ -304,6 +305,22 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         cwd: sh.cwd,
       };
       const classified = classifyShellCommandDetailed(command, classifyOpts);
+      // `set -n` makes this shell read every later line and run none, its
+      // own closing lines included: the call waited out its timeout and the
+      // shell was lost (review 2026-11-10). Refused before it is sent.
+      const noexec = noexecCommand(classified.steps ?? []);
+      if (noexec !== null) {
+        const message = `\`${noexec}\` turns on noexec: this shell would read every later command and run none, so the call could never end and the shell would be lost.`;
+        const suggestion =
+          "To check a script's syntax, run `bash -n <file>`: a child shell reads it and runs nothing.";
+        return {
+          ok: false,
+          error: { code: "bash_noexec", message, retryable: false },
+          suggestion,
+          summary: "failed: bash_noexec",
+          modelText: `Command refused by the harness: ${message} ${suggestion}`,
+        };
+      }
       const readOnly = classified.verdict.kind === "allow";
       // What the line's redirections are about to overwrite, read while it
       // is still there (ADR 0074 amendment, 2026-10-08): this contract

@@ -310,6 +310,21 @@ d("PersistentShell (real bash)", () => {
     expect(afterV.freshShell).toBe(false);
   });
 
+  it("a last line ending in a backslash ends the call instead of swallowing the wrapper (review 2026-11-10)", async () => {
+    // The continuation took the group's closing line as its own: the group
+    // never closed, the call waited out its timeout and lost the shell.
+    const r = await shell.run("echo a \\", { timeoutMs: 10_000 });
+    expect(r.timedOut).toBe(false);
+    expect(r.exitCode).toBe(0);
+    expect(r.output).toBe("a\n");
+    const again = await shell.run("echo again", { timeoutMs: 10_000 });
+    expect(again.output).toBe("again\n");
+    expect(again.freshShell).toBe(false);
+    // An escaped backslash is not a continuation, and reads as before.
+    const escaped = await shell.run("echo 'b\\'", { timeoutMs: 10_000 });
+    expect(escaped.output).toBe("b\\\n");
+  });
+
   it("a call ends at its marker's line, not at the marker's first appearance — a trap that keeps tracing on cannot hold it open", async () => {
     // The trap turns tracing back on before every command, the wrapper's
     // own included: its marker line is traced, marker and all, first.

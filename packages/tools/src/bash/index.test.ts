@@ -678,6 +678,24 @@ d("bash tool (real bash)", () => {
     expect(tool.summarize?.({ nope: 1 }, ctx)).toBeUndefined();
   });
 
+  it("refuses `set -n` before it reaches the shell, which keeps its state (review 2026-11-10)", async () => {
+    ws = await mkTmpWorkspace({});
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+    await tool.run(call("export MARK=7", "c1"), ctx, noopProgress);
+    const t0 = Date.now();
+    const r = await tool.run(call("echo hi; set -n", "c2"), ctx, noopProgress);
+    // At once, not after the call's timeout.
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(r.ok).toBe(false);
+    expect(r.error?.code).toBe("bash_noexec");
+    expect(r.suggestion).toContain("bash -n");
+    expect(r.modelText).toContain("set -n");
+    const after = await tool.run(call("echo $MARK", "c3"), ctx, noopProgress);
+    expect(after.modelText).toBe("7\n");
+    await ctx.bg.stopAll();
+  });
+
   it("refuses an empty command with a model-facing message and no shell spawn", async () => {
     ws = await mkTmpWorkspace({});
     const ctx = ctxFor(ws.root);

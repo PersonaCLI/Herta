@@ -817,6 +817,65 @@ function envAsk(verb: string, key: string): Extract<Verdict, { kind: "ask" }> {
   };
 }
 
+/** An assignment inside an arithmetic expression: a name, an optional
+ *  subscript, and `=` or a compound `op=` that is not a comparison (`==`,
+ *  `!=`, `<=`, `>=`). A `$` or a name character before it is a reference or
+ *  part of another word. */
+const ARITH_ASSIGN =
+  /(?:^|[^A-Za-z0-9_$.])([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*(?:<<|>>|[-+*/%&^|])?=(?!=)/g;
+/** An increment or decrement: `++NAME`, `NAME--`. */
+const ARITH_STEP =
+  /(?:\+\+|--)\s*([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*)\s*(?:\+\+|--)/g;
+/** An array subscript in a parameter expansion, which bash evaluates as
+ *  arithmetic wherever it stands: `${arr[i+1]}`, `${#arr[n=2]}`. */
+const EXPANSION_SUBSCRIPT = /\$\{[#!]?[A-Za-z_][A-Za-z0-9_]*\[([^\]]*)\]/g;
+
+/** The names an arithmetic expression assigns. */
+function arithmeticTargets(expr: string): string[] {
+  const out: string[] = [];
+  for (const m of expr.matchAll(ARITH_ASSIGN)) out.push(m[1] as string);
+  for (const m of expr.matchAll(ARITH_STEP)) {
+    out.push((m[1] ?? m[2]) as string);
+  }
+  return out;
+}
+
+/**
+ * The names a segment gives a number to, outside a spelled `K=V` (ADR 0045
+ * amendment 2026-11-18): `let`'s expressions (`let PATH=1`, `let "PATH =
+ * 2"`); `[[`'s words, which bash evaluates as arithmetic beside `-eq` and
+ * the like (a spaced ` = ` there is a string comparison and three words);
+ * `((`; every array subscript in a parameter expansion, on any command; and
+ * the name `wait -p` stores a process id in. The raw segment is read for the
+ * subscripts: single quotes would keep one from expanding, and reading it
+ * anyway only asks.
+ */
+function numericAssignments(
+  name: string,
+  words: readonly string[],
+  seg: string,
+): string[] {
+  const out: string[] = [];
+  for (const m of seg.matchAll(EXPANSION_SUBSCRIPT)) {
+    out.push(...arithmeticTargets(m[1] as string));
+  }
+  if (name === "let" || name === "[[") {
+    for (const w of words.slice(1)) out.push(...arithmeticTargets(w));
+  } else if (name === "((") {
+    out.push(...arithmeticTargets(words.slice(1).join(" ")));
+  } else if (name === "wait") {
+    for (let i = 1; i < words.length; i += 1) {
+      const m = /^-[A-Za-z]*p(.*)$/.exec(words[i] as string);
+      if (m === null) continue;
+      const target = m[1] !== "" ? m[1] : words[i + 1];
+      if (target !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(target)) {
+        out.push(target);
+      }
+    }
+  }
+  return out;
+}
+
 /** A name given a value by something other than a spelled `K=V` — a loop's
  *  variable, `getopts`' target. It asks unless it is on the env allow-list or
  *  plainly the script's own (`isShellLocalName`). */
@@ -1129,6 +1188,14 @@ function classifySegment(
       reason: `${name} ${unmodelled} is an option the harness has not accounted for — review it`,
     });
   }
+
+  // A name given a number (ADR 0045 amendment 2026-11-18; the four places
+  // its amendment of 2026-11-10 left open): `let PATH=1`, `[[ PATH=1 -eq 1
+  // ]]`, an array subscript on any command (`${arr[PATH=1]}`), `wait -p
+  // PATH`. A number is still a directory the next program is looked up in.
+  // Before the builtin handlers below, several of which return early.
+  const numbered = numericAssignments(name, words, seg).find(assignsEnvName);
+  if (numbered !== undefined) asks.push(envAsk("assigns", numbered));
 
   // `export K=V` also goes through the env allow-list.
   // `readonly` and `local` assign exactly the same way and were NOT routed

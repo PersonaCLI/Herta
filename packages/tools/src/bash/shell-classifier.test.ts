@@ -1715,6 +1715,49 @@ describe("classifyShellCommand — a name given a value without `K=V` (review 20
     // The words the other options take are still not targets.
     expect(kind("read -p PATH -t 1 TERM")).toBe("allow");
   });
+
+  /** A parameter expansion as bash spells it: `${…}` written in a plain
+   *  string reads to the linter as a template that lost its backquotes. */
+  const expand = (inner: string): string => ["$", "{", inner, "}"].join("");
+
+  it("a name given a number asks too: let, [[, a subscript, wait -p (2026-11-18)", () => {
+    // The four the amendment of 2026-11-10 left open. A number is still a
+    // directory: with PATH=1, the next `git status` runs ./1/git.
+    for (const line of [
+      "let PATH=1",
+      'let "PATH = 2"',
+      "let PATH+=1",
+      "let ++PATH",
+      "[[ PATH=1 -eq 1 ]]",
+      `echo ${expand("arr[PATH=1]")}`,
+      `cat "${expand("a[BASH_ENV=3]")}"`,
+      "wait -p PATH",
+      "wait -n -p NODE_OPTIONS",
+    ]) {
+      expect(envAsks(line), line).toBe(true);
+    }
+  });
+
+  it("arithmetic that assigns a script's own name, or assigns nothing, allows as before", () => {
+    for (const line of [
+      "let i=1",
+      'let "n = n + 1"',
+      "let i++",
+      "let x==1",
+      'let "PATH >= 1"',
+      "[[ $x -eq 1 ]]",
+      "[[ $a == b ]]",
+      "[[ HOME = x ]]",
+      "[[ $x != y ]]",
+      `echo ${expand("arr[i+1]")}`,
+      `echo ${expand("arr[n=2]")}`,
+      `echo ${expand("#arr[@]")}`,
+      "wait -p pid",
+      "wait $!",
+    ]) {
+      expect(kind(line), line).toBe("allow");
+    }
+  });
 });
 
 // 2026-11-12. `cd .h* && echo x > permissions.json` asked as an ordinary

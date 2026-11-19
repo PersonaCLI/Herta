@@ -696,6 +696,38 @@ d("bash tool (real bash)", () => {
     await ctx.bg.stopAll();
   });
 
+  it("refuses an exec that takes the shell over, and an unfinished line, before either reaches it (2026-11-19)", async () => {
+    ws = await mkTmpWorkspace({});
+    const ctx = ctxFor(ws.root);
+    const tool = bashTool({ bashPath: BASH as string });
+    await tool.run(call("export MARK=9", "c1"), ctx, noopProgress);
+    const t0 = Date.now();
+    const cases: Array<[string, string]> = [
+      ["exec sleep 30", "bash_exec"],
+      ["exec >out.txt", "bash_exec"],
+      ['echo "never closed', "bash_unfinished"],
+      ["cat <<EOF\nno terminator", "bash_unfinished"],
+    ];
+    for (const [line, code] of cases) {
+      const r = await tool.run(call(line, "c2"), ctx, noopProgress);
+      expect(r.ok, line).toBe(false);
+      expect(r.error?.code, line).toBe(code);
+      expect(r.suggestion, line).toBeTruthy();
+    }
+    // All four at once, not after a timeout, and the shell kept its state.
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    const after = await tool.run(call("echo $MARK", "c3"), ctx, noopProgress);
+    expect(after.modelText).toBe("9\n");
+    // What looked unfinished to the cheap look but is whole still runs.
+    const whole = await tool.run(
+      call('echo "a <<EOF"', "c4"),
+      ctx,
+      noopProgress,
+    );
+    expect(whole.modelText).toBe("a <<EOF\n");
+    await ctx.bg.stopAll();
+  });
+
   it("refuses an empty command with a model-facing message and no shell spawn", async () => {
     ws = await mkTmpWorkspace({});
     const ctx = ctxFor(ws.root);

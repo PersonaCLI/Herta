@@ -826,6 +826,8 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     server_not_running: "那个服务器没在跑",
     unsafe_shim_arg: "参数里有 Windows 不能安全传过去的字符",
     bash_noexec: "set -n 会让这个 shell 什么都不再执行，没发出去",
+    bash_exec: "exec 会接管这个 shell，没发出去",
+    bash_unfinished: "命令没写完（引号或 heredoc 没收尾），没发出去",
   },
   en: {
     invalid_input: "bad arguments",
@@ -893,6 +895,9 @@ const FAIL_REASON: Record<PromptLang, Record<string, string>> = {
     unsafe_shim_arg: "an argument cannot pass safely through Windows",
     bash_noexec:
       "set -n would stop the shell running anything, so it was not sent",
+    bash_exec: "exec would take the shell over, so it was not sent",
+    bash_unfinished:
+      "the command was unfinished (an open quote or heredoc), so it was not sent",
   },
 };
 

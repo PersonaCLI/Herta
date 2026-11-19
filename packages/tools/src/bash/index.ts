@@ -27,6 +27,8 @@ import { checkLineReads } from "./rule.js";
 import { bashInputSchema, bashJsonSchema } from "./schema.js";
 import { classifyShellCommandDetailed, tokenize } from "./shell-classifier.js";
 import { shellPathsFor } from "./shell-paths.js";
+import { execTakesOverShell } from "./shell-takeover.js";
+import { unfinishedInput } from "./unfinished.js";
 
 export { findBash } from "./find-bash.js";
 export {
@@ -305,21 +307,55 @@ export function bashTool(opts: BashToolOpts): HertaTool {
         cwd: sh.cwd,
       };
       const classified = classifyShellCommandDetailed(command, classifyOpts);
+      // Lines that would take this shell over are refused before they are
+      // sent: the call could never end, or the shell would end with it, and
+      // either way every `cd` and variable of the brief would be lost.
+      const refuse = (
+        code: string,
+        message: string,
+        suggestion: string,
+      ): ToolResult => ({
+        ok: false,
+        error: { code, message, retryable: false },
+        suggestion,
+        summary: `failed: ${code}`,
+        modelText: `Command refused by the harness: ${message} ${suggestion}`,
+      });
       // `set -n` makes this shell read every later line and run none, its
-      // own closing lines included: the call waited out its timeout and the
-      // shell was lost (review 2026-11-10). Refused before it is sent.
+      // own closing lines included (review 2026-11-10).
       const noexec = noexecCommand(classified.steps ?? []);
       if (noexec !== null) {
-        const message = `\`${noexec}\` turns on noexec: this shell would read every later command and run none, so the call could never end and the shell would be lost.`;
-        const suggestion =
-          "To check a script's syntax, run `bash -n <file>`: a child shell reads it and runs nothing.";
-        return {
-          ok: false,
-          error: { code: "bash_noexec", message, retryable: false },
-          suggestion,
-          summary: "failed: bash_noexec",
-          modelText: `Command refused by the harness: ${message} ${suggestion}`,
-        };
+        return refuse(
+          "bash_noexec",
+          `\`${noexec}\` turns on noexec: this shell would read every later command and run none, so the call could never end and the shell would be lost.`,
+          "To check a script's syntax, run `bash -n <file>`: a child shell reads it and runs nothing.",
+        );
+      }
+      // `exec <program>` replaces this shell; `exec >file` moves its own
+      // output, the end-of-call line with it (ADR 0040 amendment 2026-11-19).
+      const takeover = execTakesOverShell(classified.steps ?? [], command);
+      if (takeover !== null) {
+        return takeover.replaces
+          ? refuse(
+              "bash_exec",
+              `\`${takeover.command}\` would replace this shell with the program: the shell and everything set in it would be gone, and a program that keeps running would hold the call until its timeout.`,
+              "Run the program without `exec`.",
+            )
+          : refuse(
+              "bash_exec",
+              `\`${takeover.command}\` would move this shell's own output for the rest of the session, so the call could never see its end.`,
+              "Redirect the command's own output instead (`cmd > file`), or wrap several in `{ …; } > file`.",
+            );
+      }
+      // A quote or heredoc left open makes this shell wait for the rest,
+      // reading the end-of-call lines as part of it. bash's own parser says.
+      const unfinished = await unfinishedInput(command, opts.bashPath);
+      if (unfinished !== null) {
+        return refuse(
+          "bash_unfinished",
+          `The command is unfinished (bash: ${unfinished}): this shell would wait for the rest and the call could never end.`,
+          "Close the quote, or end the heredoc with its terminator alone on its own line.",
+        );
       }
       const readOnly = classified.verdict.kind === "allow";
       // What the line's redirections are about to overwrite, read while it

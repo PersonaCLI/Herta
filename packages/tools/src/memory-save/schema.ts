@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 export const memorySaveInputSchema = z
   .object({
@@ -41,4 +41,4 @@ export const memorySaveInputSchema = z
 
 export type MemorySaveInput = z.infer<typeof memorySaveInputSchema>;
 
-export const memorySaveJsonSchema = zodToJsonSchema(memorySaveInputSchema);
+export const memorySaveJsonSchema = toolJsonSchema(memorySaveInputSchema);

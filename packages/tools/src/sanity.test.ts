@@ -1,7 +1,7 @@
 import type { HertaTool } from "@herta/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "./json-schema.js";
 
 describe("@herta/tools sanity", () => {
   it("compiles with workspace dep on @herta/core", () => {
@@ -9,9 +9,9 @@ describe("@herta/tools sanity", () => {
     expect(t.name).toBe("noop");
   });
 
-  it("zod and zod-to-json-schema resolve", () => {
+  it("zod resolves, and a schema converts to JSON Schema", () => {
     const schema = z.object({ x: z.number() });
-    const json = zodToJsonSchema(schema);
+    const json = toolJsonSchema(schema);
     expect(json).toBeDefined();
     expect(typeof json).toBe("object");
   });

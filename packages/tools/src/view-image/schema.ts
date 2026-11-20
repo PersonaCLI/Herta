@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 /**
  * Paths to look at (ADR 0048 slice 3). An array rather than a single path
@@ -23,4 +23,4 @@ export const viewImageInputSchema = z
 
 export type ViewImageInput = z.infer<typeof viewImageInputSchema>;
 
-export const viewImageJsonSchema = zodToJsonSchema(viewImageInputSchema);
+export const viewImageJsonSchema = toolJsonSchema(viewImageInputSchema);

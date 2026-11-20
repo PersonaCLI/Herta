@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 /** The page steps' inputs (ADR 0083 §6). Every field says what it is for. */
 
@@ -26,7 +26,7 @@ export const browserNavigateInputSchema = z
   });
 
 export type BrowserNavigateInput = z.infer<typeof browserNavigateInputSchema>;
-export const browserNavigateJsonSchema = zodToJsonSchema(
+export const browserNavigateJsonSchema = toolJsonSchema(
   browserNavigateInputSchema,
 );
 
@@ -67,7 +67,7 @@ export const browserReadInputSchema = z
   .strict();
 
 export type BrowserReadInput = z.infer<typeof browserReadInputSchema>;
-export const browserReadJsonSchema = zodToJsonSchema(browserReadInputSchema);
+export const browserReadJsonSchema = toolJsonSchema(browserReadInputSchema);
 
 const actFields = {
   action: z
@@ -156,8 +156,8 @@ export const browserActWithCoordsInputSchema = z
   .strict();
 
 export type BrowserActInput = z.infer<typeof browserActWithCoordsInputSchema>;
-export const browserActJsonSchema = zodToJsonSchema(browserActInputSchema);
-export const browserActWithCoordsJsonSchema = zodToJsonSchema(
+export const browserActJsonSchema = toolJsonSchema(browserActInputSchema);
+export const browserActWithCoordsJsonSchema = toolJsonSchema(
   browserActWithCoordsInputSchema,
 );
 
@@ -189,6 +189,6 @@ export const browserScreenshotInputSchema = z
 export type BrowserScreenshotInput = z.infer<
   typeof browserScreenshotInputSchema
 >;
-export const browserScreenshotJsonSchema = zodToJsonSchema(
+export const browserScreenshotJsonSchema = toolJsonSchema(
   browserScreenshotInputSchema,
 );

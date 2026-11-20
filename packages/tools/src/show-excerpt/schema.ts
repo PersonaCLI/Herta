@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 /**
  * Either an explicit line range OR a match + context window. Both are
@@ -73,4 +73,4 @@ export const showExcerptInputSchema = z
 
 export type ShowExcerptInput = z.infer<typeof showExcerptInputSchema>;
 
-export const showExcerptJsonSchema = zodToJsonSchema(showExcerptInputSchema);
+export const showExcerptJsonSchema = toolJsonSchema(showExcerptInputSchema);

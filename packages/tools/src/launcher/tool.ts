@@ -13,9 +13,9 @@ import {
   type ToolSchema,
 } from "@herta/core";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { errResult } from "../errors.js";
 import { formatInputIssues } from "../input-issues.js";
+import { toolJsonSchema } from "../json-schema.js";
 import { redactSecrets } from "../run-command/redactor.js";
 import { makeRunCommandRule } from "../run-command/rule.js";
 import {
@@ -51,7 +51,7 @@ export const devServerInputSchema = z
   })
   .strict();
 
-export const devServerJsonSchema = zodToJsonSchema(devServerInputSchema);
+export const devServerJsonSchema = toolJsonSchema(devServerInputSchema);
 
 export interface DevServerData {
   readonly action: "list" | "start" | "logs" | "stop";

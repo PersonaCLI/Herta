@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 export const webSearchInputSchema = z
   .object({
@@ -14,7 +14,7 @@ export const webSearchInputSchema = z
   .strict();
 
 export type WebSearchInput = z.infer<typeof webSearchInputSchema>;
-export const webSearchJsonSchema = zodToJsonSchema(webSearchInputSchema);
+export const webSearchJsonSchema = toolJsonSchema(webSearchInputSchema);
 
 export const webFetchInputSchema = z
   .object({
@@ -29,4 +29,4 @@ export const webFetchInputSchema = z
   .strict();
 
 export type WebFetchInput = z.infer<typeof webFetchInputSchema>;
-export const webFetchJsonSchema = zodToJsonSchema(webFetchInputSchema);
+export const webFetchJsonSchema = toolJsonSchema(webFetchInputSchema);

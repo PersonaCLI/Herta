@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 /** One conclusion, one call. Bounds are presentation bounds: the claim is a
  *  record row and a marker line, not a report body. */
@@ -38,6 +38,4 @@ export const reportFindingInputSchema = z
 
 export type ReportFindingInput = z.infer<typeof reportFindingInputSchema>;
 
-export const reportFindingJsonSchema = zodToJsonSchema(
-  reportFindingInputSchema,
-);
+export const reportFindingJsonSchema = toolJsonSchema(reportFindingInputSchema);

@@ -24,7 +24,7 @@
     "@herta/herta": "workspace:*",
     "better-sqlite3": "^11.5.0",
     "linkedom": "^0.18.0",
-    "zod": "^3.23.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

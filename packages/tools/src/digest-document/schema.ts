@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
+import { toolJsonSchema } from "../json-schema.js";
 
 /** One input: the attached document's stored path. Strict, so a stray key
  *  (`file`, `focus`, …) is named rather than silently dropped. */
@@ -16,6 +16,6 @@ export const digestDocumentInputSchema = z
 
 export type DigestDocumentInput = z.infer<typeof digestDocumentInputSchema>;
 
-export const digestDocumentJsonSchema = zodToJsonSchema(
+export const digestDocumentJsonSchema = toolJsonSchema(
   digestDocumentInputSchema,
 );

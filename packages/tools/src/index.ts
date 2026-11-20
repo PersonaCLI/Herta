@@ -17,7 +17,7 @@ import {
   registerStrReplaceEditorRule,
   strReplaceEditorTool,
 } from "./str-replace-editor/index.js";
-import { viewImageTool } from "./view-image/index.js";
+import { type PictureShrinker, viewImageTool } from "./view-image/index.js";
 import { webTools } from "./web/index.js";
 
 // A command's result as the record and the report read it. `bash` returns it.
@@ -231,10 +231,11 @@ export {
   validateWorkspaceRoot,
   type WorkspaceRootCheck,
 } from "./validate-workspace-root.js";
-export type { ViewImageData } from "./view-image/index.js";
+export type { PictureShrinker, ViewImageData } from "./view-image/index.js";
 export {
   MAX_VIEW_IMAGE_BYTES,
   MAX_VIEW_IMAGES,
+  SHRINK_ABOVE_BYTES,
   viewImageTool,
 } from "./view-image/index.js";
 export type { ViewImageInput } from "./view-image/schema.js";
@@ -320,11 +321,15 @@ export function digestToolFor(
  */
 export function viewImageToolFor(opts: {
   readonly bashPath: string | null;
+  /** The host's picture shrinker, where it has one (the desktop). */
+  readonly shrink?: PictureShrinker;
 }): HertaTool {
-  if (opts.bashPath === null) return viewImageTool();
+  const shrink = opts.shrink !== undefined ? { shrink: opts.shrink } : {};
+  if (opts.bashPath === null) return viewImageTool(shrink);
   const paths = shellPathsFor(opts.bashPath);
   return viewImageTool({
     mapPath: (p: string): string => paths.toNative(p) ?? p,
+    ...shrink,
   });
 }
 

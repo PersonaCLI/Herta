@@ -54,14 +54,35 @@ function mimeFor(path: string): string | null {
   return ext === undefined ? null : (MIME[ext] ?? null);
 }
 
+/**
+ * Makes a large picture smaller before it is sent (ADR 0048 amendment
+ * 2026-11-20): a host hands one in where it can decode images (the desktop,
+ * with Electron's `nativeImage`). Null, or a rejection, means "send it as it
+ * is". Measured on DeepSeek: a 4032×3024 photo and the same shrunk to a
+ * 2048 long edge cost the same prompt tokens (1 029), and the full one took
+ * 54 s to send where the shrunk one took 5 s.
+ */
+export type PictureShrinker = (picture: {
+  readonly bytes: Buffer;
+  readonly mime: string;
+}) => Promise<{ readonly bytes: Buffer; readonly mime: string } | null>;
+
+/** Pictures above this are offered to the shrinker; smaller ones go as they
+ *  are (a screenshot is 150–300 KB, and its text stays crisper as PNG). */
+export const SHRINK_ABOVE_BYTES = 1024 * 1024;
+
 export interface ViewImageToolOpts {
   /** Translate the model's path spelling before path safety (ADR 0040) —
    *  under the minimal contract it copies what its shell printed. */
   mapPath?: (p: string) => string;
+  /** The host's shrinker, if it has one (see `PictureShrinker`). */
+  shrink?: PictureShrinker;
 }
 
 export interface ViewImageData {
   readonly paths: readonly string[];
+  /** The ones sent smaller than the file, by the host's shrinker. */
+  readonly shrunk?: readonly string[];
 }
 
 export function viewImageTool(opts: ViewImageToolOpts = {}): HertaTool {
@@ -121,6 +142,7 @@ export function viewImageTool(opts: ViewImageToolOpts = {}): HertaTool {
       }
 
       const images: ToolResultImage[] = [];
+      const shrunk: string[] = [];
       for (const raw of paths) {
         // Attachments are the point of this tool (ADR 0033 carve-out); the
         // harness's own tool-results stay excluded, exactly as show_excerpt
@@ -189,8 +211,18 @@ export function viewImageTool(opts: ViewImageToolOpts = {}): HertaTool {
             summary: code === "ENOENT" ? "not found" : "read failed",
           };
         }
+        // A large picture goes smaller where the host can make it so; the
+        // file is untouched, and anything but a smaller result is ignored.
+        let sent = { bytes, mime };
+        if (opts.shrink !== undefined && bytes.length > SHRINK_ABOVE_BYTES) {
+          const smaller = await opts.shrink({ bytes, mime }).catch(() => null);
+          if (smaller !== null && smaller.bytes.length < bytes.length) {
+            sent = smaller;
+            shrunk.push(safe.relative);
+          }
+        }
         images.push({
-          dataUri: `data:${mime};base64,${bytes.toString("base64")}`,
+          dataUri: `data:${sent.mime};base64,${sent.bytes.toString("base64")}`,
           path: safe.relative,
         });
       }
@@ -198,7 +230,10 @@ export function viewImageTool(opts: ViewImageToolOpts = {}): HertaTool {
       const names = images.map((i) => i.path).join(", ");
       return {
         ok: true,
-        data: { paths: images.map((i) => i.path) },
+        data: {
+          paths: images.map((i) => i.path),
+          ...(shrunk.length > 0 ? { shrunk } : {}),
+        },
         images,
         // The model-facing text is deliberately thin: the PICTURES are the
         // result, and they arrive in the user message the translator emits

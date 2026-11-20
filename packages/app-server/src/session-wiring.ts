@@ -100,6 +100,7 @@ import {
   digestToolFor,
   findBash,
   PersistentShell,
+  type PictureShrinker,
   primeConsoleEncoding,
   primeShellPaths,
   probeRepoState,
@@ -334,6 +335,10 @@ export interface BackendStackOpts {
    *  caller (setWorkspace / `/workspace set` mutate `.current`); every
    *  per-dispatch reader below reads it fresh. Never reassign the holder. */
   readonly wsHolder: { current: string };
+  /** Makes a large view_image picture smaller before it is sent, where the
+   *  host can decode images (the desktop, ADR 0048 amendment 2026-11-20).
+   *  Absent: pictures go as they are. */
+  readonly shrinkPicture?: PictureShrinker;
   /** Where the owner's automatic-review choices are kept
    *  (`reviewChoicesFileFor(home)`). Absent → in memory, for this stack. */
   readonly reviewChoicesFile?: string | null;
@@ -618,8 +623,16 @@ export function createBackendStack(opts: BackendStackOpts): BackendStack {
   const syncVisionTool = (): void => {
     const want = isVisionModel(backendModelNow());
     const have = backendTools.get("view_image") !== undefined;
-    if (want && !have) backendTools.register(viewImageToolFor({ bashPath }));
-    else if (!want && have) backendTools.unregister("view_image");
+    if (want && !have) {
+      backendTools.register(
+        viewImageToolFor({
+          bashPath,
+          ...(opts.shrinkPicture !== undefined
+            ? { shrink: opts.shrinkPicture }
+            : {}),
+        }),
+      );
+    } else if (!want && have) backendTools.unregister("view_image");
     // The page's act and screenshot steps follow it too: a position from a
     // screenshot, and the picture itself, only for a model that reads
     // images (ADR 0083 §6) — at the same boundary.

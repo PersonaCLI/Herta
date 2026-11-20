@@ -2369,6 +2369,9 @@ export class SessionImpl implements Session {
       ...(config.reviewChoicesFile !== undefined
         ? { reviewChoicesFile: config.reviewChoicesFile }
         : {}),
+      ...(config.shrinkPicture !== undefined
+        ? { shrinkPicture: config.shrinkPicture }
+        : {}),
       workspaceRoot,
       lang,
       pendingUserInput: () => steer.drain(),

@@ -6,6 +6,8 @@ import { mkToolContext } from "../testing/tool-context.js";
 import {
   MAX_VIEW_IMAGE_BYTES,
   MAX_VIEW_IMAGES,
+  type PictureShrinker,
+  SHRINK_ABOVE_BYTES,
   viewImageTool,
 } from "./index.js";
 
@@ -172,5 +174,67 @@ describe("view_image (ADR 0048 slice 3)", () => {
 
   it("is read-only", () => {
     expect(viewImageTool().readOnly).toBe(true);
+  });
+});
+
+describe("view_image — a large picture goes smaller where the host can make it so (2026-11-20)", () => {
+  /** A PNG whose file is over the shrink line. */
+  const BIG = Buffer.concat([PNG, Buffer.alloc(SHRINK_ABOVE_BYTES + 1)]);
+  const runWith = (ws: TmpWorkspace, shrink: PictureShrinker) =>
+    viewImageTool({ shrink }).run(
+      call({ paths: ["big.png", "small.png"] }),
+      mkToolContext({ workspaceRoot: ws.root }),
+      () => {},
+    );
+
+  it("a picture over 1 MB is sent as the shrinker made it; a small one as it is", async () => {
+    const ws = await mkTmpWorkspace({ "big.png": BIG, "small.png": PNG });
+    try {
+      const seen: number[] = [];
+      const r = await runWith(ws, async ({ bytes }) => {
+        seen.push(bytes.length);
+        return { bytes: Buffer.from("smaller"), mime: "image/jpeg" };
+      });
+      expect(r.ok).toBe(true);
+      expect(seen).toEqual([BIG.length]);
+      expect(r.images?.[0]?.dataUri).toBe(
+        `data:image/jpeg;base64,${Buffer.from("smaller").toString("base64")}`,
+      );
+      expect(r.images?.[0]?.path).toBe("big.png");
+      expect(r.images?.[1]?.dataUri.startsWith("data:image/png;base64,")).toBe(
+        true,
+      );
+      expect(r.data).toEqual({
+        paths: ["big.png", "small.png"],
+        shrunk: ["big.png"],
+      });
+    } finally {
+      await ws.cleanup();
+    }
+  });
+
+  it("a shrinker that fails, declines or does not make it smaller leaves the picture as it is", async () => {
+    const ws = await mkTmpWorkspace({ "big.png": BIG, "small.png": PNG });
+    try {
+      for (const shrink of [
+        (async () => {
+          throw new Error("cannot decode");
+        }) as PictureShrinker,
+        (async () => null) as PictureShrinker,
+        (async () => ({
+          bytes: Buffer.alloc(BIG.length + 10),
+          mime: "image/jpeg",
+        })) as PictureShrinker,
+      ]) {
+        const r = await runWith(ws, shrink);
+        expect(r.ok).toBe(true);
+        expect(r.images?.[0]?.dataUri).toBe(
+          `data:image/png;base64,${BIG.toString("base64")}`,
+        );
+        expect(r.data).toEqual({ paths: ["big.png", "small.png"] });
+      }
+    } finally {
+      await ws.cleanup();
+    }
   });
 });

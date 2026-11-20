@@ -17,6 +17,7 @@ import type {
   GitReadTimeout,
   LogPage,
   LogQuery,
+  PictureShrinker,
   WorkingDiff,
 } from "@herta/tools";
 import type { SessionSearchHit } from "./session-search.js";
@@ -53,6 +54,11 @@ export interface AppServerConfig {
    *  choice holds for the session only and nothing on the machine is
    *  touched, which is what a manually built test config wants. */
   readonly reviewChoicesFile?: string;
+  /** Makes a large view_image picture smaller before it is sent, where the
+   *  host can decode images: the desktop hands one in (Electron's
+   *  `nativeImage`, ADR 0048 amendment 2026-11-20). Absent in the CLI:
+   *  pictures go as they are. */
+  readonly shrinkPicture?: PictureShrinker;
   /** Absolute. 废案 narrative corpus root. Typically
    *  `<workspaceRoot>/.herta/narrative`. */
   readonly narrativeDir: string;

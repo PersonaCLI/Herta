@@ -90,6 +90,7 @@ import {
   readMiniMaxPlanKeyPlain,
 } from "./key-store.js";
 import { runsWhenOpened } from "./open-guard.js";
+import { shrinkPictureWithNativeImage } from "./picture-shrink.js";
 import {
   readWorkspaceBytesBounded,
   readWorkspaceFileBounded,
@@ -1684,6 +1685,9 @@ export function createSessionService(
         // path needs Electron's `app`, so it is set here, not in the pure
         // `buildConfig`.
         usageLogPath: join(userDataPath, "usage.jsonl"),
+        // A large view_image picture goes smaller (ADR 0048 amendment
+        // 2026-11-20): Electron decodes it, so it is set here too.
+        shrinkPicture: shrinkPictureWithNativeImage,
       });
       // The PDF-picture switch (2026-10-01) before any session can attach;
       // Settings mirrors later changes to the host live.

@@ -2811,6 +2811,126 @@ const VITEST_PRINT_REPORTERS: ReadonlySet<string> = new Set([
   "github-actions",
 ]);
 
+/** The scripts whose handed-on arguments are read (owner 2026-11-20): the
+ *  test script, for any flag that writes or loads a file; the lint script,
+ *  for a fix. `typecheck` is not read. */
+const CHECKED_SCRIPTS: ReadonlySet<string> = new Set(["test", "lint"]);
+
+/**
+ * What an npm or pnpm run of the test or lint script hands the script beyond
+ * its plain run, and which script (ADR 0045 amendments 2026-11-20); null when
+ * the line is not a run of either. npm hands on only what follows `--` (its
+ * own flags before that are npm's), pnpm everything after the script's name.
+ * A `--filter`, `-C` or `--prefix` in front was read before this.
+ */
+function scriptPassedArgs(
+  argv: readonly string[],
+): { readonly script: string; readonly args: readonly string[] } | null {
+  const pm = interpreterName(argv[0] as string);
+  let i = 1;
+  if (pm === "pnpm") {
+    for (;;) {
+      const a = argv[i];
+      if (a === "--filter" || a === "-F") i += 2;
+      else if (a?.startsWith("--filter=") === true) i += 1;
+      else break;
+    }
+  }
+  let name = argv[i];
+  if (name === "run") {
+    i += 1;
+    name = argv[i];
+  } else if (pm === "npm" && name === "t") {
+    name = "test";
+  }
+  if (name === undefined || !CHECKED_SCRIPTS.has(name)) return null;
+  const rest = argv.slice(i + 1);
+  if (pm === "npm") {
+    const dash = rest.indexOf("--");
+    return { script: name, args: dash < 0 ? [] : rest.slice(dash + 1) };
+  }
+  return { script: name, args: rest.filter((a) => a !== "--") };
+}
+
+/** A lint flag that rewrites the files it checks (owner 2026-11-20): the
+ *  write goes round the editor's diff and undo. */
+const LINT_FIX_FLAGS: ReadonlySet<string> = new Set(["--fix", "--write"]);
+
+/** What a script is handed that writes or loads a file, as written; null
+ *  when nothing is. */
+function scriptFlagThatWrites(passed: {
+  readonly script: string;
+  readonly args: readonly string[];
+}): string | null {
+  if (passed.script === "lint") {
+    return (
+      passed.args.find((a) => LINT_FIX_FLAGS.has(a.split("=")[0] as string)) ??
+      null
+    );
+  }
+  return writingOrLoadingFlag(passed.args);
+}
+
+/** Flags, across the common runners and linters, that write a file the
+ *  plain run does not or load one it would not: snapshots, coverage, an
+ *  output file, a fix, another config or root, a setup file, a module. */
+const WRITING_OR_LOADING_FLAGS: ReadonlySet<string> = new Set([
+  "-u",
+  "--update",
+  "--updateSnapshot",
+  "--update-snapshots",
+  "--coverage",
+  "--collectCoverage",
+  "--outputFile",
+  "--output-file",
+  "--fix",
+  "--write",
+  "--apply",
+  "--apply-unsafe",
+  "-c",
+  "--config",
+  "--root",
+  "--rootDir",
+  "--roots",
+  "--dir",
+  "--setupFiles",
+  "--setup-files",
+  "--setupFilesAfterEnv",
+  "--globalSetup",
+  "--global-setup",
+  "--globalTeardown",
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "--preload",
+  "--testResultsProcessor",
+  "--testSequencer",
+  "--snapshotResolver",
+  "--resolver",
+]);
+
+/** The first argument that writes or loads a file, as written; null when
+ *  none does. A reporter is one unless it is a printing one by name. */
+function writingOrLoadingFlag(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i] as string;
+    if (!a.startsWith("-")) continue;
+    const eq = a.indexOf("=");
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    if (WRITING_OR_LOADING_FLAGS.has(name) || name.startsWith("--coverage.")) {
+      return a;
+    }
+    if (name === "--reporter" || name === "--reporters") {
+      const value = eq > 0 ? a.slice(eq + 1) : args[i + 1];
+      if (value === undefined || !VITEST_PRINT_REPORTERS.has(value)) return a;
+      if (eq <= 0) i += 1;
+    }
+  }
+  return null;
+}
+
 /** vitest flags that only select tests or shape the run, with no value. */
 const VITEST_PLAIN_FLAGS: ReadonlySet<string> = new Set([
   "--bail",
@@ -4047,6 +4167,24 @@ function classifyCommandTiers(
   }
 
   // PHASE 5 — ALLOW
+
+  // What a project script is handed beyond its plain run (ADR 0045
+  // amendment 2026-11-20, owner): `pnpm test -- -u` rewrote snapshots and
+  // `npm test -- --reporter ./x.js` loaded a file with no card. A flag that
+  // writes or loads a file makes the line ask; a filter (`-- parser`) does
+  // not. So does a fix handed to the lint script (`pnpm lint --fix`).
+  if (a0 === "npm" || a0 === "pnpm") {
+    const passed = scriptPassedArgs(scopedTest ?? argv);
+    const flag = passed === null ? null : scriptFlagThatWrites(passed);
+    if (flag !== null) {
+      return {
+        kind: "ask",
+        risk: "workspace_write",
+        code: "command_ask_script",
+        reason: `${a0} passes ${flag} to the project's script — it writes or loads a file a plain run does not`,
+      };
+    }
+  }
   //
   // Every command this phase allows runs code the workspace holds: a test
   // script, a lint or typecheck script, a test runner reading the project's

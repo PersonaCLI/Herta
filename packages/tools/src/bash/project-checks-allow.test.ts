@@ -232,3 +232,66 @@ describe("a find that only reads asks as a read, which a review can answer (owne
     expect(kind("find .herta -fprint list.txt")).not.toBe("allow");
   });
 });
+
+describe("what the test script is handed beyond its plain run (owner 2026-11-20)", () => {
+  it("a flag that writes or loads a file asks, by npm after -- or by pnpm at once", () => {
+    for (const line of [
+      "pnpm test -- -u",
+      "pnpm test -u",
+      "npm t -- -u",
+      "npm test -- --coverage",
+      "pnpm test -- --coverage.enabled",
+      "npm test -- --reporter ./my-reporter.js",
+      "pnpm run test -- --config other.config.js",
+      "npm test -- --require ./hook.js",
+      "pnpm --filter web test -- -u",
+      "npm test --prefix pkg -- -u",
+    ]) {
+      expect(verdict(line), line).toMatchObject({
+        kind: "ask",
+        code: "command_ask_script",
+      });
+    }
+  });
+
+  it("filters, printing reporters, watch mode and npm's own flags still run", () => {
+    for (const line of [
+      "npm test",
+      "npm test -- parser",
+      "pnpm test -- -t parses",
+      "npm test -- --reporter=verbose",
+      "pnpm test --watch",
+      "pnpm typecheck --watch",
+      "npm test -u",
+    ]) {
+      expect(kind(line), line).toBe("allow");
+    }
+  });
+});
+
+describe("a fix handed to the lint script (owner 2026-11-20)", () => {
+  it("--fix and --write ask: the rewrite goes round the editor's diff and undo", () => {
+    for (const line of [
+      "pnpm lint --fix",
+      "npm run lint -- --fix",
+      "pnpm run lint --write",
+      "pnpm lint -- --fix",
+    ]) {
+      expect(verdict(line), line).toMatchObject({
+        kind: "ask",
+        code: "command_ask_script",
+      });
+    }
+  });
+
+  it("the plain lint run, and its other flags, still run", () => {
+    for (const line of [
+      "pnpm lint",
+      "npm run lint",
+      "pnpm lint --max-warnings 0",
+      "npm run lint -- --quiet",
+    ]) {
+      expect(kind(line), line).toBe("allow");
+    }
+  });
+});

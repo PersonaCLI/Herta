@@ -2752,7 +2752,8 @@ describe("the test and lint scripts, spelled the short way (owner 2026-11-12)", 
       "npm t",
       "npm t -- --watch=false",
       "pnpm lint",
-      "pnpm lint --fix",
+      // `pnpm lint --fix` left this list on 2026-11-20 (the owner): a fix
+      // handed to the lint script asks (`bash/project-checks-allow.test.ts`).
       // What they are short for.
       "npm test",
       "pnpm test",

@@ -2,7 +2,10 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
-import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import {
+  createMockHertaBridge,
+  withoutSettings,
+} from "../../ipc/mock-bridge.js";
 import { DeepSeekSettings } from "./DeepSeekSettings.js";
 
 function renderPane(mock: ReturnType<typeof createMockHertaBridge>) {
@@ -103,11 +106,10 @@ describe("DeepSeekSettings", () => {
       expect(backend.textContent).toContain("Flash");
     });
 
-    it("hides the rows when the bridge has no setModelConfig", async () => {
+    it("hides the rows when the host has no model setting", async () => {
       const mock = createMockHertaBridge();
-      const { setModelConfig: _s, getModelConfig: _g, ...bare } = mock.bridge;
       const { queryByLabelText, queryByText } = renderWithLocale(
-        <HertaBridgeProvider bridge={bare as typeof mock.bridge}>
+        <HertaBridgeProvider bridge={withoutSettings(mock.bridge, "model")}>
           <DeepSeekSettings />
         </HertaBridgeProvider>,
       );

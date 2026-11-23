@@ -9,7 +9,7 @@ import type { HertaBridge, ThemePref } from "../ipc/bridge-types.js";
  *
  * "system" resolves via prefers-color-scheme and RE-RESOLVES live when the
  * OS flips (the media-query listener stays armed only while the pref is
- * "system"). Fakes/demo bridges without getTheme follow the OS too (the
+ * "system"). Fakes/demo bridges without the theme setting follow the OS too (the
  * "system" default, user 2026-07-14) — light where matchMedia is absent.
  */
 
@@ -91,7 +91,9 @@ export function themePref(): ThemePref {
 /** Boot: read the persisted preference and apply it. No stored preference
  *  (first launch, fakes, the website demo) → "system": follow the OS. */
 export async function initTheme(bridge: HertaBridge): Promise<void> {
-  const pref = await bridge.getTheme?.().catch(() => undefined);
+  const pref = bridge.settingKeys.includes("theme")
+    ? await bridge.getSetting("theme").catch(() => undefined)
+    : undefined;
   applyThemePref(pref ?? "system");
 }
 

@@ -49,7 +49,7 @@ export function UpdateSettings(): JSX.Element {
   // report anything there.
   const supported =
     bridge.checkForUpdate !== undefined && state.unsupported !== true;
-  const autoSupported = bridge.setAutoUpdate !== undefined;
+  const autoSupported = bridge.settingKeys.includes("autoUpdate");
 
   useEffect(() => {
     let alive = true;
@@ -61,9 +61,11 @@ export function UpdateSettings(): JSX.Element {
     void bridge.getUpdateState?.().then((s) => {
       if (alive) setState(s);
     });
-    void bridge.getAutoUpdate?.().then((on) => {
-      if (alive) setAutoUpdate(on);
-    });
+    if (bridge.settingKeys.includes("autoUpdate")) {
+      void bridge.getSetting("autoUpdate").then((on) => {
+        if (alive) setAutoUpdate(on);
+      });
+    }
     const unsub = bridge.onUpdate?.((s) => setState(s));
     return () => {
       alive = false;
@@ -152,7 +154,7 @@ export function UpdateSettings(): JSX.Element {
                 // claiming a state main never stored).
                 setAutoUpdate(next);
                 setAutoFailed(false);
-                bridge.setAutoUpdate?.(next).catch(() => {
+                bridge.setSetting("autoUpdate", next).catch(() => {
                   setAutoUpdate(!next);
                   setAutoFailed(true);
                 });

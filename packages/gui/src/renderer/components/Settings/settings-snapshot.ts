@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { FlowSettingsView } from "../../../shared/flow.js";
+import type { SettingKey } from "../../../shared/setting-keys.js";
 import type {
   AttentionSettings,
   BackendThinking,
@@ -10,6 +11,7 @@ import type {
   MiniMaxVoiceState,
   ModelConfig,
   RealtimeVoiceState,
+  SettingReads,
   UpdateState,
   VoiceEngine,
   VoiceModelState,
@@ -140,7 +142,8 @@ export function useRememberedSetting<K extends Key>(
 
 /**
  * Read everything the panes read and keep it. Every read is optional on the
- * bridge (the website demo and test fakes omit most) and every failure is
+ * bridge or in its `settingKeys` (the website demo and test fakes omit
+ * most) and every failure is
  * silent — the pane's own read on mount is what reports a load failure.
  * A key a pane wrote after this prime began keeps the pane's value.
  */
@@ -153,17 +156,22 @@ export function primeSettings(bridge: HertaBridge): void {
   };
   const quiet = (): void => undefined;
 
-  void bridge
-    .getInteractionLanguage?.()
-    .then((v) => keep("language.interaction", v), quiet);
-  void bridge
-    .getCloseToTray?.()
-    .then((v) => keep("window.closeToTray", v), quiet);
-  void bridge.getAttention?.().then((v) => keep("window.attention", v), quiet);
+  // A setting is read only where the host has it (`settingKeys`).
+  const read = <K extends SettingKey>(
+    key: K,
+    then: (value: SettingReads[K]) => void,
+  ): void => {
+    if (!bridge.settingKeys.includes(key)) return;
+    void bridge.getSetting(key).then(then, quiet);
+  };
+
+  read("interactionLanguage", (v) => keep("language.interaction", v));
+  read("closeToTray", (v) => keep("window.closeToTray", v));
+  read("attention", (v) => keep("window.attention", v));
   void bridge.getAppVersion?.().then((v) => keep("update.version", v), quiet);
   void bridge.getUpdateState?.().then((v) => keep("update.state", v), quiet);
-  void bridge.getAutoUpdate?.().then((v) => keep("update.auto", v), quiet);
-  void bridge.getRealtimeVoice?.().then((v) => {
+  read("autoUpdate", (v) => keep("update.auto", v));
+  read("realtimeVoice", (v) => {
     keep("voice.realtime", v);
     keep("voice.model", v.model);
     keep("voice.engine", v.engine);
@@ -171,21 +179,19 @@ export function primeSettings(bridge: HertaBridge): void {
     keep("voice.minimaxPlanKey", v.minimax.planKey);
     keep("voice.clone", v.minimax.voice);
     keep("voice.refusal", v.minimax.refusal);
-  }, quiet);
-  void bridge
-    .getDreamConfig?.()
-    .then((c) => keep("dream.enabled", c.enabled), quiet);
+  });
+  read("dream", (c) => keep("dream.enabled", c.enabled));
   void bridge
     .getDeepSeekKeyStatus?.()
     .then((v) => keep("deepseek.keyStatus", v), quiet);
-  void bridge.getModelConfig?.().then((v) => keep("deepseek.models", v), quiet);
-  void bridge.getBackendConfig?.().then((c) => {
+  read("model", (v) => keep("deepseek.models", v));
+  read("backend", (c) => {
     keep("banzhuan.thinking", c.thinking);
     keep("banzhuan.bashFound", c.bashFound);
-  }, quiet);
-  void bridge
-    .getPdfPictureTranscripts?.()
-    .then((v) => keep("banzhuan.pdfPictureTranscripts", v), quiet);
+  });
+  read("pdfPictureTranscripts", (v) =>
+    keep("banzhuan.pdfPictureTranscripts", v),
+  );
   void bridge.flowSettings?.().then((v) => keep("flow.settings", v), quiet);
   void bridge
     .flowState?.()

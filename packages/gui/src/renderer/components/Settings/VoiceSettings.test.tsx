@@ -2,7 +2,10 @@ import { act, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
-import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import {
+  createMockHertaBridge,
+  withoutSettings,
+} from "../../ipc/mock-bridge.js";
 import { applyVoiceVolume, stopAllVoice } from "../../voice/play-voice.js";
 import { setVoiceVolume } from "../../voice/voice-prefs.js";
 import { VoiceSettings } from "./VoiceSettings.js";
@@ -160,16 +163,12 @@ describe("VoiceSettings", () => {
     ).toBeTruthy();
   });
 
-  it("hides the rows entirely on a bridge without the pair (website demo)", () => {
+  it("hides the rows entirely on a host without the setting (website demo)", () => {
     const mock = createMockHertaBridge();
-    // An older bridge shape: the pair simply is not there.
-    const {
-      getRealtimeVoice: _a,
-      setRealtimeVoice: _b,
-      ...bridge
-    } = mock.bridge;
     const { queryByLabelText } = renderWithLocale(
-      <HertaBridgeProvider bridge={bridge}>
+      <HertaBridgeProvider
+        bridge={withoutSettings(mock.bridge, "realtimeVoice")}
+      >
         <VoiceSettings />
       </HertaBridgeProvider>,
     );

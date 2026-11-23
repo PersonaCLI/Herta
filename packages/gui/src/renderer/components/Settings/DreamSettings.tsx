@@ -36,7 +36,7 @@ export function DreamSettings(): JSX.Element {
 
   useEffect(() => {
     let alive = true;
-    bridge.getDreamConfig().then(
+    bridge.getSetting("dream").then(
       (c) => {
         if (alive) {
           setEnabled(c.enabled);
@@ -57,7 +57,7 @@ export function DreamSettings(): JSX.Element {
     // toggle never claims a state that didn't reach disk.
     setEnabled(next);
     setFailed(false);
-    void bridge.setDreamConfig({ enabled: next }).catch(() => {
+    void bridge.setSetting("dream", { enabled: next }).catch(() => {
       setEnabled(!next);
       setFailed(true);
     });

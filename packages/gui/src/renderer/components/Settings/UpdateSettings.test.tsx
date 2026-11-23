@@ -2,7 +2,7 @@ import { act, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
-import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { createMockHertaBridge, withSetting } from "../../ipc/mock-bridge.js";
 import { UpdateSettings } from "./UpdateSettings.js";
 
 function renderPane(mock = createMockHertaBridge()) {
@@ -17,12 +17,15 @@ function renderPane(mock = createMockHertaBridge()) {
 describe("UpdateSettings — a failed write (UX review 2026-09-22, item 17)", () => {
   it("snaps the automatic-updates toggle back and says it could not save, like every sibling toggle", async () => {
     const mock = createMockHertaBridge({ appVersion: "0.1.0" });
-    Object.assign(mock.bridge, {
-      getAutoUpdate: async () => true,
-      setAutoUpdate: async () => {
-        throw new Error("EACCES: permission denied");
-      },
-    });
+    Object.assign(
+      mock.bridge,
+      withSetting(mock.bridge, "autoUpdate", {
+        get: async () => true,
+        set: async () => {
+          throw new Error("EACCES: permission denied");
+        },
+      }),
+    );
     renderPane(mock);
     const toggle = await screen.findByRole("switch", {
       name: "Automatic updates",

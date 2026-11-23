@@ -108,19 +108,21 @@ describe("theme controller", () => {
 
   it("initTheme applies the bridge's persisted preference", async () => {
     const bridge = {
-      getTheme: vi.fn(async () => "dark" as const),
+      settingKeys: ["theme"],
+      getSetting: vi.fn(async () => "dark" as const),
     } as unknown as HertaBridge;
     await initTheme(bridge);
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
-  it("initTheme defaults to SYSTEM when the bridge lacks getTheme or it rejects (first launch follows the OS)", async () => {
+  it("initTheme defaults to SYSTEM when the host lacks the theme setting or the read rejects (first launch follows the OS)", async () => {
     const mm = fakeMatchMedia(true); // dark OS
-    await initTheme({} as HertaBridge);
+    await initTheme({ settingKeys: [] } as unknown as HertaBridge);
     expect(themePref()).toBe("system");
     expect(document.documentElement.dataset.theme).toBe("dark");
     const failing = {
-      getTheme: vi.fn(async () => {
+      settingKeys: ["theme"],
+      getSetting: vi.fn(async () => {
         throw new Error("io");
       }),
     } as unknown as HertaBridge;

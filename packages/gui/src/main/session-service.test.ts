@@ -41,8 +41,8 @@ describe("countsAsUserActivity — what tells a running dream pass the user is b
       CMD.readWorkspaceLog,
       CMD.recordSlice,
       CMD.recordWindow,
-      CMD.setDreamConfig,
-      CMD.setLocale,
+      // Every settings write, by key (owner 2026-11-23).
+      CMD.setSetting,
       // The session menu (ADR 0072 §3).
       CMD.renameSession,
       CMD.saveSessionExport,
@@ -58,7 +58,7 @@ describe("countsAsUserActivity — what tells a running dream pass the user is b
       CMD.requestSync,
       CMD.refreshRepo,
       CMD.maybePlayEasterEgg,
-      CMD.getDreamConfig,
+      CMD.getSetting,
       CMD.getDeepSeekKeyStatus,
       CMD.windowIsMaximized,
     ]) {

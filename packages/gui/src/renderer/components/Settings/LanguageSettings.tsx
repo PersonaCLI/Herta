@@ -21,10 +21,12 @@ export function LanguageSettings(): JSX.Element {
   const t = useT();
   const { bridge } = useHertaBridge();
   const { locale, setLocale } = useLocale();
-  // The interaction-language bridge surface is OPTIONAL (fakes / the website
-  // demo omit it); the row hides with it, mirroring UpdateSettings.tsx's
-  // `autoSupported`.
-  const interactionSupported = bridge.setInteractionLanguage !== undefined;
+  // The interaction language is an OPTIONAL setting (fakes / the website
+  // demo leave it out of `settingKeys`); the row hides with it, mirroring
+  // UpdateSettings.tsx's `autoSupported`.
+  const interactionSupported = bridge.settingKeys.includes(
+    "interactionLanguage",
+  );
   // The last-known choice on the first frame (settings-snapshot.ts);
   // "follow" — the default — only when nothing has been read yet.
   const [interaction, setInteraction] = useRememberedSetting(
@@ -41,8 +43,9 @@ export function LanguageSettings(): JSX.Element {
   const writeSeqRef = useRef(0);
 
   useEffect(() => {
+    if (!bridge.settingKeys.includes("interactionLanguage")) return;
     let alive = true;
-    bridge.getInteractionLanguage?.().then(
+    bridge.getSetting("interactionLanguage").then(
       (v) => {
         if (alive && !touchedRef.current) setInteraction(v);
       },
@@ -68,7 +71,7 @@ export function LanguageSettings(): JSX.Element {
     const seq = localeSeqRef.current;
     setLocale(next);
     setLocaleFailed(false);
-    bridge.setLocale(next).catch(() => {
+    bridge.setSetting("locale", next).catch(() => {
       if (seq !== localeSeqRef.current) return;
       setLocale(prev);
       setLocaleFailed(true);
@@ -84,7 +87,7 @@ export function LanguageSettings(): JSX.Element {
     touchedRef.current = true;
     setInteraction(next);
     setFailed(false);
-    void bridge.setInteractionLanguage?.(next).catch(() => {
+    void bridge.setSetting("interactionLanguage", next).catch(() => {
       // Snap-back AND the error note, both only when no newer pick has
       // superseded this write (audit BL14) — the note used to fire
       // unconditionally, painting "couldn't save" over a newer choice that

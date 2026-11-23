@@ -181,10 +181,10 @@ export function BanzhuanSettings(): JSX.Element {
   const state = useDemoDeviceCycle(paused);
   const meta = metaFor(state);
 
-  // Thinking-effort row. The bridge surface is OPTIONAL (fakes / the website
-  // demo omit it); the row hides with it, mirroring LanguageSettings' handling
-  // of the interaction-language pair.
-  const thinkingSupported = bridge.setBackendConfig !== undefined;
+  // Thinking-effort row. A host may not have the setting (fakes / the
+  // website demo leave it out of `settingKeys`); the row hides with it,
+  // mirroring LanguageSettings' handling of the interaction language.
+  const thinkingSupported = bridge.settingKeys.includes("backend");
   // The last-known tier on the first frame (settings-snapshot.ts); "high" —
   // the real handler's default — only when nothing has been read yet.
   const [thinking, setThinking] = useRememberedSetting(
@@ -211,8 +211,9 @@ export function BanzhuanSettings(): JSX.Element {
   );
 
   useEffect(() => {
+    if (!bridge.settingKeys.includes("backend")) return;
     let alive = true;
-    bridge.getBackendConfig?.().then(
+    bridge.getSetting("backend").then(
       (c) => {
         if (!alive) return;
         if (!touchedRef.current) setThinking(c.thinking);
@@ -236,8 +237,8 @@ export function BanzhuanSettings(): JSX.Element {
   // PDF picture transcription (2026-10-01). Live (main applies it to the next
   // attach), per user, default on; the first frame shows the last-known value
   // (settings-snapshot.ts). Optimistic + latest-wins like the rows above;
-  // hides when the bridge has no surface (fakes / the website demo).
-  const pdfSupported = bridge.setPdfPictureTranscripts !== undefined;
+  // hides when the host has no such setting (fakes / the website demo).
+  const pdfSupported = bridge.settingKeys.includes("pdfPictureTranscripts");
   const [pdfPictures, setPdfPictures] = useRememberedSetting(
     bridge,
     "banzhuan.pdfPictureTranscripts",
@@ -247,8 +248,9 @@ export function BanzhuanSettings(): JSX.Element {
   const pdfTouchedRef = useRef(false);
   const pdfSeqRef = useRef(0);
   useEffect(() => {
+    if (!bridge.settingKeys.includes("pdfPictureTranscripts")) return;
     let alive = true;
-    bridge.getPdfPictureTranscripts?.().then(
+    bridge.getSetting("pdfPictureTranscripts").then(
       (v) => {
         if (alive && !pdfTouchedRef.current) setPdfPictures(v);
       },
@@ -265,7 +267,7 @@ export function BanzhuanSettings(): JSX.Element {
     pdfTouchedRef.current = true;
     setPdfPictures(next);
     setPdfFailed(false);
-    void bridge.setPdfPictureTranscripts?.(next).catch(() => {
+    void bridge.setSetting("pdfPictureTranscripts", next).catch(() => {
       if (seq !== pdfSeqRef.current) return;
       setPdfPictures(prev);
       setPdfFailed(true);
@@ -281,7 +283,7 @@ export function BanzhuanSettings(): JSX.Element {
     touchedRef.current = true;
     setThinking(next);
     setFailed(false);
-    void bridge.setBackendConfig?.({ thinking: next }).catch(() => {
+    void bridge.setSetting("backend", { thinking: next }).catch(() => {
       // Both inside the latest-wins guard (audit BL14). The snap-back was
       // guarded and the error note was not, so a stale write's failure
       // painted an error over a NEWER pick that had succeeded — the row read

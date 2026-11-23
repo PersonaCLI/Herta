@@ -7,7 +7,7 @@
  *
  * Bilingual (2026-07-15): the landing page's language toggle passes ?lang= into
  * the iframe, so the demo renders in the visitor's language. The EN variant is
- * the real English app — getLocale "en" (English chrome), sessions stamped
+ * the real English app — the locale setting "en" (English chrome), sessions stamped
  * lang "en" (so 板砖 renders @Brick and speech reveals by WORD), and the whole
  * script translated into Herta's English register. The zh variant is unchanged,
  * including its opening voice clip (there is no EN clip, so EN opens silent).
@@ -2102,18 +2102,28 @@ export function createDemoBridge(
     // Flow (ADR 0084): a staged issue that gathers once on load and lands
     // unread, so the top bar's radio and the REAL panel play (demo-flow.ts).
     ...createDemoFlow(lang),
-    getDreamConfig: async () => ({ enabled: true }),
-    setDreamConfig: async () => {},
-    getLocale: async () => lang,
-    setLocale: async () => {},
-    // Pin the app's theme controller to the SITE's effective theme (2026-07-16):
-    // without getTheme the controller follows the OS, which would drift from a
-    // manual site toggle. A fixed pref (never "system") also means the
-    // controller arms no OS listener inside the iframe.
-    getTheme: async () => theme,
-    setTheme: async () => {},
-    getCloseToTray: async () => true,
-    setCloseToTray: async () => {},
+    // The four settings the demo answers, through the app's one keyed pair;
+    // every other Settings row hides. The theme pins the app's theme
+    // controller to the SITE's effective theme (2026-07-16): without it the
+    // controller follows the OS, which would drift from a manual site toggle.
+    // A fixed pref (never "system") also means the controller arms no OS
+    // listener inside the iframe. Writes are accepted and kept nowhere.
+    settingKeys: ["dream", "locale", "theme", "closeToTray"],
+    getSetting: (async (key: string) => {
+      switch (key) {
+        case "dream":
+          return { enabled: true };
+        case "locale":
+          return lang;
+        case "theme":
+          return theme;
+        case "closeToTray":
+          return true;
+        default:
+          throw new Error(`the demo has no setting ${key}`);
+      }
+    }) as HertaBridge["getSetting"],
+    setSetting: async () => {},
     // A key reads as set so the no-key onboarding never hijacks the funnel.
     getDeepSeekKeyStatus: async () => ({
       set: true,

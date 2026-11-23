@@ -28,6 +28,7 @@ import type {
   WorkspaceEvent,
 } from "@herta/app-server";
 import { jumpRange, pageEnd, pageStart } from "@herta/core/record-window";
+import { SETTING_KEYS, type SettingKey } from "../../shared/setting-keys.js";
 import type {
   AttachProgressEvent,
   AttentionSettings,
@@ -47,6 +48,8 @@ import type {
   SessionNoSession,
   SessionOpenFailure,
   SessionSnapshot,
+  SettingReads,
+  SettingWrites,
   SpeechControlEvent,
   StagedImageInfo,
   StageImagesReply,
@@ -580,6 +583,151 @@ export function createMockHertaBridge(
   const openSettingsCbs = new Set<() => void>();
   const closeRequestedCbs = new Set<() => void>();
 
+  // The settings this mock answers, through the one keyed pair (owner
+  // 2026-11-23). Attention, PDF pictures and composer predictions are here
+  // only when their seed is given, and automatic updates never, as their
+  // pairs were: a pane's row hides where the key is missing.
+  type MockSettingRow<K extends SettingKey> = {
+    readonly get: () => Promise<SettingReads[K]>;
+    readonly set: (value: SettingWrites[K]) => Promise<void>;
+  };
+  const settingRows: { [K in SettingKey]?: MockSettingRow<K> } = {
+    dream: {
+      get: async () => {
+        calls.getDreamConfig += 1;
+        // The shipped default: Dream is opt-in (2026-09-21).
+        return opts.getDreamConfigResult ?? { enabled: false };
+      },
+      set: async (cfg) => {
+        calls.setDreamConfig.push(cfg);
+      },
+    },
+    backend: {
+      get: async () => {
+        calls.getBackendConfig += 1;
+        // Mirrors the real handler's defaults.
+        return (
+          opts.getBackendConfigResult ?? { thinking: "high", bashFound: true }
+        );
+      },
+      set: async (cfg) => {
+        calls.setBackendConfig.push(cfg);
+        if (opts.failSetBackendConfig) {
+          throw new Error("settings write failed");
+        }
+      },
+    },
+    model: {
+      get: async () => {
+        calls.getModelConfig += 1;
+        return (
+          opts.getModelConfigResult ?? {
+            actor: "deepseek-v4-pro",
+            // Mirrors the real handler's default: the flash, which reads
+            // images since the 2026-09 rename (ADR 0048 §5a/§5b).
+            backend: "deepseek-flash",
+          }
+        );
+      },
+      set: async (cfg) => {
+        calls.setModelConfig.push(cfg);
+        if (opts.failSetModelConfig) {
+          throw new Error("settings write failed");
+        }
+      },
+    },
+    locale: {
+      get: async () => "en" as const,
+      set: async () => {},
+    },
+    closeToTray: {
+      get: async () => {
+        calls.getCloseToTray += 1;
+        return opts.closeToTrayResult ?? true;
+      },
+      set: async (enabled) => {
+        calls.setCloseToTray.push(enabled);
+        if (opts.failSetCloseToTray === true) {
+          throw new Error("write failed");
+        }
+      },
+    },
+    theme: {
+      get: async () => opts.themeResult ?? "light",
+      set: async (theme) => {
+        calls.setTheme.push(theme);
+      },
+    },
+    ...(opts.attentionResult !== undefined
+      ? {
+          attention: {
+            get: async () => {
+              const seed = opts.attentionResult as AttentionSettings;
+              return { ...seed };
+            },
+            set: async (prefs: Partial<AttentionSettings>) => {
+              calls.setAttention.push(prefs);
+              if (opts.failSetAttention === true) {
+                throw new Error("write failed");
+              }
+            },
+          },
+        }
+      : {}),
+    ...(opts.pdfPictureTranscriptsResult !== undefined
+      ? {
+          pdfPictureTranscripts: {
+            get: async () => opts.pdfPictureTranscriptsResult === true,
+            set: async (enabled: boolean) => {
+              calls.setPdfPictureTranscripts.push(enabled);
+              if (opts.failSetPdfPictureTranscripts === true) {
+                throw new Error("write failed");
+              }
+            },
+          },
+        }
+      : {}),
+    ...(opts.composerPredictionsResult !== undefined
+      ? {
+          composerPredictions: {
+            get: async () => opts.composerPredictionsResult === true,
+            set: async (enabled: boolean) => {
+              calls.setComposerPredictions.push(enabled);
+            },
+          },
+        }
+      : {}),
+    interactionLanguage: {
+      get: async () => {
+        calls.getInteractionLanguage += 1;
+        return interactionLanguage;
+      },
+      set: async (choice) => {
+        calls.setInteractionLanguage.push(choice);
+        if (opts.failSetInteractionLanguage === true) {
+          throw new Error("write failed");
+        }
+        interactionLanguage = choice;
+      },
+    },
+    realtimeVoice: {
+      get: async () => {
+        calls.getRealtimeVoice += 1;
+        return voiceView();
+      },
+      set: async (enabled) => {
+        calls.setRealtimeVoice.push(enabled);
+        if (opts.failSetRealtimeVoice === true) throw new Error("write failed");
+        realtimeVoice = { ...realtimeVoice, enabled };
+      },
+    },
+  };
+  const settingRow = <K extends SettingKey>(key: K): MockSettingRow<K> => {
+    const row = settingRows[key] as MockSettingRow<K> | undefined;
+    if (row === undefined) throw new Error(`the mock has no setting ${key}`);
+    return row;
+  };
+
   const bridge: HertaBridge = {
     platform: opts.platform ?? "win32",
     windowMinimize: () => {
@@ -785,48 +933,9 @@ export function createMockHertaBridge(
       calls.pathForFile += 1;
       return file.name;
     },
-    getDreamConfig: async () => {
-      calls.getDreamConfig += 1;
-      // The shipped default: Dream is opt-in (2026-09-21).
-      return opts.getDreamConfigResult ?? { enabled: false };
-    },
-    setDreamConfig: async (cfg) => {
-      calls.setDreamConfig.push(cfg);
-    },
-    getBackendConfig: async () => {
-      calls.getBackendConfig += 1;
-      return (
-        opts.getBackendConfigResult ?? {
-          thinking: "high",
-          // Mirrors the real handler's defaults (owner flip 2026-08-17).
-          contract: "minimal",
-          bashFound: true,
-        }
-      );
-    },
-    setBackendConfig: async (cfg) => {
-      calls.setBackendConfig.push(cfg);
-      if (opts.failSetBackendConfig) {
-        throw new Error("settings write failed");
-      }
-    },
-    getModelConfig: async () => {
-      calls.getModelConfig += 1;
-      return (
-        opts.getModelConfigResult ?? {
-          actor: "deepseek-v4-pro",
-          // Mirrors the real handler's default: the flash, which reads
-          // images since the 2026-09 rename (ADR 0048 §5a/§5b).
-          backend: "deepseek-flash",
-        }
-      );
-    },
-    setModelConfig: async (cfg) => {
-      calls.setModelConfig.push(cfg);
-      if (opts.failSetModelConfig) {
-        throw new Error("settings write failed");
-      }
-    },
+    settingKeys: SETTING_KEYS.filter((k) => settingRows[k] !== undefined),
+    getSetting: async (key) => settingRow(key).get(),
+    setSetting: async (key, value) => settingRow(key).set(value),
     getDeepSeekKeyStatus: async () => {
       calls.getDeepSeekKeyStatus += 1;
       return keyStatus;
@@ -856,22 +965,6 @@ export function createMockHertaBridge(
       calls.clearDeepSeekKey += 1;
       keyStatus = { set: false, hint: null, encrypted: false };
       return { ok: true, status: keyStatus };
-    },
-    getLocale: async () => "en" as const,
-    setLocale: async () => {},
-    getCloseToTray: async () => {
-      calls.getCloseToTray += 1;
-      return opts.closeToTrayResult ?? true;
-    },
-    setCloseToTray: async (enabled) => {
-      calls.setCloseToTray.push(enabled);
-      if (opts.failSetCloseToTray === true) {
-        throw new Error("write failed");
-      }
-    },
-    getTheme: async () => opts.themeResult ?? "light",
-    setTheme: async (theme) => {
-      calls.setTheme.push(theme);
     },
     ...(opts.workspaceFiles !== undefined
       ? {
@@ -908,64 +1001,9 @@ export function createMockHertaBridge(
           },
         }
       : {}),
-    ...(opts.attentionResult !== undefined
-      ? {
-          getAttention: async () => {
-            const seed = opts.attentionResult as AttentionSettings;
-            return { ...seed };
-          },
-          setAttention: async (prefs: Partial<AttentionSettings>) => {
-            calls.setAttention.push(prefs);
-            if (opts.failSetAttention === true) {
-              throw new Error("write failed");
-            }
-          },
-        }
-      : {}),
-    ...(opts.pdfPictureTranscriptsResult !== undefined
-      ? {
-          getPdfPictureTranscripts: async () =>
-            opts.pdfPictureTranscriptsResult === true,
-          setPdfPictureTranscripts: async (enabled: boolean) => {
-            calls.setPdfPictureTranscripts.push(enabled);
-            if (opts.failSetPdfPictureTranscripts === true) {
-              throw new Error("write failed");
-            }
-          },
-        }
-      : {}),
-    ...(opts.composerPredictionsResult !== undefined
-      ? {
-          getComposerPredictions: async () =>
-            opts.composerPredictionsResult === true,
-          setComposerPredictions: async (enabled: boolean) => {
-            calls.setComposerPredictions.push(enabled);
-          },
-        }
-      : {}),
     ...(opts.deviceSceneResult !== undefined
       ? { getDeviceScene: async () => opts.deviceSceneResult === true }
       : {}),
-    getInteractionLanguage: async () => {
-      calls.getInteractionLanguage += 1;
-      return interactionLanguage;
-    },
-    setInteractionLanguage: async (choice) => {
-      calls.setInteractionLanguage.push(choice);
-      if (opts.failSetInteractionLanguage === true) {
-        throw new Error("write failed");
-      }
-      interactionLanguage = choice;
-    },
-    getRealtimeVoice: async () => {
-      calls.getRealtimeVoice += 1;
-      return voiceView();
-    },
-    setRealtimeVoice: async (enabled) => {
-      calls.setRealtimeVoice.push(enabled);
-      if (opts.failSetRealtimeVoice === true) throw new Error("write failed");
-      realtimeVoice = { ...realtimeVoice, enabled };
-    },
     downloadVoiceModel: async () => {
       calls.downloadVoiceModel += 1;
       pushVoiceModel({ ...voiceModel, phase: "downloading", receivedBytes: 0 });
@@ -1152,5 +1190,49 @@ export function createMockHertaBridge(
     emitCloseRequested: () => {
       for (const cb of closeRequestedCbs) cb();
     },
+  };
+}
+
+/** `bridge` with `key` read and/or written by `row` (owner 2026-11-23: the
+ *  settings are one keyed pair, so a test that changes one setting wraps the
+ *  pair instead of replacing a method). The key joins `settingKeys`. */
+export function withSetting<K extends SettingKey>(
+  bridge: HertaBridge,
+  key: K,
+  row: {
+    readonly get?: () => Promise<SettingReads[K]>;
+    readonly set?: (value: SettingWrites[K]) => Promise<void>;
+  },
+): HertaBridge {
+  // The pair as it is now: `Object.assign(mock.bridge, withSetting(...))`
+  // replaces it, and the wrapper must not then call itself.
+  const baseGet = bridge.getSetting;
+  const baseSet = bridge.setSetting;
+  const getSetting = (<J extends SettingKey>(k: J) =>
+    k === (key as SettingKey) && row.get !== undefined
+      ? row.get()
+      : baseGet(k)) as HertaBridge["getSetting"];
+  const setSetting = (<J extends SettingKey>(k: J, value: SettingWrites[J]) =>
+    k === (key as SettingKey) && row.set !== undefined
+      ? row.set(value as unknown as SettingWrites[K])
+      : baseSet(k, value)) as HertaBridge["setSetting"];
+  return {
+    ...bridge,
+    settingKeys: bridge.settingKeys.includes(key)
+      ? bridge.settingKeys
+      : [...bridge.settingKeys, key],
+    getSetting,
+    setSetting,
+  };
+}
+
+/** `bridge` as a host without `keys`: their rows hide. */
+export function withoutSettings(
+  bridge: HertaBridge,
+  ...keys: readonly SettingKey[]
+): HertaBridge {
+  return {
+    ...bridge,
+    settingKeys: bridge.settingKeys.filter((k) => !keys.includes(k)),
   };
 }

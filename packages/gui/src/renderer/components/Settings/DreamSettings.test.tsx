@@ -2,16 +2,17 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { HertaBridgeProvider } from "../../context/HertaBridgeContext.js";
 import { renderWithLocale } from "../../i18n/test-util.js";
-import { createMockHertaBridge } from "../../ipc/mock-bridge.js";
+import { createMockHertaBridge, withSetting } from "../../ipc/mock-bridge.js";
 import { DreamSettings } from "./DreamSettings.js";
 
 describe("DreamSettings", () => {
   it("is OFF on the first frame when nothing has been read, and says what turning it on costs (opt-in, 2026-09-21)", () => {
     // A read that never answers: what paints is the pane's own fallback.
     const mock = createMockHertaBridge();
-    Object.assign(mock.bridge, {
-      getDreamConfig: () => new Promise(() => {}),
-    });
+    Object.assign(
+      mock.bridge,
+      withSetting(mock.bridge, "dream", { get: () => new Promise(() => {}) }),
+    );
     const { getByLabelText, getByText } = renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
         <DreamSettings />
@@ -34,7 +35,7 @@ describe("DreamSettings", () => {
       </HertaBridgeProvider>,
     );
     const toggle = getByLabelText("Enable Dream");
-    // The async getDreamConfig resolves → toggle reflects enabled:false.
+    // The async Dream read resolves → toggle reflects enabled:false.
     await waitFor(() =>
       expect(toggle.getAttribute("aria-checked")).toBe("false"),
     );
@@ -87,11 +88,14 @@ describe("DreamSettings", () => {
     const mock = createMockHertaBridge({
       getDreamConfigResult: { enabled: true },
     });
-    Object.assign(mock.bridge, {
-      setDreamConfig: async () => {
-        throw new Error("disk full");
-      },
-    });
+    Object.assign(
+      mock.bridge,
+      withSetting(mock.bridge, "dream", {
+        set: async () => {
+          throw new Error("disk full");
+        },
+      }),
+    );
     const { getByLabelText, queryByText } = renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
         <DreamSettings />

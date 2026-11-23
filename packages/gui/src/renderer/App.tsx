@@ -405,7 +405,7 @@ export function App(props: AppProps = {}): JSX.Element {
   useEffect(() => {
     if (bridge === undefined) return;
     let alive = true;
-    void bridge.getLocale().then((l) => {
+    void bridge.getSetting("locale").then((l) => {
       if (alive) setLocale(l);
     });
     return () => {

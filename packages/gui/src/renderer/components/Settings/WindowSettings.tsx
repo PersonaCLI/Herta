@@ -36,17 +36,17 @@ export function WindowSettings(): JSX.Element {
   const [loadFailed, setLoadFailed] = useState(false);
   // Seed from the controller (already booted by App) — no async flash.
   const [theme, setTheme] = useState<ThemePref>(() => themePref());
-  // Attention (ADR 0072 §1): the rows exist when the bridge can read them
-  // (the website demo's cannot); both default on, like main's reading.
-  const hasAttention = bridge.getAttention !== undefined;
+  // Attention (ADR 0072 §1): the rows exist when the host has the setting
+  // (the website demo does not); both default on, like main's reading.
+  const hasAttention = bridge.settingKeys.includes("attention");
   const [attention, setAttention] = useRememberedSetting(
     bridge,
     "window.attention",
     { notifications: true, keepAwake: true },
   );
   // Composer predictions (2026-10-10): on unless turned off, like main's
-  // reading; the row exists when the bridge can read it.
-  const hasPredictions = bridge.getComposerPredictions !== undefined;
+  // reading; the row exists when the host has the setting.
+  const hasPredictions = bridge.settingKeys.includes("composerPredictions");
   const [predictions, setPredictions] = useRememberedSetting(
     bridge,
     "window.predictions",
@@ -54,9 +54,9 @@ export function WindowSettings(): JSX.Element {
   );
 
   useEffect(() => {
-    if (bridge.getComposerPredictions === undefined) return;
+    if (!bridge.settingKeys.includes("composerPredictions")) return;
     let alive = true;
-    bridge.getComposerPredictions().then(
+    bridge.getSetting("composerPredictions").then(
       (v) => {
         if (alive) setPredictions(v);
       },
@@ -73,16 +73,16 @@ export function WindowSettings(): JSX.Element {
     // Optimistic, like the rows above: flip now, snap back on a failed write.
     setPredictions(next);
     setFailed(false);
-    void bridge.setComposerPredictions?.(next).catch(() => {
+    void bridge.setSetting("composerPredictions", next).catch(() => {
       setPredictions(!next);
       setFailed(true);
     });
   };
 
   useEffect(() => {
-    if (bridge.getAttention === undefined) return;
+    if (!bridge.settingKeys.includes("attention")) return;
     let alive = true;
-    bridge.getAttention().then(
+    bridge.getSetting("attention").then(
       (v) => {
         if (alive) setAttention(v);
       },
@@ -100,7 +100,7 @@ export function WindowSettings(): JSX.Element {
     const before = attention;
     setAttention({ ...attention, ...change });
     setFailed(false);
-    void bridge.setAttention?.(change).catch(() => {
+    void bridge.setSetting("attention", change).catch(() => {
       setAttention(before);
       setFailed(true);
     });
@@ -113,12 +113,13 @@ export function WindowSettings(): JSX.Element {
     setTheme(next);
     applyThemePref(next);
     setFailed(false);
-    void bridge.setTheme?.(next).catch(() => setFailed(true));
+    if (!bridge.settingKeys.includes("theme")) return;
+    void bridge.setSetting("theme", next).catch(() => setFailed(true));
   };
 
   useEffect(() => {
     let alive = true;
-    bridge.getCloseToTray().then(
+    bridge.getSetting("closeToTray").then(
       (v) => {
         if (alive) setEnabled(v);
       },
@@ -136,7 +137,7 @@ export function WindowSettings(): JSX.Element {
     // the toggle never claims a state that didn't reach disk.
     setEnabled(next);
     setFailed(false);
-    void bridge.setCloseToTray(next).catch(() => {
+    void bridge.setSetting("closeToTray", next).catch(() => {
       setEnabled(!next);
       setFailed(true);
     });

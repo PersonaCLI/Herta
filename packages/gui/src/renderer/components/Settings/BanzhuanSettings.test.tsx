@@ -6,6 +6,7 @@ import type { HertaBridge, Locale } from "../../ipc/bridge-types.js";
 import {
   createMockHertaBridge,
   type MockHertaBridge,
+  withoutSettings,
 } from "../../ipc/mock-bridge.js";
 import { resetDeviceScenePrefForTest } from "../UtilityRail/device-scene/device-scene-prefs.js";
 import { BanzhuanSettings } from "./BanzhuanSettings.js";
@@ -158,9 +159,8 @@ describe("BanzhuanSettings", () => {
 
     it("hides the row entirely when the bridge lacks the surface (fakes / website demo)", () => {
       const mock = createMockHertaBridge();
-      const { setBackendConfig: _omit, ...rest } = mock.bridge;
       renderWithLocale(
-        <HertaBridgeProvider bridge={rest as HertaBridge}>
+        <HertaBridgeProvider bridge={withoutSettings(mock.bridge, "backend")}>
           <BanzhuanSettings />
         </HertaBridgeProvider>,
       );

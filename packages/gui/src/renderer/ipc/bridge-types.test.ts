@@ -22,10 +22,9 @@ describe("bridge-types", () => {
     // Compile-time smoke: construct a conforming object.
     const bridge: HertaBridge = {
       platform: "win32",
-      getLocale: async () => "zh",
-      setLocale: async () => undefined,
-      getCloseToTray: async () => true,
-      setCloseToTray: async () => undefined,
+      settingKeys: ["dream", "locale", "closeToTray"],
+      getSetting: (async () => undefined) as HertaBridge["getSetting"],
+      setSetting: async () => undefined,
       windowMinimize: () => undefined,
       windowToggleMaximize: () => undefined,
       windowClose: () => undefined,
@@ -63,8 +62,6 @@ describe("bridge-types", () => {
       stageImages: async () => ({ ok: true, staged: [], rejected: [] }),
       unstageImage: async () => true,
       pathForFile: () => "/tmp/x.md",
-      getDreamConfig: async () => ({ enabled: true }),
-      setDreamConfig: async () => undefined,
       getDeepSeekKeyStatus: async () => ({
         set: false,
         hint: null,

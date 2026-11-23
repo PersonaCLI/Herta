@@ -51,6 +51,7 @@ import type {
   FlowStateView,
 } from "../../shared/flow.js";
 import type { LiveToolSnapshot } from "../../shared/live-tool-feed.js";
+import type { SettingKey } from "../../shared/setting-keys.js";
 import type { ShortcutId } from "../../shared/shortcuts.js";
 
 /** One file's progress in an attach in flight, from main (2026-10-01). */
@@ -515,6 +516,65 @@ export type RecordWindowRequest =
     }
   | { readonly kind: "later"; readonly after: number; readonly count: number };
 
+/**
+ * What each setting reads (owner 2026-11-23: one keyed pair, `getSetting`,
+ * where each had a get/set pair of its own). Live means applied without a
+ * restart; restart-to-apply means read at the next bootstrap.
+ */
+export interface SettingReads {
+  /** Settings → Dream. Restart-to-apply; `running` is what the running app
+   *  was built with, for the pane's restart note. */
+  dream: DreamConfig;
+  /** Settings → Coprocessor: the backend's reasoning effort, and whether a
+   *  bash was found. The effort applies from 板砖's next dispatch. */
+  backend: BackendConfig;
+  /** Settings → DeepSeek → 模型: the per-stage model. Live (ADR 0081). */
+  model: ModelConfig;
+  /** The resolved UI language (stored choice, else OS-derived). The
+   *  renderer re-renders at once; the write is for the next launch. */
+  locale: Locale;
+  /** The STORED interaction-language choice: "zh" / "en" when set, else
+   *  "follow" (the UI locale). Applies to new sessions only. */
+  interactionLanguage: InteractionLanguageChoice;
+  /** Whether the close button hides the app to the tray. Live. */
+  closeToTray: boolean;
+  /** Notifications while the window is not attended, and keeping the
+   *  machine awake while 板砖 runs (ADR 0072 §1). Both default on. Live. */
+  attention: AttentionSettings;
+  /** Automatic update checks and downloads (default on). Live: off cancels
+   *  the cycle; a manual check still installs on quit. */
+  autoUpdate: boolean;
+  /** The appearance preference; the theme controller applies it live. */
+  theme: ThemePref;
+  /** Whether an attached PDF's pictures are transcribed (default on). Live,
+   *  from the next attach. */
+  pdfPictureTranscripts: boolean;
+  /** Whether the composer offers a predicted next message (default on).
+   *  Live, from the next finished turn. */
+  composerPredictions: boolean;
+  /** Herta's real-time voice (ADR 0042): the toggle, and whether it can run
+   *  here at all, so the row can say why it is silent. Live, from the next
+   *  reply. */
+  realtimeVoice: RealtimeVoiceState;
+}
+
+/** What each setting writes (`setSetting`). "follow" deletes the stored
+ *  interaction language; attention takes either or both of its values. */
+export interface SettingWrites {
+  dream: DreamConfig;
+  backend: BackendConfig;
+  model: ModelConfig;
+  locale: Locale;
+  interactionLanguage: InteractionLanguageChoice;
+  closeToTray: boolean;
+  attention: Partial<AttentionSettings>;
+  autoUpdate: boolean;
+  theme: ThemePref;
+  pdfPictureTranscripts: boolean;
+  composerPredictions: boolean;
+  realtimeVoice: boolean;
+}
+
 export interface HertaBridge {
   /** The OS platform (process.platform in the preload). The renderer gates
    *  the custom window controls on it — macOS keeps its native traffic
@@ -787,90 +847,25 @@ export interface HertaBridge {
    *  `File.path`, so only the preload can answer this — the renderer never
    *  holds a File beyond the drop handler. */
   pathForFile(file: File): string;
-  /** Read the persisted Dream config (Settings → Dream). */
-  getDreamConfig(): Promise<DreamConfig>;
-  /** Persist the Dream config. Restart-to-apply (the running app-server reads
-   *  it at the next bootstrap). */
-  setDreamConfig(cfg: DreamConfig): Promise<void>;
-  /** Read the persisted backend reasoning effort (Settings → Coprocessor).
-   *  OPTIONAL — fakes and the website demo omit it; the settings row hides
-   *  with it (same contract as the interaction-language pair). */
-  getBackendConfig?(): Promise<BackendConfig>;
-  /** Persist the backend reasoning effort. Restart-to-apply (buildConfig
-   *  reads it at the next bootstrap). Optional alongside getBackendConfig. */
-  setBackendConfig?(cfg: BackendConfig): Promise<void>;
-  /** Read the persisted per-stage model choice (Settings → DeepSeek → 模型,
-   *  2026-08-17). OPTIONAL like the backend-config pair; the rows hide with
-   *  it. */
-  getModelConfig?(): Promise<ModelConfig>;
-  /** Persist the per-stage model choice. Restart-to-apply. */
-  setModelConfig?(cfg: ModelConfig): Promise<void>;
-  /** Read the resolved UI language (stored choice, else OS-derived). */
-  getLocale(): Promise<Locale>;
-  /** Persist the UI language. Live — the renderer re-renders immediately; this
-   *  only writes the per-user preference for the next launch. */
-  setLocale(locale: Locale): Promise<void>;
-  /** Read the STORED interaction-language choice (Settings → Language,
-   *  slice 4): "zh" / "en" when explicitly set, else "follow" (follow the UI
-   *  locale). OPTIONAL — fakes and the website demo omit it and the row
-   *  hides with it. */
-  getInteractionLanguage?(): Promise<InteractionLanguageChoice>;
-  /** Persist the interaction-language choice; "follow" DELETES the stored
-   *  field. Applies to NEW sessions only (per-session static prefix +
-   *  prompt cache) — running sessions keep their language. */
-  setInteractionLanguage?(choice: InteractionLanguageChoice): Promise<void>;
-  /** Read whether the close button hides the app to the system tray
-   *  (Settings → Window). Default true. */
-  getCloseToTray(): Promise<boolean>;
-  /** Persist + LIVE-apply the close-to-tray behavior (main updates its
-   *  window close handler immediately — no restart). */
-  setCloseToTray(enabled: boolean): Promise<void>;
-  /** Read the attention settings (Settings → Window, ADR 0072 §1): OS
-   *  notifications while the window is not attended, and keeping the
-   *  machine awake while 板砖 runs. Both default on. OPTIONAL — fakes and
-   *  the website demo omit it, and the rows hide with it. */
-  getAttention?(): Promise<AttentionSettings>;
-  /** Persist + LIVE-apply either or both attention settings. */
-  setAttention?(prefs: Partial<AttentionSettings>): Promise<void>;
-  /** Read whether AUTOMATIC update checks/downloads are enabled (Settings →
-   *  Update; default true). OPTIONAL — fakes and the website demo omit it,
-   *  and the toggle then hides with the rest of the update surface. */
-  getAutoUpdate?(): Promise<boolean>;
-  /** Persist + LIVE-apply the automatic-update toggle: off cancels the
-   *  check cycle; a MANUAL check still downloads and installs on quit. */
-  setAutoUpdate?(enabled: boolean): Promise<void>;
-  /** Read the UI appearance preference (Settings → Window; default "light").
-   *  OPTIONAL — fakes and the website demo omit it and stay light. */
-  getTheme?(): Promise<ThemePref>;
-  /** Persist the appearance preference; the renderer's theme controller
-   *  applies it live (no restart). */
-  setTheme?(theme: ThemePref): Promise<void>;
+  /** The settings this host has (owner 2026-11-23): a Settings row shows
+   *  only when its key is here. The desktop has every key; the website demo
+   *  and fakes list what they answer, and the other rows hide — what each
+   *  optional get/set pair's absence used to say. */
+  readonly settingKeys: readonly SettingKey[];
+  /** Read a setting (see `SettingReads` for each key's value and default).
+   *  Only a key in `settingKeys` is asked for. */
+  getSetting<K extends SettingKey>(key: K): Promise<SettingReads[K]>;
+  /** Persist a setting (see `SettingWrites`); main validates the value and
+   *  ignores one it does not take, as each pair's setter did. */
+  setSetting<K extends SettingKey>(
+    key: K,
+    value: SettingWrites[K],
+  ): Promise<void>;
   /** Whether this host draws the 3D device card (ADR 0057) — the desktop
    *  answers true; the GPU probe decides the rest. No setting since
    *  2026-10-01 (§2.7 amended). OPTIONAL — fakes and the website demo omit
    *  it, and the card then stays on its flat renders. */
   getDeviceScene?(): Promise<boolean>;
-  /** Read whether an attached PDF's pictures are transcribed (2026-10-01;
-   *  Settings → 差分协处理器). Default on. OPTIONAL — fakes and the website
-   *  demo omit it, and the row hides. */
-  getPdfPictureTranscripts?(): Promise<boolean>;
-  /** Persist the switch; main applies it to the next attach, no restart. */
-  setPdfPictureTranscripts?(enabled: boolean): Promise<void>;
-  /** Read whether the composer offers a predicted next message (2026-10-10;
-   *  Settings → 窗口). Default on. OPTIONAL — fakes and the website demo
-   *  omit it, and the row hides. */
-  getComposerPredictions?(): Promise<boolean>;
-  /** Persist the switch; main applies it from the next finished turn. */
-  setComposerPredictions?(enabled: boolean): Promise<void>;
-  /** Read Herta's real-time-voice state (ADR 0042): whether the user has it
-   *  ON, and whether it can run here at all — `available` folds in the model
-   *  bundle, the native runtime, and a worker that has failed for good, so
-   *  the Settings row can say WHY it is silent instead of lying. OPTIONAL —
-   *  fakes and the website demo omit the pair and the row hides with it. */
-  getRealtimeVoice?(): Promise<RealtimeVoiceState>;
-  /** Persist the real-time-voice toggle. LIVE: the synthesizer reads it at
-   *  every speech stream's start, so it applies to the next reply. */
-  setRealtimeVoice?(enabled: boolean): Promise<void>;
   /** Start downloading the voice model (ADR 0061); resolves with the state
    *  the download ENDED in (ready, failed, or absent after a cancel).
    *  Progress streams through `onVoiceModel`. OPTIONAL — the website demo

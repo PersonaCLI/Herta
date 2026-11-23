@@ -49,17 +49,17 @@ export function DeepSeekSettings(): JSX.Element {
   // Any in-flight key op (or a running turn) locks both controls.
   const locked = busy || saving || deleting;
 
-  // Per-stage model rows (2026-08-17). Optional bridge surface, same
+  // Per-stage model rows (2026-08-17). An optional setting, same
   // contract and same optimistic / latest-wins / snap-back shape as the
   // Coprocessor thinking row (BanzhuanSettings). Live (ADR 0081): main hands
   // the saved choice to the running host — Herta's next turn, 板砖's next
   // dispatch.
-  const modelsSupported = bridge.setModelConfig !== undefined;
+  const modelsSupported = bridge.settingKeys.includes("model");
   // Pre-load optimistic state = the real handler's defaults (actor Pro,
   // owner 2026-08-17; backend the flash — the vision-capable one since the
   // 2026-09 rename, ADR 0048 §5a/§5b), so the pills never flash a wrong
-  // selection while getModelConfig is in flight. Keep in lockstep with
-  // session-service's getModelConfig and buildConfig — three statements of
+  // selection while the read is in flight. Keep in lockstep with main's
+  // `settingRows().model` and buildConfig — three statements of
   // one default. The last-known choice wins over it on the first frame
   // (settings-snapshot.ts) — a user on Flash/Flash saw Pro for a beat.
   const [models, setModels] = useRememberedSetting(
@@ -73,8 +73,9 @@ export function DeepSeekSettings(): JSX.Element {
   const modelsWriteSeqRef = useRef(0);
 
   useEffect(() => {
+    if (!bridge.settingKeys.includes("model")) return;
     let alive = true;
-    bridge.getModelConfig?.().then(
+    bridge.getSetting("model").then(
       (c) => {
         if (alive && !modelsTouchedRef.current) setModels(c);
       },
@@ -97,7 +98,7 @@ export function DeepSeekSettings(): JSX.Element {
     modelsTouchedRef.current = true;
     setModels(nextCfg);
     setModelsFailed(false);
-    void bridge.setModelConfig?.(nextCfg).catch(() => {
+    void bridge.setSetting("model", nextCfg).catch(() => {
       if (seq !== modelsWriteSeqRef.current) return;
       setModels(prev);
       setModelsFailed(true);

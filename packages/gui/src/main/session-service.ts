@@ -784,7 +784,7 @@ export function createSessionService(
   });
 
   // Interaction language (slice 4): resolved FRESH here per activation (like
-  // getTheme reads per call) — stored choice, else follow the UI locale.
+  // the theme setting reads per call) — stored choice, else follow the UI locale.
   // Threaded into the host so the session builds its static prefix, openings,
   // driver, recap, and title in this language. On CREATE this is the session's
   // birth language and the host persists it into the header. On OPEN the host

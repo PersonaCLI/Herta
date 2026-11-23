@@ -314,13 +314,12 @@ export function VoiceSettings(): JSX.Element {
   const { bridge } = useHertaBridge();
   const muted = useVoiceMuted();
   const volume = useVoiceVolume();
-  // The rows render on the FIRST frame whenever the bridge has the methods
-  // (the settings-pane rule, owner 2026-09-07: gate on the METHOD's presence,
-  // never on an async read's result); the controls stay inert until the
-  // state lands, so nothing pops in a frame later.
-  const supported =
-    bridge.getRealtimeVoice !== undefined &&
-    bridge.setRealtimeVoice !== undefined;
+  // The rows render on the FIRST frame whenever the host has the setting
+  // (the settings-pane rule, owner 2026-09-07: gate on the METHOD's presence
+  // — since 2026-11-23 the key's — never on an async read's result); the
+  // controls stay inert until the state lands, so nothing pops in a frame
+  // later.
+  const supported = bridge.settingKeys.includes("realtimeVoice");
   const modelSupported = bridge.downloadVoiceModel !== undefined;
   const engineSupported =
     bridge.setVoiceEngine !== undefined && bridge.setMiniMaxKey !== undefined;
@@ -366,11 +365,10 @@ export function VoiceSettings(): JSX.Element {
   );
 
   useEffect(() => {
-    const read = bridge.getRealtimeVoice;
-    if (read === undefined) return;
+    if (!bridge.settingKeys.includes("realtimeVoice")) return;
     let alive = true;
     const refresh = (): void => {
-      void read().then(
+      void bridge.getSetting("realtimeVoice").then(
         (s) => {
           if (!alive) return;
           setRt(s);
@@ -439,13 +437,12 @@ export function VoiceSettings(): JSX.Element {
   const canSpeak = engine === "minimax" ? cloudCanSpeak : localCanSpeak;
 
   const onRealtimeChange = (next: boolean): void => {
-    const write = bridge.setRealtimeVoice;
-    if (write === undefined || rt === null) return;
+    if (!bridge.settingKeys.includes("realtimeVoice") || rt === null) return;
     // Optimistic, with a snap-back on a failed write — same contract as the
     // Dream toggle, so the switch never claims a state that missed disk.
     setRt({ ...rt, enabled: next });
     setRtFailed(false);
-    void write(next).catch(() => {
+    void bridge.setSetting("realtimeVoice", next).catch(() => {
       setRt({ ...rt, enabled: !next });
       setRtFailed(true);
     });

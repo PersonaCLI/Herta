@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,9 +15,29 @@ vi.mock("electron", () => ({
 }));
 
 const { CMD } = await import("../preload/channels.js");
-const { registerSettingsHandlers } = await import("./settings-ipc.js");
+const { registerSettingsHandlers, settingRows } = await import(
+  "./settings-ipc.js"
+);
+const { SETTING_KEYS } = await import("../shared/setting-keys.js");
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<unknown>;
+
+/** A setting through the keyed pair, as the renderer calls it (owner
+ *  2026-11-23: one `settings:get` / `settings:set` for every row). */
+function settingOf(
+  handlers: Map<string, Handler>,
+  key: string,
+): { get: () => Promise<unknown>; set: (value: unknown) => Promise<unknown> } {
+  const call = (channel: string, ...args: unknown[]): Promise<unknown> => {
+    const fn = handlers.get(channel);
+    if (fn === undefined) throw new Error(`no handler for ${channel}`);
+    return fn(null, ...args);
+  };
+  return {
+    get: () => call(CMD.getSetting, key),
+    set: (value) => call(CMD.setSetting, key, value),
+  };
+}
 
 afterEach(() => {
   if (userData.dir.length > 0) {
@@ -51,12 +71,12 @@ describe("settings IPC — 实时语音 off mid-reply (ADR 0042 §7c)", () => {
       workspaceRoot: () => userData.dir,
       voice,
     });
-    const set = handlers.get(CMD.setRealtimeVoice);
-    expect(set).toBeDefined();
-    await set?.(null, false);
+    expect(handlers.has(CMD.setSetting)).toBe(true);
+    const { set } = settingOf(handlers, "realtimeVoice");
+    await set(false);
     expect(stopSpeech).toHaveBeenCalledTimes(1);
     expect(voice.realtimeEnabled).toBe(false);
-    await set?.(null, true);
+    await set(true);
     expect(stopSpeech).toHaveBeenCalledTimes(1);
     expect(voice.realtimeEnabled).toBe(true);
   });
@@ -87,12 +107,11 @@ describe("settings IPC — Dream says what the running app has (dream review 202
       },
       dreamRunning: () => running,
     });
-    const get = handlers.get(CMD.getDreamConfig);
-    const set = handlers.get(CMD.setDreamConfig);
-    expect(await get?.(null)).toEqual({ enabled: false });
+    const { get, set } = settingOf(handlers, "dream");
+    expect(await get()).toEqual({ enabled: false });
     running = false; // the host bootstrapped with Dream off
-    await set?.(null, { enabled: true });
-    expect(await get?.(null)).toEqual({ enabled: true, running: false });
+    await set({ enabled: true });
+    expect(await get()).toEqual({ enabled: true, running: false });
   });
 });
 
@@ -120,17 +139,16 @@ describe("settings IPC — PDF picture transcription (2026-10-01)", () => {
         stopSpeech: () => {},
       },
     });
-    const get = handlers.get(CMD.getPdfPictureTranscripts);
-    const set = handlers.get(CMD.setPdfPictureTranscripts);
-    expect(await get?.(null)).toBe(true);
+    const { get, set } = settingOf(handlers, "pdfPictureTranscripts");
+    expect(await get()).toBe(true);
 
-    await set?.(null, false);
-    expect(await get?.(null)).toBe(false);
+    await set(false);
+    expect(await get()).toBe(false);
     expect(setPdfPictureTranscription).toHaveBeenLastCalledWith(false);
 
-    await set?.(null, "yes");
+    await set("yes");
     expect(setPdfPictureTranscription).toHaveBeenCalledTimes(1);
-    expect(await get?.(null)).toBe(false);
+    expect(await get()).toBe(false);
   });
 });
 
@@ -158,12 +176,11 @@ describe("settings IPC — attention (ADR 0072 §1)", () => {
         stopSpeech: () => {},
       },
     });
-    const get = handlers.get(CMD.getAttention);
-    const set = handlers.get(CMD.setAttention);
-    expect(await get?.(null)).toEqual({ notifications: true, keepAwake: true });
+    const { get, set } = settingOf(handlers, "attention");
+    expect(await get()).toEqual({ notifications: true, keepAwake: true });
 
-    await set?.(null, { keepAwake: false });
-    expect(await get?.(null)).toEqual({
+    await set({ keepAwake: false });
+    expect(await get()).toEqual({
       notifications: true,
       keepAwake: false,
     });
@@ -172,9 +189,9 @@ describe("settings IPC — attention (ADR 0072 §1)", () => {
       keepAwake: false,
     });
 
-    await set?.(null, { notifications: "no", keepAwake: 1 });
+    await set({ notifications: "no", keepAwake: 1 });
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(await get?.(null)).toEqual({
+    expect(await get()).toEqual({
       notifications: true,
       keepAwake: false,
     });
@@ -213,11 +230,11 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
 
   it("a model pick is saved and reaches the running host at once", async () => {
     const { handlers, applied } = setup();
-    await handlers.get(CMD.setModelConfig)?.(null, {
+    await settingOf(handlers, "model").set({
       actor: "deepseek-flash",
       backend: "deepseek-v4-pro",
     });
-    expect(await handlers.get(CMD.getModelConfig)?.(null)).toEqual({
+    expect(await settingOf(handlers, "model").get()).toEqual({
       actor: "deepseek-flash",
       backend: "deepseek-v4-pro",
     });
@@ -228,13 +245,13 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
 
   it("an effort pick reaches the host; a pick of the retired tool set is ignored (ADR 0086)", async () => {
     const { handlers, applied } = setup();
-    await handlers.get(CMD.setBackendConfig)?.(null, { thinking: "max" });
+    await settingOf(handlers, "backend").set({ thinking: "max" });
     expect(applied).toEqual([{ thinking: "max" }]);
     // An older renderer could still send the choice: it is neither applied
     // nor saved, and the config it reads back has no such field.
-    await handlers.get(CMD.setBackendConfig)?.(null, { contract: "standard" });
+    await settingOf(handlers, "backend").set({ contract: "standard" });
     expect(applied).toEqual([{ thinking: "max" }]);
-    const read = (await handlers.get(CMD.getBackendConfig)?.(null)) as Record<
+    const read = (await settingOf(handlers, "backend").get()) as Record<
       string,
       unknown
     >;
@@ -256,8 +273,8 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
     });
     const { handlers } = setup({ pathReady });
     let answered = false;
-    const read = handlers
-      .get(CMD.getBackendConfig)?.(null)
+    const read = settingOf(handlers, "backend")
+      .get()
       .then((v) => {
         answered = true;
         return v;
@@ -273,7 +290,7 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
     const { handlers, applied } = setup();
     vi.stubEnv("HERTA_ACTOR_MODEL", "deepseek-v4-pro");
     try {
-      await handlers.get(CMD.setModelConfig)?.(null, {
+      await settingOf(handlers, "model").set({
         actor: "deepseek-flash",
         backend: "deepseek-flash",
       });
@@ -288,31 +305,83 @@ describe("settings IPC — models and effort apply live (ADR 0081)", () => {
   it("a model pick and an effort pick in flight together are both saved (release review 2026-10-22)", async () => {
     const { handlers } = setup();
     await Promise.all([
-      handlers.get(CMD.setModelConfig)?.(null, {
+      settingOf(handlers, "model").set({
         actor: "deepseek-flash",
         backend: "deepseek-v4-pro",
       }),
-      handlers.get(CMD.setBackendConfig)?.(null, { thinking: "max" }),
-      handlers.get(CMD.setDreamConfig)?.(null, { enabled: false }),
+      settingOf(handlers, "backend").set({ thinking: "max" }),
+      settingOf(handlers, "dream").set({ enabled: false }),
     ]);
-    expect(await handlers.get(CMD.getModelConfig)?.(null)).toEqual({
+    expect(await settingOf(handlers, "model").get()).toEqual({
       actor: "deepseek-flash",
       backend: "deepseek-v4-pro",
     });
-    expect(await handlers.get(CMD.getBackendConfig)?.(null)).toMatchObject({
+    expect(await settingOf(handlers, "backend").get()).toMatchObject({
       thinking: "max",
     });
-    expect(await handlers.get(CMD.getDreamConfig)?.(null)).toMatchObject({
+    expect(await settingOf(handlers, "dream").get()).toMatchObject({
       enabled: false,
     });
   });
 
   it("an off-list model is refused and nothing reaches the host", async () => {
     const { handlers, applied } = setup();
-    await handlers.get(CMD.setModelConfig)?.(null, {
+    await settingOf(handlers, "model").set({
       actor: "gpt-9",
       backend: "deepseek-flash",
     });
     expect(applied).toEqual([]);
+  });
+});
+
+describe("settings IPC — one keyed pair (owner 2026-11-23)", () => {
+  function deps(handlers: Map<string, Handler>) {
+    return {
+      handle: ((channel: string, fn: Handler) => {
+        handlers.set(channel, fn);
+      }) as never,
+      hooks: {},
+      host: () => null,
+      workspaceRoot: () => userData.dir,
+      voice: {
+        synthesizer: null,
+        voiceModel: null,
+        minimaxVoice: null,
+        engine: "local" as const,
+        realtimeEnabled: false,
+        minimaxFetch: (async () => new Response("")) as never,
+        anyMiniMaxKey: () => false,
+        minimaxRefusal: () => null,
+        stopSpeech: () => {},
+      },
+    };
+  }
+
+  it("the table has a row for every key and for nothing else", () => {
+    userData.dir = mkdtempSync(join(tmpdir(), "herta-settings-"));
+    const rows = settingRows(deps(new Map()));
+    expect(Object.keys(rows).sort()).toEqual([...SETTING_KEYS].sort());
+  });
+
+  it("a key that is not a setting is refused, read or write, and nothing is written", async () => {
+    userData.dir = mkdtempSync(join(tmpdir(), "herta-settings-"));
+    const handlers = new Map<string, Handler>();
+    registerSettingsHandlers(deps(handlers));
+    await expect(settingOf(handlers, "deepSeekKey").get()).rejects.toThrow(
+      /not a setting/,
+    );
+    await expect(settingOf(handlers, "__proto__").set(true)).rejects.toThrow(
+      /not a setting/,
+    );
+    await expect(
+      handlers.get(CMD.getSetting)?.(null, { key: "theme" }),
+    ).rejects.toThrow(/not a setting/);
+    expect(existsSync(join(userData.dir, "settings.json"))).toBe(false);
+  });
+
+  it("a write is a user action; a read is the pane loading (dream review 2026-09-22, finding 12)", () => {
+    // The session service counts a channel by its name.
+    expect(CMD.setSetting.startsWith("settings:set")).toBe(true);
+    expect(CMD.getSetting.startsWith("settings:set")).toBe(false);
   });
 });

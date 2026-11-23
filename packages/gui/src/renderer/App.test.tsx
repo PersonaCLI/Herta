@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
-import { createMockHertaBridge } from "./ipc/mock-bridge.js";
+import { createMockHertaBridge, withSetting } from "./ipc/mock-bridge.js";
 
 vi.mock("./components/Opening/pick-opening-segment.js", () => ({
   // Never-resolving loader: the splash overlay mounts (empty) but does not
@@ -189,7 +189,7 @@ describe("App", () => {
   it("fetches the locale from the bridge on mount", async () => {
     const getLocale = vi.fn(async () => "zh" as const);
     const { bridge } = createMockHertaBridge();
-    const bridgeWithLocale = { ...bridge, getLocale };
+    const bridgeWithLocale = withSetting(bridge, "locale", { get: getLocale });
     render(<App bridge={bridgeWithLocale} />);
     await waitFor(() => expect(getLocale).toHaveBeenCalled());
     // The workbench is still present after locale fetch.

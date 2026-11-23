@@ -5,6 +5,7 @@ import {
   webUtils,
 } from "electron";
 import type { HertaBridge } from "../renderer/ipc/bridge-types.js";
+import { SETTING_KEYS } from "../shared/setting-keys.js";
 import { CMD, EVT } from "./channels.js";
 
 function subscribe<T>(channel: string, cb: (e: T) => void): () => void {
@@ -94,38 +95,12 @@ const bridge: Required<HertaBridge> = {
   // file's real path is only reachable through webUtils here. The renderer
   // gets a path string and never a File handle.
   pathForFile: (file) => webUtils.getPathForFile(file),
-  getDreamConfig: () => ipcRenderer.invoke(CMD.getDreamConfig),
-  setDreamConfig: (cfg) => ipcRenderer.invoke(CMD.setDreamConfig, cfg),
-  getBackendConfig: () => ipcRenderer.invoke(CMD.getBackendConfig),
-  setBackendConfig: (cfg) => ipcRenderer.invoke(CMD.setBackendConfig, cfg),
-  getModelConfig: () => ipcRenderer.invoke(CMD.getModelConfig),
-  setModelConfig: (cfg) => ipcRenderer.invoke(CMD.setModelConfig, cfg),
-  getLocale: () => ipcRenderer.invoke(CMD.getLocale),
-  setLocale: (locale) => ipcRenderer.invoke(CMD.setLocale, locale),
-  getInteractionLanguage: () => ipcRenderer.invoke(CMD.getInteractionLanguage),
-  setInteractionLanguage: (choice) =>
-    ipcRenderer.invoke(CMD.setInteractionLanguage, choice),
-  getCloseToTray: () => ipcRenderer.invoke(CMD.getCloseToTray),
-  setCloseToTray: (enabled) => ipcRenderer.invoke(CMD.setCloseToTray, enabled),
-  getAttention: () => ipcRenderer.invoke(CMD.getAttention),
-  setAttention: (prefs) => ipcRenderer.invoke(CMD.setAttention, prefs),
-  getAutoUpdate: () => ipcRenderer.invoke(CMD.getAutoUpdate),
-  setAutoUpdate: (enabled) => ipcRenderer.invoke(CMD.setAutoUpdate, enabled),
-  getTheme: () => ipcRenderer.invoke(CMD.getTheme),
-  setTheme: (theme) => ipcRenderer.invoke(CMD.setTheme, theme),
+  settingKeys: SETTING_KEYS,
+  getSetting: (key) => ipcRenderer.invoke(CMD.getSetting, key),
+  setSetting: (key, value) => ipcRenderer.invoke(CMD.setSetting, key, value),
   // The desktop draws the 3D device card (ADR 0057); whether THIS machine's
   // GPU can is the renderer's probe. No setting since 2026-10-01.
   getDeviceScene: () => Promise.resolve(true),
-  getPdfPictureTranscripts: () =>
-    ipcRenderer.invoke(CMD.getPdfPictureTranscripts),
-  setPdfPictureTranscripts: (enabled) =>
-    ipcRenderer.invoke(CMD.setPdfPictureTranscripts, enabled),
-  getComposerPredictions: () => ipcRenderer.invoke(CMD.getComposerPredictions),
-  setComposerPredictions: (enabled) =>
-    ipcRenderer.invoke(CMD.setComposerPredictions, enabled),
-  getRealtimeVoice: () => ipcRenderer.invoke(CMD.getRealtimeVoice),
-  setRealtimeVoice: (enabled) =>
-    ipcRenderer.invoke(CMD.setRealtimeVoice, enabled),
   downloadVoiceModel: () => ipcRenderer.invoke(CMD.downloadVoiceModel),
   cancelVoiceModelDownload: () =>
     ipcRenderer.invoke(CMD.cancelVoiceModelDownload),

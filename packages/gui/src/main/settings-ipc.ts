@@ -11,6 +11,12 @@
  * and hands them the live voice state it owns through `VoiceSettingsState`
  * (getters and setters over the service's own variables, so the flags the
  * synthesizer reads at every stream's start stay the service's).
+ *
+ * The rows that only store a value answer one keyed pair since 2026-11-23
+ * (owner, from the review of 2026-11-10): `settings:get` / `settings:set`
+ * over `settingRows`, a table keyed like `SETTING_KEYS`, where each row had
+ * a channel pair, a preload line, a bridge pair and a demo stub of its own.
+ * The keys, the voice engine and the model download keep their channels.
  */
 import type { SessionHost } from "@herta/app-server";
 import { validateDeepSeekKey } from "@herta/providers";
@@ -22,7 +28,9 @@ import type {
   InteractionLanguageChoice,
   MiniMaxRefusalState,
   RealtimeVoiceState,
+  SettingReads,
 } from "../renderer/ipc/bridge-types.js";
+import { isSettingKey, type SettingKey } from "../shared/setting-keys.js";
 import type { VoiceEngine } from "./app-global-settings.js";
 import {
   composerPredictionsEnabled,
@@ -146,268 +154,333 @@ export function attentionSettingsOf(s: GlobalSettings): AttentionSettings {
   };
 }
 
-export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
-  const { handle, hooks, voice, workspaceRoot } = deps;
-  // Settings → Dream. Restart-to-apply: read/write the persisted flag; the
-  // running app-server is untouched (it reads config.dream at next bootstrap).
-  // The answer carries what the running app has too (`running`): the pane's
-  // "restart to apply" note compares against it, not against the file it
-  // read on mount — a pane reopened after a change showed ON with no note
-  // while the running app still had the old value (dream review 2026-09-22,
-  // finding 20).
-  handle(CMD.getDreamConfig, async () => {
-    const s = await readAppSettings(workspaceRoot());
-    const running = deps.dreamRunning?.();
-    return {
-      enabled: dreamEnabled(s),
-      ...(running !== undefined ? { running } : {}),
-    };
-  });
-  handle(CMD.setDreamConfig, async (_e, cfg: { enabled: boolean }) => {
-    await updateAppSettings(workspaceRoot(), (s) => ({
-      ...s,
-      dream: { ...s.dream, enabled: cfg.enabled },
-    }));
-  });
-  // Settings → Coprocessor: backend reasoning effort. Restart-to-apply, same
-  // contract as Dream above — buildConfig reads it at the next bootstrap.
-  handle(CMD.getBackendConfig, async () => {
-    const s = await readAppSettings(workspaceRoot());
-    const v = s.backend?.thinking;
-    // `findBash` reads PATH: on Windows it finds bash beside the git there.
-    await hooks.pathReady;
-    return {
-      thinking: isBackendThinking(v) ? v : "high",
-      // Whether 板砖 can run here at all (ADR 0086): it needs a bash, and
-      // the pane says so when there is none.
-      bashFound: findBash() !== null,
-    };
-  });
-  handle(CMD.setBackendConfig, async (_e, cfg: { thinking?: unknown }) => {
-    // Validate like setTheme/setLocale: an off-enum value would fail the
-    // read-side shape check downstream — refuse it instead of persisting.
-    const thinking = isBackendThinking(cfg?.thinking)
-      ? cfg.thinking
-      : undefined;
-    if (thinking === undefined) return;
-    const next = await updateAppSettings(
-      workspaceRoot(),
-      (s): AppSettings => ({
-        ...s,
-        backend: { ...s.backend, thinking },
-      }),
-    );
-    // The effort applies from 板砖's next dispatch (ADR 0081).
-    deps.host()?.setModels({ thinking: effectiveModels(next).thinking });
-  });
-  // Settings → DeepSeek → 模型: per-stage model (2026-08-17). Same
-  // restart-to-apply contract; buildConfig reads it at the next bootstrap
-  // (an env override, if set, still wins there — it is the dev/lab knob).
-  handle(CMD.getModelConfig, async () => {
-    const s = await readAppSettings(workspaceRoot());
-    return {
-      actor: normalizeModelChoice(s.models?.actor) ?? "deepseek-v4-pro",
-      // Default `deepseek-flash` (the vision-capable flash, ADR 0048
-      // §5a/§5b) — must match buildConfig's, or the pane shows a model
-      // the next boot will not use. A legacy name in the file reads as
-      // its successor here too, so the pane shows what the boot will run.
-      backend: normalizeModelChoice(s.models?.backend) ?? "deepseek-flash",
-    };
-  });
-  handle(
-    CMD.setModelConfig,
-    async (_e, cfg: { actor?: unknown; backend?: unknown }) => {
-      if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
-      const { actor, backend } = cfg;
-      const next = await updateAppSettings(
-        workspaceRoot(),
-        (s): AppSettings => ({
+/** One Settings row in main: how its value is read, and how a value the
+ *  renderer sent is checked and persisted. `set` takes the value unchecked:
+ *  each row validates its own, as each channel's handler did. */
+interface SettingRow<K extends SettingKey> {
+  readonly get: () => Promise<SettingReads[K]>;
+  readonly set: (value: unknown) => Promise<void>;
+}
+
+type SettingRows = { readonly [K in SettingKey]: SettingRow<K> };
+
+/** The table behind `settings:get` / `settings:set` (owner 2026-11-23),
+ *  keyed like `SETTING_KEYS`: the mapped type makes a key without a row a
+ *  build error. Exported for the tests. */
+export function settingRows(deps: SettingsIpcDeps): SettingRows {
+  const { hooks, voice, workspaceRoot } = deps;
+  const userData = (): string => app.getPath("userData");
+  return {
+    // Settings → Dream. Restart-to-apply: read/write the persisted flag; the
+    // running app-server is untouched (it reads config.dream at next
+    // bootstrap). The answer carries what the running app has too
+    // (`running`): the pane's "restart to apply" note compares against it,
+    // not against the file it read on mount — a pane reopened after a change
+    // showed ON with no note while the running app still had the old value
+    // (dream review 2026-09-22, finding 20).
+    dream: {
+      get: async () => {
+        const s = await readAppSettings(workspaceRoot());
+        const running = deps.dreamRunning?.();
+        return {
+          enabled: dreamEnabled(s),
+          ...(running !== undefined ? { running } : {}),
+        };
+      },
+      set: async (value) => {
+        const cfg = value as { enabled: boolean };
+        await updateAppSettings(workspaceRoot(), (s) => ({
           ...s,
-          models: { ...s.models, actor, backend },
-        }),
-      );
-      // Live (ADR 0081): Herta's next turn and 板砖's next dispatch use them.
-      // An env override still wins, as at a fresh start.
-      const live = effectiveModels(next);
-      deps.host()?.setModels({
-        actorModel: live.actorModel,
-        backendModel: live.backendModel,
-      });
+          dream: { ...s.dream, enabled: cfg.enabled },
+        }));
+      },
     },
-  );
-  // Settings → Language. App-global (per-user) preference; the renderer
-  // applies it live, so this is just persistence. getLocale resolves a stored
-  // choice, else maps the OS locale.
-  handle(CMD.getLocale, async () => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    return resolveInitialLocale(s, osLocale(process.platform, app));
-  });
-  handle(CMD.setLocale, async (_e, locale: Locale) => {
-    // Validate like setTheme: an off-enum value would fail the read-side
-    // shape check and silently reset EVERY preference to default.
-    if (locale !== "zh" && locale !== "en") return;
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      locale,
-    }));
-    // AFTER the write settles: the hook re-reads the persisted settings,
-    // so firing early would re-render the tray tooltip from the OLD file.
-    hooks.onLocaleChanged?.();
-  });
-  // Settings → Language: interaction language (slice 4). Returns the STORED
-  // choice ("follow" when absent = follow the UI locale); "follow" DELETES
-  // the stored field. Applies to NEW sessions (per-session static prefix +
-  // prompt cache) — session activation resolves it fresh above.
-  handle(CMD.getInteractionLanguage, async () => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    return s.interactionLanguage ?? "follow";
-  });
-  handle(
-    CMD.setInteractionLanguage,
-    async (_e, choice: InteractionLanguageChoice) => {
-      // Validate like setTheme: an off-enum value would fail the read-side
-      // shape check and silently reset EVERY preference to default.
-      if (choice !== "zh" && choice !== "en" && choice !== "follow") return;
-      await updateGlobalSettings(app.getPath("userData"), (s) => {
-        if (choice === "follow") {
-          const { interactionLanguage: _drop, ...rest } = s;
-          return rest;
-        }
-        return { ...s, interactionLanguage: choice };
-      });
-    },
-  );
-  // Settings → Window. Close-to-tray is app-global (per-user) and applies
-  // LIVE: the hook updates main's cached close-handler flag immediately.
-  handle(CMD.getCloseToTray, async () => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    return s.closeToTray ?? defaultCloseToTray(process.platform);
-  });
-  handle(CMD.setCloseToTray, async (_e, enabled: boolean) => {
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      closeToTray: enabled === true,
-    }));
-    hooks.onCloseToTrayChanged?.(enabled === true);
-  });
-  // Settings → Window: attention (ADR 0072 §1). Both default on; a write
-  // carries either or both, and anything but a boolean is ignored.
-  handle(CMD.getAttention, async (): Promise<AttentionSettings> => {
-    return attentionSettingsOf(
-      await readGlobalSettings(app.getPath("userData")),
-    );
-  });
-  handle(
-    CMD.setAttention,
-    async (_e, prefs: { notifications?: unknown; keepAwake?: unknown }) => {
-      const notifications =
-        typeof prefs?.notifications === "boolean"
-          ? prefs.notifications
+    // Settings → Coprocessor: backend reasoning effort. It applies from
+    // 板砖's next dispatch (ADR 0081).
+    backend: {
+      get: async () => {
+        const s = await readAppSettings(workspaceRoot());
+        const v = s.backend?.thinking;
+        // `findBash` reads PATH: on Windows it finds bash beside the git
+        // there.
+        await hooks.pathReady;
+        return {
+          thinking: isBackendThinking(v) ? v : "high",
+          // Whether 板砖 can run here at all (ADR 0086): it needs a bash,
+          // and the pane says so when there is none.
+          bashFound: findBash() !== null,
+        };
+      },
+      set: async (value) => {
+        const cfg = value as { thinking?: unknown } | null | undefined;
+        // Validate like theme/locale: an off-enum value would fail the
+        // read-side shape check downstream — refuse it instead of
+        // persisting.
+        const thinking = isBackendThinking(cfg?.thinking)
+          ? cfg.thinking
           : undefined;
-      const keepAwake =
-        typeof prefs?.keepAwake === "boolean" ? prefs.keepAwake : undefined;
-      if (notifications === undefined && keepAwake === undefined) return;
-      const userData = app.getPath("userData");
-      await updateGlobalSettings(userData, (s) => ({
-        ...s,
-        ...(notifications !== undefined ? { notifications } : {}),
-        ...(keepAwake !== undefined ? { keepAwake } : {}),
-      }));
-      hooks.onAttentionChanged?.(
-        attentionSettingsOf(await readGlobalSettings(userData)),
-      );
+        if (thinking === undefined) return;
+        const next = await updateAppSettings(
+          workspaceRoot(),
+          (s): AppSettings => ({
+            ...s,
+            backend: { ...s.backend, thinking },
+          }),
+        );
+        deps.host()?.setModels({ thinking: effectiveModels(next).thinking });
+      },
     },
-  );
-  // Settings → Update: automatic checks/downloads. App-global and applied
-  // LIVE via the hook (the update service cancels or restarts its cycle).
-  handle(CMD.getAutoUpdate, async () => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    return s.autoUpdate ?? true;
-  });
-  handle(CMD.setAutoUpdate, async (_e, enabled: boolean) => {
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      autoUpdate: enabled === true,
-    }));
-    hooks.onAutoUpdateChanged?.(enabled === true);
-  });
-  // Settings → Appearance (night-mode slice 2). The renderer's theme
-  // controller applies it live; main just persists (validated on read).
-  // Default "system" (user 2026-07-14): a first launch follows the OS
-  // appearance; light/dark stay explicit overrides.
-  handle(CMD.getTheme, async () => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    return s.theme ?? "system";
-  });
-  handle(CMD.setTheme, async (_e, theme: ThemePref) => {
-    if (theme !== "light" && theme !== "dark" && theme !== "system") return;
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      theme,
-    }));
-    hooks.onThemeChanged?.(theme);
-  });
-  // Settings → 差分协处理器 → PDF picture transcription (2026-10-01). Per user
-  // and LIVE: persisted here, mirrored to the running host, which every
-  // session reads at its next attach. Anything but a boolean is ignored.
-  handle(CMD.getPdfPictureTranscripts, async () =>
-    pdfPictureTranscriptsEnabled(
-      await readGlobalSettings(app.getPath("userData")),
-    ),
-  );
-  handle(CMD.setPdfPictureTranscripts, async (_e, enabled: unknown) => {
-    if (typeof enabled !== "boolean") return;
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      pdfPictureTranscripts: enabled,
-    }));
-    deps.host()?.setPdfPictureTranscription(enabled);
-  });
-  // Settings → 窗口 → composer predictions (2026-10-10). Per user and LIVE:
-  // persisted here, mirrored to the running host, which reads it at every
-  // finished turn. Anything but a boolean is ignored.
-  handle(CMD.getComposerPredictions, async () =>
-    composerPredictionsEnabled(
-      await readGlobalSettings(app.getPath("userData")),
-    ),
-  );
-  handle(CMD.setComposerPredictions, async (_e, enabled: unknown) => {
-    if (typeof enabled !== "boolean") return;
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      composerPredictions: enabled,
-    }));
-    deps.host()?.setComposerPredictions(enabled);
-  });
-  // Settings → Voice: Herta's real-time synthesized voice (ADR 0042).
-  // App-global and applied LIVE — the synthesizer reads the cached flag at
-  // every speech stream's start. The read reports the ASSET facts alongside
-  // the toggle so the row can explain a silent install rather than claim
-  // the voice is on when nothing can speak.
-  handle(CMD.getRealtimeVoice, async (): Promise<RealtimeVoiceState> => {
-    const s = await readGlobalSettings(app.getPath("userData"));
-    const enabled = s.realtimeVoice ?? true;
-    voice.realtimeEnabled = enabled;
-    const st = voice.synthesizer?.status();
-    return {
-      enabled,
-      bundle: st?.bundle ?? false,
-      runtime: st?.runtime ?? false,
-      failed: st?.failed ?? false,
-      model: (await voice.voiceModel?.state()) ?? {
-        phase: "absent",
-        receivedBytes: 0,
-        totalBytes: TTS_ARCHIVE_BYTES,
-        unpackedBytes: TTS_BUNDLE_BYTES,
+    // Settings → DeepSeek → 模型: per-stage model (2026-08-17). An env
+    // override, if set, still wins at the next bootstrap — it is the dev/lab
+    // knob.
+    model: {
+      get: async () => {
+        const s = await readAppSettings(workspaceRoot());
+        return {
+          actor: normalizeModelChoice(s.models?.actor) ?? "deepseek-v4-pro",
+          // Default `deepseek-flash` (the vision-capable flash, ADR 0048
+          // §5a/§5b) — must match buildConfig's, or the pane shows a model
+          // the next boot will not use. A legacy name in the file reads as
+          // its successor here too, so the pane shows what the boot will
+          // run.
+          backend: normalizeModelChoice(s.models?.backend) ?? "deepseek-flash",
+        };
       },
-      engine: voice.engine,
-      minimax: {
-        key: getMiniMaxKeyStatus(),
-        planKey: getMiniMaxPlanKeyStatus(),
-        voice: voice.minimaxVoice?.state() ?? { phase: "absent" },
-        refusal: voice.minimaxRefusal(),
+      set: async (value) => {
+        const cfg = value as
+          | { actor?: unknown; backend?: unknown }
+          | null
+          | undefined;
+        if (!isModelChoice(cfg?.actor) || !isModelChoice(cfg?.backend)) return;
+        const { actor, backend } = cfg;
+        const next = await updateAppSettings(
+          workspaceRoot(),
+          (s): AppSettings => ({
+            ...s,
+            models: { ...s.models, actor, backend },
+          }),
+        );
+        // Live (ADR 0081): Herta's next turn and 板砖's next dispatch use
+        // them. An env override still wins, as at a fresh start.
+        const live = effectiveModels(next);
+        deps.host()?.setModels({
+          actorModel: live.actorModel,
+          backendModel: live.backendModel,
+        });
       },
-    };
+    },
+    // Settings → Language. App-global (per-user) preference; the renderer
+    // applies it live, so this is just persistence. The read resolves a
+    // stored choice, else maps the OS locale.
+    locale: {
+      get: async () => {
+        const s = await readGlobalSettings(userData());
+        return resolveInitialLocale(s, osLocale(process.platform, app));
+      },
+      set: async (value) => {
+        // Validate like theme: an off-enum value would fail the read-side
+        // shape check and silently reset EVERY preference to default.
+        if (value !== "zh" && value !== "en") return;
+        const locale: Locale = value;
+        await updateGlobalSettings(userData(), (s) => ({ ...s, locale }));
+        // AFTER the write settles: the hook re-reads the persisted settings,
+        // so firing early would re-render the tray tooltip from the OLD
+        // file.
+        hooks.onLocaleChanged?.();
+      },
+    },
+    // Settings → Language: interaction language (slice 4). Reads the STORED
+    // choice ("follow" when absent = follow the UI locale); "follow" DELETES
+    // the stored field. Applies to NEW sessions (per-session static prefix +
+    // prompt cache) — session activation resolves it fresh.
+    interactionLanguage: {
+      get: async () => {
+        const s = await readGlobalSettings(userData());
+        return s.interactionLanguage ?? "follow";
+      },
+      set: async (value) => {
+        // Validate like theme: an off-enum value would fail the read-side
+        // shape check and silently reset EVERY preference to default.
+        if (value !== "zh" && value !== "en" && value !== "follow") return;
+        const choice: InteractionLanguageChoice = value;
+        await updateGlobalSettings(userData(), (s) => {
+          if (choice === "follow") {
+            const { interactionLanguage: _drop, ...rest } = s;
+            return rest;
+          }
+          return { ...s, interactionLanguage: choice };
+        });
+      },
+    },
+    // Settings → Window. Close-to-tray is app-global (per-user) and applies
+    // LIVE: the hook updates main's cached close-handler flag immediately.
+    closeToTray: {
+      get: async () => {
+        const s = await readGlobalSettings(userData());
+        return s.closeToTray ?? defaultCloseToTray(process.platform);
+      },
+      set: async (value) => {
+        const enabled = value === true;
+        await updateGlobalSettings(userData(), (s) => ({
+          ...s,
+          closeToTray: enabled,
+        }));
+        hooks.onCloseToTrayChanged?.(enabled);
+      },
+    },
+    // Settings → Window: attention (ADR 0072 §1). Both default on; a write
+    // carries either or both, and anything but a boolean is ignored.
+    attention: {
+      get: async () =>
+        attentionSettingsOf(await readGlobalSettings(userData())),
+      set: async (value) => {
+        const prefs = value as
+          | { notifications?: unknown; keepAwake?: unknown }
+          | null
+          | undefined;
+        const notifications =
+          typeof prefs?.notifications === "boolean"
+            ? prefs.notifications
+            : undefined;
+        const keepAwake =
+          typeof prefs?.keepAwake === "boolean" ? prefs.keepAwake : undefined;
+        if (notifications === undefined && keepAwake === undefined) return;
+        const dir = userData();
+        await updateGlobalSettings(dir, (s) => ({
+          ...s,
+          ...(notifications !== undefined ? { notifications } : {}),
+          ...(keepAwake !== undefined ? { keepAwake } : {}),
+        }));
+        hooks.onAttentionChanged?.(
+          attentionSettingsOf(await readGlobalSettings(dir)),
+        );
+      },
+    },
+    // Settings → Update: automatic checks/downloads. App-global and applied
+    // LIVE via the hook (the update service cancels or restarts its cycle).
+    autoUpdate: {
+      get: async () => {
+        const s = await readGlobalSettings(userData());
+        return s.autoUpdate ?? true;
+      },
+      set: async (value) => {
+        const enabled = value === true;
+        await updateGlobalSettings(userData(), (s) => ({
+          ...s,
+          autoUpdate: enabled,
+        }));
+        hooks.onAutoUpdateChanged?.(enabled);
+      },
+    },
+    // Settings → Appearance (night-mode slice 2). The renderer's theme
+    // controller applies it live; main just persists (validated on read).
+    // Default "system" (user 2026-07-14): a first launch follows the OS
+    // appearance; light/dark stay explicit overrides.
+    theme: {
+      get: async () => {
+        const s = await readGlobalSettings(userData());
+        return s.theme ?? "system";
+      },
+      set: async (value) => {
+        if (value !== "light" && value !== "dark" && value !== "system") {
+          return;
+        }
+        const theme: ThemePref = value;
+        await updateGlobalSettings(userData(), (s) => ({ ...s, theme }));
+        hooks.onThemeChanged?.(theme);
+      },
+    },
+    // Settings → 差分协处理器 → PDF picture transcription (2026-10-01). Per
+    // user and LIVE: persisted here, mirrored to the running host, which
+    // every session reads at its next attach. Anything but a boolean is
+    // ignored.
+    pdfPictureTranscripts: {
+      get: async () =>
+        pdfPictureTranscriptsEnabled(await readGlobalSettings(userData())),
+      set: async (value) => {
+        if (typeof value !== "boolean") return;
+        await updateGlobalSettings(userData(), (s) => ({
+          ...s,
+          pdfPictureTranscripts: value,
+        }));
+        deps.host()?.setPdfPictureTranscription(value);
+      },
+    },
+    // Settings → 窗口 → composer predictions (2026-10-10). Per user and LIVE:
+    // persisted here, mirrored to the running host, which reads it at every
+    // finished turn. Anything but a boolean is ignored.
+    composerPredictions: {
+      get: async () =>
+        composerPredictionsEnabled(await readGlobalSettings(userData())),
+      set: async (value) => {
+        if (typeof value !== "boolean") return;
+        await updateGlobalSettings(userData(), (s) => ({
+          ...s,
+          composerPredictions: value,
+        }));
+        deps.host()?.setComposerPredictions(value);
+      },
+    },
+    // Settings → Voice: Herta's real-time synthesized voice (ADR 0042).
+    // App-global and applied LIVE — the synthesizer reads the cached flag at
+    // every speech stream's start. The read reports the ASSET facts
+    // alongside the toggle so the row can explain a silent install rather
+    // than claim the voice is on when nothing can speak.
+    realtimeVoice: {
+      get: async (): Promise<RealtimeVoiceState> => {
+        const s = await readGlobalSettings(userData());
+        const enabled = s.realtimeVoice ?? true;
+        voice.realtimeEnabled = enabled;
+        const st = voice.synthesizer?.status();
+        return {
+          enabled,
+          bundle: st?.bundle ?? false,
+          runtime: st?.runtime ?? false,
+          failed: st?.failed ?? false,
+          model: (await voice.voiceModel?.state()) ?? {
+            phase: "absent",
+            receivedBytes: 0,
+            totalBytes: TTS_ARCHIVE_BYTES,
+            unpackedBytes: TTS_BUNDLE_BYTES,
+          },
+          engine: voice.engine,
+          minimax: {
+            key: getMiniMaxKeyStatus(),
+            planKey: getMiniMaxPlanKeyStatus(),
+            voice: voice.minimaxVoice?.state() ?? { phase: "absent" },
+            refusal: voice.minimaxRefusal(),
+          },
+        };
+      },
+      set: async (value) => {
+        const next = value === true;
+        voice.realtimeEnabled = next;
+        // Off mid-reply: the renderer fades what is on air; this ends what
+        // is still being made, so the rest of the reply types unvoiced
+        // instead of resuming one sentence later (ADR 0042 §7c).
+        if (!next) voice.stopSpeech();
+        await updateGlobalSettings(userData(), (s) => ({
+          ...s,
+          realtimeVoice: next,
+        }));
+      },
+    },
+  };
+}
+
+export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
+  const { handle, voice } = deps;
+  const rows = settingRows(deps);
+  // Every Settings row's value through one keyed pair (owner 2026-11-23).
+  // A key that is not a setting is refused, as a channel nobody registered
+  // was.
+  handle(CMD.getSetting, async (_e, key: unknown) => {
+    if (!isSettingKey(key)) throw new Error(`not a setting: ${String(key)}`);
+    return rows[key].get();
+  });
+  handle(CMD.setSetting, async (_e, key: unknown, value: unknown) => {
+    if (!isSettingKey(key)) throw new Error(`not a setting: ${String(key)}`);
+    await rows[key].set(value);
   });
   // Settings → Voice → the engine and the cloud voice (ADR 0062).
   handle(CMD.setVoiceEngine, async (_e, engine: VoiceEngine) => {
@@ -514,18 +587,6 @@ export function registerSettingsHandlers(deps: SettingsIpcDeps): void {
   handle(CMD.prepareMiniMaxVoice, async () => {
     if (voice.minimaxVoice === null) throw new Error("cloud voice not up");
     return voice.minimaxVoice.prepare();
-  });
-  handle(CMD.setRealtimeVoice, async (_e, enabled: boolean) => {
-    const next = enabled === true;
-    voice.realtimeEnabled = next;
-    // Off mid-reply: the renderer fades what is on air; this ends what is
-    // still being made, so the rest of the reply types unvoiced instead of
-    // resuming one sentence later (ADR 0042 §7c).
-    if (!next) voice.stopSpeech();
-    await updateGlobalSettings(app.getPath("userData"), (s) => ({
-      ...s,
-      realtimeVoice: next,
-    }));
   });
   // Settings → Voice → the model row (ADR 0061). Download resolves with
   // the state the download ENDED in; progress rides EVT.voiceModel.

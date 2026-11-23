@@ -28,7 +28,7 @@ const langParam = params.get("lang");
 const demoLang = langParam === "en" ? "en" : "zh";
 
 // …and the SITE's effective theme via ?theme= (2026-07-16): the app's theme
-// controller follows the OS when a bridge has no getTheme, which would drift
+// controller follows the OS when a bridge has no theme setting, which would drift
 // from a manual site toggle — so the bridge pins it, and the pre-render stamp
 // below keeps the app's boot splash from flashing the wrong theme.
 const demoTheme = params.get("theme") === "dark" ? "dark" : "light";

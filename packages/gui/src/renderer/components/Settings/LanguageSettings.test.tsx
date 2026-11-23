@@ -5,6 +5,7 @@ import { renderWithLocale } from "../../i18n/test-util.js";
 import {
   createMockHertaBridge,
   type MockHertaBridgeOpts,
+  withSetting,
 } from "../../ipc/mock-bridge.js";
 import { LanguageSettings } from "./LanguageSettings.js";
 
@@ -22,7 +23,10 @@ describe("LanguageSettings — the UI-language row persists, and says when it co
   it("a pick applies live and is written through the bridge", async () => {
     const mock = createMockHertaBridge();
     const setLocale = vi.fn(async () => undefined);
-    Object.assign(mock.bridge, { setLocale });
+    Object.assign(
+      mock.bridge,
+      withSetting(mock.bridge, "locale", { set: setLocale }),
+    );
     renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
         <LanguageSettings />
@@ -39,11 +43,14 @@ describe("LanguageSettings — the UI-language row persists, and says when it co
 
   it("a failed write snaps the UI back to the stored language and says it could not save", async () => {
     const mock = createMockHertaBridge();
-    Object.assign(mock.bridge, {
-      setLocale: async () => {
-        throw new Error("EACCES: permission denied");
-      },
-    });
+    Object.assign(
+      mock.bridge,
+      withSetting(mock.bridge, "locale", {
+        set: async () => {
+          throw new Error("EACCES: permission denied");
+        },
+      }),
+    );
     renderWithLocale(
       <HertaBridgeProvider bridge={mock.bridge}>
         <LanguageSettings />

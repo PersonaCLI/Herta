@@ -243,10 +243,14 @@ async function close() {
   for (const signal of ["SIGTERM", "SIGKILL"]) {
     try {
       if (process.platform === "win32") {
-        // No process groups here: the tree goes by pid (a local run).
-        spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-          stdio: "ignore",
-        });
+        // No process groups here (a local run). End only the app this probe
+        // started, and only while it is running: child.kill() goes through
+        // the handle Node holds open on it, so the pid cannot have been
+        // reused, and Chromium's helpers end with their browser process. Not
+        // `taskkill /T` by pid: run after the app had exited, that walks
+        // whatever process now holds the number, and a tree kill of a
+        // reused pid once stopped an unrelated program here (2026-11-21).
+        if (!exited) child.kill();
       } else {
         process.kill(-child.pid, signal);
       }
@@ -383,9 +387,13 @@ try {
   const from = markAt("opening-painted") ?? Number.NEGATIVE_INFINITY;
   const reveal = markAt("revealed");
   const end = markAt("interactive");
+  // The same bound the judgement below uses, rounded the same way: unrounded
+  // here, a frame dated on the rounded end (1540 for 1539.5) was judged but
+  // never measured, and read as a frame with no figure (Electron 45 check,
+  // 2026-11-24).
   const upTo =
     reveal !== undefined && end !== undefined
-      ? reveal + (end - reveal) * 0.25
+      ? Math.round(reveal + (end - reveal) * 0.25)
       : Number.POSITIVE_INFINITY;
   for (const f of frames) {
     if (f.at < from || f.at > upTo) continue;

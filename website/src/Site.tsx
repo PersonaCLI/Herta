@@ -620,7 +620,7 @@ const ZH: SiteCopy = {
   // (2026-09-24).
   dlFine:
     // A no-break space before each dot keeps it at a line's end on a phone.
-    "Windows 10/11 x64 · macOS 12+ · Linux x64 AppImage · 对话只发送给 DeepSeek API（开启云端语音时，她的台词另发送给 MiniMax）；密钥保存在本机，系统密钥链可用时加密",
+    "Windows 10/11 x64 · macOS 13+ · Linux x64 AppImage · 对话只发送给 DeepSeek API（开启云端语音时，她的台词另发送给 MiniMax）；密钥保存在本机，系统密钥链可用时加密",
   footer: "本页演示运行的就是应用本身的界面代码。",
   fanNotice:
     "黑塔是《崩坏：星穹铁道》的角色，版权归米哈游所有。本项目为非官方同人作品，与米哈游无关，亦未获其认可。",
@@ -853,7 +853,7 @@ const EN: SiteCopy = {
   dlPan: null,
   // See the zh note above — "fully local" was false; turns go to DeepSeek.
   dlFine:
-    "Windows 10/11 x64 · macOS 12+ · Linux x64 AppImage · your conversation goes only to the DeepSeek API (with cloud voice on, her lines also go to MiniMax) · your key stays on your machine, encrypted by the OS keychain when one is available",
+    "Windows 10/11 x64 · macOS 13+ · Linux x64 AppImage · your conversation goes only to the DeepSeek API (with cloud voice on, her lines also go to MiniMax) · your key stays on your machine, encrypted by the OS keychain when one is available",
   footer: "the demo on this page runs the app's own interface code.",
   fanNotice:
     "Herta is a character from Honkai: Star Rail, © HoYoverse. Unofficial fan project, unaffiliated with and not endorsed by HoYoverse.",

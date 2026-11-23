@@ -143,8 +143,8 @@ importers:
         specifier: ^3.4.18
         version: 3.4.18
       electron:
-        specifier: ^43.8.10
-        version: 43.8.10
+        specifier: ^45.4.1
+        version: 45.4.1
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3
@@ -1836,8 +1836,8 @@ packages:
       '@swc/core':
         optional: true
 
-  electron@43.8.10:
-    resolution: {integrity: sha512-He/CVZxahZbDOS++eIwzU+XubARqz8s3d/eqPCmE/VcWc67yf8sei5vbKVZJE2jCmqqbbr5yWrWKmXJSyds8Ug==}
+  electron@45.4.1:
+    resolution: {integrity: sha512-DjsJ/eQhovkjf1vYFFyh5GB8NMx+L5bdYaonvGOlWselg3DQ0fwIF0N/+2hrPsoS4whmmNswh21ym/8dgt1y5Q==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -4642,7 +4642,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@43.8.10:
+  electron@45.4.1:
     dependencies:
       '@electron-internal/extract-zip': 1.0.4
       '@electron/get': 5.0.0

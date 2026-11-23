@@ -8,6 +8,15 @@ import { FileViewerProvider } from "../FileViewer/file-viewer-context.js";
 import { ActivityBlock, type ActivityBlockProps } from "./ActivityBlock.js";
 import type { SystemBlock } from "./group-record.js";
 
+// The PDF renderer is a stand-in here: a row opening a document is what is
+// tested, not pdf.js. The real one loads pdf.js, whose module prints a
+// warning as it loads under Node; the load ended after this file's last test,
+// and vitest 4 fails the run on a console write after a file's teardown
+// (scheduled CI, 2026-11-23).
+vi.mock("../FileViewer/renderers/PdfView.js", () => ({
+  PdfView: () => "pdf view",
+}));
+
 const step = (body: string): SystemBlock => ({
   kind: "system",
   label: "差分协处理器",
@@ -378,6 +387,8 @@ describe("ActivityBlock — attachment groups (ADR 0033, owner 2026-08-10)", () 
         ".herta/attachments/s/report-ab12cd34.pdf",
       ),
     );
+    // The viewer drew the PDF: its renderer's chunk loaded inside the test.
+    expect(await screen.findByText("pdf view")).toBeTruthy();
     expect(readWorkspaceFile).not.toHaveBeenCalled();
     const xs = h.container.querySelectorAll(".activity-step__remove");
     expect(xs).toHaveLength(2);

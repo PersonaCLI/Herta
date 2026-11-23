@@ -18,7 +18,7 @@
  * Herta-authored finalized text, never over user blocks. escapeUserText
  * is a second layer in case that scope check is ever bypassed.
  */
-import { stripDisplayUnsafe } from "@herta/core";
+import { quotationRanges, stripDisplayUnsafe } from "@herta/core";
 
 const ZWSP = "​";
 
@@ -61,6 +61,51 @@ function breakPattern(text: string, pattern: string): string {
   if (!text.includes(pattern)) return text;
   const broken = `${pattern[0]}${ZWSP}${pattern.slice(1)}`;
   return text.split(pattern).join(broken);
+}
+
+/**
+ * Invisible characters the display hygiene keeps (ADR 0015 amendment
+ * 2026-11-23): the zero-width joiner (kept for emoji sequences), the soft
+ * hyphen, the Mongolian vowel separator, the combining grapheme joiner, the
+ * Hangul fillers, the Khmer inherent vowels and the variation selectors. Any
+ * of them inside `@板砖` leaves a token that reads as the trigger and never
+ * dispatches. ZWSP, ZWNJ, the word joiner and BOM are not here:
+ * `stripDisplayUnsafe` removes those, so the token they split becomes the
+ * real one, and dispatch and display agree.
+ */
+const KEPT_INVISIBLE =
+  "\\u00AD\\u034F\\u115F\\u1160\\u17B4\\u17B5\\u180E\\u200D\\u3164\\uFE00-\\uFE0F\\uFFA0\\u{E0100}-\\u{E01EF}";
+const LOOK_ALIKE_TRIGGER = new RegExp(
+  `@[${KEPT_INVISIBLE}]*板[${KEPT_INVISIBLE}]*砖`,
+  "gu",
+);
+
+/**
+ * A `@板砖` spelled with an invisible character inside (ADR 0015 amendment
+ * 2026-11-23, owner): it read as a call on the screen and in the record
+ * Herta reads back, and no run followed — the shape the fabrication chain
+ * starts from (ADR 0036). Outside quotation it becomes the quoted mention
+ * `` `@板砖` ``, the form a non-dispatching token takes everywhere
+ * (`neutralizeBanzhuanTrigger`); inside a code span it is already a
+ * mention, and only loses the invisible character. The real token is not
+ * touched. Idempotent: the result holds no look-alike.
+ */
+export function quoteLookAlikeTriggers(text: string): string {
+  if (!/[@][^板]{0,8}板/u.test(text)) return text;
+  const spelled = (s: string): string =>
+    s.replace(LOOK_ALIKE_TRIGGER, (m) => (m === "@板砖" ? m : "\u0000"));
+  if (!spelled(text).includes("\u0000")) return text;
+  const inQuote = (s: string): string =>
+    s.replace(LOOK_ALIKE_TRIGGER, () => "@板砖");
+  let out = "";
+  let last = 0;
+  for (const [s, e] of quotationRanges(text)) {
+    out += spelled(text.slice(last, s)).split("\u0000").join("`@板砖`");
+    out += inQuote(text.slice(s, e));
+    last = e;
+  }
+  out += spelled(text.slice(last)).split("\u0000").join("`@板砖`");
+  return out;
 }
 
 export function escapeUserText(text: string): string {
@@ -123,7 +168,7 @@ export function sanitizeActorText(
   text: string,
   opts: { readonly role: ActorTextRole },
 ): string {
-  let out = stripDisplayUnsafe(text);
+  let out = quoteLookAlikeTriggers(stripDisplayUnsafe(text));
   for (const pattern of ACTOR_MARKERS) {
     out = breakPattern(out, pattern);
   }

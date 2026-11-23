@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   escapeUserText,
   FORBIDDEN_USER_PATTERNS,
+  quoteLookAlikeTriggers,
   sanitizeActorText,
 } from "./escape.js";
+import { parseHertaBlock } from "./parse.js";
 
 const ZWSP = "​";
 
@@ -250,5 +252,49 @@ describe("sanitizeActorText — forged-marker neutralization", () => {
     for (const t of texts) {
       expect(sanitizeActorText(t, { role: "speech" })).toBe(t);
     }
+  });
+});
+
+describe("sanitizeActorText — a look-alike @板砖 becomes a quoted mention (ADR 0015 amendment 2026-11-23)", () => {
+  // Built from code points so this file stays printable ASCII where it can.
+  const ZWJ = String.fromCodePoint(0x200d);
+  const SHY = String.fromCodePoint(0x00ad);
+  const MVS = String.fromCodePoint(0x180e);
+
+  it("an invisible character the display hygiene keeps makes the token inert, and quoted", () => {
+    for (const lookAlike of [
+      `@板${ZWJ}砖`,
+      `@板${SHY}砖`,
+      `@${MVS}板砖`,
+      `@${ZWJ}板${SHY}砖`,
+    ]) {
+      const out = sanitizeActorText(`好，${lookAlike} 去跑测试`, {
+        role: "speech",
+      });
+      expect(out, JSON.stringify(lookAlike)).toBe("好，`@板砖` 去跑测试");
+      expect(parseHertaBlock(out).hasBanzhuanTrigger).toBe(false);
+    }
+  });
+
+  it("the real token stays live, and one split by a character the hygiene strips becomes it", () => {
+    for (const speech of ["好，@板砖 去跑测试", `好，@板${ZWSP}砖 去跑测试`]) {
+      const out = sanitizeActorText(speech, { role: "speech" });
+      expect(out).toBe("好，@板砖 去跑测试");
+      expect(parseHertaBlock(out).hasBanzhuanTrigger).toBe(true);
+    }
+  });
+
+  it("inside a code span it is already a mention, and only loses the invisible character", () => {
+    expect(
+      sanitizeActorText(`引用 \`@板${ZWJ}砖\` 而已`, { role: "speech" }),
+    ).toBe("引用 `@板砖` 而已");
+  });
+
+  it("leaves an emoji sequence's joiner alone, and is idempotent", () => {
+    const family = `\u{1F468}${ZWJ}\u{1F469}${ZWJ}\u{1F467}`;
+    expect(sanitizeActorText(family, { role: "speech" })).toBe(family);
+    const once = sanitizeActorText(`@板${ZWJ}砖 和 @板砖`, { role: "speech" });
+    expect(sanitizeActorText(once, { role: "speech" })).toBe(once);
+    expect(quoteLookAlikeTriggers(once)).toBe(once);
   });
 });

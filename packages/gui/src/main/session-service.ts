@@ -58,7 +58,7 @@ import {
   effectiveModels,
   readAppSettings,
 } from "./app-settings.js";
-import { createAttachProgressRelay } from "./attach-progress-relay.js";
+import { registerAttachmentHandlers } from "./attachment-ipc.js";
 import {
   type AttentionPrefs,
   DEFAULT_ATTENTION_PREFS,
@@ -1036,110 +1036,12 @@ export function createSessionService(
         homedir(),
       ),
     );
-    handle(CMD.pickAttachments, async () => {
-      const r = await dialog.showOpenDialog(win, {
-        properties: ["openFile", "multiSelections"],
-      });
-      return r.canceled || r.filePaths.length === 0 ? null : r.filePaths;
-    });
-    handle(
-      CMD.attachFiles,
-      async (_e, sessionId: string, paths: readonly string[]) => {
-        const s = host?.activeSession ?? null;
-        if (s === null || s.sessionId !== sessionId) {
-          return { ok: false as const, message: "no matching active session" };
-        }
-        if (s.attachFiles === undefined) {
-          return { ok: false as const, message: "attachments unavailable" };
-        }
-        // The pending row's hairline (2026-10-01): each file's pages and
-        // transcripts as they go, throttled per file, the last always sent.
-        const relay = createAttachProgressRelay((p) =>
-          send(EVT.attachProgress, { sessionId, ...p }),
-        );
-        let r: Awaited<ReturnType<typeof s.attachFiles>>;
-        try {
-          r = await s.attachFiles(paths, relay.push);
-        } finally {
-          relay.flush();
-        }
-        if (r.ok) return { ok: true as const };
-        // Each refusal gets its own words: "a turn is in progress" is a
-        // retry-in-a-moment, "too many files" is a do-something-different.
-        return {
-          ok: false as const,
-          message:
-            r.reason === "turn_in_progress"
-              ? "a turn is in progress"
-              : r.reason === "too_many"
-                ? "too many files at once"
-                : "no files",
-        };
-      },
-    );
-    handle(
-      CMD.stageImages,
-      async (
-        _e,
-        sessionId: string,
-        inputs: readonly {
-          readonly path?: string;
-          readonly bytes?: Uint8Array;
-          readonly name?: string;
-        }[],
-      ) => {
-        const s = host?.activeSession ?? null;
-        if (s === null || s.sessionId !== sessionId) {
-          return { ok: false as const, message: "no matching active session" };
-        }
-        if (s.stageImages === undefined) {
-          return { ok: false as const, message: "attachments unavailable" };
-        }
-        const r = await s.stageImages(inputs);
-        if (r.ok)
-          return { ok: true as const, staged: r.staged, rejected: r.rejected };
-        return {
-          ok: false as const,
-          message:
-            r.reason === "turn_in_progress"
-              ? "a turn is in progress"
-              : r.reason === "too_many_images"
-                ? "five images per message"
-                : "no files",
-        };
-      },
-    );
-    handle(CMD.unstageImage, async (_e, sessionId: string, id: string) => {
-      const s = host?.activeSession ?? null;
-      if (s === null || s.sessionId !== sessionId) return false;
-      return (await s.unstageImage?.(id)) ?? false;
-    });
+    // What the composer attaches: documents and staged pictures
+    // (attachment-ipc.ts).
+    registerAttachmentHandlers({ handle, host: () => host, send, win });
     // The viewer's reads of the workspace and its doors to the OS
     // (workspace-read-ipc.ts).
     registerWorkspaceReadHandlers({ handle, host: () => host });
-    handle(
-      CMD.removeAttachment,
-      async (_e, sessionId: string, path: string) => {
-        const s = host?.activeSession ?? null;
-        if (s === null || s.sessionId !== sessionId) {
-          return { ok: false as const, message: "no matching active session" };
-        }
-        if (s.removeAttachment === undefined) {
-          return { ok: false as const, message: "attachments unavailable" };
-        }
-        const r = await s.removeAttachment(path);
-        if (r.ok) return { ok: true as const };
-        return {
-          ok: false as const,
-          message:
-            r.reason === "turn_in_progress"
-              ? "a turn is in progress"
-              : r.reason === "in_use"
-                ? "file in use"
-                : "attachment not found",
-        };
-      },
-    );
     handle(CMD.resetWorkspace, async (_e, sessionId: string) => {
       const s = host?.activeSession ?? null;
       if (s === null || s.sessionId !== sessionId) {

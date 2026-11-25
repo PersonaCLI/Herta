@@ -1,6 +1,4 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -45,19 +43,14 @@ import {
   type BrowserWindow,
   dialog,
   ipcMain,
-  net,
   shell,
   type WebContents,
 } from "electron";
 import { CMD, EVT } from "../preload/channels.js";
-import type {
-  MiniMaxRefusalState,
-  SessionSnapshot,
-} from "../renderer/ipc/bridge-types.js";
+import type { SessionSnapshot } from "../renderer/ipc/bridge-types.js";
 import { slimAgentEventForRenderer } from "../shared/agent-event-wire.js";
 import { isRecordedWebUrl } from "../shared/links.js";
 import { createLiveToolFeed } from "../shared/live-tool-feed.js";
-import type { VoiceEngine } from "./app-global-settings.js";
 import {
   composerPredictionsEnabled,
   type InteractionLang,
@@ -84,11 +77,7 @@ import { createElectronAttentionHost } from "./attention-electron.js";
 import { bootstrapOnce } from "./bootstrap-once.js";
 import { createFlowHost, flowDirFor } from "./flow-host.js";
 import { installMode } from "./install-mode.js";
-import {
-  readDeepSeekKeyPlain,
-  readMiniMaxKeyPlain,
-  readMiniMaxPlanKeyPlain,
-} from "./key-store.js";
+import { readDeepSeekKeyPlain } from "./key-store.js";
 import { runsWhenOpened } from "./open-guard.js";
 import { shrinkPictureWithNativeImage } from "./picture-shrink.js";
 import {
@@ -104,40 +93,8 @@ import {
   type SettingsHooks,
 } from "./settings-ipc.js";
 import { TRAY_SESSION_ROWS } from "./tray-menu.js";
-import { createFallbackFetch } from "./tts/fallback-fetch.js";
-import {
-  createMiniMaxSynthesizer,
-  type MiniMaxSynthesizer,
-} from "./tts/minimax-synthesizer.js";
-import {
-  createMiniMaxVoiceService,
-  type MiniMaxVoiceService,
-} from "./tts/minimax-voice.js";
-import { createSwitchingSynthesizer } from "./tts/switching-synthesizer.js";
-import {
-  createTtsSynthesizer,
-  resolveSherpaEntry,
-  type TtsSynthesizer,
-} from "./tts/synthesizer.js";
-import {
-  resolveTtsModelRoots,
-  resolveVoiceCloneReference,
-  TTS_BUNDLE_ID,
-  TTS_EFFECT,
-  voiceModelStoreRoot,
-} from "./tts/tts-path.js";
-import {
-  TTS_ARCHIVE_BYTES,
-  TTS_ARCHIVE_SHA256,
-  TTS_ARCHIVE_URL,
-  TTS_ARCHIVE_URL_ENV,
-  TTS_BUNDLE_BYTES,
-} from "./tts/tts-release.js";
-import {
-  createVoiceModelService,
-  type VoiceModelService,
-} from "./tts/voice-model.js";
 import { resolveVoiceRoot } from "./voice-path.js";
+import { createVoiceStack } from "./voice-stack.js";
 import { listWorkspaceFiles } from "./workspace-files.js";
 
 type Send = (channel: string, payload: unknown) => void;
@@ -698,52 +655,13 @@ export function createSessionService(
    *  restart note compares against it); undefined before bootstrap. */
   let dreamRunning: boolean | undefined;
   let handlersRegistered = false;
-  // Herta's synthesized voice (ADR 0042). Built once at bootstrap and shared
-  // by every session; the enable flag is cached here so `available()` — read
-  // at every speech stream's start — never touches disk, and the Settings
-  // toggle applies to the very next reply.
-  let synthesizer: TtsSynthesizer | null = null;
-  let realtimeVoiceEnabled = true;
-  // The model as a download (ADR 0061): built beside the synthesizer, it
-  // owns the bundle directory under userData and tells the synthesizer to
-  // re-probe when a download lands or the bundle is removed.
-  let voiceModel: VoiceModelService | null = null;
-  // The cloud voice (ADR 0062): which engine speaks (cached from settings,
-  // read at every stream's start), the MiniMax synthesizer and the clone it
-  // uses. The key itself stays in the secure store and is read per call.
-  let voiceEngine: VoiceEngine = "local";
-  let minimaxSynth: MiniMaxSynthesizer | null = null;
-  let minimaxVoice: MiniMaxVoiceService | null = null;
-  // The cloud voice's network path (ADR 0062 §1.4, amended): Chromium's
-  // proxy-aware `net.fetch` first — the same stack the DeepSeek calls use —
-  // and Node's `fetch` only when Chromium could not connect at all. On the
-  // owner's second machine Chromium reached DeepSeek but failed the TLS
-  // handshake to both MiniMax hosts; a second stack is the only lever the
-  // app has there. Called after `whenReady` only (the handlers and the
-  // services are wired inside `start`).
-  const minimaxFetch = createFallbackFetch(
-    [(url, init) => net.fetch(url, init), (url, init) => fetch(url, init)],
-    (line) => console.log(line),
-  );
-  /** Either MiniMax key is enough to try for a voice: the pay-as-you-go
-   *  one clones, the plan one can adopt (ADR 0062 §1.8). */
-  const anyMiniMaxKey = (): boolean =>
-    readMiniMaxKeyPlain() !== null || readMiniMaxPlanKeyPlain() !== null;
-  // The synthesizer's refusal, blamed on the key that spoke: the plan key
-  // when set (speech prefers it), else the API key. The synthesizer forgets
-  // a refusal when its key changes, so the key in use now is the one it was
-  // answered for.
-  const minimaxRefusal = (): MiniMaxRefusalState | null => {
-    const reason = minimaxSynth?.status().refusal ?? null;
-    if (reason === null) return null;
-    return {
-      reason,
-      key: readMiniMaxPlanKeyPlain() !== null ? "plan" : "api",
-    };
-  };
   const send: Send = (ch, payload) => {
     if (!wc.isDestroyed()) wc.send(ch, payload);
   };
+  // Herta's synthesized voice (voice-stack.ts): the local synthesizer, its
+  // model download and the cloud voice. Built once and shared by every
+  // session; `bootstrap` starts it.
+  const voice = createVoiceStack(send);
 
   // When the user is away from the window (ADR 0072 §1): notifications and
   // keep-awake for the active session. Both settings and the UI language are
@@ -1466,36 +1384,7 @@ export function createSessionService(
       host: () => host,
       workspaceRoot: appWorkspaceRoot,
       dreamRunning: () => dreamRunning,
-      voice: {
-        get synthesizer() {
-          return synthesizer;
-        },
-        get voiceModel() {
-          return voiceModel;
-        },
-        get minimaxVoice() {
-          return minimaxVoice;
-        },
-        get engine() {
-          return voiceEngine;
-        },
-        set engine(next) {
-          voiceEngine = next;
-        },
-        get realtimeEnabled() {
-          return realtimeVoiceEnabled;
-        },
-        set realtimeEnabled(next) {
-          realtimeVoiceEnabled = next;
-        },
-        minimaxFetch,
-        anyMiniMaxKey,
-        minimaxRefusal,
-        stopSpeech: () => {
-          synthesizer?.stopWorker();
-          minimaxSynth?.cancelAll();
-        },
-      },
+      voice: voice.settings,
     });
     flow.register(handle);
   }
@@ -1531,133 +1420,28 @@ export function createSessionService(
       // recovery, which the window no longer waits for (review 2026-11-10).
       await hooks.pathReady;
       const workspaceRoot = appWorkspaceRoot();
-      // Herta's synthesized voice (ADR 0042). Constructed here — before the
-      // host, so every session it creates carries it — but the utility
-      // process starts LAZILY on the first sentence, so an install that
-      // never speaks never pays the model load. The enable flag is seeded
-      // from the persisted setting; the Settings handler keeps it current.
-      realtimeVoiceEnabled =
+      // Herta's synthesized voice (voice-stack.ts). Started here — before the
+      // host, so every session it creates carries it. The enable flag is
+      // seeded from the persisted setting; the Settings handler keeps it
+      // current.
+      voice.settings.realtimeEnabled =
         (await readGlobalSettings(app.getPath("userData"))).realtimeVoice ??
         true;
       const userDataPath = app.getPath("userData");
-      synthesizer = createTtsSynthesizer({
-        // The downloaded copy first, the dev workspace's second (ADR 0061);
-        // a packaged app has only the first.
-        modelRoots: resolveTtsModelRoots({
-          userDataPath,
-          isPackaged: installMode().installed,
-          workspaceRoot,
-        }),
-        // electron.vite.config.ts emits the worker beside the main bundle;
-        // it is a plain .cjs on purpose — a native addon cannot be bundled.
-        workerPath: join(__dirname, "tts-worker.cjs"),
-        sherpaPath: resolveSherpaEntry({
-          isPackaged: installMode().installed,
-          resourcesPath: installMode().resourcesPath,
-          startDir: __dirname,
-        }),
-        enabled: () => realtimeVoiceEnabled,
-        // Not on this thread at launch: the probe stats every file the
-        // bundle's manifest lists (~50 ms, ADR 0068 §14).
-        probeInBackground: true,
-      });
-      {
-        // The model download (ADR 0061). The archive's location is pinned
-        // with its hash; a dev run may point it at a local server for the
-        // lab — NEVER a packaged build (the T1.3 rule the update feed and
-        // the DeepSeek base URL already follow).
-        const override = installMode().installed
-          ? undefined
-          : process.env[TTS_ARCHIVE_URL_ENV];
-        const synth = synthesizer;
-        voiceModel = createVoiceModelService({
-          root: voiceModelStoreRoot(userDataPath),
-          bundleId: TTS_BUNDLE_ID,
-          archive: {
-            url:
-              override !== undefined && override !== ""
-                ? override
-                : TTS_ARCHIVE_URL,
-            sha256: TTS_ARCHIVE_SHA256,
-            bytes: TTS_ARCHIVE_BYTES,
-            unpackedBytes: TTS_BUNDLE_BYTES,
-          },
-          // Electron's client: proxy-aware, and the session's certificate
-          // policy applies. The signal aborts the transfer on cancel.
-          fetch: (url, init) => net.fetch(url, { signal: init.signal }),
-          onChange: (state) => send(EVT.voiceModel, state),
-          // The worker holds the bundle's files open; stop it before the
-          // files go (it forks afresh on the next request if a bundle is
-          // still there).
-          beforeRemove: () => synth.stopWorker(),
-          afterChange: () => {
-            synth.refreshBundle();
-          },
-        });
-      }
-      // The cloud voice (ADR 0062) beside the local one, both behind one
-      // switching synthesizer the app-server sees. The engine and the clone
-      // record come from settings; the key from the secure store, per call.
+      voice.startLocal({ userDataPath, workspaceRoot });
+      // The cloud voice takes its engine and clone record from the stored
+      // settings; the same read seeds what the attention watcher and Flow
+      // read at every event.
       const startupSettings = await readGlobalSettings(userDataPath);
-      voiceEngine = startupSettings.voiceEngine ?? "local";
       attentionPrefs = attentionSettingsOf(startupSettings);
       uiLocale = resolveInitialLocale(
         startupSettings,
         osLocale(process.platform, app),
       );
-      const referencePath = resolveVoiceCloneReference({
-        isPackaged: installMode().installed,
-        resourcesPath: installMode().resourcesPath,
+      const speech = voice.startCloud({
+        userDataPath,
         workspaceRoot,
-      });
-      const fetchLike = minimaxFetch;
-      minimaxVoice = createMiniMaxVoiceService({
-        fetch: fetchLike,
-        key: readMiniMaxKeyPlain,
-        planKey: readMiniMaxPlanKeyPlain,
-        readReference: async () => {
-          try {
-            return new Uint8Array(await readFile(referencePath));
-          } catch {
-            return null;
-          }
-        },
-        initial: startupSettings.minimaxVoice ?? null,
-        save: async (record) => {
-          await updateGlobalSettings(userDataPath, (s) => ({
-            ...s,
-            minimaxVoice: record ?? undefined,
-          }));
-        },
-        onChange: (state) => send(EVT.voiceMinimax, state),
-      });
-      const voiceService = minimaxVoice;
-      // An install that chose the cloud and has a key but no clone yet (a
-      // reset, a settings file from before the clone existed): make it at
-      // start, unasked — the user never operates the clone.
-      if (
-        voiceEngine === "minimax" &&
-        anyMiniMaxKey() &&
-        voiceService.voice() === null
-      ) {
-        void voiceService.prepare();
-      }
-      minimaxSynth = createMiniMaxSynthesizer({
-        fetch: fetchLike,
-        // Speech goes through the plan when there is one (§1.8), else it is
-        // billed to the pay-as-you-go key.
-        key: () => readMiniMaxPlanKeyPlain() ?? readMiniMaxKeyPlain(),
-        voice: () => voiceService.voice(),
-        enabled: () => realtimeVoiceEnabled && voiceEngine === "minimax",
-        applyEffect: loadCommChannelEffect(),
-        onVoiceMissing: (id) => voiceService.markMissing(id),
-        onUsed: () => voiceService.stampUsed(),
-        onRefusal: () => send(EVT.voiceMinimaxSpeech, minimaxRefusal()),
-      });
-      const speech = createSwitchingSynthesizer({
-        engine: () => voiceEngine,
-        local: synthesizer,
-        minimax: minimaxSynth,
+        settings: startupSettings,
       });
       const config = await buildConfig(
         workspaceRoot,
@@ -1748,49 +1532,11 @@ export function createSessionService(
     await host?.closeActiveSession();
     host?.dispose();
     host = null;
-    // The voice worker is a CHILD PROCESS: left running it would outlive the
-    // window and hold ~200 MB of loaded model. Disposed after the sessions,
-    // so a turn still unwinding can finish its last synthesis request
-    // (which resolves null once the worker is gone — the reveal types it).
-    // A download in flight dies with the window (its partial file is
-    // discarded by the downloader itself); the service is rebuilt with the
-    // synthesizer on the next start.
-    voiceModel?.cancel();
-    voiceModel = null;
-    minimaxSynth?.dispose();
-    minimaxSynth = null;
-    minimaxVoice = null;
-    synthesizer?.dispose();
-    synthesizer = null;
-  }
-
-  /**
-   * The station-terminal treatment for the cloud voice, from the vendored
-   * `.cjs` emitted beside the main bundle (the worker requires the same file
-   * the same way). Absent — a dev tree before a build — the cloud voice
-   * plays dry rather than not at all.
-   */
-  function loadCommChannelEffect():
-    | ((samples: Float32Array, sampleRate: number) => Float32Array)
-    | undefined {
-    try {
-      const mod = createRequire(__filename)(
-        join(__dirname, "comm-channel-effect.cjs"),
-      ) as {
-        applyCommChannel: (
-          samples: Float32Array,
-          sampleRate: number,
-          options: { preset: string },
-        ) => Float32Array;
-      };
-      return (samples, sampleRate) =>
-        mod.applyCommChannel(samples, sampleRate, { preset: TTS_EFFECT });
-    } catch (err) {
-      console.warn(
-        `[herta-minimax] comm-channel effect unavailable, playing dry: ${String(err)}`,
-      );
-      return undefined;
-    }
+    // The voice worker is a CHILD PROCESS (voice-stack.ts). Disposed after
+    // the sessions, so a turn still unwinding can finish its last synthesis
+    // request (which resolves null once the worker is gone — the reveal
+    // types it).
+    voice.dispose();
   }
 
   return {

@@ -60,6 +60,7 @@ import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { AuraVisual } from "../UtilityRail/AuraVisual.js";
 import { ChipMenu, renderWithChips } from "./ComposerChips.js";
+import { useAttachmentIntake } from "./useAttachmentIntake.js";
 import { COMPOSER_MIN_LINES, useComposerLines } from "./useComposerLines.js";
 import { useComposerNotice } from "./useComposerNotice.js";
 
@@ -72,7 +73,6 @@ export {
 } from "./useComposerLines.js";
 
 import { useLightbox } from "./ImageLightbox.js";
-import { endPendingAttach, startPendingAttach } from "./pending-attach.js";
 import { SendArrowIcon } from "./SendArrowIcon.js";
 import { useStagedImages } from "./useStagedImages.js";
 import { useWorkspaceRefs } from "./WorkspaceRefs.js";
@@ -119,13 +119,6 @@ function caretIsFree(form: HTMLElement | null): boolean {
 /** How long the workspace's file list is reused before `@` lists it again
  *  (ADR 0072 §2) — a file 板砖 just created shows up on the next mention. */
 const MENTION_FILES_TTL_MS = 10_000;
-
-/** Filename extension for a pasted image whose File carries no name. The
- *  MIME subtype is the only thing the clipboard tells us. */
-function pasteName(mime: string): string {
-  const sub = mime.split("/")[1] ?? "png";
-  return `image.${sub === "jpeg" ? "jpg" : sub.replace(/[^a-z0-9]/gi, "")}`;
-}
 
 /** Every element picked on the page this composer knows of (ADR 0083 §4):
  *  the ones it placed and the ones the record's messages carry, by line. */
@@ -220,11 +213,6 @@ export function Composer(): JSX.Element {
   // Chrome fires no blur for it); an unsent draft keeps its first line
   // visible and survives; the turn-end auto-refocus expands again.
   const [focusWithin, setFocusWithin] = useState(false);
-  // While the OS file picker is up it steals WINDOW focus, firing
-  // focusout/focusin churn that says nothing about the user's intent —
-  // freeze the height until the picker resolves (then the caret handoff
-  // below decides).
-  const pickerOpen = useRef(false);
   // Set around a focus() that gives the caret back WITHOUT the expansion
   // (the hold window opening, below): the textarea's onFocus skips the
   // expand while it is set, and the first keystroke expands instead.
@@ -371,31 +359,6 @@ export function Composer(): JSX.Element {
     sessionStore.setComposerNotice(text);
   }, [sessionStore, t]);
 
-  // A document's record block arrives only when main has read it — and, for
-  // a PDF, transcribed its pictures (2026-09-30): seconds. The read in flight
-  // shows as the files' own rows with a hairline (2026-10-01, the owner's
-  // pick; pending-attach.ts), which replaced a "reading the file" notice here.
-  // While a read is in flight a second batch is refused rather than queued,
-  // and the SEND waits: `attachFiles` is idle-only, so a turn started
-  // meanwhile makes main refuse the whole attach once it has read it,
-  // transcripts already paid for (review on #6). The refusal notices are
-  // remembered like `turnNotice`, so the answer clears its own notice and
-  // never a newer one.
-  const reading = useRef(false);
-  const [readingDoc, setReadingDoc] = useState(false);
-  const readingNotice = useRef<string | null>(null);
-  const showReadingNotice = (text: string): void => {
-    readingNotice.current = text;
-    sessionStore.setComposerNotice(text);
-  };
-  const clearReadingNotice = (): void => {
-    const shown = readingNotice.current;
-    readingNotice.current = null;
-    if (shown !== null && sessionStore.getSnapshot().composerNotice === shown) {
-      sessionStore.clearComposerNotice();
-    }
-  };
-
   // Staged pictures (ADR 0048 §4). Refusals go through the same notice lane
   // every other composer refusal uses.
   const onStageRefusal = useCallback(
@@ -418,6 +381,31 @@ export function Composer(): JSX.Element {
   );
   const images = useStagedImages(sessionId, onStageRefusal);
   const openLightbox = useLightbox();
+  // What the composer takes in (useAttachmentIntake.ts): the file picker,
+  // a drop, a pasted picture. Pictures stage; documents are read at once.
+  const {
+    pickerOpen,
+    reading,
+    readingDoc,
+    showReadingNotice,
+    dragOver,
+    onPickAttachments,
+    onPaste,
+    onDragEnter,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+  } = useAttachmentIntake({
+    bridge,
+    sessionStore,
+    sessionId,
+    t,
+    images,
+    refuseForTurn,
+    busy,
+    taRef,
+    setFocusWithin,
+  });
 
   // Shared submit path for the ↑ button (form submit) and Enter-to-send.
   const doSubmit = (): void => {
@@ -1083,13 +1071,6 @@ export function Composer(): JSX.Element {
   // (useComposerNotice.ts).
   const { noticeText, noticeExiting } = useComposerNotice(composerNotice);
 
-  // ── Attachments (ADR 0033) ────────────────────────────────────────────────
-  // `dragDepth` counts enter/leave rather than using a boolean: dragging over a
-  // child element fires leave-then-enter, and a boolean flickers the highlight
-  // off on every internal boundary crossing.
-  const dragDepth = useRef(0);
-  const [dragOver, setDragOver] = useState(false);
-
   // A file drag over the composer also expands it — a drop target should
   // not be at its smallest exactly while the user is aiming at it. Staged
   // pictures also hold it open: the strip is the only sign the pictures are
@@ -1103,80 +1084,6 @@ export function Composer(): JSX.Element {
   // height of the composer grows by the lines past two.
   const { measureRef, inputLines, linePx } = useComposerLines(text);
 
-  /**
-   * A picked or dropped batch splits by KIND (ADR 0048 §4): pictures stage in
-   * the strip and wait for the message they belong to; documents ingest
-   * immediately, as they always have — their extraction takes seconds and the
-   * early row is what tells the user the file is ready to ask about.
-   *
-   * Main decides which is which, by sniffing the bytes: the renderer holds
-   * only a path and an extension, and an extension is the user's claim, not
-   * the file's content.
-   */
-  const sendAttachments = (paths: readonly string[]): void => {
-    if (paths.length === 0 || sessionId === null) return;
-    void images.stagePaths(paths).then(({ notImages }) => {
-      if (notImages.length > 0) ingestDocuments(paths, notImages);
-    });
-  };
-
-  const ingestDocuments = (
-    paths: readonly string[],
-    notImages: readonly string[],
-  ): void => {
-    if (sessionId === null) return;
-    // Match back to the ORIGINAL paths: main answers with display names, and
-    // attachFiles needs the paths it was given.
-    const names = new Set(notImages);
-    const docs = paths.filter((p) => names.has(p.split(/[\\/]/).at(-1) ?? p));
-    if (docs.length === 0) return;
-    if (reading.current) {
-      showReadingNotice(t("composer.attach.stillReading"));
-      return;
-    }
-    reading.current = true;
-    setReadingDoc(true);
-    // The read shows as the files' own rows, with a hairline (2026-10-01,
-    // pending-attach.ts) — placed where the record blocks will land.
-    const snap = sessionStore.getSnapshot();
-    const pendingId = startPendingAttach({
-      sessionId,
-      names: docs.map((p) => p.split(/[\\/]/).at(-1) ?? p),
-      baseAbs: snap.recordStart + snap.record.length,
-    });
-    void bridge
-      .attachFiles(sessionId, docs)
-      .then((r) => {
-        endPendingAttach(pendingId, r.ok);
-        clearReadingNotice();
-        // Refusals are SHOWN. `attachFiles` is idle-only, and a drop that
-        // silently did nothing mid-turn would read as a broken drop target
-        // (the same no-op-silently failure the M6 audit found on setWorkspace).
-        if (!r.ok) {
-          if (r.message === "a turn is in progress") {
-            refuseForTurn();
-            return;
-          }
-          sessionStore.setComposerNotice(
-            r.message === "too many files at once"
-              ? t("composer.attach.tooMany")
-              : t("composer.attach.failed"),
-          );
-        }
-      })
-      // A rejected IPC call (handler threw) must land in the same notice, not
-      // as an unhandled rejection with a drop that looked like it worked.
-      .catch(() => {
-        endPendingAttach(pendingId, false);
-        clearReadingNotice();
-        sessionStore.setComposerNotice(t("composer.attach.failed"));
-      })
-      .finally(() => {
-        reading.current = false;
-        setReadingDoc(false);
-      });
-  };
-
   // Ctrl/⌘+L and Ctrl/⌘+U (ADR 0082): the caret into the composer, and the
   // paperclip — each refused exactly when its control is (a disabled
   // textarea takes no caret; attaching waits for the turn to end).
@@ -1188,29 +1095,6 @@ export function Composer(): JSX.Element {
     if (!busy) onPickAttachments();
     return true;
   });
-  const onPickAttachments = (): void => {
-    // One picker at a time: a second Ctrl+U before the dialog was up opened
-    // another (release review 2026-10-22).
-    if (pickerOpen.current) return;
-    pickerOpen.current = true;
-    void bridge
-      .pickAttachments()
-      .then((paths) => {
-        if (paths !== null) sendAttachments(paths);
-      })
-      .finally(() => {
-        pickerOpen.current = false;
-        // Caret handoff: whether the user picked files or cancelled, the
-        // next act is typing — put the caret in the field. Any expansion the
-        // dialog's close causes is then explained by a visible caret (the
-        // owner's report: cancel re-expanded the composer with focus stuck
-        // on the attach button and no caret anywhere). Explicit set beside
-        // focus(), same rationale as the turn-end refocus.
-        taRef.current?.focus({ preventScroll: true });
-        setFocusWithin(true);
-      });
-  };
-
   return (
     <>
       {/* The notice pill (rewind spill, attach refusals) floats above the
@@ -1399,61 +1283,11 @@ export function Composer(): JSX.Element {
           if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
           setFocusWithin(false);
         }}
-        onPaste={(e) => {
-          // A screenshot is Ctrl+V, not a file picker (ADR 0048 §4) — clipboard
-          // bytes with no path at all, which is why staging takes bytes as a
-          // first-class input rather than only paths.
-          const files = Array.from(e.clipboardData.files).filter((f) =>
-            f.type.startsWith("image/"),
-          );
-          if (files.length === 0) return; // ordinary text paste: leave it alone
-          e.preventDefault();
-          if (busy) {
-            refuseForTurn();
-            return;
-          }
-          void Promise.all(
-            files.map(async (f) => ({
-              // A pasted screenshot's File carries a generic name ("image.png")
-              // or none; the fallback keeps the record row readable.
-              name: f.name.length > 0 ? f.name : `pasted-${pasteName(f.type)}`,
-              bytes: new Uint8Array(await f.arrayBuffer()),
-            })),
-          ).then((items) => images.stageBytes(items));
-        }}
-        onDragEnter={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
-          dragDepth.current += 1;
-          setDragOver(true);
-        }}
-        onDragOver={(e) => {
-          // Without preventDefault the browser navigates to the dropped file and
-          // the drop handler never runs — the classic silent-nothing-happens.
-          if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-        }}
-        onDragLeave={() => {
-          dragDepth.current = Math.max(0, dragDepth.current - 1);
-          if (dragDepth.current === 0) setDragOver(false);
-        }}
-        onDrop={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
-          e.preventDefault();
-          dragDepth.current = 0;
-          setDragOver(false);
-          // Electron 43 removed File.path; only the preload can resolve a real
-          // path (webUtils), so the File objects never leave this handler.
-          const paths = Array.from(e.dataTransfer.files)
-            .map((f) => bridge.pathForFile(f))
-            .filter((p) => p.length > 0);
-          sendAttachments(paths);
-          // Same caret handoff as the picker: after a drop you type the
-          // message that goes with the files. Busy drops surface a refusal
-          // notice instead — a disabled textarea can't take the caret.
-          if (!busy) {
-            taRef.current?.focus({ preventScroll: true });
-            setFocusWithin(true);
-          }
-        }}
+        onPaste={onPaste}
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
       >
         {/* Herta's tide wave living at the composer's floor (glass-wave merge,
           2026-07-05): inside the composer it tracks the composer's width when

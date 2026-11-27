@@ -2,13 +2,11 @@ import type { TerminalRecord } from "@herta/core";
 import { pageElementWords } from "@herta/core/page-element";
 import {
   type CSSProperties,
-  Fragment,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
-import { attachmentImageUrl } from "../../../shared/attachment-image.js";
 import { useHertaBridge } from "../../context/HertaBridgeContext.js";
 import { useSessionLang } from "../../hooks/useActiveSession.js";
 import {
@@ -17,7 +15,6 @@ import {
 } from "../../hooks/useSessionSelector.js";
 import { useT } from "../../i18n/LocaleProvider.js";
 import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
-import { FileTypeIcon } from "../../lib/file-icons.js";
 import {
   addChipAt,
   chipify,
@@ -35,10 +32,8 @@ import {
   withoutChip,
 } from "../../lib/file-mention.js";
 import {
-  chipLabel,
   composeQuotedMessage,
   joinHeld,
-  quotedMessagePreview,
   quotesBack,
 } from "../../lib/quote-format.js";
 import { recallLastUserMessage } from "../../lib/recall-last-message.js";
@@ -51,6 +46,10 @@ import { useFileViewerOpen } from "../FileViewer/file-viewer-context.js";
 import { Tooltip } from "../Tooltip/Tooltip.js";
 import { AuraVisual } from "../UtilityRail/AuraVisual.js";
 import { ChipMenu, renderWithChips } from "./ComposerChips.js";
+import { ComposerHeldCard, ComposerResumeCard } from "./ComposerHeldCards.js";
+import { ComposerMentions } from "./ComposerMentions.js";
+import { ComposerQuotes } from "./ComposerQuotes.js";
+import { ComposerStaged } from "./ComposerStaged.js";
 import { useAttachmentIntake } from "./useAttachmentIntake.js";
 import { COMPOSER_MIN_LINES, useComposerLines } from "./useComposerLines.js";
 import { useComposerNotice } from "./useComposerNotice.js";
@@ -828,14 +827,6 @@ export function Composer(): JSX.Element {
       .getElementById(`composer-mention-${mentionIndex}`)
       ?.scrollIntoView({ block: "nearest" });
   }, [mentionIndex, mention]);
-  // Fade the list's edges only where there is more to scroll to.
-  const fadeEdges = (el: HTMLElement | null): void => {
-    if (el === null) return;
-    el.dataset.above = el.scrollTop > 1 ? "1" : "0";
-    el.dataset.below =
-      el.scrollTop + el.clientHeight < el.scrollHeight - 1 ? "1" : "0";
-  };
-
   useEffect(() => {
     if (pendingCaret.current !== null && taRef.current) {
       taRef.current.setSelectionRange(
@@ -994,123 +985,19 @@ export function Composer(): JSX.Element {
           it. Offered in the held card's place and shape, only while the
           session is idle; pressing it sends the 继续 turn. */}
       {resumable && !busy && bridge.continueInterrupted !== undefined && (
-        <section
-          className="composer-held composer-resume"
-          aria-label={t("composer.resume.aria")}
-          data-testid="composer-resume"
-        >
-          <span className="composer-held__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 14 14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="7" cy="7" r="5.6" />
-              <path d="M5.6 4.6v4.8M8.4 4.6v4.8" />
-            </svg>
-          </span>
-          <span className="composer-held__text">
-            {t("composer.resume.text")}
-          </span>
-          <span className="composer-held__actions">
-            <button
-              type="button"
-              className="composer-held__action composer-held__action--steer"
-              onClick={() => void sessionStore.continueInterrupted()}
-            >
-              <svg
-                viewBox="0 0 11 11"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M3 2l5.5 3.5L3 9z" />
-              </svg>
-              {t("composer.resume.action")}
-            </button>
-          </span>
-        </section>
+        <ComposerResumeCard t={t} sessionStore={sessionStore} />
       )}
       {held !== null && (
-        <section
-          ref={heldCardRef}
-          className={`composer-held${suppressed ? " is-suppressed" : ""}`}
-          aria-label={t("composer.hold.aria")}
-          title={t("composer.hold.label")}
-          data-testid="composer-held"
-        >
-          <span className="composer-held__icon" aria-hidden="true">
-            <svg
-              viewBox="0 0 14 14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="7" cy="7" r="5.6" />
-              <path d="M7 4.2V7l1.9 1.4" />
-            </svg>
-          </span>
-          <span className="composer-held__text">
-            {quotedMessagePreview(held)}
-          </span>
-          <span className="composer-held__actions">
-            {canSteer && (
-              <button
-                type="button"
-                className="composer-held__action composer-held__action--steer"
-                onClick={onSteer}
-              >
-                <svg
-                  viewBox="0 0 11 11"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M1.5 5.5h8M6 2l3.5 3.5L6 9" />
-                </svg>
-                {t("composer.hold.steer")}
-              </button>
-            )}
-            <button
-              type="button"
-              className="composer-held__action"
-              onClick={onEditHeld}
-            >
-              {t("composer.hold.edit")}
-            </button>
-            <button
-              type="button"
-              className="composer-held__action composer-held__action--discard"
-              aria-label={t("composer.hold.discard")}
-              title={t("composer.hold.discard")}
-              onClick={() => sessionStore.clearHeld()}
-            >
-              <svg
-                viewBox="0 0 10 10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-              </svg>
-            </button>
-          </span>
-        </section>
+        <ComposerHeldCard
+          heldCardRef={heldCardRef}
+          suppressed={suppressed}
+          t={t}
+          held={held}
+          canSteer={canSteer}
+          onSteer={onSteer}
+          onEditHeld={onEditHeld}
+          sessionStore={sessionStore}
+        />
       )}
       <form
         ref={composerRef}
@@ -1156,203 +1043,30 @@ export function Composer(): JSX.Element {
           the × removes a picture as if it had never arrived, which is the
           whole reason staging exists on an append-only record. */}
         {images.staged.length > 0 && (
-          <ul className="composer-staged" aria-label={t("composer.staged")}>
-            {images.staged.map((img) => (
-              <li className="composer-staged__item" key={img.id}>
-                {/* Click-to-enlarge (ADR 0048 §4a): checking WHICH screenshot
-                  this is before sending is exactly when it matters — the ×
-                  is the take-back, this is the look. */}
-                <button
-                  type="button"
-                  className="composer-staged__open"
-                  aria-label={`${t("lightbox.open")} ${img.name}`}
-                  onClick={() => openLightbox(img)}
-                >
-                  <img
-                    className="composer-staged__thumb"
-                    src={attachmentImageUrl(img.path)}
-                    alt={img.name}
-                    title={img.name}
-                    draggable={false}
-                  />
-                </button>
-                <button
-                  type="button"
-                  className="composer-staged__remove"
-                  aria-label={`${t("composer.staged.remove")} ${img.name}`}
-                  onClick={() => images.unstage(img.id)}
-                >
-                  <svg
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ComposerStaged images={images} openLightbox={openLightbox} t={t} />
         )}
         {/* The 插话 tag (ADR 0085 §9): while it shows, what is sent goes
           to 板砖's run as a steer; × gives the composer back to Herta.
           Quotes from the viewer's page (ADR 0078 §6): the source rides
           the message when it is sent; × takes one back. */}
         {hasQuotes && (
-          <ul className="composer-quotes">
-            {steerOn && (
-              <li className="composer-quote composer-steer-tag">
-                <span className="composer-quote__label">
-                  {t("composer.steer.tag")}
-                </span>
-                <button
-                  type="button"
-                  className="composer-quote__remove"
-                  aria-label={t("composer.steer.off")}
-                  onClick={() => sessionStore.setComposerSteer(false)}
-                >
-                  <svg
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                  </svg>
-                </button>
-              </li>
-            )}
-            {composerQuotes.map((q) => (
-              <li className="composer-quote" key={q.id}>
-                <svg
-                  className="composer-quote__icon"
-                  viewBox="0 0 13 13"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 9.5c-.3-1.8.3-3.4 2-4.2M7.5 9.5c-.3-1.8.3-3.4 2-4.2" />
-                </svg>
-                <span className="composer-quote__label">
-                  {chipLabel(q, lang)}
-                </span>
-                <span className="composer-quote__preview">
-                  {q.title ??
-                    q.text.split("\n").find((l) => l.trim().length > 0) ??
-                    ""}
-                </span>
-                <button
-                  type="button"
-                  className="composer-quote__remove"
-                  aria-label={`${t("composer.quote.remove")} ${chipLabel(q, lang)}`}
-                  onClick={() => sessionStore.removeComposerQuote(q.id)}
-                >
-                  <svg
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ComposerQuotes
+            steerOn={steerOn}
+            composerQuotes={composerQuotes}
+            lang={lang}
+            t={t}
+            sessionStore={sessionStore}
+          />
         )}
         {mentionOpen && (
-          <div
-            id="composer-mentions"
-            className="composer-mentions"
-            role="listbox"
-            aria-label={t("composer.mentions.aria")}
-          >
-            <div
-              className="composer-mentions__scroll"
-              ref={fadeEdges}
-              onScroll={(e) => fadeEdges(e.currentTarget)}
-            >
-              {mentionMatches.map((item, i) => {
-                const active = item === mentionActive;
-                const firstFile =
-                  item.kind === "file" &&
-                  mentionMatches[i - 1]?.kind !== "file";
-                const option = (children: JSX.Element): JSX.Element => (
-                  <button
-                    key={item.kind === "brick" ? "@brick" : item.path}
-                    id={`composer-mention-${i}`}
-                    type="button"
-                    role="option"
-                    // The caret stays in the textarea; the keys it takes move
-                    // the highlight, so an option is never tabbed to.
-                    tabIndex={-1}
-                    aria-selected={active}
-                    className={`composer-mentions__item${item.kind === "brick" ? " is-brick" : ""}${active ? " is-active" : ""}`}
-                    // mousedown, not click: the textarea keeps the caret.
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      pickMention(item);
-                    }}
-                    onMouseEnter={() => setMentionIndex(i)}
-                  >
-                    {children}
-                  </button>
-                );
-                if (item.kind === "brick") {
-                  return option(
-                    <>
-                      <span className="composer-mentions__name">
-                        {lang === "en" ? "@brick" : "@板砖"}
-                      </span>
-                      <span className="composer-mentions__desc">
-                        {t("composer.mentions.brick")}
-                      </span>
-                    </>,
-                  );
-                }
-                const cut = item.path.lastIndexOf("/");
-                const name = item.path.slice(cut + 1);
-                const dir = cut >= 0 ? item.path.slice(0, cut) : "";
-                const folder = item.dir === true;
-                return (
-                  <Fragment key={item.path}>
-                    {firstFile && (
-                      // What the rows below are — the list says so itself.
-                      <div
-                        className="composer-mentions__section"
-                        aria-hidden="true"
-                      >
-                        {t("composer.mentions.files")}
-                      </div>
-                    )}
-                    {option(
-                      <>
-                        <FileTypeIcon
-                          path={item.path}
-                          dir={folder}
-                          className="composer-mentions__icon"
-                        />
-                        <span className="composer-mentions__name">{name}</span>
-                        {dir.length > 0 && (
-                          <span className="composer-mentions__dir">{dir}</span>
-                        )}
-                      </>,
-                    )}
-                  </Fragment>
-                );
-              })}
-            </div>
-          </div>
+          <ComposerMentions
+            mentionMatches={mentionMatches}
+            mentionActive={mentionActive}
+            pickMention={pickMention}
+            setMentionIndex={setMentionIndex}
+            lang={lang}
+            t={t}
+          />
         )}
         <div className="composer-input-wrap">
           {/* The draft as the textarea wraps it, unseen: its height is how

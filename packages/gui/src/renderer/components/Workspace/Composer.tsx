@@ -1,12 +1,10 @@
 import type { TerminalRecord } from "@herta/core";
 import { pageElementWords } from "@herta/core/page-element";
-import { workspaceRelativeRepoPath } from "@herta/core/repo-path";
 import {
   type CSSProperties,
   Fragment,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -22,25 +20,18 @@ import { aliasBrickInput } from "../../lib/banzhuan-mention.js";
 import { FileTypeIcon } from "../../lib/file-icons.js";
 import {
   addChipAt,
-  brickComplete,
-  type ChipSpan,
-  chipAt,
   chipify,
   chipifyPicks,
   chipsAfterEdit,
   expandChips,
-  type FileChip,
   findChipSpans,
-  findMentionQuery,
   insertBrick,
   insertChip,
   insertPickChip,
   type MentionItem,
-  mentionItems,
   type PagePick,
   pickLine,
   picksIn,
-  pruneChips,
   withoutChip,
 } from "../../lib/file-mention.js";
 import {
@@ -63,6 +54,8 @@ import { ChipMenu, renderWithChips } from "./ComposerChips.js";
 import { useAttachmentIntake } from "./useAttachmentIntake.js";
 import { COMPOSER_MIN_LINES, useComposerLines } from "./useComposerLines.js";
 import { useComposerNotice } from "./useComposerNotice.js";
+import { useFileChips } from "./useFileChips.js";
+import { useMentionList } from "./useMentionList.js";
 
 // Tested through this module (Composer.test.tsx).
 export {
@@ -115,10 +108,6 @@ function caretIsFree(form: HTMLElement | null): boolean {
   if (active.classList.contains("conversation")) return true;
   return active.closest(".approval-panel") !== null;
 }
-
-/** How long the workspace's file list is reused before `@` lists it again
- *  (ADR 0072 §2) — a file 板砖 just created shows up on the next mention. */
-const MENTION_FILES_TTL_MS = 10_000;
 
 /** Every element picked on the page this composer knows of (ADR 0083 §4):
  *  the ones it placed and the ones the record's messages carry, by line. */
@@ -225,52 +214,41 @@ export function Composer(): JSX.Element {
   // After a Tab insertion we must restore the caret AFTER the inserted 板砖,
   // applied post-render via this ref (React owns the controlled value).
   const pendingCaret = useRef<number | null>(null);
-  // @-file mentions (ADR 0072 §2): the `@query` the caret is in, the
-  // workspace's files (listed by main, kept briefly per session), the
-  // highlighted match, and the `@` whose list the user dismissed with Esc
-  // (it stays dismissed while the caret stays in that mention).
-  const [mention, setMention] = useState<{
-    readonly start: number;
-    readonly query: string;
-  } | null>(null);
-  const [mentionFiles, setMentionFiles] = useState<readonly string[] | null>(
-    null,
-  );
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const mentionKey = useRef("");
-  const mentionDismissed = useRef(-1);
-  const mentionCache = useRef<{
-    readonly sessionId: string;
-    readonly at: number;
-  } | null>(null);
-  // File chips (ADR 0072 amendment 2026-10-20): each picked file is an
-  // `@<name>` token the highlight layer draws as a chip; the registry says
-  // which path each token stands for. Read through a ref by the handlers,
-  // which see the text a keystroke made before React does.
-  const [chips, setChips] = useState<readonly FileChip[]>([]);
-  const chipsRef = useRef(chips);
-  chipsRef.current = chips;
-  const chipSpans = useMemo(() => findChipSpans(text, chips), [text, chips]);
-  // Elements picked on the page (ADR 0083 §4), by line: a line that comes
-  // back as words — a hold, a rewind, a recall — still goes as a pick.
-  const placedPicks = useRef(new Map<string, PagePick>());
-  /** The chip menu: which chip, and where it opens (over the chip). */
-  const [chipMenu, setChipMenu] = useState<{
-    readonly span: ChipSpan;
-    readonly left: number;
-    readonly bottom: number;
-    /** Opened from the keyboard: the menu takes the focus. */
-    readonly byKey: boolean;
-  } | null>(null);
-  const [chipCopyOpen, setChipCopyOpen] = useState(false);
-  const hoverChip = useRef(-1);
-  /** The caret before the last selection change — which way a caret that
-   *  lands inside a chip is pushed out. */
-  const lastCaret = useRef(0);
+  // File chips (useFileChips.ts): each `@<name>` token drawn as a chip,
+  // the chip menu, and the elements picked on the page. Called where the
+  // chips' state was: its effect is the first of the composer's own.
+  const {
+    chips,
+    setChips,
+    chipsRef,
+    chipSpans,
+    placedPicks,
+    chipMenu,
+    setChipMenu,
+    chipCopyOpen,
+    setChipCopyOpen,
+    hoverChip,
+    lastCaret,
+    chipUnder,
+    openChipMenu,
+    removeChip,
+    copyText,
+    absolutePath,
+  } = useFileChips({ text, setText, pendingCaret, taRef, sessionStore });
+  // The @-mention list (useMentionList.ts).
+  const {
+    mention,
+    setMention,
+    mentionIndex,
+    setMentionIndex,
+    mentionDismissed,
+    updateMention,
+    mentionMatches,
+    mentionOpen,
+    mentionActive,
+    resetMentions,
+  } = useMentionList({ bridge, sessionStore, sessionId, lang, chipsRef });
   const openFile = useFileViewerOpen();
-  useEffect(() => {
-    setChips((c) => pruneChips(text, c));
-  }, [text]);
   const busy = status !== "idle";
   const suppressed = overlay?.kind === "pending-permission";
   // Composer predictions (owner 2026-10-10): the Trailblazer's likely next
@@ -640,7 +618,15 @@ export function Composer(): JSX.Element {
       // fails to take should still leave the composer ready).
       setFocusWithin(true);
     }
-  }, [busy, suppressed, bridge, sessionStore, composerRef]);
+  }, [
+    busy,
+    suppressed,
+    bridge,
+    sessionStore,
+    composerRef,
+    setChips,
+    placedPicks,
+  ]);
 
   // The hold window closing while the turn goes on (板砖 done, Herta
   // speaking) disables the textarea again — silently, like the turn start
@@ -768,78 +754,9 @@ export function Composer(): JSX.Element {
     setChipMenu(null);
     setHintActive(false);
     escDismissed.current = -1;
-    setMention(null);
-    setMentionFiles(null);
-    mentionCache.current = null;
-    mentionDismissed.current = -1;
+    resetMentions();
   }, [sessionId]);
 
-  // The mention list for the caret's `@query`, from the bare `@` on (owner
-  // 2026-10-08: it waited for a query past what could still be `@板砖`, so a
-  // bare `@` showed the ghost alone and the files went unnoticed). Not for
-  // the token already typed out, nor for a mention the user dismissed. The
-  // files are fetched once and kept for a few seconds, so typing does not
-  // re-list; where the bridge cannot list them, the list offers `@板砖`
-  // alone.
-  const updateMention = (value: string, caret: number | null): void => {
-    // A chip's own token is not a query: the caret at its end offers nothing.
-    const onChip =
-      caret !== null &&
-      chipAt(findChipSpans(value, chipsRef.current), caret) !== null;
-    const mq = onChip ? null : findMentionQuery(value, caret);
-    if (mq === null) mentionDismissed.current = -1;
-    if (
-      mq === null ||
-      mq.start === mentionDismissed.current ||
-      brickComplete(mq.query, lang)
-    ) {
-      mentionKey.current = "";
-      setMention(null);
-      return;
-    }
-    // The highlight resets only when the mention itself changes: React
-    // re-reports the selection on key-up, and resetting there undid every
-    // ArrowDown (live check 2026-09-29).
-    const key = `${mq.start}:${mq.query}`;
-    if (key !== mentionKey.current) {
-      mentionKey.current = key;
-      setMentionIndex(0);
-    }
-    setMention(mq);
-    if (bridge.listWorkspaceFiles === undefined || sessionId === null) return;
-    const cached = mentionCache.current;
-    if (
-      cached === null ||
-      cached.sessionId !== sessionId ||
-      Date.now() - cached.at > MENTION_FILES_TTL_MS
-    ) {
-      mentionCache.current = { sessionId, at: Date.now() };
-      const asked = sessionId;
-      void bridge.listWorkspaceFiles(asked).then(
-        (r) => {
-          if (mentionCache.current?.sessionId !== asked) return;
-          setMentionFiles(r?.files ?? []);
-        },
-        () => setMentionFiles([]),
-      );
-    }
-  };
-  // A bare `@` offers the files being worked on first: the repository's
-  // uncommitted paths, read from the store when the list is built (the
-  // composer does not re-render on every repository probe).
-  const mentionMatches = useMemo((): MentionItem[] => {
-    if (mention === null) return [];
-    const repo = sessionStore.getSnapshot().repo;
-    const changed =
-      repo === null
-        ? []
-        : repo.dirty.map((d) => workspaceRelativeRepoPath(d.path, repo.prefix));
-    return mentionItems(mention.query, lang, mentionFiles, changed);
-  }, [mention, mentionFiles, lang, sessionStore]);
-  const mentionOpen = mention !== null && mentionMatches.length > 0;
-  const mentionActive = mentionOpen
-    ? mentionMatches[mentionIndex % mentionMatches.length]
-    : undefined;
   const pickMention = (item: MentionItem): void => {
     if (mention === null) return;
     const caret = taRef.current?.selectionStart ?? text.length;
@@ -875,69 +792,6 @@ export function Composer(): JSX.Element {
     taRef.current?.focus({ preventScroll: true });
   };
 
-  // The chip under a pointer: the highlight layer's chip boxes (it takes no
-  // pointer events itself), read at the moment of the event.
-  const chipUnder = (
-    x: number,
-    y: number,
-  ): { readonly index: number; readonly el: HTMLElement } | null => {
-    const layer = taRef.current?.previousElementSibling;
-    if (!(layer instanceof HTMLElement)) return null;
-    for (const el of layer.querySelectorAll<HTMLElement>("[data-chip]")) {
-      for (const r of el.getClientRects()) {
-        if (
-          x >= r.left - 2 &&
-          x <= r.right + 2 &&
-          y >= r.top - 1 &&
-          y <= r.bottom + 1
-        ) {
-          return { index: Number(el.dataset.chip), el };
-        }
-      }
-    }
-    return null;
-  };
-  const openChipMenu = (
-    index: number,
-    el: HTMLElement,
-    byKey = false,
-  ): void => {
-    const span = chipSpans[index];
-    const wrap = taRef.current?.parentElement;
-    if (span === undefined || wrap == null) return;
-    const w = wrap.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    hideHoverTip();
-    setChipCopyOpen(false);
-    setChipMenu({
-      span,
-      left: Math.max(0, r.left - w.left),
-      bottom: w.bottom - r.top + 6,
-      byKey,
-    });
-  };
-  /** Take a chip's token out of the text, with the space after it. */
-  const removeChip = (span: ChipSpan): void => {
-    const end = text[span.end] === " " ? span.end + 1 : span.end;
-    pendingCaret.current = span.start;
-    setChips((c) => withoutChip(c, span.chip));
-    setText(`${text.slice(0, span.start)}${text.slice(end)}`);
-    setChipMenu(null);
-    taRef.current?.focus({ preventScroll: true });
-  };
-  const copyText = (value: string): void => {
-    void navigator.clipboard?.writeText(value).catch(() => undefined);
-    setChipMenu(null);
-    taRef.current?.focus({ preventScroll: true });
-  };
-  /** The chip's path on this machine: the session's workspace joined in its
-   *  own separator. */
-  const absolutePath = (path: string): string => {
-    const root = sessionStore.getSnapshot().backendWorkspace;
-    if (root === null) return path;
-    const sep = root.includes("\\") ? "\\" : "/";
-    return `${root.replace(/[\\/]+$/u, "")}${sep}${path.split("/").join(sep)}`;
-  };
   // The menu closes on Esc and on any press outside it.
   useEffect(() => {
     if (chipMenu === null) return;
@@ -965,7 +819,7 @@ export function Composer(): JSX.Element {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onDown);
     };
-  }, [chipMenu]);
+  }, [chipMenu, setChipMenu]);
   // The highlighted row stays in view as the arrows move it (the list
   // scrolls now — it holds more rows than fit).
   useEffect(() => {
